@@ -1479,10 +1479,503 @@
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
+  "DesiredStateResponseSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "binding": {
+        "type": "object",
+        "properties": {
+          "repositoryId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "instanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "installationId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authorizationRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "bindingEpoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "suspended": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repositoryId",
+          "instanceId",
+          "installationId",
+          "owner",
+          "name",
+          "authorizationRevision",
+          "bindingEpoch",
+          "suspended"
+        ],
+        "additionalProperties": false
+      },
+      "instance": {
+        "type": "object",
+        "properties": {
+          "instanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repositoryId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "runtimeEpoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "desiredState": {
+            "type": "string",
+            "enum": [
+              "running",
+              "stopped"
+            ]
+          },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "pinned"
+            ]
+          },
+          "observedGeneration": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentArtifactDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "desiredArtifactDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedState": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "starting",
+              "ready",
+              "stopping",
+              "stopped",
+              "failed",
+              "unknown"
+            ]
+          },
+          "observedRuntimeEpoch": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedSequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "desiredRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reservationState": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending",
+              "reserved",
+              "blocked",
+              "released"
+            ]
+          },
+          "reservationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "instanceId",
+          "repositoryId",
+          "generation",
+          "runtimeEpoch",
+          "desiredState",
+          "policy",
+          "observedGeneration",
+          "currentArtifactDigest",
+          "desiredArtifactDigest",
+          "observedState",
+          "observedRuntimeEpoch",
+          "observedSequence",
+          "desiredRevisionId",
+          "observedRevisionId",
+          "reservationState",
+          "reservationId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "operation": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "instanceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "generation": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "runtimeEpoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "start",
+                  "stop",
+                  "redeploy",
+                  "update"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "claimed",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "blocked"
+                ]
+              },
+              "phase": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "id",
+              "instanceId",
+              "generation",
+              "runtimeEpoch",
+              "kind",
+              "status",
+              "phase",
+              "attempt",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "replayed": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "binding",
+      "instance",
+      "operation",
+      "replayed"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
   "DigestSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "string",
     "pattern": "^sha256:[a-f0-9]{64}$",
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "InstanceSnapshotSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "instanceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "repositoryId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "runtimeEpoch": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "desiredState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "stopped"
+        ]
+      },
+      "policy": {
+        "type": "string",
+        "enum": [
+          "stable",
+          "pinned"
+        ]
+      },
+      "observedGeneration": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "currentArtifactDigest": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "desiredArtifactDigest": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "observedState": {
+        "type": "string",
+        "enum": [
+          "absent",
+          "starting",
+          "ready",
+          "stopping",
+          "stopped",
+          "failed",
+          "unknown"
+        ]
+      },
+      "observedRuntimeEpoch": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "observedSequence": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "desiredRevisionId": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "observedRevisionId": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "reservationState": {
+        "type": "string",
+        "enum": [
+          "none",
+          "pending",
+          "reserved",
+          "blocked",
+          "released"
+        ]
+      },
+      "reservationId": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "createdAt": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "updatedAt": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "instanceId",
+      "repositoryId",
+      "generation",
+      "runtimeEpoch",
+      "desiredState",
+      "policy",
+      "observedGeneration",
+      "currentArtifactDigest",
+      "desiredArtifactDigest",
+      "observedState",
+      "observedRuntimeEpoch",
+      "observedSequence",
+      "desiredRevisionId",
+      "observedRevisionId",
+      "reservationState",
+      "reservationId",
+      "createdAt",
+      "updatedAt"
+    ],
+    "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
   "LogicalInstanceSchema": {
@@ -1765,6 +2258,84 @@
       "maintain",
       "admin"
     ],
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "PublicOperationSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "instanceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "runtimeEpoch": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "start",
+          "stop",
+          "redeploy",
+          "update"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "claimed",
+          "running",
+          "succeeded",
+          "failed",
+          "blocked"
+        ]
+      },
+      "phase": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "attempt": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "createdAt": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "updatedAt": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "id",
+      "instanceId",
+      "generation",
+      "runtimeEpoch",
+      "kind",
+      "status",
+      "phase",
+      "attempt",
+      "createdAt",
+      "updatedAt"
+    ],
+    "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
   "QuiesceRequestSchema": {
@@ -2171,6 +2742,476 @@
     "type": "integer",
     "exclusiveMinimum": 0,
     "maximum": 9007199254740991,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "RepositorySnapshotSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "binding": {
+        "type": "object",
+        "properties": {
+          "repositoryId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "instanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "installationId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authorizationRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "bindingEpoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "suspended": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repositoryId",
+          "instanceId",
+          "installationId",
+          "owner",
+          "name",
+          "authorizationRevision",
+          "bindingEpoch",
+          "suspended"
+        ],
+        "additionalProperties": false
+      },
+      "instance": {
+        "type": "object",
+        "properties": {
+          "instanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repositoryId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "runtimeEpoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "desiredState": {
+            "type": "string",
+            "enum": [
+              "running",
+              "stopped"
+            ]
+          },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "pinned"
+            ]
+          },
+          "observedGeneration": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentArtifactDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "desiredArtifactDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedState": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "starting",
+              "ready",
+              "stopping",
+              "stopped",
+              "failed",
+              "unknown"
+            ]
+          },
+          "observedRuntimeEpoch": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedSequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "desiredRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reservationState": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending",
+              "reserved",
+              "blocked",
+              "released"
+            ]
+          },
+          "reservationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "instanceId",
+          "repositoryId",
+          "generation",
+          "runtimeEpoch",
+          "desiredState",
+          "policy",
+          "observedGeneration",
+          "currentArtifactDigest",
+          "desiredArtifactDigest",
+          "observedState",
+          "observedRuntimeEpoch",
+          "observedSequence",
+          "desiredRevisionId",
+          "observedRevisionId",
+          "reservationState",
+          "reservationId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "binding",
+      "instance"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "ResolveRepositoryResponseSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "binding": {
+        "type": "object",
+        "properties": {
+          "repositoryId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "instanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "installationId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authorizationRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "bindingEpoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "suspended": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repositoryId",
+          "instanceId",
+          "installationId",
+          "owner",
+          "name",
+          "authorizationRevision",
+          "bindingEpoch",
+          "suspended"
+        ],
+        "additionalProperties": false
+      },
+      "instance": {
+        "type": "object",
+        "properties": {
+          "instanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repositoryId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "runtimeEpoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "desiredState": {
+            "type": "string",
+            "enum": [
+              "running",
+              "stopped"
+            ]
+          },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "pinned"
+            ]
+          },
+          "observedGeneration": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentArtifactDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "desiredArtifactDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedState": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "starting",
+              "ready",
+              "stopping",
+              "stopped",
+              "failed",
+              "unknown"
+            ]
+          },
+          "observedRuntimeEpoch": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedSequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "desiredRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedRevisionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reservationState": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending",
+              "reserved",
+              "blocked",
+              "released"
+            ]
+          },
+          "reservationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "instanceId",
+          "repositoryId",
+          "generation",
+          "runtimeEpoch",
+          "desiredState",
+          "policy",
+          "observedGeneration",
+          "currentArtifactDigest",
+          "desiredArtifactDigest",
+          "observedState",
+          "observedRuntimeEpoch",
+          "observedSequence",
+          "desiredRevisionId",
+          "observedRevisionId",
+          "reservationState",
+          "reservationId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "created": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "binding",
+      "instance",
+      "created"
+    ],
+    "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
   "ResourceRequirementsSchema": {

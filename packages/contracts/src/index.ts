@@ -4,3 +4,4 @@ export * from "./repository.js";
 export * from "./lifecycle.js";
 export * from "./provider.js";
 export * from "./producer.js";
+export * from "./instance-access.js";

@@ -774,6 +774,170 @@
     ],
     "additionalProperties": false
   },
+  "RedeemHandoffRequestSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "contractVersion": {
+        "type": "string",
+        "const": "instance-access/v1"
+      },
+      "audience": {
+        "type": "string",
+        "const": "instance-access"
+      },
+      "instanceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "hostname": {
+        "type": "string",
+        "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$"
+      },
+      "origin": {
+        "type": "string",
+        "format": "uri"
+      },
+      "code": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 256
+      },
+      "returnPath": {
+        "type": "string",
+        "maxLength": 2048,
+        "pattern": "^\\/(?!\\/)[^\\r\\n\\\\]*$"
+      }
+    },
+    "required": [
+      "contractVersion",
+      "audience",
+      "instanceId",
+      "hostname",
+      "origin",
+      "code",
+      "returnPath"
+    ],
+    "additionalProperties": false
+  },
+  "RedeemHandoffResponseSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "contractVersion": {
+        "type": "string",
+        "const": "instance-access/v1"
+      },
+      "token": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16384
+      },
+      "expiresAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      },
+      "refreshCredential": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 1024
+      },
+      "refreshExpiresAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      }
+    },
+    "required": [
+      "contractVersion",
+      "token",
+      "expiresAt",
+      "refreshCredential",
+      "refreshExpiresAt"
+    ],
+    "additionalProperties": false
+  },
+  "RefreshAccessRequestSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "contractVersion": {
+        "type": "string",
+        "const": "instance-access/v1"
+      },
+      "audience": {
+        "type": "string",
+        "const": "instance-access"
+      },
+      "instanceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "hostname": {
+        "type": "string",
+        "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$"
+      },
+      "origin": {
+        "type": "string",
+        "format": "uri"
+      },
+      "refreshCredential": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 1024
+      }
+    },
+    "required": [
+      "contractVersion",
+      "audience",
+      "instanceId",
+      "hostname",
+      "origin",
+      "refreshCredential"
+    ],
+    "additionalProperties": false
+  },
+  "RefreshAccessResponseSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "contractVersion": {
+        "type": "string",
+        "const": "instance-access/v1"
+      },
+      "token": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16384
+      },
+      "expiresAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      },
+      "refreshCredential": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 1024
+      },
+      "refreshExpiresAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      }
+    },
+    "required": [
+      "contractVersion",
+      "token",
+      "expiresAt",
+      "refreshCredential",
+      "refreshExpiresAt"
+    ],
+    "additionalProperties": false
+  },
   "RepositoryBindingSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -856,6 +1020,66 @@
       "cpuMilli",
       "memoryMiB",
       "ephemeralStorageMiB"
+    ],
+    "additionalProperties": false
+  },
+  "RevokeAccessRequestSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "contractVersion": {
+        "type": "string",
+        "const": "instance-access/v1"
+      },
+      "audience": {
+        "type": "string",
+        "const": "instance-access"
+      },
+      "instanceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "hostname": {
+        "type": "string",
+        "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$"
+      },
+      "origin": {
+        "type": "string",
+        "format": "uri"
+      },
+      "refreshCredential": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 1024
+      }
+    },
+    "required": [
+      "contractVersion",
+      "audience",
+      "instanceId",
+      "hostname",
+      "origin",
+      "refreshCredential"
+    ],
+    "additionalProperties": false
+  },
+  "RevokeAccessResponseSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "contractVersion": {
+        "type": "string",
+        "const": "instance-access/v1"
+      },
+      "revoked": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "contractVersion",
+      "revoked"
     ],
     "additionalProperties": false
   },

@@ -22,6 +22,9 @@ export interface KubernetesResourceRendererOptions {
   readonly ingressNamespace: string;
   readonly instanceAccessNamespace: string;
   readonly instanceAccessService: string;
+  /** Trusted Provisioner control namespace and app.kubernetes.io/name value. */
+  readonly controlNamespace: string;
+  readonly controlService: string;
   /** Hard operator ceilings; producer requests are checked against these. */
   readonly maximumResources: RuntimeResourceQuantities;
 }
@@ -195,6 +198,19 @@ function baseResources(
                 },
                 podSelector: {
                   matchLabels: { "app.kubernetes.io/name": options.instanceAccessService },
+                },
+              },
+            ],
+            ports: [{ protocol: "TCP", port: app.httpPort }],
+          },
+          {
+            from: [
+              {
+                namespaceSelector: {
+                  matchLabels: { "kubernetes.io/metadata.name": options.controlNamespace },
+                },
+                podSelector: {
+                  matchLabels: { "app.kubernetes.io/name": options.controlService },
                 },
               },
             ],
@@ -419,6 +435,14 @@ export function createKubernetesResourceRenderer(
     !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(options.instanceAccessService)
   ) {
     failInvalid("instance access service identity is invalid");
+  }
+  if (
+    options.controlNamespace !== "praetorium-system" ||
+    options.controlService !== "provisioner" ||
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(options.controlNamespace) ||
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(options.controlService)
+  ) {
+    failInvalid("Provisioner control service identity is invalid");
   }
   return {
     renderRunning(spec: RunningInstanceSpec) {

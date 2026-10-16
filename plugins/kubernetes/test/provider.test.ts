@@ -105,6 +105,8 @@ class FakeKubernetesApi implements KubernetesApi {
   }> = [];
   readonly listCalls: Array<{ kind: string; namespace: string; selector: string }> = [];
   invalidPodListVersion = false;
+  endpointMutation: ((resource: KubernetesResource) => KubernetesResource) | null = null;
+  onEndpointWrite: (() => void) | null = null;
   private revision = 1;
   private heldCreate: {
     readonly kind: string;
@@ -287,6 +289,12 @@ class FakeKubernetesApi implements KubernetesApi {
   }
 
   private put(kind: string, namespace: string, name: string, resource: unknown): unknown {
+    if (kind === "IngressRoute") {
+      this.onEndpointWrite?.();
+      if (this.endpointMutation !== null) {
+        resource = this.endpointMutation(resource as KubernetesResource);
+      }
+    }
     this.revision += 1;
     const value = {
       ...record(resource),
@@ -367,6 +375,8 @@ function provider(
     ingressNamespace: "traefik",
     instanceAccessNamespace: "praetorium-system",
     instanceAccessService: "instance-access",
+    controlNamespace: "praetorium-system",
+    controlService: "provisioner",
     maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
   });
   return new KubernetesRuntimeProvider({
@@ -404,6 +414,8 @@ describe("Kubernetes runtime provider", () => {
       ingressNamespace: "traefik",
       instanceAccessNamespace: "praetorium-system",
       instanceAccessService: "instance-access",
+      controlNamespace: "praetorium-system",
+      controlService: "provisioner",
       maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
     }).renderRunning(spec());
     const deployment = resources.find((resource) => resource.kind === "Deployment");
@@ -411,6 +423,7 @@ describe("Kubernetes runtime provider", () => {
     const podSpec = record(template.spec);
     const container = record((podSpec.containers as unknown[])[0]);
     const policy = record(resources.find((resource) => resource.kind === "NetworkPolicy")?.spec);
+    const ingress = policy.ingress as unknown[];
     const egress = policy.egress as unknown[];
 
     expect(resources.map((resource) => resource.kind)).not.toContain("IngressRoute");
@@ -436,6 +449,24 @@ describe("Kubernetes runtime provider", () => {
       (podSpec.volumes as unknown[]).map((volume) => record(record(volume).emptyDir).sizeLimit),
     ).toEqual(["1024Mi", "1024Mi"]);
     expect((container.env as unknown[] | undefined) ?? []).toHaveLength(0);
+    expect(ingress).toHaveLength(3);
+    expect(
+      ingress.map((rule) =>
+        (record(rule).ports as unknown[]).map((item) => ({
+          protocol: record(item).protocol,
+          port: record(item).port,
+        })),
+      ),
+    ).toEqual(Array.from({ length: 3 }, () => [{ protocol: "TCP", port: 3847 }]));
+    expect(record(ingress[2]).from).toEqual([
+      {
+        namespaceSelector: {
+          matchLabels: { "kubernetes.io/metadata.name": "praetorium-system" },
+        },
+        podSelector: { matchLabels: { "app.kubernetes.io/name": "provisioner" } },
+      },
+    ]);
+    expect(JSON.stringify(ingress)).not.toContain('"port":8080');
     expect(JSON.stringify(egress)).toContain("168.63.129.16/32");
     expect(JSON.stringify(egress)).toContain('"port":443');
     const publicRule = record(egress[1]);
@@ -466,6 +497,8 @@ describe("Kubernetes runtime provider", () => {
       ingressNamespace: "traefik",
       instanceAccessNamespace: "praetorium-system",
       instanceAccessService: "instance-access",
+      controlNamespace: "praetorium-system",
+      controlService: "provisioner",
       maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
     }).renderRunning({
       ...spec(),
@@ -476,6 +509,25 @@ describe("Kubernetes runtime provider", () => {
         "arcadia.io/release-id"
       ],
     ).toBe(revision);
+  });
+
+  it("rejects a control ingress peer outside the trusted Provisioner identity", () => {
+    const options = {
+      namespacePrefix: PREFIX,
+      clusterId: CLUSTER_ID,
+      ingressNamespace: "traefik",
+      instanceAccessNamespace: "praetorium-system",
+      instanceAccessService: "instance-access",
+      controlNamespace: "praetorium-system",
+      controlService: "provisioner",
+      maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
+    };
+    expect(() =>
+      createKubernetesResourceRenderer({ ...options, controlNamespace: "tenant-namespace" }),
+    ).toThrow("Provisioner control service identity is invalid");
+    expect(() =>
+      createKubernetesResourceRenderer({ ...options, controlService: "any-service" }),
+    ).toThrow("Provisioner control service identity is invalid");
   });
 
   it("records complete live capacity and CAS-matches exact reservation identities to Pods", async () => {
@@ -519,6 +571,8 @@ describe("Kubernetes runtime provider", () => {
       ingressNamespace: "traefik",
       instanceAccessNamespace: "praetorium-system",
       instanceAccessService: "instance-access",
+      controlNamespace: "praetorium-system",
+      controlService: "provisioner",
       maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
     });
     const deployment = renderer
@@ -754,6 +808,8 @@ describe("Kubernetes runtime provider", () => {
       ingressNamespace: "traefik",
       instanceAccessNamespace: "praetorium-system",
       instanceAccessService: "instance-access",
+      controlNamespace: "praetorium-system",
+      controlService: "provisioner",
       maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
     });
     expect(() =>
@@ -810,6 +866,141 @@ describe("Kubernetes runtime provider", () => {
       ),
     ).rejects.toMatchObject({ code: "conflict" });
   });
+
+  it("exposes the owned internal Service address for signed probes before route activation", async () => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const runtime = provider(api, targetReservations(), () => 500_000);
+    await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+    api.addWriterPod(spec());
+
+    await expect(runtime.getControlEndpoint(spec())).resolves.toBe(
+      `http://${DEPLOYMENT}.${NAMESPACE}.svc.cluster.local:3847`,
+    );
+    expect(api.objects.has(key("IngressRoute", NAMESPACE, DEPLOYMENT))).toBe(false);
+  });
+
+  it.each(["missing", "wrong port"])(
+    "fails closed when the internal control Service is %s",
+    async (problem) => {
+      const api = new FakeKubernetesApi();
+      api.addNode();
+      const runtime = provider(api, targetReservations(), () => 500_000);
+      await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+      api.addWriterPod(spec());
+      const serviceKey = key("Service", NAMESPACE, DEPLOYMENT);
+      if (problem === "missing") {
+        api.objects.delete(serviceKey);
+      } else {
+        const service = record(api.objects.get(serviceKey));
+        const serviceSpec = record(service.spec);
+        const ports = serviceSpec.ports as unknown[];
+        api.objects.set(serviceKey, {
+          ...service,
+          spec: {
+            ...serviceSpec,
+            ports: [{ ...record(ports[0]), port: 9999 }],
+          },
+        });
+      }
+
+      await expect(runtime.getControlEndpoint(spec())).rejects.toMatchObject({
+        code: problem === "missing" ? "unavailable" : "conflict",
+      });
+    },
+  );
+
+  it.each([
+    [
+      "wrong host",
+      (route: Record<string, unknown>) => ({ ...route, match: "Host(`other.example.test`)" }),
+    ],
+    [
+      "wrong service port",
+      (route: Record<string, unknown>) => ({
+        ...route,
+        services: [{ ...record((route.services as unknown[])[0]), port: 9999 }],
+      }),
+    ],
+  ])("rejects and removes an endpoint with %s", async (_description, mutateRoute) => {
+    const time = 500_000;
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const runtime = provider(api, targetReservations(), () => time);
+    await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+    api.addWriterPod(spec());
+    api.endpointMutation = (resource) => {
+      const routeSpec = record(resource.spec);
+      const routes = routeSpec.routes as unknown[];
+      return {
+        ...resource,
+        spec: { ...routeSpec, routes: [mutateRoute(record(routes[0]))] },
+      };
+    };
+    const evidence = {
+      identity: identity(),
+      actualImageDigest: CHILD_DIGEST,
+      applicationProbe: { id: "app-probe-1", observedAt: time, ready: true as const },
+      authProbe: { id: "auth-probe-1", observedAt: time, ready: true as const },
+    };
+
+    await expect(
+      runtime.activateEndpoint(spec(), evidence, new AbortController().signal, () => undefined),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(api.objects.has(key("IngressRoute", NAMESPACE, DEPLOYMENT))).toBe(false);
+  });
+
+  it.each(["image", "readiness"])(
+    "rejects and removes the endpoint when %s drifts during route apply",
+    async (drift) => {
+      const time = 500_000;
+      const api = new FakeKubernetesApi();
+      api.addNode();
+      const runtime = provider(api, targetReservations(), () => time);
+      await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+      api.addWriterPod(spec());
+      api.onEndpointWrite = () => {
+        const podKey = key("Pod", NAMESPACE, "writer-1");
+        const pod = record(api.objects.get(podKey));
+        const status = record(pod.status);
+        const containers = status.containerStatuses as unknown[];
+        const conditions = status.conditions as unknown[];
+        api.objects.set(podKey, {
+          ...pod,
+          status: {
+            ...status,
+            ...(drift === "image"
+              ? {
+                  containerStatuses: [
+                    {
+                      ...record(containers[0]),
+                      imageID: `containerd://ghcr.io/praetorium/scriptorium@${INDEX_DIGEST}`,
+                    },
+                  ],
+                }
+              : {
+                  conditions: conditions.map((condition) =>
+                    record(condition).type === "Ready"
+                      ? { ...record(condition), status: "False" }
+                      : condition,
+                  ),
+                }),
+          },
+        });
+      };
+      const evidence = {
+        identity: identity(),
+        actualImageDigest: CHILD_DIGEST,
+        applicationProbe: { id: "app-probe-1", observedAt: time, ready: true as const },
+        authProbe: { id: "auth-probe-1", observedAt: time, ready: true as const },
+      };
+
+      await expect(
+        runtime.activateEndpoint(spec(), evidence, new AbortController().signal, () => undefined),
+      ).rejects.toMatchObject({ code: "conflict" });
+      expect(api.objects.has(key("IngressRoute", NAMESPACE, DEPLOYMENT))).toBe(false);
+    },
+  );
 
   it("removes only runtime workload resources after writer absence and retains the namespace", async () => {
     const api = new FakeKubernetesApi();

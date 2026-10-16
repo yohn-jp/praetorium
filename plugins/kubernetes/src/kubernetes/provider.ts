@@ -386,6 +386,16 @@ function targetMatches(metadata: ObjectMetadata, identity: InstanceIdentity): bo
   );
 }
 
+function sameIdentity(left: InstanceIdentity, right: InstanceIdentity): boolean {
+  return (
+    left.instanceId === right.instanceId &&
+    left.repositoryId === right.repositoryId &&
+    left.runtimeEpoch === right.runtimeEpoch &&
+    left.generation === right.generation &&
+    left.clusterId === right.clusterId
+  );
+}
+
 function digestFromImageId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   return /sha256:[0-9a-f]{64}$/.exec(value)?.[0];
@@ -967,16 +977,50 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     }
     const endpoint = this.options.renderer.renderEndpoint(spec);
     this.validateEndpointResource(endpoint, spec);
-    await this.upsertResource(endpoint, spec, signal, beforeEffect);
-    const activated = await this.inspect(spec, signal);
-    if (activated.endpoint === undefined) {
+    if (!this.endpointResourceMatchesSpec(endpoint, spec)) {
       throw new RuntimeProviderError(
-        "unavailable",
-        "activated endpoint was not observed in Kubernetes",
-        "retryable",
+        "invalid_spec",
+        "renderer returned an endpoint with an unexpected host, service, or port",
+        "terminal",
       );
     }
-    return activated;
+    await this.upsertResource(endpoint, spec, signal, beforeEffect);
+    try {
+      // Probes can expire, and the target can drift while the route write is in
+      // flight. Revalidate both the evidence and the live workload afterwards.
+      const activated = await this.inspect(spec, signal);
+      const route = await this.getOptional(
+        {
+          kind: "IngressRoute",
+          namespace: this.namespaceFor(spec.instanceId),
+          name: runtimeResourceName(spec.instanceId),
+        },
+        signal,
+      );
+      this.validateActivationEvidence(spec, evidence);
+      const expectedEndpoint = `https://${spec.hostname}`;
+      if (
+        !this.isDesiredAndReady(activated, spec) ||
+        !sameIdentity(activated.identity, spec) ||
+        activated.application?.ready !== true ||
+        activated.health?.ready !== true ||
+        activated.observedImageDigest !== spec.release.platformManifestDigest ||
+        activated.endpoint !== expectedEndpoint ||
+        route === undefined ||
+        !this.endpointResourceMatchesSpec(route, spec)
+      ) {
+        throw new RuntimeProviderError(
+          "conflict",
+          "runtime or endpoint drifted during endpoint activation",
+          "retryable",
+        );
+      }
+      return activated;
+    } catch (error) {
+      // A route that failed post-write verification must not stay active.
+      await this.deactivateCurrentEndpoint(spec, signal, beforeEffect);
+      throw error;
+    }
   }
 
   async deactivateEndpoint(
@@ -987,6 +1031,72 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     validateIdentity(identity, this.options.clusterId);
     await this.deactivateCurrentEndpoint(identity, signal, beforeEffect);
     return this.inspect(identity, signal);
+  }
+
+  /** Returns the owned in-cluster Service address for pre-route signed probes. */
+  async getControlEndpoint(spec: RunningInstanceSpec, signal?: AbortSignal): Promise<string> {
+    this.validateRunningSpec(spec);
+    const httpPort = spec.application?.httpPort;
+    if (httpPort === undefined) {
+      throw new RuntimeProviderError(
+        "invalid_spec",
+        "runtime listener port is missing",
+        "terminal",
+      );
+    }
+    const observation = await this.inspect(spec, signal);
+    if (!this.isDesiredAndReady(observation, spec) || !sameIdentity(observation.identity, spec)) {
+      throw new RuntimeProviderError(
+        "unavailable",
+        "ready runtime evidence is unavailable for the internal control endpoint",
+        "retryable",
+      );
+    }
+
+    const namespaceName = this.namespaceFor(spec.instanceId);
+    const serviceName = runtimeResourceName(spec.instanceId);
+    const service = await this.getOptional(
+      { kind: "Service", namespace: namespaceName, name: serviceName },
+      signal,
+    );
+    if (service === undefined) {
+      throw new RuntimeProviderError(
+        "unavailable",
+        "owned runtime Service is not observed",
+        "retryable",
+      );
+    }
+    const metadata = assertObjectOwned(service, spec, namespaceName, serviceName);
+    const labels = resourceLabels(spec, spec.release.releaseId);
+    const serviceSpec = record(record(service)?.spec);
+    const ports = Array.isArray(serviceSpec?.ports) ? serviceSpec.ports : [];
+    const port = record(ports[0]);
+    const selector = record(serviceSpec?.selector);
+    const expectedSelector = {
+      [INSTANCE_LABEL_KEY]: spec.instanceId,
+      "app.kubernetes.io/name": "scriptorium",
+    };
+    if (
+      !targetMatches(metadata, spec) ||
+      Object.entries(labels).some(([key, value]) => metadata.labels[key] !== value) ||
+      serviceSpec?.type !== "ClusterIP" ||
+      serviceSpec.externalName !== undefined ||
+      ports.length !== 1 ||
+      port?.name !== "http" ||
+      port.port !== httpPort ||
+      port.targetPort !== "http" ||
+      port.protocol !== "TCP" ||
+      selector === undefined ||
+      Object.keys(selector).length !== Object.keys(expectedSelector).length ||
+      Object.entries(expectedSelector).some(([key, value]) => selector[key] !== value)
+    ) {
+      throw new RuntimeProviderError(
+        "conflict",
+        "runtime Service identity or port does not match the ready application",
+        "retryable",
+      );
+    }
+    return `http://${serviceName}.${namespaceName}.svc.cluster.local:${httpPort}`;
   }
 
   async listManagedInstances(
@@ -1171,6 +1281,47 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     return matchingHosts.length === 1 ? matchingHosts[0] : undefined;
   }
 
+  private endpointResourceMatchesSpec(
+    route: unknown,
+    spec: RunningInstanceSpec | ReleaseSpec,
+  ): boolean {
+    const metadata = objectMetadata(route);
+    const resource = record(route);
+    const routeSpec = record(resource?.spec);
+    const routes = Array.isArray(routeSpec?.routes) ? routeSpec.routes : [];
+    const expectedLabels = resourceLabels(spec, spec.release.releaseId);
+    const entryPoints = Array.isArray(routeSpec?.entryPoints) ? routeSpec.entryPoints : [];
+    const tls = record(routeSpec?.tls);
+    if (
+      resource?.apiVersion !== "traefik.io/v1alpha1" ||
+      resource.kind !== "IngressRoute" ||
+      metadata.namespace !== this.namespaceFor(spec.instanceId) ||
+      metadata.name !== runtimeResourceName(spec.instanceId) ||
+      !targetMatches(metadata, spec) ||
+      Object.entries(expectedLabels).some(([key, value]) => metadata.labels[key] !== value) ||
+      entryPoints.length !== 1 ||
+      entryPoints[0] !== "websecure" ||
+      tls === undefined ||
+      Object.keys(tls).length !== 0 ||
+      routes.length !== 1
+    ) {
+      return false;
+    }
+    const entry = record(routes[0]);
+    const services = Array.isArray(entry?.services) ? entry.services : [];
+    const service = record(services[0]);
+    return (
+      entry?.kind === "Rule" &&
+      entry?.match === `Host(\`${spec.hostname}\`)` &&
+      entry.priority === 1 &&
+      services.length === 1 &&
+      service?.name === runtimeResourceName(spec.instanceId) &&
+      Object.keys(service).length === 2 &&
+      service.namespace === undefined &&
+      service.port === spec.application?.httpPort
+    );
+  }
+
   private validateRunningSpec(spec: RunningInstanceSpec | ReleaseSpec): void {
     validateIdentity(spec, this.options.clusterId);
     validateRelease(spec);
@@ -1192,8 +1343,9 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       observation.state === "running" &&
       observation.writerState === "running" &&
       observation.writerCensus.queriedPodCount === 1 &&
-      observation.identity.runtimeEpoch === spec.runtimeEpoch &&
-      observation.identity.generation === spec.generation &&
+      sameIdentity(observation.identity, spec) &&
+      observation.application?.ready === true &&
+      observation.health?.ready === true &&
       observation.releaseId === spec.release.releaseId &&
       observation.releaseDigest === spec.release.imageDigest &&
       observation.observedImageDigest === spec.release.platformManifestDigest

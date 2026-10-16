@@ -1,0 +1,19 @@
+name = "praetorium-control-plane"
+main = "src/worker.ts"
+compatibility_date = "2026-07-30"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[[d1_databases]]
+binding = "CONTROL_PLANE_DB"
+database_name = "praetorium-platform"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "REPOSITORY_COORDINATOR"
+class_name = "RepositoryCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RepositoryCoordinator"]

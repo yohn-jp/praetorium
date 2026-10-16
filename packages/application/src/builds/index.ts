@@ -3,3 +3,4 @@ export * from "./queue-types.js";
 export * from "./attestation.js";
 export * from "./file-builder-signer.js";
 export * from "./worker.js";
+export * from "./queue.js";

@@ -7,6 +7,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./registry": {
+      "types": "./dist/oci-registry-client.d.ts",
+      "import": "./dist/oci-registry-client.js"
+    },
+    "./builder-signature": {
+      "types": "./dist/builder-signature.d.ts",
+      "import": "./dist/builder-signature.js"
+    },
+    "./provenance": {
+      "types": "./dist/sigstore-provenance.d.ts",
+      "import": "./dist/sigstore-provenance.js"
     }
   },
   "files": [

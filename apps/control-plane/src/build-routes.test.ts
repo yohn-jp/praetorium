@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BuildClaim } from "@praetorium/contracts";
+import type { BuildClaim, BuildInput } from "@praetorium/contracts";
 import type { BuildQueuePort } from "@praetorium/application/builds";
 import { createBuildRoutes } from "./build-routes.js";
 
 const TOKEN = "build-worker-service-token-0123456789";
 const KEY = `sha256:${"a".repeat(64)}`;
-const BUILD_INPUT = {
+const BUILD_INPUT: BuildInput = {
   contractVersion: "scriptorium-build/v1",
   producerRevision: "a".repeat(40),
   runtimeBaseDigest: KEY,
@@ -17,7 +17,7 @@ const BUILD_INPUT = {
   resolvedModules: [],
   platform: "linux/amd64",
   options: {},
-} as const;
+};
 
 function claim(): BuildClaim {
   return {
@@ -45,7 +45,7 @@ function request(
         ? { authorization: `Bearer ${TOKEN}` }
         : { authorization: options.token }),
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
 

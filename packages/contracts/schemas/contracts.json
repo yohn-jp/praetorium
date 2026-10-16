@@ -1479,6 +1479,47 @@
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
+  "ConfigurationSelectionSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "releaseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "requestedModules": {
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "uniqueItems": true
+      },
+      "resourceProfileId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "policy": {
+        "type": "string",
+        "enum": [
+          "stable",
+          "pinned"
+        ]
+      }
+    },
+    "required": [
+      "releaseId",
+      "requestedModules",
+      "resourceProfileId",
+      "policy"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
   "DesiredStateResponseSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -1672,6 +1713,18 @@
               }
             ]
           },
+          "clusterId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "type": "integer",
             "minimum": 0,
@@ -1807,6 +1860,1244 @@
     "pattern": "^sha256:[a-f0-9]{64}$",
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
+  "InstanceDashboardSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "snapshot": {
+        "type": "object",
+        "properties": {
+          "binding": {
+            "type": "object",
+            "properties": {
+              "repositoryId": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "instanceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "installationId": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "owner": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "authorizationRevision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "bindingEpoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "suspended": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "repositoryId",
+              "instanceId",
+              "installationId",
+              "owner",
+              "name",
+              "authorizationRevision",
+              "bindingEpoch",
+              "suspended"
+            ],
+            "additionalProperties": false
+          },
+          "instance": {
+            "type": "object",
+            "properties": {
+              "instanceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "repositoryId": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "generation": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "runtimeEpoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "desiredState": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "stopped"
+                ]
+              },
+              "policy": {
+                "type": "string",
+                "enum": [
+                  "stable",
+                  "pinned"
+                ]
+              },
+              "observedGeneration": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "currentArtifactDigest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "desiredArtifactDigest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "observedState": {
+                "type": "string",
+                "enum": [
+                  "absent",
+                  "starting",
+                  "ready",
+                  "stopping",
+                  "stopped",
+                  "failed",
+                  "unknown"
+                ]
+              },
+              "observedRuntimeEpoch": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "observedSequence": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "desiredRevisionId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "observedRevisionId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reservationState": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "pending",
+                  "reserved",
+                  "allocated",
+                  "blocked",
+                  "released"
+                ]
+              },
+              "reservationId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "clusterId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "instanceId",
+              "repositoryId",
+              "generation",
+              "runtimeEpoch",
+              "desiredState",
+              "policy",
+              "observedGeneration",
+              "currentArtifactDigest",
+              "desiredArtifactDigest",
+              "observedState",
+              "observedRuntimeEpoch",
+              "observedSequence",
+              "desiredRevisionId",
+              "observedRevisionId",
+              "reservationState",
+              "reservationId",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "binding",
+          "instance"
+        ],
+        "additionalProperties": false
+      },
+      "current": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "revisionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "instanceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "repositoryId": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "generation": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "buildKey": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "buildId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "selection": {
+                "type": "object",
+                "properties": {
+                  "releaseId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "requestedModules": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    "uniqueItems": true
+                  },
+                  "resourceProfileId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "policy": {
+                    "type": "string",
+                    "enum": [
+                      "stable",
+                      "pinned"
+                    ]
+                  }
+                },
+                "required": [
+                  "releaseId",
+                  "requestedModules",
+                  "resourceProfileId",
+                  "policy"
+                ],
+                "additionalProperties": false
+              },
+              "resources": {
+                "type": "object",
+                "properties": {
+                  "cpuMilli": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "memoryMiB": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "ephemeralStorageMiB": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "cpuMilli",
+                  "memoryMiB",
+                  "ephemeralStorageMiB"
+                ],
+                "additionalProperties": false
+              },
+              "runtimeMetadata": {
+                "type": "object",
+                "properties": {
+                  "contractVersion": {
+                    "type": "string",
+                    "const": "scriptorium-platform/v1"
+                  },
+                  "producerRevision": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "listener": {
+                    "type": "object",
+                    "properties": {
+                      "port": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      }
+                    },
+                    "required": [
+                      "port"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "paths": {
+                    "type": "object",
+                    "properties": {
+                      "liveness": {
+                        "type": "string",
+                        "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+                      },
+                      "readiness": {
+                        "type": "string",
+                        "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+                      },
+                      "metadata": {
+                        "type": "string",
+                        "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+                      },
+                      "shutdown": {
+                        "type": "string",
+                        "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+                      },
+                      "status": {
+                        "type": "string",
+                        "const": "/api/platform/v1/status"
+                      },
+                      "quiesce": {
+                        "type": "string",
+                        "const": "/api/platform/v1/quiesce"
+                      },
+                      "resume": {
+                        "type": "string",
+                        "const": "/api/platform/v1/resume"
+                      }
+                    },
+                    "required": [
+                      "liveness",
+                      "readiness",
+                      "metadata",
+                      "shutdown",
+                      "status",
+                      "quiesce",
+                      "resume"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "shutdownTimeoutSeconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "contractVersion",
+                  "producerRevision",
+                  "listener",
+                  "paths",
+                  "shutdownTimeoutSeconds"
+                ],
+                "additionalProperties": false
+              },
+              "artifactDigest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "building",
+                  "admitted",
+                  "failed",
+                  "superseded"
+                ]
+              },
+              "actorId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "revisionId",
+              "instanceId",
+              "repositoryId",
+              "generation",
+              "buildKey",
+              "buildId",
+              "selection",
+              "resources",
+              "runtimeMetadata",
+              "artifactDigest",
+              "status",
+              "actorId",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "desired": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "revisionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "instanceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "repositoryId": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "generation": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "buildKey": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "buildId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "selection": {
+                "type": "object",
+                "properties": {
+                  "releaseId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "requestedModules": {
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    "uniqueItems": true
+                  },
+                  "resourceProfileId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "policy": {
+                    "type": "string",
+                    "enum": [
+                      "stable",
+                      "pinned"
+                    ]
+                  }
+                },
+                "required": [
+                  "releaseId",
+                  "requestedModules",
+                  "resourceProfileId",
+                  "policy"
+                ],
+                "additionalProperties": false
+              },
+              "resources": {
+                "type": "object",
+                "properties": {
+                  "cpuMilli": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "memoryMiB": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "ephemeralStorageMiB": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "cpuMilli",
+                  "memoryMiB",
+                  "ephemeralStorageMiB"
+                ],
+                "additionalProperties": false
+              },
+              "runtimeMetadata": {
+                "type": "object",
+                "properties": {
+                  "contractVersion": {
+                    "type": "string",
+                    "const": "scriptorium-platform/v1"
+                  },
+                  "producerRevision": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "listener": {
+                    "type": "object",
+                    "properties": {
+                      "port": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535
+                      }
+                    },
+                    "required": [
+                      "port"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "paths": {
+                    "type": "object",
+                    "properties": {
+                      "liveness": {
+                        "type": "string",
+                        "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+                      },
+                      "readiness": {
+                        "type": "string",
+                        "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+                      },
+                      "metadata": {
+                        "type": "string",
+                        "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+                      },
+                      "shutdown": {
+                        "type": "string",
+                        "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+                      },
+                      "status": {
+                        "type": "string",
+                        "const": "/api/platform/v1/status"
+                      },
+                      "quiesce": {
+                        "type": "string",
+                        "const": "/api/platform/v1/quiesce"
+                      },
+                      "resume": {
+                        "type": "string",
+                        "const": "/api/platform/v1/resume"
+                      }
+                    },
+                    "required": [
+                      "liveness",
+                      "readiness",
+                      "metadata",
+                      "shutdown",
+                      "status",
+                      "quiesce",
+                      "resume"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "shutdownTimeoutSeconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "contractVersion",
+                  "producerRevision",
+                  "listener",
+                  "paths",
+                  "shutdownTimeoutSeconds"
+                ],
+                "additionalProperties": false
+              },
+              "artifactDigest": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "building",
+                  "admitted",
+                  "failed",
+                  "superseded"
+                ]
+              },
+              "actorId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "revisionId",
+              "instanceId",
+              "repositoryId",
+              "generation",
+              "buildKey",
+              "buildId",
+              "selection",
+              "resources",
+              "runtimeMetadata",
+              "artifactDigest",
+              "status",
+              "actorId",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "build": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "buildKey": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "reserved",
+                  "pending",
+                  "claimed",
+                  "running",
+                  "verifying",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "progress": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "stage": {
+                        "type": "string",
+                        "enum": [
+                          "preparing",
+                          "building",
+                          "publishing"
+                        ]
+                      },
+                      "percent": {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 100
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "stage",
+                      "percent"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "errorCode": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "id",
+              "buildKey",
+              "status",
+              "progress",
+              "errorCode",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "operations": {
+        "maxItems": 50,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "runtimeEpoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "start",
+                "stop",
+                "redeploy",
+                "update"
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "claimed",
+                "running",
+                "succeeded",
+                "failed",
+                "blocked"
+              ]
+            },
+            "phase": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "attempt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "createdAt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "updatedAt": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "id",
+            "instanceId",
+            "generation",
+            "runtimeEpoch",
+            "kind",
+            "status",
+            "phase",
+            "attempt",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "releases": {
+        "maxItems": 50,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "releaseId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "imageDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "catalog": {
+              "type": "object",
+              "properties": {
+                "contractVersion": {
+                  "type": "string",
+                  "const": "scriptorium-build/v1"
+                },
+                "producerRevision": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "runtimeBaseDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "buildKitDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "recipeDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "lockDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "sourceDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "supportedPlatforms": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9._-]{0,31}\\/[a-z0-9][a-z0-9._-]{0,31}$"
+                  },
+                  "uniqueItems": true
+                },
+                "modules": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                      },
+                      "version": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "artifactDigest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      "requires": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                        },
+                        "uniqueItems": true
+                      },
+                      "conflicts": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                        },
+                        "uniqueItems": true
+                      },
+                      "contractRange": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "exclusiveResources": {
+                        "type": "object",
+                        "properties": {
+                          "cpuMilli": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "memoryMiB": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "ephemeralStorageMiB": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "cpuMilli",
+                          "memoryMiB",
+                          "ephemeralStorageMiB"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "sharedResourceGroupIds": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                        },
+                        "uniqueItems": true
+                      },
+                      "workerLimits": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
+                        },
+                        "additionalProperties": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version",
+                      "artifactDigest",
+                      "requires",
+                      "conflicts",
+                      "contractRange",
+                      "exclusiveResources",
+                      "sharedResourceGroupIds",
+                      "workerLimits"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "baseResources": {
+                  "type": "object",
+                  "properties": {
+                    "cpuMilli": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "memoryMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "ephemeralStorageMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cpuMilli",
+                    "memoryMiB",
+                    "ephemeralStorageMiB"
+                  ],
+                  "additionalProperties": false
+                },
+                "sharedResourceGroups": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                      },
+                      "resources": {
+                        "type": "object",
+                        "properties": {
+                          "cpuMilli": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "memoryMiB": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "ephemeralStorageMiB": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "cpuMilli",
+                          "memoryMiB",
+                          "ephemeralStorageMiB"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "resources"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "resourceProfiles": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                      },
+                      "cpuMilli": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "memoryMiB": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "ephemeralStorageMiB": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "cpuMilli",
+                      "memoryMiB",
+                      "ephemeralStorageMiB"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "contractVersion",
+                "producerRevision",
+                "runtimeBaseDigest",
+                "buildKitDigest",
+                "recipeDigest",
+                "lockDigest",
+                "sourceDigest",
+                "supportedPlatforms",
+                "modules",
+                "baseResources",
+                "sharedResourceGroups",
+                "resourceProfiles"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "releaseId",
+            "version",
+            "imageDigest",
+            "catalog"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "resourceLimits": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "cpuMilli": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "memoryMiB": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "ephemeralStorageMiB": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "cpuMilli",
+              "memoryMiB",
+              "ephemeralStorageMiB"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "snapshot",
+      "current",
+      "desired",
+      "build",
+      "operations",
+      "releases",
+      "resourceLimits"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
   "InstanceSnapshotSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -1940,6 +3231,18 @@
         "anyOf": [
           {
             "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "clusterId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
           },
           {
             "type": "null"
@@ -2260,6 +3563,328 @@
       "maintain",
       "admin"
     ],
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "PublicBuildStatusSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "buildKey": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "reserved",
+          "pending",
+          "claimed",
+          "running",
+          "verifying",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "progress": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "preparing",
+                  "building",
+                  "publishing"
+                ]
+              },
+              "percent": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "stage",
+              "percent"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "errorCode": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "updatedAt": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "id",
+      "buildKey",
+      "status",
+      "progress",
+      "errorCode",
+      "updatedAt"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "PublicConfigurationRevisionSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "revisionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "instanceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "repositoryId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "generation": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "buildKey": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "buildId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "selection": {
+        "type": "object",
+        "properties": {
+          "releaseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "requestedModules": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "uniqueItems": true
+          },
+          "resourceProfileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "pinned"
+            ]
+          }
+        },
+        "required": [
+          "releaseId",
+          "requestedModules",
+          "resourceProfileId",
+          "policy"
+        ],
+        "additionalProperties": false
+      },
+      "resources": {
+        "type": "object",
+        "properties": {
+          "cpuMilli": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "memoryMiB": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "ephemeralStorageMiB": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "cpuMilli",
+          "memoryMiB",
+          "ephemeralStorageMiB"
+        ],
+        "additionalProperties": false
+      },
+      "runtimeMetadata": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "scriptorium-platform/v1"
+          },
+          "producerRevision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "listener": {
+            "type": "object",
+            "properties": {
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              }
+            },
+            "required": [
+              "port"
+            ],
+            "additionalProperties": false
+          },
+          "paths": {
+            "type": "object",
+            "properties": {
+              "liveness": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+              },
+              "readiness": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+              },
+              "metadata": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+              },
+              "shutdown": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+              },
+              "status": {
+                "type": "string",
+                "const": "/api/platform/v1/status"
+              },
+              "quiesce": {
+                "type": "string",
+                "const": "/api/platform/v1/quiesce"
+              },
+              "resume": {
+                "type": "string",
+                "const": "/api/platform/v1/resume"
+              }
+            },
+            "required": [
+              "liveness",
+              "readiness",
+              "metadata",
+              "shutdown",
+              "status",
+              "quiesce",
+              "resume"
+            ],
+            "additionalProperties": false
+          },
+          "shutdownTimeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "contractVersion",
+          "producerRevision",
+          "listener",
+          "paths",
+          "shutdownTimeoutSeconds"
+        ],
+        "additionalProperties": false
+      },
+      "artifactDigest": {
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "building",
+          "admitted",
+          "failed",
+          "superseded"
+        ]
+      },
+      "actorId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "createdAt": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "revisionId",
+      "instanceId",
+      "repositoryId",
+      "generation",
+      "buildKey",
+      "buildId",
+      "selection",
+      "resources",
+      "runtimeMetadata",
+      "artifactDigest",
+      "status",
+      "actorId",
+      "createdAt"
+    ],
+    "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
   "PublicOperationSchema": {
@@ -2686,6 +4311,609 @@
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
+  "ReleaseListSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "releases": {
+        "maxItems": 50,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "releaseId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "imageDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "catalog": {
+              "type": "object",
+              "properties": {
+                "contractVersion": {
+                  "type": "string",
+                  "const": "scriptorium-build/v1"
+                },
+                "producerRevision": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "runtimeBaseDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "buildKitDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "recipeDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "lockDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "sourceDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "supportedPlatforms": {
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9._-]{0,31}\\/[a-z0-9][a-z0-9._-]{0,31}$"
+                  },
+                  "uniqueItems": true
+                },
+                "modules": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                      },
+                      "version": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "artifactDigest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}$"
+                      },
+                      "requires": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                        },
+                        "uniqueItems": true
+                      },
+                      "conflicts": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                        },
+                        "uniqueItems": true
+                      },
+                      "contractRange": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
+                      "exclusiveResources": {
+                        "type": "object",
+                        "properties": {
+                          "cpuMilli": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "memoryMiB": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "ephemeralStorageMiB": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "cpuMilli",
+                          "memoryMiB",
+                          "ephemeralStorageMiB"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "sharedResourceGroupIds": {
+                        "maxItems": 256,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                        },
+                        "uniqueItems": true
+                      },
+                      "workerLimits": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
+                        },
+                        "additionalProperties": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version",
+                      "artifactDigest",
+                      "requires",
+                      "conflicts",
+                      "contractRange",
+                      "exclusiveResources",
+                      "sharedResourceGroupIds",
+                      "workerLimits"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "baseResources": {
+                  "type": "object",
+                  "properties": {
+                    "cpuMilli": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "memoryMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "ephemeralStorageMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cpuMilli",
+                    "memoryMiB",
+                    "ephemeralStorageMiB"
+                  ],
+                  "additionalProperties": false
+                },
+                "sharedResourceGroups": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                      },
+                      "resources": {
+                        "type": "object",
+                        "properties": {
+                          "cpuMilli": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "memoryMiB": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "ephemeralStorageMiB": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "cpuMilli",
+                          "memoryMiB",
+                          "ephemeralStorageMiB"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "resources"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "resourceProfiles": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                      },
+                      "cpuMilli": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "memoryMiB": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "ephemeralStorageMiB": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "cpuMilli",
+                      "memoryMiB",
+                      "ephemeralStorageMiB"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "contractVersion",
+                "producerRevision",
+                "runtimeBaseDigest",
+                "buildKitDigest",
+                "recipeDigest",
+                "lockDigest",
+                "sourceDigest",
+                "supportedPlatforms",
+                "modules",
+                "baseResources",
+                "sharedResourceGroups",
+                "resourceProfiles"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "releaseId",
+            "version",
+            "imageDigest",
+            "catalog"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "releases"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "ReleaseSummarySchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "releaseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "imageDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "catalog": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "scriptorium-build/v1"
+          },
+          "producerRevision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "runtimeBaseDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "buildKitDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "recipeDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "lockDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "sourceDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "supportedPlatforms": {
+            "minItems": 1,
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,31}\\/[a-z0-9][a-z0-9._-]{0,31}$"
+            },
+            "uniqueItems": true
+          },
+          "modules": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "artifactDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "requires": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                  },
+                  "uniqueItems": true
+                },
+                "conflicts": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                  },
+                  "uniqueItems": true
+                },
+                "contractRange": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "exclusiveResources": {
+                  "type": "object",
+                  "properties": {
+                    "cpuMilli": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "memoryMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "ephemeralStorageMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cpuMilli",
+                    "memoryMiB",
+                    "ephemeralStorageMiB"
+                  ],
+                  "additionalProperties": false
+                },
+                "sharedResourceGroupIds": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                  },
+                  "uniqueItems": true
+                },
+                "workerLimits": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
+                  },
+                  "additionalProperties": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "artifactDigest",
+                "requires",
+                "conflicts",
+                "contractRange",
+                "exclusiveResources",
+                "sharedResourceGroupIds",
+                "workerLimits"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "baseResources": {
+            "type": "object",
+            "properties": {
+              "cpuMilli": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "memoryMiB": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "ephemeralStorageMiB": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "cpuMilli",
+              "memoryMiB",
+              "ephemeralStorageMiB"
+            ],
+            "additionalProperties": false
+          },
+          "sharedResourceGroups": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "resources": {
+                  "type": "object",
+                  "properties": {
+                    "cpuMilli": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "memoryMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "ephemeralStorageMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cpuMilli",
+                    "memoryMiB",
+                    "ephemeralStorageMiB"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "resources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "resourceProfiles": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "cpuMilli": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "memoryMiB": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "ephemeralStorageMiB": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "cpuMilli",
+                "memoryMiB",
+                "ephemeralStorageMiB"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "producerRevision",
+          "runtimeBaseDigest",
+          "buildKitDigest",
+          "recipeDigest",
+          "lockDigest",
+          "sourceDigest",
+          "supportedPlatforms",
+          "modules",
+          "baseResources",
+          "sharedResourceGroups",
+          "resourceProfiles"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "releaseId",
+      "version",
+      "imageDigest",
+      "catalog"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
   "RepositoryBindingSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -2939,6 +5167,18 @@
               }
             ]
           },
+          "clusterId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "type": "integer",
             "minimum": 0,
@@ -3167,6 +5407,18 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clusterId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
               },
               {
                 "type": "null"

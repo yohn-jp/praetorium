@@ -20,6 +20,7 @@ const BUILD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 export type BuildRoutesOptions = {
   readonly queue: BuildQueuePort;
   readonly serviceToken: string;
+  readonly workerId?: string;
   /** BuildQueueService replaces this transport value with its Control Plane clock. */
   readonly now?: () => number;
 };
@@ -53,6 +54,8 @@ export function createBuildRoutes(options: BuildRoutesOptions) {
   app.post("/internal/builds/claim", async (c) => {
     const body = await requestJson(c.req.raw);
     const input = BuildClaimRequestSchema.parse(body);
+    if (options.workerId && input.workerId !== options.workerId)
+      throw new TypeError("Worker identity scope mismatch");
     const claim = await options.queue.claimNext({ ...input, now: now() });
     if (claim === null) return c.body(null, 204);
     return c.json(BuildClaimSchema.parse(claim));
@@ -61,6 +64,8 @@ export function createBuildRoutes(options: BuildRoutesOptions) {
   app.post("/internal/builds/:buildId/heartbeat", async (c) => {
     const buildId = pathBuildId(c.req.param("buildId"));
     const input = BuildHeartbeatRequestSchema.parse(await requestJson(c.req.raw));
+    if (options.workerId && input.workerId !== options.workerId)
+      throw new TypeError("Worker identity scope mismatch");
     if (input.buildId !== buildId) return c.json({ error: { code: "BUILD_ID_MISMATCH" } }, 400);
     const result = await options.queue.heartbeat({
       ...input,
@@ -72,6 +77,8 @@ export function createBuildRoutes(options: BuildRoutesOptions) {
   app.post("/internal/builds/:buildId/report", async (c) => {
     const buildId = pathBuildId(c.req.param("buildId"));
     const input = BuildReportRequestSchema.parse(await requestJson(c.req.raw));
+    if (options.workerId && input.workerId !== options.workerId)
+      throw new TypeError("Worker identity scope mismatch");
     if (input.buildId !== buildId) return c.json({ error: { code: "BUILD_ID_MISMATCH" } }, 400);
     const result = await options.queue.report({
       ...input,

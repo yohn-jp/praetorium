@@ -54,6 +54,114 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  apps/build-worker:
+    dependencies:
+      '@praetorium/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@praetorium/buildkit':
+        specifier: workspace:*
+        version: link:../../plugins/buildkit
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@praetorium/ghcr':
+        specifier: workspace:*
+        version: link:../../plugins/ghcr
+
+  apps/control-plane:
+    dependencies:
+      '@praetorium/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@praetorium/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@praetorium/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@praetorium/ghcr':
+        specifier: workspace:*
+        version: link:../../plugins/ghcr
+      '@praetorium/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@praetorium/scriptorium':
+        specifier: workspace:*
+        version: link:../../plugins/scriptorium
+      hono:
+        specifier: 4.12.33
+        version: 4.12.33
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20260801.1
+        version: 5.20260801.1
+      miniflare:
+        specifier: 4.20260730.0
+        version: 4.20260730.0
+      wrangler:
+        specifier: 4.118.0
+        version: 4.118.0(@cloudflare/workers-types@5.20260801.1)
+
+  apps/gateway:
+    dependencies:
+      '@praetorium/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@praetorium/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@praetorium/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@praetorium/github':
+        specifier: workspace:*
+        version: link:../../plugins/github
+      hono:
+        specifier: 4.12.33
+        version: 4.12.33
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20260801.1
+        version: 5.20260801.1
+      wrangler:
+        specifier: 4.118.0
+        version: 4.118.0(@cloudflare/workers-types@5.20260801.1)
+
+  apps/instance-access:
+    dependencies:
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@praetorium/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      hono:
+        specifier: 4.12.33
+        version: 4.12.33
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20260801.1
+        version: 5.20260801.1
+      '@types/node':
+        specifier: 24.19.0
+        version: 24.19.0
+      wrangler:
+        specifier: 4.118.0
+        version: 4.118.0(@cloudflare/workers-types@5.20260801.1)
+
   apps/provisioner:
     dependencies:
       '@praetorium/application':
@@ -110,6 +218,24 @@ importers:
         version: 4.4.3
 
   packages/observability: {}
+
+  packages/persistence:
+    dependencies:
+      '@praetorium/application':
+        specifier: workspace:*
+        version: link:../application
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
+  plugins/buildkit:
+    dependencies:
+      '@praetorium/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
 
   plugins/ghcr:
     dependencies:
@@ -1315,6 +1441,10 @@ packages:
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
+
+  hono@4.12.33:
+    resolution: {integrity: sha512-+SwvkaiJtxsiPjhy9LivY/1m7UsNqCJetM1BrZl9A5DkQhlbHQDU730mMiDPWjnoCYOM8Chf3WrCJw27kNTPFQ==}
+    engines: {node: '>=16.9.0'}
 
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
@@ -2722,6 +2852,8 @@ snapshots:
   graphemer@1.4.0: {}
 
   has-flag@4.0.0: {}
+
+  hono@4.12.33: {}
 
   ignore@5.3.2: {}
 

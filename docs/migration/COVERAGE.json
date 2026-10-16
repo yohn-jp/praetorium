@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "epic": 1,
+  "sourceCommit": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
+  "targetBaseline": "a062b67aa028894422f68ed54717109f583871f9",
+  "producerBaseline": "5ee8f0f0f0b9ee63b4920f2a73f3d76baa2cef1a",
+  "notes": [
+    "Route catalog coverage is not implementation or runtime proof.",
+    "Expand only assigned route groups/direct dependencies; do not discover an unlimited backlog.",
+    "Required entries finish verified with exact target/proofs. Exclusions require their recorded owner decision and migration disposition."
+  ],
+  "tasks": {
+    "T00": [],
+    "T01": [
+      "T00"
+    ],
+    "T02": [
+      "T01"
+    ],
+    "T03": [
+      "T01"
+    ],
+    "T04": [
+      "T01"
+    ],
+    "T05": [
+      "T01"
+    ],
+    "T06": [
+      "T03",
+      "T04",
+      "T05"
+    ],
+    "T07": [
+      "T01"
+    ],
+    "T08": [
+      "T02",
+      "T03",
+      "T04"
+    ],
+    "T09": [
+      "T03",
+      "T04",
+      "T07",
+      "T08"
+    ],
+    "T10": [
+      "T02",
+      "T03",
+      "T04",
+      "T05"
+    ],
+    "T11": [
+      "T06",
+      "T09",
+      "T10"
+    ],
+    "T12": [
+      "T01"
+    ],
+    "T13": [
+      "T03"
+    ],
+    "T14": [
+      "T06",
+      "T07",
+      "T08",
+      "T09",
+      "T10",
+      "T11",
+      "T12",
+      "T13"
+    ],
+    "T15": [
+      "T14"
+    ]
+  },
+  "producerGates": [
+    "S01",
+    "S02",
+    "S03",
+    "S04",
+    "S05"
+  ],
+  "entries": [
+    {"id":"G01","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /","task":"T10","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G02","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /health","task":"T08","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G03","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /version","task":"T08","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G04","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /.well-known/jwks.json","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G05","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /auth/github/start","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G06","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /auth/github/callback","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G07","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /api/session","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G08","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /auth/logout","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G09","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /auth/logout-all","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G10","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /api/credentials","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G11","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /api/credentials","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G12","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /api/credentials/:id/revoke","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G13","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /api/credentials/revoke-all","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G14","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /api/token","task":"T02","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G15","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /api/instances/:id/open","task":"T08","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G16","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /internal/instance-access/handoff","task":"T08","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G17","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /internal/instance-access/refresh","task":"T08","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G18","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /internal/instance-access/revoke","task":"T08","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G19","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /api/instances","task":"T03","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G20","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /api/instances","task":"T03","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G21","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"PATCH /api/instances/:id","task":"T03","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G22","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"DELETE /api/instances/:id","task":"T03","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G23","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /api/instances/:id/select-release","task":"T11","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G24","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /api/instances/:id/operations","task":"T03","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G25","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /api/operations/:id","task":"T03","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G26","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"POST /api/operations/:id/retry","task":"T09","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"G27","kind":"gateway-route","source":"apps/gateway/src/router.ts","surface":"GET /api/releases","task":"T05","disposition":"migrate-or-replace-under-contract","status":"planned","target":[],"proofs":[]},
+    {"id":"C01","kind":"control-plane-route-group","source":"apps/control-plane/src/routes/internal.ts","surface":"/internal","task":"T03","disposition":"expand-assigned-handlers-then-migrate","status":"planned","target":[],"proofs":[]},
+    {"id":"C02","kind":"control-plane-route-group","source":"apps/control-plane/src/routes/users.ts","surface":"/v1/user","task":"T02","disposition":"expand-assigned-handlers-then-migrate","status":"planned","target":[],"proofs":[]},
+    {"id":"C03","kind":"control-plane-route-group","source":"apps/control-plane/src/routes/audit.ts","surface":"/v1/audit","task":"T03","disposition":"expand-assigned-handlers-then-migrate","status":"planned","target":[],"proofs":[]},
+    {"id":"C04","kind":"control-plane-route-group","source":"apps/control-plane/src/routes/instances.ts","surface":"/v1/instances","task":"T03","disposition":"expand-assigned-handlers-then-migrate","status":"planned","target":[],"proofs":[]},
+    {"id":"C05","kind":"control-plane-route-group","source":"apps/control-plane/src/routes/operations.ts","surface":"/v1/operations","task":"T03","disposition":"expand-assigned-handlers-then-migrate","status":"planned","target":[],"proofs":[]},
+    {"id":"C06","kind":"control-plane-route-group","source":"apps/control-plane/src/routes/releases.ts","surface":"/v1/releases","task":"T05","disposition":"expand-assigned-handlers-then-migrate","status":"planned","target":[],"proofs":[]},
+    {"id":"C07","kind":"control-plane-route-group","source":"apps/control-plane/src/routes/release-admin.ts","surface":"/v1/admin/releases","task":"T11","disposition":"expand-assigned-handlers-then-migrate","status":"planned","target":[],"proofs":[]},
+    {"id":"C08","kind":"control-plane-route-group","source":"apps/control-plane/src/routes/provisioner.ts","surface":"/v1/provisioner","task":"T09","disposition":"expand-assigned-handlers-then-migrate","status":"planned","target":[],"proofs":[]},
+    {"id":"A01","kind":"source","source":"packages/auth/src/index.ts","surface":"auth sessions/keys/CSRF/handoff/refresh/MCP credentials","task":"T02","disposition":"retain-refactor","status":"planned","target":[],"proofs":[]},
+    {"id":"A02","kind":"source","source":"apps/control-plane/src/adapters/cloudflare.ts","surface":"D1/DO repositories, migrations, idempotency and actor audit","task":"T03","disposition":"repository-scope","status":"planned","target":[],"proofs":[]},
+    {"id":"A03","kind":"source","source":"packages/runtime/src/types.ts","surface":"RuntimeProvider and Kubernetes rendering/observation","task":"T07","disposition":"extract-provider","status":"planned","target":[],"proofs":[]},
+    {"id":"A04","kind":"source","source":"apps/provisioner/src/main.ts","surface":"real Provisioner executor/worker lifecycle","task":"T09","disposition":"retain-refactor","status":"planned","target":[],"proofs":[]},
+    {"id":"A05","kind":"source","source":"packages/loom-adapter","surface":"Loom application metadata adapter","task":"T04","disposition":"replace-producer-adapter","status":"planned","target":[],"proofs":[]},
+    {"id":"A06","kind":"source","source":"apps/instance-access","surface":"same-origin Instance Access","task":"T08","disposition":"retain-refactor","status":"planned","target":[],"proofs":[]},
+    {"id":"A07","kind":"source","source":"apps/control-plane/src/adapters/ghcr","surface":"GHCR immutable manifests/provenance and release admission","task":"T05","disposition":"extract-provider","status":"planned","target":[],"proofs":[]},
+    {"id":"A08","kind":"source-gap","source":"docs/implementation/current-plan.md","surface":"scheduled discovery/canary/persisted rollout","task":"T11","disposition":"complete-required-path","status":"planned","target":[],"proofs":[]},
+    {"id":"A09","kind":"source-gap","source":"packages/runtime/src/types.ts","surface":"authoritative resource capacity/reservations","task":"T07","disposition":"complete-required-path","status":"planned","target":[],"proofs":[]},
+    {"id":"A10","kind":"source","source":"packages/observability","surface":"observability/audit/operator recovery","task":"T13","disposition":"retain-refactor","status":"planned","target":[],"proofs":[]},
+    {"id":"A11","kind":"source","source":"infrastructure","surface":"Nix/Flux/static inventory/secrets/ingress/management boundaries","task":"T12","disposition":"sanitize-retain","status":"planned","target":[],"proofs":[]},
+    {"id":"A12","kind":"source","source":"docs/implementation/current-plan.md","surface":"legacy Restic/PVC recovery and D1 export/restore","task":"T13","disposition":"explicit-legacy-tool-and-metadata-recovery","status":"planned","target":[],"proofs":[]},
+    {"id":"A13","kind":"new","source":null,"surface":"App user-repository intersection and installation credential broker","task":"T02","disposition":"implement","status":"planned","target":[],"proofs":[]},
+    {"id":"A14","kind":"new","source":null,"surface":"unique repository binding and configuration generation","task":"T03","disposition":"implement","status":"planned","target":[],"proofs":[]},
+    {"id":"A15","kind":"new","source":null,"surface":"immutable producer build/module/resource catalog","task":"T04","disposition":"implement-consumer","status":"planned","target":[],"proofs":[]},
+    {"id":"A16","kind":"new","source":null,"surface":"shared composition build/cache/verification and cancellation","task":"T06","disposition":"implement","status":"planned","target":[],"proofs":[]},
+    {"id":"A17","kind":"new","source":null,"surface":"direct stopped-origin wake; never replay writes","task":"T08","disposition":"implement","status":"planned","target":[],"proofs":[]},
+    {"id":"A18","kind":"new","source":null,"surface":"quiesce/idle/redeploy and runtime epoch fencing","task":"T09","disposition":"implement","status":"planned","target":[],"proofs":[]},
+    {"id":"A19","kind":"new","source":null,"surface":"repository/image/add-on/resource/build/status portal","task":"T10","disposition":"implement","status":"planned","target":[],"proofs":[]},
+    {"id":"A20","kind":"new","source":null,"surface":"real integration, producer closure and independent review","task":"T14","disposition":"certify","status":"planned","target":[],"proofs":[]},
+    {"id":"X01","kind":"source","source":".github/workflows","surface":"GitHub Actions/runner workflow orchestration","task":"T00","disposition":"excluded-by-owner; product-build-service-replaces-build-orchestration","status":"excluded","target":[],"proofs":[]},
+    {"id":"X02","kind":"source","source":"docs/architecture/target-architecture.md","surface":"multi-cluster/HA/billing and roadmap-only expansion","task":"T00","disposition":"excluded; not-current-campaign","status":"excluded","target":[],"proofs":[]},
+    {"id":"X03","kind":"source","source":"apps/control-plane/src/routes/instances.ts","surface":"per-user ownership as independent authorization authority","task":"T03","disposition":"superseded-by-github-repository-authorization","status":"excluded","target":[],"proofs":[]},
+    {"id":"X04","kind":"source","source":"packages/runtime/src/types.ts","surface":"mandatory retained application PVC on new instances","task":"T07","disposition":"superseded; old-data-preserved-under-T13","status":"excluded","target":[],"proofs":[]}
+  ]
+}

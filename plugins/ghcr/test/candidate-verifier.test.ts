@@ -2,7 +2,7 @@ import { buildKey, type BuildInput, type CompositionManifest } from "@praetorium
 import { describe, expect, it, vi } from "vitest";
 import { CandidateVerificationError, GhcrCandidateVerifier, type CompositionArtifactInspector } from "../src/candidate-verifier.js";
 import { sha256Digest } from "../src/digest.js";
-import type { GhcrRegistryClient } from "../src/oci-registry-client.js";
+import { GhcrRegistryClient } from "../src/oci-registry-client.js";
 import type { VerifiedOciImage } from "../src/oci-types.js";
 
 const digestA = `sha256:${"a".repeat(64)}` as const;
@@ -50,6 +50,7 @@ async function fixture() {
     reachableLayerBytes: 0,
   };
   const registry = {
+    registryHost: "ghcr.io",
     verifyImage: vi.fn(async (repository: string, manifestDigest: string) => {
       return { ...image, repository, manifestDigest };
     }),
@@ -79,10 +80,40 @@ async function fixture() {
     manifestDigest: digestA,
     compositionManifest: { repository: "praetorium/derived", digest: compositionDigest },
   };
-  return { verifier, registry, inspection, candidate, compositionDigest };
+  return { verifier, registry, inspection, candidate, compositionDigest, compositionBytes, image };
 }
 
 const approvedOutput = { registryHost: "ghcr.io", repository: "praetorium/derived" } as const;
+const registryLimits = {
+  allowedRepositories: ["praetorium/derived"],
+  maxImageLayerBytes: 1024 * 1024,
+  maxImageVerificationMs: 5_000,
+  maxRegistryRequestMs: 1_000,
+  fetch: vi.fn(async () => new Response(null, { status: 404 })) as typeof fetch,
+};
+
+function configuredRegistry(registryUrl: string, allowInsecureLoopback = false): GhcrRegistryClient {
+  return new GhcrRegistryClient({
+    ...registryLimits,
+    registryUrl,
+    allowInsecureLoopback,
+  });
+}
+
+function stubConfiguredRegistry(
+  registry: GhcrRegistryClient,
+  image: VerifiedOciImage,
+  compositionBytes: Uint8Array,
+  compositionDigest: string,
+): void {
+  vi.spyOn(registry, "verifyImage").mockResolvedValue(image);
+  vi.spyOn(registry, "readBlob").mockResolvedValue({
+    digest: compositionDigest as typeof digestA,
+    mediaType: "application/json",
+    size: compositionBytes.byteLength,
+    bytes: compositionBytes,
+  });
+}
 
 describe("GHCR candidate verification", () => {
   it("returns a canonical statement only after persisted-input, composition, closure, and smoke checks", async () => {
@@ -157,12 +188,59 @@ describe("GHCR candidate verification", () => {
       .rejects.toMatchObject({ reason: "invalid_candidate" });
   });
 
-  it("requires canonical GHCR candidate references before resolving a repository", async () => {
-    const { verifier, candidate } = await fixture();
+  it("rejects an arbitrary caller-approved registry host before registry access", async () => {
+    const { verifier, registry, candidate } = await fixture();
     await expect(verifier.verifyUnsignedCandidate({
       ...candidate,
-      candidateRef: `docker.io/praetorium/derived@${digestA}`,
-    }, approvedOutput, activeSignal)).rejects.toMatchObject({ reason: "invalid_candidate" });
+      candidateRef: `attacker.example/praetorium/derived@${digestA}`,
+    }, { registryHost: "attacker.example", repository: "praetorium/derived" }, activeSignal))
+      .rejects.toMatchObject({ reason: "invalid_candidate" });
+    expect(registry.verifyImage).not.toHaveBeenCalled();
+  });
+
+  it("accepts the exact configured custom HTTPS registry host", async () => {
+    const { candidate, inspection, compositionDigest, compositionBytes, image } = await fixture();
+    const registry = configuredRegistry("https://registry.example.test");
+    stubConfiguredRegistry(registry, image, compositionBytes, compositionDigest);
+    const verifier = new GhcrCandidateVerifier(registry, inspection);
+    const configuredCandidate = {
+      ...candidate,
+      candidateRef: `${registry.registryHost}/praetorium/derived@${digestA}`,
+    };
+
+    await expect(verifier.verifyUnsignedCandidate(configuredCandidate, {
+      registryHost: registry.registryHost,
+      repository: "praetorium/derived",
+    }, activeSignal)).resolves.toBeDefined();
+    expect(inspection.inspectAndSmoke).toHaveBeenCalledWith(
+      expect.objectContaining({ imageReference: `registry.example.test/praetorium/derived@${digestA}` }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("accepts the exact explicitly enabled loopback registry host and port", async () => {
+    const { candidate, inspection, compositionDigest, compositionBytes, image } = await fixture();
+    const registry = configuredRegistry("http://127.0.0.1:39567", true);
+    stubConfiguredRegistry(registry, image, compositionBytes, compositionDigest);
+    const verifier = new GhcrCandidateVerifier(registry, inspection);
+    const configuredCandidate = {
+      ...candidate,
+      candidateRef: `${registry.registryHost}/praetorium/derived@${digestA}`,
+    };
+
+    await expect(verifier.verifyUnsignedCandidate(configuredCandidate, {
+      registryHost: registry.registryHost,
+      repository: "praetorium/derived",
+    }, activeSignal)).resolves.toBeDefined();
+    expect(inspection.inspectAndSmoke).toHaveBeenCalledWith(
+      expect.objectContaining({ imageReference: `127.0.0.1:39567/praetorium/derived@${digestA}` }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("rejects registry URL credentials instead of exposing them in the configured host", () => {
+    expect(() => configuredRegistry("https://operator:secret@registry.example.test"))
+      .toThrow("registry URL must be HTTPS");
   });
 
   it("rejects a valid digest from a different repository than the persisted output approval", async () => {

@@ -303,6 +303,11 @@ export class GhcrRegistryClient {
     }
   }
 
+  /** Canonical host (including any configured port) of this registry origin. */
+  get registryHost(): string {
+    return this.baseUrl.host;
+  }
+
   /** Resolves a mutable tag once. Persist the returned digest; never use the tag as artifact identity. */
   async discoverTag(repository: string, tag: string, signal?: AbortSignal): Promise<{ digest: Sha256Digest; mediaType: string }> {
     const repo = this.requireAllowedRepository(repository);

@@ -83,7 +83,8 @@ export class GhcrCandidateVerifier {
     signal: AbortSignal,
   ): Promise<BuilderArtifactStatement> {
     if (signal.aborted) throw new CandidateVerificationError("canceled", "candidate verification was canceled");
-    const repository = parseCandidateReference(candidate.candidateRef, candidate.manifestDigest, approvedOutput);
+    const registryHost = this.registry.registryHost;
+    const repository = parseCandidateReference(candidate.candidateRef, candidate.manifestDigest, approvedOutput, registryHost);
     if (!repository || !isSha256Digest(candidate.expectedBuildKey) || !isSha256Digest(candidate.compositionManifest.digest)) {
       throw new CandidateVerificationError("invalid_candidate", "candidate reference or digest is invalid");
     }
@@ -183,7 +184,7 @@ export class GhcrCandidateVerifier {
     try {
       const inspection = await Promise.race([
         this.inspector.inspectAndSmoke({
-          imageReference: `${approvedOutput.registryHost}/${repository}@${candidate.manifestDigest}`,
+          imageReference: `${registryHost}/${repository}@${candidate.manifestDigest}`,
           image,
           compositionManifest,
         }, controller.signal),
@@ -213,12 +214,21 @@ export class GhcrCandidateVerifier {
   }
 }
 
-function parseCandidateReference(reference: string, digest: string, approvedOutput: ApprovedCandidateOutput): string | null {
+function parseCandidateReference(
+  reference: string,
+  digest: string,
+  approvedOutput: ApprovedCandidateOutput,
+  registryHost: string,
+): string | null {
   if (!isSha256Digest(digest) || typeof reference !== "string") return null;
-  if (approvedOutput.registryHost !== "ghcr.io" || typeof approvedOutput.repository !== "string") return null;
+  if (
+    typeof approvedOutput.registryHost !== "string" ||
+    approvedOutput.registryHost !== registryHost ||
+    typeof approvedOutput.repository !== "string"
+  ) return null;
   const repository = approvedOutput.repository;
   if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u.test(repository)) return null;
-  return reference === `${approvedOutput.registryHost}/${repository}@${digest}` ? repository : null;
+  return reference === `${registryHost}/${repository}@${digest}` ? repository : null;
 }
 
 function toOciPlatform(platform: BuildInput["platform"]): OciPlatform {

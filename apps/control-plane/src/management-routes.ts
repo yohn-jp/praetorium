@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  BuildInputSchema,
+  buildKey,
   InstanceDashboardSchema,
   ReleaseListSchema,
   PublicOperationSchema,
@@ -23,6 +25,20 @@ export interface ManagementDependencies {
 export function createManagementRoutes(deps: ManagementDependencies) {
   const app = new Hono();
   const configurationStore = new D1ConfigurationStore(deps.db);
+  const revisionWithClosure = async (revisionId: string | null) => {
+    if (!revisionId) return null;
+    const revision = await configurationStore.getRevision(revisionId);
+    if (!revision) throw new Error("Referenced deployment revision is unavailable");
+    const row = await deps.db
+      .prepare("SELECT build_input_json FROM builds WHERE build_id=? AND build_key=?")
+      .bind(revision.buildId, revision.buildKey)
+      .first<{ build_input_json: string }>();
+    if (!row) throw new Error("Referenced immutable build is unavailable");
+    const input = BuildInputSchema.parse(JSON.parse(row.build_input_json));
+    if ((await buildKey(input)) !== revision.buildKey)
+      throw new Error("Immutable build key mismatch");
+    return { ...revision, resolvedModules: input.resolvedModules };
+  };
   const releases = async () => {
     const rows = await deps.db
       .prepare(
@@ -54,12 +70,8 @@ export function createManagementRoutes(deps: ManagementDependencies) {
     if (!snapshot) return c.json({ error: { code: "REPOSITORY_NOT_FOUND" } }, 404);
     const { instance } = snapshot;
     const [current, desired, releaseList, operationRows] = await Promise.all([
-      instance.observedRevisionId
-        ? configurationStore.getRevision(instance.observedRevisionId)
-        : null,
-      instance.desiredRevisionId
-        ? configurationStore.getRevision(instance.desiredRevisionId)
-        : null,
+      revisionWithClosure(instance.observedRevisionId),
+      revisionWithClosure(instance.desiredRevisionId),
       releases(),
       deps.db
         .prepare(

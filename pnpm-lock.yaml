@@ -167,6 +167,9 @@ importers:
       '@praetorium/application':
         specifier: workspace:*
         version: link:../../packages/application
+      '@praetorium/kubernetes':
+        specifier: workspace:*
+        version: link:../../plugins/kubernetes
     devDependencies:
       '@types/node':
         specifier: 24.19.0

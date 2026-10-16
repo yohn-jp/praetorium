@@ -2290,6 +2290,32 @@
                 ],
                 "additionalProperties": false
               },
+              "resolvedModules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "artifactDigest": {
+                      "type": "string",
+                      "pattern": "^sha256:[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "version",
+                    "artifactDigest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
               "artifactDigest": {
                 "anyOf": [
                   {
@@ -2331,6 +2357,7 @@
               "selection",
               "resources",
               "runtimeMetadata",
+              "resolvedModules",
               "artifactDigest",
               "status",
               "actorId",
@@ -2525,6 +2552,32 @@
                 ],
                 "additionalProperties": false
               },
+              "resolvedModules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "artifactDigest": {
+                      "type": "string",
+                      "pattern": "^sha256:[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "version",
+                    "artifactDigest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
               "artifactDigest": {
                 "anyOf": [
                   {
@@ -2566,6 +2619,7 @@
               "selection",
               "resources",
               "runtimeMetadata",
+              "resolvedModules",
               "artifactDigest",
               "status",
               "actorId",
@@ -3838,6 +3892,32 @@
         ],
         "additionalProperties": false
       },
+      "resolvedModules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "artifactDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "artifactDigest"
+          ],
+          "additionalProperties": false
+        }
+      },
       "artifactDigest": {
         "anyOf": [
           {
@@ -3879,6 +3959,7 @@
       "selection",
       "resources",
       "runtimeMetadata",
+      "resolvedModules",
       "artifactDigest",
       "status",
       "actorId",

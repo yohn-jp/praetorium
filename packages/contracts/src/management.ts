@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BuildCatalogSchema, RuntimeMetadataSchema } from "./producer.js";
-import { DigestSchema } from "./build.js";
+import { DigestSchema, BuildInputSchema } from "./build.js";
 import { ResourceRequirementsSchema } from "./lifecycle.js";
 import { PublicOperationSchema, RepositorySnapshotSchema } from "./repository.js";
 import { BuildProgressSchema } from "./build-queue.js";
@@ -21,6 +21,7 @@ export const PublicConfigurationRevisionSchema = z.strictObject({
   selection: ConfigurationSelectionSchema,
   resources: ResourceRequirementsSchema,
   runtimeMetadata: RuntimeMetadataSchema,
+  resolvedModules: BuildInputSchema.shape.resolvedModules,
   artifactDigest: DigestSchema.nullable(),
   status: z.enum(["building", "admitted", "failed", "superseded"]),
   actorId: z.string().min(1).max(255),

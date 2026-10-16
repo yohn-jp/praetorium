@@ -196,12 +196,30 @@ function artifactSection(
   );
 }
 
-function summaryItem(repository: PortalRepositorySummary): string {
+function summaryItem(
+  repository: PortalRepositorySummary,
+  csrfToken: string,
+  appInstalled: boolean,
+): string {
   const status = escapeHtml(instanceStateLabel(repository.instance.state));
   const details = repository.instance.reason
     ? `<p>${escapeHtml(repository.instance.reason)}</p>`
     : "";
-  const action = `<p><a href="/repositories/${encodeURIComponent(repository.repositoryId)}">Manage repository</a></p>`;
+  const repositoryPath = `/repositories/${encodeURIComponent(repository.repositoryId)}`;
+  const canEnter =
+    appInstalled &&
+    repository.installation === "active" &&
+    ["read", "write", "maintain", "admin"].includes(repository.permission);
+  const enter = canEnter
+    ? `<form method="post" action="${repositoryPath}/actions">` +
+      `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
+      `<input type="hidden" name="action" value="enter">` +
+      `<button type="submit">Open repository</button></form>`
+    : "";
+  const action =
+    canEnter && repository.instance.instanceId
+      ? `<p><a href="${repositoryPath}">Manage repository</a></p>`
+      : "";
   const operation = repository.operation
     ? `<p>Latest ${escapeHtml(repository.operation.kind)} operation: ` +
       `${escapeHtml(operationStateLabel(repository.operation.state))}</p>`
@@ -213,12 +231,15 @@ function summaryItem(repository: PortalRepositorySummary): string {
     `<p>Instance: ${status}</p>${details}` +
     `<p>Current image: <code>${image(repository.currentImageDigest)}</code></p>` +
     `<p>Desired image: <code>${image(repository.desiredImageDigest)}</code></p>` +
-    `${operation}${action}</li>`
+    `${operation}${enter}${action}</li>`
   );
 }
 
 export function renderRepositoryList(list: PortalRepositoryList, csrfToken: string): Response {
-  const repos = list.repositories.map(summaryItem).join("");
+  const appInstalled = list.githubApp.installationState === "active";
+  const repos = list.repositories
+    .map((repository) => summaryItem(repository, csrfToken, appInstalled))
+    .join("");
   const content = list.repositories.length
     ? `<ul>${repos}</ul>`
     : `<p>No repositories are available to this GitHub account.</p>`;

@@ -175,6 +175,31 @@ describe("server-rendered management UI", () => {
     expect(html).toContain('name="csrfToken" value="csrf-token-value"');
   });
 
+  it("offers CSRF-protected entry for an accessible unbound repository", async () => {
+    const unbound = {
+      ...summary,
+      permission: "read" as const,
+      currentImageDigest: null,
+      desiredImageDigest: null,
+      instance: { state: "stopped" as const, instanceId: null, retryable: true, reason: null },
+    };
+    const inaccessible = { ...unbound, repositoryId: "987654321", permission: "none" as const };
+    const html = await renderRepositoryList(
+      {
+        githubApp: { installationState: "active", message: "Installation active." },
+        repositories: [unbound, inaccessible],
+      },
+      "csrf-token-value",
+    ).text();
+
+    expect(html).toContain('action="/repositories/123456789/actions"');
+    expect(html).toContain('name="action" value="enter"');
+    expect(html).toContain('name="csrfToken" value="csrf-token-value"');
+    expect(html).toContain("Open repository");
+    expect(html).not.toContain('action="/repositories/987654321/actions"');
+    expect(html).not.toContain("Manage repository");
+  });
+
   it("shows current and desired image/module/resource state, preview dependencies and same-image redeploy", async () => {
     const html = await renderRepositoryDashboard(dashboard, {
       csrfToken: "csrf-token-value",

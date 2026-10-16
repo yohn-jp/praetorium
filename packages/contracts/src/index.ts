@@ -9,3 +9,4 @@ export * from "./artifact.js";
 export * from "./build-queue.js";
 export * from "./instance-hostname.js";
 export * from "./composition.js";
+export * from "./mutation-authorization.js";

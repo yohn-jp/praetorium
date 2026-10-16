@@ -6,12 +6,12 @@ Status: required cross-repository contract, not a claim of producer implementati
 
 Inspected `yohn-jp/scriptorium@5ee8f0f0f0b9ee63b4920f2a73f3d76baa2cef1a`:
 
-| Source path | Observed | Required delta |
-| --- | --- | --- |
-| `scripts/profile-build.mjs` | Only `--profile core|full`; resolves declared module dependency closure and emits server/browser registries | Serialized arbitrary validated selection; immutable build-kit output contract |
-| `Dockerfile` | Node multi-stage build, port 3000, `/data`, static copied application outputs | Published Runtime Base/Build Kit plus actual composition build of all selected backend/browser assets |
-| `packages/api/src/server.ts` | `authToken: string`, local sessions; module runtime composition options | Hosted grant verifier, per-request principal/permission, repository/runtime binding; standalone mode remains separate |
-| `packages/core` and module-runtime | Current in-flight checkpoint/recovery and module work | Verified scoped credential renewal, status/activity and quiesce result used by Platform |
+| Source path                        | Observed                                                                      | Required delta                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `scripts/profile-build.mjs`        | Only `--profile core                                                          | full`; resolves declared module dependency closure and emits server/browser registries                                | Serialized arbitrary validated selection; immutable build-kit output contract |
+| `Dockerfile`                       | Node multi-stage build, port 3000, `/data`, static copied application outputs | Published Runtime Base/Build Kit plus actual composition build of all selected backend/browser assets                 |
+| `packages/api/src/server.ts`       | `authToken: string`, local sessions; module runtime composition options       | Hosted grant verifier, per-request principal/permission, repository/runtime binding; standalone mode remains separate |
+| `packages/core` and module-runtime | Current in-flight checkpoint/recovery and module work                         | Verified scoped credential renewal, status/activity and quiesce result used by Platform                               |
 
 These observations establish specific missing seams, not a full current Scriptorium review. Refresh the producer SHA and actual public interfaces at T01. Any capability already delivered by that point is consumed, not reimplemented.
 
@@ -86,12 +86,20 @@ Involuntary runtime failure remains possible; Scriptorium's browser journal is t
 
 ## 6. Exact producer acceptance handoff
 
-| ID | Producer deliverable | Proof required before consumer certification |
-| --- | --- | --- |
-| S01 | Immutable Runtime Base/Build Kit and arbitrary composition request | Build Core plus two differing legal non-preset module selections; exact backend/browser/native dependency closure |
-| S02 | Hosted grants and role enforcement | Wrong issuer/repository/instance/epoch/expiry denied; read cannot checkpoint/publish/configure; no static-token fallback |
-| S03 | Single-repository bootstrap and credential provider | Fresh clone, repository-ID mismatch rejection, actual token expiry/renewal and App-authorized push on an owned test repository |
-| S04 | Activity/quiesce/resume | In-flight request/job, pending checkpoint, uncertain push, duplicate quiesce and stale resume are safe; healthy empty state permits replacement |
-| S05 | Disposable reconstruction and public runtime metadata | Real image replacement at stable origin, confirmed data restored and browser journal reconciled; metadata corroborated by OCI/runtime observation |
+| ID  | Producer deliverable                                               | Proof required before consumer certification                                                                                                      |
+| --- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S01 | Immutable Runtime Base/Build Kit and arbitrary composition request | Build Core plus two differing legal non-preset module selections; exact backend/browser/native dependency closure                                 |
+| S02 | Hosted grants and role enforcement                                 | Wrong issuer/repository/instance/epoch/expiry denied; read cannot checkpoint/publish/configure; no static-token fallback                          |
+| S03 | Single-repository bootstrap and credential provider                | Fresh clone, repository-ID mismatch rejection, actual token expiry/renewal and App-authorized push on an owned test repository                    |
+| S04 | Activity/quiesce/resume                                            | In-flight request/job, pending checkpoint, uncertain push, duplicate quiesce and stale resume are safe; healthy empty state permits replacement   |
+| S05 | Disposable reconstruction and public runtime metadata              | Real image replacement at stable origin, confirmed data restored and browser journal reconciled; metadata corroborated by OCI/runtime observation |
 
 Praetorium's Sol records this handoff in `docs/migration/PRODUCER-STATUS.json` and coordinates with the existing Scriptorium implementation session. It must not edit that session's main, lockfile or worktrees. Missing S01–S05 block only dependent real-image gates while all independent fixed Platform tasks continue. The full migration cannot be called integrated until those gates pass; source/fixture availability is not producer acceptance.
+
+## 7. Execution preflight handoff (2026-10-17)
+
+Consumer checkpoint: the normative parsers live in `packages/contracts/src/producer.ts`, `build.ts`, `access.ts` and `artifact.ts`. The emitted JSON Schema includes structural and expressible conditional constraints. It cannot replace semantic validation of module graph/resource closure, cross-field host/origin and time bindings, uniqueness by module/group ID or operation/epoch state. Implementations in another language must enforce those semantic rules too. A shape-only JSON Schema validation is not conformance.
+
+The actual producer preflight at `c90e95d9711e859799f9674138b2db42efad6bc3` is recorded in `docs/migration/PRODUCER-STATUS.json`. Existing producer coordinator retains all producer implementation ownership. S01–S05 remain dependent acceptance gates; no Platform fork, shared owner token, inferred assignment environment names or invented readiness flag substitutes for delivery.
+
+The producer handoff must include the approved recipe invocation, versioned arbitrary-selection resolver and compatibility semantics, versioned composition manifest binding actual server/browser/native closure, hosted runtime assignment transport, control-service authentication and quiesce/status endpoints. Platform owns derived-image signing and admission; that signing must follow verification of actual registry bytes and composition evidence, never simply sign a worker's echoed input.

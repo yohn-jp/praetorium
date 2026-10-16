@@ -4,7 +4,7 @@ export const ScriptoriumBuildContractVersion = z.literal("scriptorium-build/v1")
 export const ScriptoriumPlatformContractVersion = z.literal("scriptorium-platform/v1");
 
 const Sha256DigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const ProducerRevisionSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u);
+const ProducerRevisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 const ModuleIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u);
 const NonNegativeIntegerSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const PositiveIntegerSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);

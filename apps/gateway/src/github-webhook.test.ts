@@ -108,6 +108,33 @@ describe("Gateway GitHub webhook boundary", () => {
     expect(receiveGitHubWebhook).not.toHaveBeenCalled();
   });
 
+  it("rejects an installation repository event missing its required selection before forwarding", async () => {
+    const rawBody = new TextEncoder().encode(
+      JSON.stringify({
+        action: "removed",
+        installation: { id: 71 },
+        repositories_removed: [],
+      }),
+    );
+    const receiveGitHubWebhook = vi.fn(async () => "accepted" as const);
+    const app = createGitHubWebhookRoutes({
+      webhookSecret: SECRET,
+      controlPlane: { receiveGitHubWebhook },
+    });
+    const response = await app.request("/", {
+      method: "POST",
+      headers: await githubHeaders(
+        rawBody,
+        "installation_repositories",
+        "delivery-missing-selection",
+      ),
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(400);
+    expect(receiveGitHubWebhook).not.toHaveBeenCalled();
+  });
+
   it("authenticates the private Control Plane call with the configured service secret", async () => {
     const forwardedRequests: Request[] = [];
     const client = createGitHubWebhookControlPlaneClient(

@@ -122,10 +122,8 @@ async function boundedDelivery(
   let repositorySelection: "all" | "selected" | undefined;
   if (verified.event === "installation_repositories") {
     const selection = payload.repository_selection;
-    if (selection !== undefined) {
-      if (selection !== "all" && selection !== "selected") return null;
-      repositorySelection = selection;
-    }
+    if (selection !== "all" && selection !== "selected") return null;
+    repositorySelection = selection;
   }
 
   let repositoryIds = [...verified.repositoryIds];

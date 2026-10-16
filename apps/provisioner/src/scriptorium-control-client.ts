@@ -21,6 +21,7 @@ const MAX_CONTROL_RESPONSE_BYTES = 64 * 1024;
 const CONTROL_TIMEOUT_MS = 5_000;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const MODULE_ID = /^[a-z][a-z0-9-]{0,63}$/u;
+const EMPTY_BODY_DIGEST = `sha256:${createHash("sha256").update("").digest("hex")}`;
 
 export interface RuntimeControlCredentialRequest {
   readonly assignment: RuntimeAssignment;
@@ -66,6 +67,51 @@ export class OperationBackedRuntimeControlCredentialProvider
     const expiry = Date.parse(result.expiresAt);
     if (!Number.isFinite(expiry) || expiry <= this.now() || expiry > this.now() + 61_000) {
       throw new Error("runtime_control_credential_expired_or_invalid");
+    }
+    return result.token;
+  }
+}
+
+/** Issues read-only status credentials for idle observation without inventing
+ * an operation lease. The Control Plane fences each token to its current
+ * generation/epoch and returns the audit operation identity it created. */
+export class IdleObservationRuntimeControlCredentialProvider
+  implements RuntimeControlCredentialProvider
+{
+  readonly available = true;
+
+  constructor(
+    private readonly operations: ProvisionerOperationService,
+    private readonly workerId: string,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async issue(request: RuntimeControlCredentialRequest, signal?: AbortSignal): Promise<string> {
+    if (request.endpoint !== "status" || request.payloadDigest !== EMPTY_BODY_DIGEST) {
+      throw new TypeError("idle observation credentials are restricted to empty-body status reads");
+    }
+    const result = await this.operations.issueObservationCredential({
+      workerId: this.workerId,
+      clusterId: request.assignment.clusterId,
+      instanceId: request.assignment.instanceId,
+      repositoryId: request.assignment.repositoryId,
+      expectedGeneration: request.assignment.generation,
+      runtimeEpoch: request.assignment.runtimeEpoch,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    const expiry = Date.parse(result.expiresAt);
+    const now = this.now();
+    if (
+      result.token.length < 16 ||
+      result.token.length > 8192 ||
+      /[\r\n]/u.test(result.token) ||
+      result.operationId.length > 128 ||
+      !/^[A-Za-z0-9_.:-]+$/u.test(result.operationId) ||
+      !Number.isFinite(expiry) ||
+      expiry <= now ||
+      expiry > now + 31_000
+    ) {
+      throw new TypeError("idle observation credential is invalid or outside its short lifetime");
     }
     return result.token;
   }

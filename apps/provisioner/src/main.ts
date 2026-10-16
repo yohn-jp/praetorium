@@ -5,6 +5,8 @@ import { HealthServer } from "./health.js";
 import { JsonLogger, ProvisionerWorker } from "./worker.js";
 import { readProvisionerCredential } from "./credentials.js";
 import { LifecycleProvisionerExecutor } from "./lifecycle-executor.js";
+import { DEFAULT_IDLE_TIMEOUT_MS } from "@praetorium/application/lifecycle";
+import { ProvisionerIdleController } from "./idle-controller.js";
 import {
   UnavailableRuntimeAssignmentTransport,
   UnavailableRuntimeAuthAcceptanceProbe,
@@ -18,6 +20,7 @@ interface ProvisionerConfig {
   readonly clusterId: string;
   readonly runtime: InClusterRuntimeOptions;
   readonly healthPort: number;
+  readonly idleTimeoutMs: number;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -69,6 +72,7 @@ export function loadProvisionerConfig(env: NodeJS.ProcessEnv = process.env): Pro
     workerId: required(env, "PROVISIONER_WORKER_ID"),
     clusterId,
     healthPort: positiveInteger(env, "PROVISIONER_HEALTH_PORT", 8080),
+    idleTimeoutMs: positiveInteger(env, "PROVISIONER_IDLE_TIMEOUT_MS", DEFAULT_IDLE_TIMEOUT_MS),
     runtime: {
       namespacePrefix,
       clusterId,
@@ -148,7 +152,21 @@ async function main(): Promise<void> {
         ready = value;
       },
     });
-    await worker.run(shutdown.signal);
+    const idleController = new ProvisionerIdleController({
+      operations,
+      workerId: config.workerId,
+      clusterId: config.clusterId,
+      runtime: config.runtime,
+      idleTimeoutMs: config.idleTimeoutMs,
+      metrics,
+      logger,
+    });
+    try {
+      await Promise.all([worker.run(shutdown.signal), idleController.run(shutdown.signal)]);
+    } catch (error) {
+      shutdown.abort(error);
+      throw error;
+    }
   } finally {
     ready = false;
     live = false;

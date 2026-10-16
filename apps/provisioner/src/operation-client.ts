@@ -155,6 +155,23 @@ export interface ProvisionerResolvedRuntime {
   };
 }
 
+export interface ProvisionerIdleCandidate {
+  readonly instanceId: string;
+  readonly repositoryId: number;
+  readonly generation: number;
+  readonly runtimeEpoch: number;
+  readonly clusterId: string;
+  readonly desiredState: "running" | "stopped";
+  readonly bindingSuspended: boolean;
+  readonly hasActiveOperation: boolean;
+  readonly currentRuntime: ProvisionerResolvedRuntime;
+}
+
+export interface ProvisionerIdleCandidatePage {
+  readonly items: readonly ProvisionerIdleCandidate[];
+  readonly nextCursor: string | null;
+}
+
 export interface ProvisionerAuthenticationPolicy {
   readonly issuer: string;
   readonly jwksUrl: string;
@@ -233,6 +250,31 @@ export interface HttpOperationServiceOptions {
 }
 
 export interface ProvisionerOperationService {
+  listIdleCandidates(input: {
+    readonly workerId: string;
+    readonly clusterId: string;
+    readonly limit: number;
+    readonly cursor: string | null;
+    readonly signal?: AbortSignal;
+  }): Promise<ProvisionerIdleCandidatePage>;
+  createIdleStop(input: {
+    readonly workerId: string;
+    readonly clusterId: string;
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly expectedGeneration: number;
+    readonly expectedRuntimeEpoch: number;
+    readonly signal?: AbortSignal;
+  }): Promise<string>;
+  issueObservationCredential(input: {
+    readonly workerId: string;
+    readonly clusterId: string;
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly expectedGeneration: number;
+    readonly runtimeEpoch: number;
+    readonly signal?: AbortSignal;
+  }): Promise<ControlCredentialResponse & { readonly operationId: string }>;
   claimNext(input: {
     readonly workerId: string;
     readonly clusterId: string;
@@ -577,6 +619,68 @@ function parseResolvedRuntime(input: unknown): ProvisionerResolvedRuntime {
     },
     metadata: parseRuntimeMetadata(value.metadata),
   };
+}
+
+function parseIdleCandidate(input: unknown): ProvisionerIdleCandidate {
+  const value = object(input, "invalid idle candidate");
+  const instanceId = nonEmptyString(value.instanceId, "idle candidate instance ID missing");
+  const repositoryId = positiveInteger(value.repositoryId, "idle candidate repository ID missing");
+  const generation = positiveInteger(value.generation, "idle candidate generation missing");
+  const runtimeEpoch = positiveInteger(value.runtimeEpoch, "idle candidate runtime epoch missing");
+  const clusterId = nonEmptyString(value.clusterId, "idle candidate cluster ID missing");
+  const desiredState = enumValue(
+    value.desiredState,
+    ["running", "stopped"],
+    "idle candidate desired state invalid",
+  );
+  if (
+    typeof value.bindingSuspended !== "boolean" ||
+    typeof value.hasActiveOperation !== "boolean"
+  ) {
+    throw new TypeError("idle candidate eligibility flags invalid");
+  }
+  const currentRuntime = parseResolvedRuntime(value.currentRuntime);
+  if (
+    currentRuntime.assignment.instanceId !== instanceId ||
+    currentRuntime.assignment.repositoryId !== repositoryId ||
+    currentRuntime.assignment.runtimeEpoch !== runtimeEpoch
+  ) {
+    throw new TypeError("idle candidate current runtime identity mismatch");
+  }
+  return {
+    instanceId,
+    repositoryId,
+    generation,
+    runtimeEpoch,
+    clusterId,
+    desiredState,
+    bindingSuspended: value.bindingSuspended,
+    hasActiveOperation: value.hasActiveOperation,
+    currentRuntime,
+  };
+}
+
+function parseIdleCandidatePage(
+  input: unknown,
+  requestedLimit: number,
+): ProvisionerIdleCandidatePage {
+  const value = object(input, "invalid idle candidate page");
+  if (!Array.isArray(value.items) || value.items.length > requestedLimit) {
+    throw new TypeError("idle candidate page exceeds the requested bound");
+  }
+  const items = value.items.map(parseIdleCandidate);
+  if (new Set(items.map((item) => item.instanceId)).size !== items.length) {
+    throw new TypeError("idle candidate page contains duplicate instances");
+  }
+  let nextCursor: string | null;
+  if (value.nextCursor === null) nextCursor = null;
+  else {
+    nextCursor = nonEmptyString(value.nextCursor, "idle candidate cursor invalid");
+    if (nextCursor.length > 2_048 || /[\r\n]/u.test(nextCursor)) {
+      throw new TypeError("idle candidate cursor exceeds its bound");
+    }
+  }
+  return { items, nextCursor };
 }
 
 function parseOperation(input: unknown): ProvisionerOperationRecord {
@@ -976,6 +1080,70 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     }
     if (/[\r\n]/u.test(options.credential))
       throw new TypeError("Operation Service credential is invalid");
+  }
+
+  async listIdleCandidates(input: {
+    readonly workerId: string;
+    readonly clusterId: string;
+    readonly limit: number;
+    readonly cursor: string | null;
+    readonly signal?: AbortSignal;
+  }): Promise<ProvisionerIdleCandidatePage> {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 25) {
+      throw new RangeError("idle candidate page limit must be between 1 and 25");
+    }
+    return this.post("/idle-candidates", withoutSignal(input), input.signal).then((result) =>
+      parseIdleCandidatePage(result, input.limit),
+    );
+  }
+
+  async createIdleStop(input: {
+    readonly workerId: string;
+    readonly clusterId: string;
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly expectedGeneration: number;
+    readonly expectedRuntimeEpoch: number;
+    readonly signal?: AbortSignal;
+  }): Promise<string> {
+    const value = object(
+      await this.post("/idle-stop", withoutSignal(input), input.signal),
+      "invalid idle stop response",
+    );
+    return nonEmptyString(value.operationId, "idle stop operation ID missing");
+  }
+
+  async issueObservationCredential(input: {
+    readonly workerId: string;
+    readonly clusterId: string;
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly expectedGeneration: number;
+    readonly runtimeEpoch: number;
+    readonly signal?: AbortSignal;
+  }): Promise<ControlCredentialResponse & { readonly operationId: string }> {
+    const value = object(
+      await this.post("/observation-credential", withoutSignal(input), input.signal),
+      "invalid idle observation credential response",
+    );
+    const token = nonEmptyString(value.token, "idle observation credential token missing");
+    const expiresAt = nonEmptyString(value.expiresAt, "idle observation credential expiry missing");
+    const operationId = nonEmptyString(
+      value.operationId,
+      "idle observation credential operation ID missing",
+    );
+    const expiry = Date.parse(expiresAt);
+    const now = Date.now();
+    if (
+      token.length > 8192 ||
+      /[\r\n]/u.test(token) ||
+      !Number.isFinite(expiry) ||
+      expiry <= now ||
+      expiry > now + 31_000
+    ) {
+      throw new TypeError("idle observation credential response is invalid or expired");
+    }
+    return { token, expiresAt, operationId };
   }
 
   async claimNext(input: {

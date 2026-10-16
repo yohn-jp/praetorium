@@ -152,6 +152,171 @@ function client(fetch: typeof globalThis.fetch) {
 }
 
 describe("OperationServiceHttpClient", () => {
+  it("uses bounded idle candidate and generation-fenced stop/observation routes", async () => {
+    const requests: { path: string; body: Record<string, unknown> }[] = [];
+    const service = client(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ path, body });
+      if (path.endsWith("/idle-candidates")) {
+        return Response.json({ items: [], nextCursor: "cursor-next" });
+      }
+      if (path.endsWith("/idle-stop")) return Response.json({ operationId: "op_idle" });
+      return Response.json({
+        token: "short-lived-observation-token",
+        expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        operationId: "op_observation",
+      });
+    });
+
+    const page = await service.listIdleCandidates({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      limit: 25,
+      cursor: null,
+    });
+    const operationId = await service.createIdleStop({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      expectedGeneration: 7,
+      expectedRuntimeEpoch: 9,
+    });
+    const credential = await service.issueObservationCredential({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      expectedGeneration: 7,
+      runtimeEpoch: 9,
+    });
+
+    expect(page).toEqual({ items: [], nextCursor: "cursor-next" });
+    expect(operationId).toBe("op_idle");
+    expect(credential.operationId).toBe("op_observation");
+    expect(requests).toEqual([
+      {
+        path: "/internal/provisioner/idle-candidates",
+        body: { workerId: "worker-a", clusterId: "cluster-a", limit: 25, cursor: null },
+      },
+      {
+        path: "/internal/provisioner/idle-stop",
+        body: {
+          workerId: "worker-a",
+          clusterId: "cluster-a",
+          instanceId: "ins_01",
+          repositoryId: 123456,
+          expectedGeneration: 7,
+          expectedRuntimeEpoch: 9,
+        },
+      },
+      {
+        path: "/internal/provisioner/observation-credential",
+        body: {
+          workerId: "worker-a",
+          clusterId: "cluster-a",
+          instanceId: "ins_01",
+          repositoryId: 123456,
+          expectedGeneration: 7,
+          runtimeEpoch: 9,
+        },
+      },
+    ]);
+  });
+
+  it("parses a typed current-runtime candidate and keeps pagination bounded", async () => {
+    const runtime = resolvedRuntime(
+      "rev_idle",
+      9,
+      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    const service = client(async () =>
+      Response.json({
+        items: [
+          {
+            instanceId: "ins_01",
+            repositoryId: 123456,
+            generation: 7,
+            runtimeEpoch: 9,
+            clusterId: "cluster-a",
+            desiredState: "running",
+            bindingSuspended: false,
+            hasActiveOperation: false,
+            currentRuntime: runtime,
+          },
+        ],
+        nextCursor: null,
+      }),
+    );
+
+    const page = await service.listIdleCandidates({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      limit: 1,
+      cursor: null,
+    });
+
+    expect(page.items[0]).toMatchObject({
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      generation: 7,
+      runtimeEpoch: 9,
+      desiredState: "running",
+      currentRuntime: { revisionId: "rev_idle" },
+    });
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("rejects malformed idle candidates and excessive page bounds", async () => {
+    const service = client(async (input) => {
+      if (String(input).endsWith("/idle-candidates")) {
+        const runtime = resolvedRuntime(
+          "rev_idle",
+          9,
+          "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        return Response.json({
+          items: [
+            {
+              instanceId: "ins_01",
+              repositoryId: 123456,
+              generation: 7,
+              runtimeEpoch: 9,
+              clusterId: "cluster-a",
+              desiredState: "running",
+              bindingSuspended: false,
+              hasActiveOperation: false,
+              currentRuntime: {
+                ...runtime,
+                assignment: { ...runtime.assignment, instanceId: "ins_other" },
+              },
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      return Response.json({});
+    });
+
+    await expect(
+      service.listIdleCandidates({
+        workerId: "worker-a",
+        clusterId: "cluster-a",
+        limit: 25,
+        cursor: null,
+      }),
+    ).rejects.toThrow("idle candidate current runtime identity mismatch");
+    await expect(
+      service.listIdleCandidates({
+        workerId: "worker-a",
+        clusterId: "cluster-a",
+        limit: 26,
+        cursor: null,
+      }),
+    ).rejects.toThrow("idle candidate page limit");
+  });
+
   it("claims through the authenticated internal API and validates identity", async () => {
     let requestUrl = "";
     let requestInit: RequestInit | undefined;

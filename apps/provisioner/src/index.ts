@@ -2,6 +2,7 @@ export * from "./health.js";
 export * from "./metrics.js";
 export * from "./operation-client.js";
 export * from "./lifecycle-executor.js";
+export * from "./idle-controller.js";
 export * from "./lifecycle-journal.js";
 export * from "./kubernetes-lifecycle-adapter.js";
 export * from "./scriptorium-control-client.js";

@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RuntimeAssignment } from "@praetorium/application/lifecycle";
 import {
+  IdleObservationRuntimeControlCredentialProvider,
   ScriptoriumControlHttpClient,
   type RuntimeControlCredentialRequest,
 } from "./scriptorium-control-client.js";
+import type { ProvisionerOperationService } from "./operation-client.js";
 
 const instanceId = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const imageDigest = `sha256:${"a".repeat(64)}`;
@@ -134,6 +136,41 @@ function client(options: {
 }
 
 describe("ScriptoriumControlHttpClient", () => {
+  it("limits idle observation credentials to a generation-fenced status-only call", async () => {
+    const issueObservationCredential = vi.fn(async () => ({
+      token: "signed-observation-token",
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      operationId: "op_observation",
+    }));
+    const operations = { issueObservationCredential } as unknown as ProvisionerOperationService;
+    const credentials = new IdleObservationRuntimeControlCredentialProvider(
+      operations,
+      "worker-idle",
+    );
+    const current = assignment();
+    const request: RuntimeControlCredentialRequest = {
+      assignment: current,
+      policy: current.deployment.controlServicePolicy,
+      endpoint: "status",
+      payloadDigest: "sha256:" + createHash("sha256").update("").digest("hex"),
+    };
+
+    await expect(credentials.issue(request)).resolves.toBe("signed-observation-token");
+    await expect(credentials.issue({ ...request, endpoint: "quiesce" })).rejects.toThrow(
+      "restricted to empty-body status reads",
+    );
+
+    expect(issueObservationCredential).toHaveBeenCalledTimes(1);
+    expect(issueObservationCredential).toHaveBeenCalledWith({
+      workerId: "worker-idle",
+      clusterId: current.clusterId,
+      instanceId,
+      repositoryId: 123456,
+      expectedGeneration: 4,
+      runtimeEpoch: 9,
+    });
+  });
+
   it("uses a live provider-resolved endpoint and hashes the empty status body", async () => {
     let requestUrl = "";
     let requestInit: RequestInit | undefined;

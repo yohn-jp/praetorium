@@ -46,7 +46,7 @@ class ClaimedArtifactBuildProvider implements LifecycleBuildProvider {
     return {
       status: "admitted" as const,
       ...(buildId === undefined ? {} : { buildId }),
-      deployment: operation.target ?? deploymentFromClaim(target),
+      deployment: operation.target ?? deploymentFromResolvedRuntime(target),
     };
   }
 
@@ -57,7 +57,7 @@ class ClaimedArtifactBuildProvider implements LifecycleBuildProvider {
   }
 }
 
-function deploymentFromClaim(
+export function deploymentFromResolvedRuntime(
   runtime: NonNullable<ClaimedProvisionerOperation["runtimeContext"]["target"]>,
 ): RuntimeDeployment {
   return {

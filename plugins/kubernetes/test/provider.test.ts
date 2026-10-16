@@ -429,6 +429,10 @@ describe("Kubernetes runtime provider", () => {
     expect(resources.map((resource) => resource.kind)).not.toContain("IngressRoute");
     expect(resources.map((resource) => resource.kind)).not.toContain("PersistentVolumeClaim");
     expect(podSpec.automountServiceAccountToken).toBe(false);
+    expect(podSpec.tolerations).toEqual([
+      { key: "node.kubernetes.io/not-ready", operator: "Exists", effect: "NoExecute" },
+      { key: "node.kubernetes.io/unreachable", operator: "Exists", effect: "NoExecute" },
+    ]);
     expect(podSpec.serviceAccountName).toBe(`${DEPLOYMENT}-app`);
     expect(podSpec.containers).toHaveLength(1);
     expect(container.image).toBe(spec().release?.artifactRef);

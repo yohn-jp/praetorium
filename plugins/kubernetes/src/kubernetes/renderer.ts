@@ -359,6 +359,12 @@ function deployment(
         spec: {
           serviceAccountName: `${name}-app`,
           automountServiceAccountToken: false,
+          // Retain the old writer in the API census during a node partition.
+          // Default 300-second eviction cannot prove its process has stopped.
+          tolerations: [
+            { key: "node.kubernetes.io/not-ready", operator: "Exists", effect: "NoExecute" },
+            { key: "node.kubernetes.io/unreachable", operator: "Exists", effect: "NoExecute" },
+          ],
           terminationGracePeriodSeconds: app.shutdownTimeoutSeconds,
           securityContext: {
             runAsNonRoot: true,

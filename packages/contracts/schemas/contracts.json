@@ -1657,6 +1657,7 @@
               "none",
               "pending",
               "reserved",
+              "allocated",
               "blocked",
               "released"
             ]
@@ -1930,6 +1931,7 @@
           "none",
           "pending",
           "reserved",
+          "allocated",
           "blocked",
           "released"
         ]
@@ -2922,6 +2924,7 @@
               "none",
               "pending",
               "reserved",
+              "allocated",
               "blocked",
               "released"
             ]
@@ -3155,6 +3158,7 @@
               "none",
               "pending",
               "reserved",
+              "allocated",
               "blocked",
               "released"
             ]

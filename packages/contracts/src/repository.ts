@@ -38,7 +38,7 @@ export const InstanceSnapshotSchema = LogicalInstanceSchema.extend({
   observedSequence: z.number().int().nonnegative(),
   desiredRevisionId: z.string().nullable(),
   observedRevisionId: z.string().nullable(),
-  reservationState: z.enum(["none", "pending", "reserved", "blocked", "released"]),
+  reservationState: z.enum(["none", "pending", "reserved", "allocated", "blocked", "released"]),
   reservationId: z.string().nullable(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),

@@ -8,6 +8,8 @@ import { createRunnerEnvironment, REQUIRED_CATEGORIES } from "../../scripts/veri
 
 const scriptPath = path.resolve("scripts/verify-integration.mjs");
 const fixturePath = path.resolve("tests/integration/fixtures/acceptance-inventory.fixture.json");
+const sourceHandlersPath = path.resolve("docs/migration/SOURCE-HANDLERS.json");
+const coveragePath = path.resolve("docs/migration/COVERAGE.json");
 
 function run(arguments_) {
   const result = spawnSync(process.execPath, [scriptPath, ...arguments_], {
@@ -208,4 +210,35 @@ test("production declarations and incomplete category sets block the run", async
     assert.equal(stable.status, "BLOCKED");
     assert.equal(stable.proofStatus, "NOT_CHECKED");
   });
+});
+
+test("expanded source handler surfaces map to current migration coverage", async () => {
+  const [inventoryText, coverageText] = await Promise.all([
+    readFile(sourceHandlersPath, "utf8"),
+    readFile(coveragePath, "utf8"),
+  ]);
+  const inventory = JSON.parse(inventoryText);
+  const coverage = JSON.parse(coverageText);
+  const coverageIds = new Set(coverage.entries.map((entry) => entry.id));
+  const groupCounts = Object.fromEntries(
+    inventory.groups.map((group) => [group.id, group.handlers.length]),
+  );
+  const handlers = inventory.groups.flatMap((group) => group.handlers);
+
+  assert.equal(handlers.length, 65);
+  assert.equal(
+    Object.values(inventory.counts).reduce((total, count) => total + count, 0),
+    handlers.length,
+  );
+  assert.deepEqual(groupCounts, {
+    gateway: inventory.counts.gatewayRoutes,
+    "control-plane": inventory.counts.controlPlaneRoutes,
+    "instance-access": inventory.counts.instanceAccessRoutes,
+    "provisioner-health": inventory.counts.provisionerHealthRoutes,
+    "provisioner-worker": inventory.counts.provisionerWorkerSurfaces,
+  });
+  for (const handler of handlers) {
+    assert.ok(coverageIds.has(handler.coverageEntry), `${handler.surface} has no coverage entry`);
+    assert.ok(handler.sourcePath && !path.isAbsolute(handler.sourcePath));
+  }
 });

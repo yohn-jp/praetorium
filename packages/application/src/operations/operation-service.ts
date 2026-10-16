@@ -1,5 +1,6 @@
 import type { OperationRecord } from "../instances/types.js";
 import type {
+  BlockClaimInput,
   ClaimedOperation,
   OperationCheckpointInput,
   OperationObservation,
@@ -20,6 +21,14 @@ export class OperationService {
 
   getById(operationId: string): Promise<OperationRecord | null> {
     return this.store.getOperationById(operationId);
+  }
+
+  async blockClaim(input: BlockClaimInput): Promise<OperationRecord> {
+    validateClaimBlock(input);
+    const operation = await this.store.blockClaimOperation(input);
+    if (!operation)
+      throw new OperationFenceConflict("claimed operation lease is no longer current");
+    return operation;
   }
 
   reserveRuntime(input: ReserveRuntimeInput) {
@@ -114,7 +123,7 @@ export class OperationService {
     readonly leaseToken: string;
     readonly leaseEpoch: number;
     readonly sequence: number;
-    readonly observation: OperationObservation;
+    readonly observation: OperationObservation | null;
     readonly terminal?: OperationTerminal | null;
     readonly now: number;
   }): Promise<{
@@ -135,6 +144,32 @@ function validateLeaseRequest(workerId: string, leaseSeconds: number): void {
   if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(workerId)) throw new TypeError("invalid worker ID");
   if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds < 5 || leaseSeconds > 300) {
     throw new TypeError("lease duration must be between 5 and 300 seconds");
+  }
+}
+
+function validateClaimBlock(input: BlockClaimInput): void {
+  if (
+    !/^[A-Za-z0-9_.:-]{1,128}$/u.test(input.operationId) ||
+    !/^[A-Za-z0-9_.:-]{1,128}$/u.test(input.workerId) ||
+    input.leaseToken.length < 32 ||
+    input.leaseToken.length > 256 ||
+    !Number.isSafeInteger(input.leaseEpoch) ||
+    input.leaseEpoch < 0 ||
+    !Number.isSafeInteger(input.now) ||
+    input.now < 0
+  ) {
+    throw new TypeError("claim block lease identity is invalid");
+  }
+  if (!/^[A-Z][A-Z0-9_]{0,63}$/u.test(input.code)) {
+    throw new TypeError("claim block code must be a bounded uppercase identifier");
+  }
+  if (
+    typeof input.message !== "string" ||
+    input.message.length < 1 ||
+    input.message.length > 400 ||
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(input.message)
+  ) {
+    throw new TypeError("claim block message must be bounded plain text");
   }
 }
 

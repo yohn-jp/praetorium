@@ -29,6 +29,9 @@ export class InstanceService {
   }
 
   async requestDesiredState(input: DesiredStateMutationInput): Promise<DesiredStateMutationResult> {
+    if (input.desiredState === "stopped" && input.forceNewRuntime === true) {
+      throw new TypeError("forceNewRuntime is only valid for a running desired state");
+    }
     const scope = `repository:${input.repositoryId}`;
     const requestHash = await hashRequest({
       repositoryId: input.repositoryId,

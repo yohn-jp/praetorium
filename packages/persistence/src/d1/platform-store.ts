@@ -15,6 +15,7 @@ import type {
   SuspendBindingInput,
 } from "@praetorium/application/instances";
 import type {
+  BlockClaimInput,
   ClaimedOperation,
   OperationCheckpointInput,
   OperationObservation,
@@ -401,6 +402,55 @@ export class D1PlatformStore implements OperationStore {
       .bind(operationId)
       .first<OperationRow>();
     return row ? toOperation(row) : null;
+  }
+
+  async blockClaimOperation(input: BlockClaimInput): Promise<OperationRecord | null> {
+    const resultJson = JSON.stringify({ code: input.code, message: input.message });
+    let results: readonly { readonly meta: { readonly changes: number } }[];
+    try {
+      results = await this.db.batch([
+        this.db
+          .prepare(
+            `UPDATE operations
+             SET status = 'blocked', phase = 'blocked', result_json = ?,
+                 lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+             WHERE operation_id = ? AND worker_id = ? AND lease_token = ? AND lease_epoch = ?
+               AND lease_expires_at > ? AND status = 'claimed'`,
+          )
+          .bind(
+            resultJson,
+            input.now,
+            input.operationId,
+            input.workerId,
+            input.leaseToken,
+            input.leaseEpoch,
+            input.now,
+          ),
+        this.assertOneChange(),
+        this.db
+          .prepare(
+            `INSERT INTO audit_events (
+               event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
+               action, outcome, request_id, metadata_json, occurred_at
+             ) SELECT ?, repository_id, instance_id, operation_id, ?, 'provisioner',
+                      'operation.claim.blocked', 'blocked', request_id, ?, ?
+               FROM operations WHERE operation_id = ? AND status = 'blocked' AND lease_epoch = ?`,
+          )
+          .bind(
+            `operation.claim.blocked:${input.operationId}:${input.leaseEpoch}`,
+            input.workerId,
+            resultJson,
+            input.now,
+            input.operationId,
+            input.leaseEpoch,
+          ),
+      ]);
+    } catch (error) {
+      if (isTransactionAssertion(error)) return null;
+      throw error;
+    }
+    if (results[0]?.meta.changes !== 1) return null;
+    return this.getOperationById(input.operationId);
   }
 
   requestDesiredState(input: D1DesiredStateInput): Promise<DesiredStateMutationResult | null> {
@@ -1304,7 +1354,7 @@ export class D1PlatformStore implements OperationStore {
     readonly leaseToken: string;
     readonly leaseEpoch: number;
     readonly sequence: number;
-    readonly observation: OperationObservation;
+    readonly observation: OperationObservation | null;
     readonly terminal: OperationTerminal | null;
     readonly now: number;
   }): Promise<{
@@ -1313,7 +1363,7 @@ export class D1PlatformStore implements OperationStore {
     readonly duplicate: boolean;
   } | null> {
     const observation = input.observation;
-    if (observation.operationId !== input.operationId) return null;
+    if ((input.terminal === "succeeded") !== (observation !== null)) return null;
     const digest = await digestJson({ observation, terminal: input.terminal });
     const current = await this.db
       .prepare("SELECT * FROM operations WHERE operation_id = ?")
@@ -1335,13 +1385,22 @@ export class D1PlatformStore implements OperationStore {
       !(current.status === "claimed" || current.status === "running")
     )
       return null;
-    if (
-      observation.instanceId !== current.instance_id ||
-      observation.repositoryId !== current.repository_id ||
-      observation.generation !== current.generation ||
-      observation.runtimeEpoch !== current.runtime_epoch
-    )
-      return null;
+    if (observation) {
+      if (
+        observation.instanceId !== current.instance_id ||
+        observation.repositoryId !== current.repository_id ||
+        observation.generation !== current.generation ||
+        observation.runtimeEpoch !== current.runtime_epoch
+      )
+        return null;
+      if (
+        current.kind === "stop" &&
+        ((observation.observedState !== "absent" && observation.observedState !== "stopped") ||
+          observation.observedArtifactDigest !== null ||
+          observation.observedRevisionId !== null)
+      )
+        return null;
+    }
 
     const status = input.terminal ?? "running";
     const phase =
@@ -1353,12 +1412,10 @@ export class D1PlatformStore implements OperationStore {
             ? "blocked"
             : current.phase;
     const resultJson = JSON.stringify({ observation, terminal: input.terminal });
-    let results: readonly { readonly meta: { readonly changes: number } }[];
-    try {
-      results = await this.db.batch([
-        this.db
-          .prepare(
-            `UPDATE operations SET status = ?, phase = ?, report_sequence = ?, last_report_digest = ?,
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `UPDATE operations SET status = ?, phase = ?, report_sequence = ?, last_report_digest = ?,
                result_json = ?, updated_at = ?
            WHERE operation_id = ? AND worker_id = ? AND lease_token = ? AND lease_epoch = ?
              AND lease_expires_at > ? AND status IN ('claimed', 'running') AND report_sequence = ?
@@ -1366,8 +1423,23 @@ export class D1PlatformStore implements OperationStore {
                          AND i.generation = operations.generation AND i.runtime_epoch = operations.runtime_epoch)
              AND (
                ? <> 'succeeded'
-               OR (operations.kind = 'stop' AND ? IN ('absent', 'stopped'))
-               OR (operations.kind <> 'stop' AND ? = 'ready' AND EXISTS (
+               OR (operations.kind = 'stop' AND operations.phase = 'complete'
+                   AND ? IN ('absent', 'stopped') AND ? IS NULL AND ? IS NULL
+                   AND EXISTS (
+                     SELECT 1 FROM operation_checkpoints old_writer_absent
+                     WHERE old_writer_absent.operation_id = operations.operation_id
+                       AND old_writer_absent.phase = 'old-writer-absent'
+                       AND old_writer_absent.runtime_epoch = operations.runtime_epoch
+                   )
+                   AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.instanceId') = operations.instance_id
+                   AND CAST(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') AS INTEGER) = operations.repository_id
+                   AND CAST(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') AS INTEGER) = operations.runtime_epoch)
+               OR (operations.kind <> 'stop' AND operations.phase = 'complete' AND ? = 'ready' AND EXISTS (
+                 SELECT 1 FROM operation_checkpoints route_activated
+                 WHERE route_activated.operation_id = operations.operation_id
+                   AND route_activated.phase = 'route-activated'
+                   AND route_activated.runtime_epoch = operations.runtime_epoch
+               ) AND EXISTS (
                  SELECT 1 FROM deployment_revisions d JOIN artifacts a ON a.artifact_digest = d.artifact_digest
                  WHERE d.revision_id = operations.deployment_revision_id AND d.instance_id = operations.instance_id
                    AND d.repository_id = operations.repository_id AND d.status = 'admitted'
@@ -1375,27 +1447,32 @@ export class D1PlatformStore implements OperationStore {
                ))
              )
            `,
-          )
-          .bind(
-            status,
-            phase,
-            input.sequence,
-            digest,
-            resultJson,
-            input.now,
-            input.operationId,
-            input.workerId,
-            input.leaseToken,
-            input.leaseEpoch,
-            input.now,
-            current.report_sequence,
-            input.terminal ?? "running",
-            observation.observedState,
-            observation.observedState,
-            observation.observedRevisionId,
-            observation.observedArtifactDigest,
-          ),
-        this.assertOneChange(),
+        )
+        .bind(
+          status,
+          phase,
+          input.sequence,
+          digest,
+          resultJson,
+          input.now,
+          input.operationId,
+          input.workerId,
+          input.leaseToken,
+          input.leaseEpoch,
+          input.now,
+          current.report_sequence,
+          input.terminal ?? "running",
+          observation?.observedState ?? null,
+          observation?.observedArtifactDigest ?? null,
+          observation?.observedRevisionId ?? null,
+          observation?.observedState ?? null,
+          observation?.observedRevisionId ?? null,
+          observation?.observedArtifactDigest ?? null,
+        ),
+      this.assertOneChange(),
+    ];
+    if (observation) {
+      statements.push(
         this.db
           .prepare(
             `UPDATE logical_instances
@@ -1432,28 +1509,34 @@ export class D1PlatformStore implements OperationStore {
             observation.sequence,
           ),
         this.assertOneChange(),
-        this.db
-          .prepare(
-            `INSERT INTO audit_events (
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO audit_events (
              event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
              action, outcome, request_id, metadata_json, occurred_at
            ) SELECT ?, repository_id, instance_id, operation_id, ?, 'provisioner', 'operation.reported', ?, request_id, ?, ?
              FROM operations WHERE operation_id = ? AND report_sequence = ?`,
-          )
-          .bind(
-            `operation.report:${input.operationId}:${input.sequence}`,
-            input.workerId,
-            status,
-            JSON.stringify({
-              phase,
-              observationSequence: observation.sequence,
-              runtimeEpoch: observation.runtimeEpoch,
-            }),
-            input.now,
-            input.operationId,
-            input.sequence,
-          ),
-      ]);
+        )
+        .bind(
+          `operation.report:${input.operationId}:${input.sequence}`,
+          input.workerId,
+          status,
+          JSON.stringify({
+            phase,
+            observationSequence: observation?.sequence ?? null,
+            observedRuntimeEpoch: observation?.runtimeEpoch ?? null,
+          }),
+          input.now,
+          input.operationId,
+          input.sequence,
+        ),
+    );
+    let results: readonly { readonly meta: { readonly changes: number } }[];
+    try {
+      results = await this.db.batch(statements);
     } catch (error) {
       if (isTransactionAssertion(error)) return null;
       throw error;

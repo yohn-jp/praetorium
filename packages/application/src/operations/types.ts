@@ -107,7 +107,6 @@ export type OperationCheckpointInput = {
 };
 
 export type OperationObservation = {
-  readonly operationId: string;
   readonly instanceId: string;
   readonly repositoryId: number;
   readonly generation: number;
@@ -120,6 +119,16 @@ export type OperationObservation = {
 };
 
 export type OperationTerminal = "succeeded" | "failed" | "blocked";
+
+export type BlockClaimInput = {
+  readonly operationId: string;
+  readonly workerId: string;
+  readonly leaseToken: string;
+  readonly leaseEpoch: number;
+  readonly code: string;
+  readonly message: string;
+  readonly now: number;
+};
 
 export type ReserveRuntimeInput = {
   readonly operationId: string;
@@ -146,6 +155,7 @@ export type ReservationSnapshot = {
 
 export type OperationStore = {
   getOperationById(operationId: string): Promise<OperationRecord | null>;
+  blockClaimOperation(input: BlockClaimInput): Promise<OperationRecord | null>;
   recordCapacitySnapshot(input: {
     readonly clusterId: string;
     readonly observedAt: number;
@@ -196,7 +206,8 @@ export type OperationStore = {
     readonly leaseToken: string;
     readonly leaseEpoch: number;
     readonly sequence: number;
-    readonly observation: OperationObservation;
+    /** Null records operation progress without changing the instance's actual runtime observation. */
+    readonly observation: OperationObservation | null;
     readonly terminal: OperationTerminal | null;
     readonly now: number;
   }): Promise<{

@@ -59,6 +59,7 @@ export type ControlPlaneDependencies = {
   webhook?: Parameters<typeof createGitHubWebhookRoutes>[0];
   operatorAdmission?: Hono;
   operatorToken?: string;
+  runtimeIdentity?: Hono;
   now?: () => number;
 };
 /** Only authenticated control metadata enters this Worker. Actor identity comes from Gateway session authority. */
@@ -83,6 +84,12 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
     if (c.req.path === "/v1/operator/releases" || c.req.path === "/v1/operator/releases/") {
       if (!deps.operatorAdmission)
         return c.json({ error: { code: "RELEASE_SERVICE_UNAVAILABLE" } }, 503);
+      await next();
+      return;
+    }
+    if (c.req.path === "/.well-known/runtime-identity-jwks.json" && c.req.method === "GET") {
+      if (!deps.runtimeIdentity)
+        return c.json({ error: { code: "RUNTIME_IDENTITY_UNAVAILABLE" } }, 503);
       await next();
       return;
     }
@@ -173,6 +180,7 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
   }
   if (deps.operationAdmin) app.route("/", createOperationAdminRoutes(deps.operationAdmin));
   if (deps.webhook) app.route("/", createGitHubWebhookRoutes(deps.webhook));
+  if (deps.runtimeIdentity) app.route("/", deps.runtimeIdentity);
   if (deps.operatorAdmission) app.route("/v1/operator/releases", deps.operatorAdmission);
   if (deps.builds) app.route("/", createBuildRoutes(deps.builds));
   if (deps.management) app.route("/", createManagementRoutes(deps.management));

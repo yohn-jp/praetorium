@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, webcrypto } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -58,6 +58,15 @@ function makeMiniflare(script, persistenceRoot, secrets, compatibilityDate, comp
       PROVISIONER_CLUSTER_ID: "test-cluster",
       GATEWAY_ORIGIN: "https://gateway.test",
       INSTANCE_HOST_SUFFIX: "instances.test",
+      CONTROL_PLANE_ORIGIN: "https://control-plane.test",
+      RUNTIME_IDENTITY_SIGNING_KEY: secrets.runtimeIdentityKey,
+      ...(secrets.buildPolicy ? { BUILD_POLICY_JSON: secrets.buildPolicy } : {}),
+      ...(secrets.releasePolicy
+        ? {
+            RELEASE_POLICY_JSON: secrets.releasePolicy,
+            RELEASE_OPERATOR_TOKEN: secrets.releaseOperator,
+          }
+        : {}),
     },
     d1Databases: { CONTROL_PLANE_DB: "praetorium-t14-control-plane" },
     d1Persist: path.join(persistenceRoot, "d1"),
@@ -198,9 +207,18 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
   assert.ok(script, "Wrangler dry-run must produce the actual Control Plane Worker bundle");
 
   const persistenceRoot = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-workers-d1-do-"));
+  const identityKey = await webcrypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
   const secrets = {
     gateway: randomBytes(32).toString("base64url"),
     provisioner: randomBytes(32).toString("base64url"),
+    runtimeIdentityKey: JSON.stringify({
+      kid: "t14-owned-runtime-identity",
+      privateKeyJwk: await webcrypto.subtle.exportKey("jwk", identityKey.privateKey),
+    }),
   };
   assert.notEqual(secrets.gateway, secrets.provisioner);
   let miniflare;
@@ -249,6 +267,39 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     });
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { service: "praetorium-control-plane", status: "ok" });
+    const identityJwksResponse = await miniflare.dispatchFetch(
+      "https://control-plane.test/.well-known/runtime-identity-jwks.json",
+    );
+    assert.equal(identityJwksResponse.status, 200);
+    const identityJwks = await identityJwksResponse.json();
+    assert.equal(identityJwks.keys.length, 1);
+    assert.deepEqual(Object.keys(identityJwks.keys[0]).sort(), [
+      "alg",
+      "crv",
+      "kid",
+      "kty",
+      "use",
+      "x",
+      "y",
+    ]);
+    assert.equal(identityJwks.keys[0].kid, "t14-owned-runtime-identity");
+    const privateBindingUrl = `https://control-plane.test/internal/runtime-bindings/${testRepository.repositoryId}`;
+    assert.equal((await miniflare.dispatchFetch(privateBindingUrl)).status, 401);
+    assert.equal(
+      (
+        await miniflare.dispatchFetch(privateBindingUrl, {
+          headers: gatewayHeaders(secrets.gateway),
+        })
+      ).status,
+      404,
+      "no reservation or writer cannot become an active runtime binding",
+    );
+    assert.equal(
+      (await postJson(miniflare, "/internal/provisioner/runtime-identity", secrets.gateway, {}))
+        .response.status,
+      401,
+      "Gateway authority cannot mint runtime service identities",
+    );
 
     const unauthenticated = await miniflare.dispatchFetch(
       "https://control-plane.test/v1/repositories/resolve",
@@ -438,6 +489,76 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     );
     assert.equal(suspended.status, 200);
     assert.equal((await suspended.json()).binding.suspended, true);
+
+    // Exercise the real release composition constructor and isolated operator
+    // entry with owned local keys; no real producer manifest is fabricated.
+    await miniflare.dispose();
+    const builderKey = await webcrypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const releaseOperator = randomBytes(32).toString("base64url");
+    miniflare = makeMiniflare(
+      script,
+      persistenceRoot,
+      {
+        ...secrets,
+        releaseOperator,
+        buildPolicy: JSON.stringify({
+          registryUrl: "https://registry.test",
+          allowedRepositories: ["praetorium-t14/output"],
+          outputRepository: "praetorium-t14/output",
+          maxImageLayerBytes: 1048576,
+          maxImageVerificationMs: 5000,
+          maxRegistryRequestMs: 1000,
+          runtimeResourceLimits: { cpuMilli: 1000, memoryMiB: 1024, ephemeralStorageMiB: 1024 },
+          targetPlatform: "linux/amd64",
+          builderKeys: [
+            {
+              keyId: "t14-owned-builder",
+              publicKeyBase64: Buffer.from(
+                await webcrypto.subtle.exportKey("raw", builderKey.publicKey),
+              ).toString("base64"),
+            },
+          ],
+        }),
+        releasePolicy: JSON.stringify({
+          workerId: "t14-owned-release-worker",
+          clusterId: "test-cluster",
+          operatorActorId: "t14-owned-operator",
+          signerIdentityAllowlist: [{ subjectAlternativeName: "t14-owned-producer@test.invalid" }],
+          canary: {
+            owner: "sophia uid=1000",
+            disposable: true,
+            production: false,
+            repositoryId: testRepository.repositoryId,
+            instanceId,
+            bindingEpoch: snapshot.binding.bindingEpoch,
+            authorizationRevision: snapshot.binding.authorizationRevision,
+            requestedModules: [],
+            resourceProfileId: "t14-small",
+          },
+        }),
+      },
+      compatibilityDateMatch[1],
+      compatibilityFlags,
+    );
+    await miniflare.ready;
+    const operatorPath = "/v1/operator/releases";
+    assert.equal(
+      (await postJson(miniflare, operatorPath, secrets.gateway, {})).response.status,
+      403,
+      "Gateway service authority is not operator release authority",
+    );
+    assert.equal(
+      (await postJson(miniflare, operatorPath, secrets.provisioner, {}, "Authorization")).response
+        .status,
+      403,
+      "Provisioner service authority is not operator release authority",
+    );
+    assert.equal(
+      (await postJson(miniflare, operatorPath, releaseOperator, {}, "Authorization")).response
+        .status,
+      422,
+      "operator authority reaches real admission but cannot admit a malformed manifest",
+    );
   } finally {
     await miniflare?.dispose();
     await rm(persistenceRoot, { recursive: true, force: true });

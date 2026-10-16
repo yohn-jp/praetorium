@@ -2,6 +2,8 @@ import { BuildInputSchema } from "@praetorium/contracts";
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
 import { createScheduledHandler } from "./scheduled.js";
+import { createRuntimeIdentityRoutes } from "./runtime-identity-routes.js";
+import { createRuntimeBindingMetadataReader } from "./runtime-binding.js";
 import { newInstanceId, newOperationId } from "@praetorium/domain";
 import { InstanceService, RepositoryRegistryService } from "@praetorium/application/instances";
 import { OperationService } from "@praetorium/application/operations";
@@ -26,6 +28,7 @@ export interface ControlPlaneEnv {
   RUNTIME_REGISTRY_HOST?: string;
   GIT_CREDENTIAL_BROKER_LOCATOR?: string;
   RUNTIME_CONTROL_SIGNING_KEY?: string;
+  RUNTIME_IDENTITY_SIGNING_KEY?: string;
   BUILD_POLICY_JSON?: string;
   REGISTRY_PULL_CREDENTIAL?: string;
   BUILD_WORKER_AUTH_TOKEN?: string;
@@ -77,6 +80,19 @@ function composeServices(env: ControlPlaneEnv) {
         })
       : undefined;
   const app = createControlPlaneApp({
+    ...(env.RUNTIME_IDENTITY_SIGNING_KEY
+      ? {
+          runtimeIdentity: createRuntimeIdentityRoutes({
+            db: env.CONTROL_PLANE_DB,
+            runtimeBindings: createRuntimeBindingMetadataReader({ db: env.CONTROL_PLANE_DB }),
+            operations,
+            signingKey: JSON.parse(env.RUNTIME_IDENTITY_SIGNING_KEY),
+            issuerOrigin: required(env.CONTROL_PLANE_ORIGIN),
+            workerId: required(env.PROVISIONER_WORKER_ID),
+            clusterId: required(env.PROVISIONER_CLUSTER_ID),
+          }),
+        }
+      : {}),
     ...(releases
       ? {
           operatorAdmission: releases.operatorReleaseAdmission,

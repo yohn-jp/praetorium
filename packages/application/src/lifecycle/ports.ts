@@ -2,11 +2,7 @@
  * package never imports Kubernetes, a producer SDK, D1, or HTTP framework code.
  */
 
-export type LifecycleOperationKind =
-  | "start"
-  | "redeploy"
-  | "update"
-  | "stop";
+export type LifecycleOperationKind = "start" | "redeploy" | "update" | "stop";
 
 export type LifecyclePhase =
   | "accepted"
@@ -41,13 +37,32 @@ export interface RuntimeDeployment {
   readonly repositoryLocator: string;
   readonly defaultBranchPolicy: string;
   readonly imageDigest: string;
+  readonly artifactRef: string;
+  readonly platformManifestDigest: string;
   readonly compositionManifestDigest: string;
   readonly enabledModuleIds: readonly string[];
   readonly credentialBrokerLocator: string;
   readonly grantPolicy: ScriptoriumRuntimePolicy;
   readonly controlServicePolicy: ScriptoriumRuntimePolicy;
+  readonly runtimeMetadata: {
+    readonly producerRevision: string;
+    readonly listenerPort: number;
+    readonly livenessPath: string;
+    readonly readinessPath: string;
+    readonly metadataPath: string;
+    readonly shutdownPath: string;
+    readonly statusPath: string;
+    readonly quiescePath: string;
+    readonly resumePath: string;
+    readonly shutdownTimeoutSeconds: number;
+  };
   readonly hostname: string;
   readonly resourceProfileId: string;
+  readonly resources: {
+    readonly cpuMilli: number;
+    readonly memoryMiB: number;
+    readonly ephemeralStorageMiB: number;
+  };
 }
 
 export interface RuntimeAssignment {
@@ -110,7 +125,8 @@ export interface ProducerStatus {
 }
 
 export interface RuntimeWriter {
-  readonly runtimeEpoch: RuntimeEpoch;
+  /** Null is an unlabelled/unbound Pod; it still counts as a possible writer. */
+  readonly runtimeEpoch: RuntimeEpoch | null;
   readonly phase: "running" | "terminating";
   /** Provider-observed workload identities, such as Kubernetes pod UIDs. */
   readonly identities: readonly string[];
@@ -131,7 +147,7 @@ export interface WriterCensus {
 export interface WriterAbsenceProof {
   readonly instanceId: string;
   readonly repositoryId: number;
-  readonly retiredEpoch: RuntimeEpoch | null;
+  readonly retiredRuntimeEpoch: RuntimeEpoch | null;
   readonly providerObservationId: string;
   readonly censusObservedAt: string;
   readonly remainingWriters: 0;
@@ -234,12 +250,19 @@ export interface LifecycleProducerProvider {
     beforeEffect: BeforeLifecycleEffect,
     signal?: AbortSignal,
   ): Promise<QuiesceReceipt>;
-  resume(request: QuiesceRequest, beforeEffect: BeforeLifecycleEffect, signal?: AbortSignal): Promise<void>;
+  resume(
+    request: QuiesceRequest,
+    beforeEffect: BeforeLifecycleEffect,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 
 /** Evidence must come from real calls against the new runtime auth path. */
 export interface LifecycleAuthProbeProvider {
-  verify(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<{
+  verify(
+    assignment: RuntimeAssignment,
+    signal?: AbortSignal,
+  ): Promise<{
     readonly applicationProbeId: string;
     readonly grantPolicyMatched: boolean;
     readonly controlServicePolicyMatched: boolean;
@@ -317,20 +340,30 @@ export interface LifecycleDependencies {
   readonly now?: () => number;
   readonly quiesceTimeoutMs?: number;
   readonly readinessTimeoutMs?: number;
+  /** Maximum age for producer status and auth probe evidence before route activation. */
+  readonly readinessEvidenceMaxAgeMs?: number;
   readonly pollIntervalMs?: number;
 }
 
 export interface LifecycleExecutionContext {
   readonly signal: AbortSignal;
   readonly assertLease: () => Promise<void>;
-  readonly report?: (phase: LifecyclePhase, details?: Readonly<Record<string, string>>) => Promise<void>;
+  readonly report?: (
+    phase: LifecyclePhase,
+    details?: Readonly<Record<string, string>>,
+  ) => Promise<void>;
 }
 
 export type LifecycleResult =
   | { readonly status: "complete"; readonly observed: RuntimeAssignment | null }
   | { readonly status: "waiting"; readonly phase: LifecyclePhase; readonly reason: string }
   | { readonly status: "blocked"; readonly code: string; readonly reason: string }
-  | { readonly status: "failed"; readonly code: string; readonly reason: string; readonly observed?: RuntimeAssignment }
+  | {
+      readonly status: "failed";
+      readonly code: string;
+      readonly reason: string;
+      readonly observed?: RuntimeAssignment;
+    }
   | { readonly status: "unknown"; readonly code: string; readonly reason: string };
 
 export interface IdleObservation {

@@ -8,7 +8,6 @@ import {
   type ClaimedProvisionerOperation,
   type ProvisionerOperationService,
   type ProvisionerObservation,
-  type ProvisionerObservedState,
   type ProvisionerTerminal,
 } from "./operation-client.js";
 import { ProvisionerMetrics } from "./metrics.js";
@@ -67,7 +66,8 @@ const DEFAULT_RETRY_INTERVAL_MS = 5_000;
 const DEFAULT_MAX_CONCURRENCY = 4;
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", abort);
@@ -95,53 +95,52 @@ function record(error: unknown): string {
   return "provisioner_error";
 }
 
-function phaseState(phase: LifecyclePhase, previous: ProvisionerObservedState): ProvisionerObservedState {
-  switch (phase) {
-    case "quiescing-old":
-    case "old-quiesced":
-    case "stopping-old":
-      return "stopping";
-    case "old-writer-absent":
-      return "stopped";
-    case "starting-target":
-    case "target-ready":
-      return "starting";
-    case "route-activated":
-    case "complete":
-      return "ready";
-    case "failed":
-      return "failed";
-    case "unknown":
-      return "unknown";
-    case "blocked":
-      return previous;
-    default:
-      return previous;
-  }
-}
-
 function observationFor(
   claim: ClaimedProvisionerOperation,
   sequence: number,
-  state: ProvisionerObservedState,
+  now: number,
   result?: LifecycleResult,
-): ProvisionerObservation {
-  const assignment = result?.status === "complete"
-    ? result.observed
-    : result?.status === "failed"
-      ? result.observed ?? null
-      : null;
-  const current = claim.snapshot.instance;
+): ProvisionerObservation | null {
+  if (result?.status !== "complete") return null;
+  const operation = claim.operation;
+  const reportedAt = new Date(now).toISOString();
+  if (result.observed === null) {
+    if (operation.kind !== "stop") return null;
+    return {
+      instanceId: operation.instanceId,
+      repositoryId: operation.repositoryId,
+      generation: operation.generation,
+      runtimeEpoch: operation.runtimeEpoch,
+      sequence,
+      observedState: "stopped",
+      observedArtifactDigest: null,
+      observedRevisionId: null,
+      reportedAt,
+    };
+  }
+  const assignment = result.observed;
+  const admittedTarget = claim.runtimeContext.target;
+  if (
+    operation.kind === "stop" ||
+    admittedTarget === null ||
+    assignment.instanceId !== operation.instanceId ||
+    assignment.repositoryId !== operation.repositoryId ||
+    assignment.generation !== operation.generation ||
+    assignment.runtimeEpoch !== operation.runtimeEpoch ||
+    assignment.deployment.revisionId !== admittedTarget.revisionId ||
+    assignment.deployment.imageDigest !== admittedTarget.assignment.imageDigest
+  )
+    return null;
   return {
-    operationId: claim.operation.id,
-    instanceId: claim.operation.instanceId,
-    repositoryId: claim.operation.repositoryId,
-    generation: claim.operation.generation,
-    runtimeEpoch: claim.operation.runtimeEpoch,
+    instanceId: assignment.instanceId,
+    repositoryId: assignment.repositoryId,
+    generation: assignment.generation,
+    runtimeEpoch: assignment.runtimeEpoch,
     sequence,
-    observedState: state,
-    observedArtifactDigest: assignment?.deployment.imageDigest ?? current.currentArtifactDigest,
-    observedRevisionId: assignment?.deployment.revisionId ?? current.observedRevisionId,
+    observedState: "ready",
+    observedArtifactDigest: assignment.deployment.imageDigest,
+    observedRevisionId: assignment.deployment.revisionId,
+    reportedAt,
   };
 }
 
@@ -207,30 +206,30 @@ class SequencedLease {
     details?: Readonly<Record<string, string>>,
     result?: LifecycleResult,
     terminal?: ProvisionerTerminal,
-  ): Promise<void> {
+  ): Promise<ProvisionerTerminal | undefined> {
     void details;
     await this.confirmOwned();
-    await this.withSequence(async (sequence) => {
-      const current = claim.snapshot.instance.observedState;
-      const state = result?.status === "complete"
-        ? result.observed === null ? "stopped" : "ready"
-        : result?.status === "failed"
-          ? result.observed === undefined ? "failed" : "ready"
-          : result?.status === "unknown"
-            ? "unknown"
-            : result?.status === "blocked"
-              ? current
-              : phaseState(phase, current);
+    return this.withSequence(async (sequence) => {
+      const observation = observationFor(claim, sequence, this.now(), result);
+      let effectiveTerminal = terminal;
+      if (terminal === "succeeded" && observation === null) {
+        effectiveTerminal = "blocked";
+        this.logger.warn("operation_success_observation_mismatch", {
+          operationId: claim.operation.id,
+          phase,
+        });
+      }
       await this.operations.report({
         operationId: claim.operation.id,
         workerId: this.workerId,
         leaseToken: claim.operation.leaseToken,
         leaseEpoch: claim.operation.leaseEpoch,
         sequence,
-        observation: observationFor(claim, sequence, state, result),
-        ...(terminal === undefined ? {} : { terminal }),
+        observation,
+        ...(effectiveTerminal === undefined ? {} : { terminal: effectiveTerminal }),
         signal: this.operationController.signal,
       });
+      return effectiveTerminal;
     });
   }
 
@@ -307,13 +306,17 @@ class SequencedLease {
     this.lost = true;
     this.metrics.increment("operation_lease_lost");
     this.logger.warn("operation_lease_lost", { operationId: this.claim.operation.id });
-    this.operationController.abort(new OperationServiceHttpError("operation_lease_lost", 409, false));
+    this.operationController.abort(
+      new OperationServiceHttpError("operation_lease_lost", 409, false),
+    );
   }
 }
 
 function isLeaseConflict(error: unknown): boolean {
-  return error instanceof OperationServiceHttpError &&
-    (error.status === 401 || error.status === 403 || error.status === 409);
+  return (
+    error instanceof OperationServiceHttpError &&
+    (error.status === 401 || error.status === 403 || error.status === 409)
+  );
 }
 
 class InstanceLocks {
@@ -354,16 +357,28 @@ export class ProvisionerWorker {
     this.logger = options.logger ?? new JsonLogger();
     this.metrics = options.metrics ?? new ProvisionerMetrics();
     this.leaseSeconds = options.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
-    this.maxConcurrency = Math.max(1, Math.min(50, options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY));
+    this.maxConcurrency = Math.max(
+      1,
+      Math.min(50, options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY),
+    );
     this.pollIntervalMs = Math.max(100, options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
     this.retryIntervalMs = Math.max(250, options.retryIntervalMs ?? DEFAULT_RETRY_INTERVAL_MS);
     this.heartbeatIntervalMs = Math.max(
       1_000,
-      Math.min(options.heartbeatIntervalMs ?? this.leaseSeconds * 1_000 / 3, this.leaseSeconds * 1_000 / 2),
+      Math.min(
+        options.heartbeatIntervalMs ?? (this.leaseSeconds * 1_000) / 3,
+        (this.leaseSeconds * 1_000) / 2,
+      ),
     );
-    if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(options.workerId)) throw new TypeError("invalid provisioner worker ID");
-    if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(options.clusterId)) throw new TypeError("invalid runtime cluster ID");
-    if (!Number.isSafeInteger(this.leaseSeconds) || this.leaseSeconds < 5 || this.leaseSeconds > 300) {
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(options.workerId))
+      throw new TypeError("invalid provisioner worker ID");
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(options.clusterId))
+      throw new TypeError("invalid runtime cluster ID");
+    if (
+      !Number.isSafeInteger(this.leaseSeconds) ||
+      this.leaseSeconds < 5 ||
+      this.leaseSeconds > 300
+    ) {
       throw new RangeError("lease duration must be between 5 and 300 seconds");
     }
   }
@@ -427,7 +442,10 @@ export class ProvisionerWorker {
     this.options.onReadyChange?.(ready);
   }
 
-  private async runClaim(claim: ClaimedProvisionerOperation, parentSignal: AbortSignal): Promise<void> {
+  private async runClaim(
+    claim: ClaimedProvisionerOperation,
+    parentSignal: AbortSignal,
+  ): Promise<void> {
     const operationController = new AbortController();
     const unlink = linkAbort(parentSignal, operationController);
     const lease = new SequencedLease(
@@ -445,7 +463,9 @@ export class ProvisionerWorker {
     const context: LifecycleExecutionContext = {
       signal: operationController.signal,
       assertLease: () => lease.confirmOwned(),
-      report: (phase, details) => lease.report(claim, phase, details),
+      report: async (phase, details) => {
+        await lease.report(claim, phase, details);
+      },
     };
     try {
       await this.locks.run(claim.operation.instanceId, async () => {
@@ -458,8 +478,10 @@ export class ProvisionerWorker {
             continue;
           }
           if (result.status === "complete") {
-            await lease.report(claim, "complete", undefined, result, "succeeded");
-            this.metrics.increment("operation_succeeded");
+            const terminal = await lease.report(claim, "complete", undefined, result, "succeeded");
+            this.metrics.increment(
+              terminal === "succeeded" ? "operation_succeeded" : "operation_blocked",
+            );
           } else if (result.status === "failed") {
             await lease.report(claim, "failed", undefined, result, "failed");
             this.metrics.increment("operation_failed");

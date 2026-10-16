@@ -20,6 +20,7 @@ import type {
 
 const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
+const platformDigest = `sha256:${"d".repeat(64)}`;
 
 function deployment(revisionId = "rev-a", imageDigest = digestA): RuntimeDeployment {
   return {
@@ -28,6 +29,8 @@ function deployment(revisionId = "rev-a", imageDigest = digestA): RuntimeDeploym
     repositoryLocator: "https://github.com/owner/repository",
     defaultBranchPolicy: "repository-default",
     imageDigest,
+    artifactRef: `ghcr.io/praetorium/scriptorium@${imageDigest}`,
+    platformManifestDigest: platformDigest,
     compositionManifestDigest: digestB,
     enabledModuleIds: ["core", "notes"],
     credentialBrokerLocator: "platform://credential-broker",
@@ -41,8 +44,21 @@ function deployment(revisionId = "rev-a", imageDigest = digestA): RuntimeDeploym
       jwksUrl: "https://platform.example.test/.well-known/jwks.json",
       audience: "praetorium-runtime-control",
     },
+    runtimeMetadata: {
+      producerRevision: "a".repeat(40),
+      listenerPort: 3000,
+      livenessPath: "/health/live",
+      readinessPath: "/health/ready",
+      metadataPath: "/api/platform/v1/metadata",
+      shutdownPath: "/shutdown",
+      statusPath: "/api/platform/v1/status",
+      quiescePath: "/api/platform/v1/quiesce",
+      resumePath: "/api/platform/v1/resume",
+      shutdownTimeoutSeconds: 30,
+    },
     hostname: "instance.example.test",
     resourceProfileId: "small",
+    resources: { cpuMilli: 500, memoryMiB: 512, ephemeralStorageMiB: 256 },
   };
 }
 
@@ -123,21 +139,33 @@ interface HarnessOptions {
   readonly crashAfterActivation?: boolean;
   readonly crashAfterActivationEpoch?: number;
   readonly readiness?: (assignment: RuntimeAssignment) => RuntimeReadiness;
+  readonly initialWriters?: readonly RuntimeAssignment[];
   readonly compatibleRollback?: boolean;
   readonly now?: () => number;
+  readonly producerObservedAt?: string | (() => string);
+  readonly authObservedAt?: string;
   readonly readinessTimeoutMs?: number;
   readonly quiesceTimeoutMs?: number;
 }
 
 function harness(options: HarnessOptions = {}) {
   const journal = new MemoryJournal(options.operation ?? operation());
-  const writers: RuntimeAssignment[] = journal.value.current === null ? [] : [journal.value.current];
+  const writers: RuntimeAssignment[] =
+    options.initialWriters === undefined
+      ? journal.value.current === null
+        ? []
+        : [journal.value.current]
+      : [...options.initialWriters];
   const counters = {
     quiesces: [] as { readonly operationId: string; readonly runtimeEpoch: number }[],
     resumes: [] as string[],
     stops: [] as number[],
     starts: [] as number[],
-    activations: [] as { readonly assignment: RuntimeAssignment; readonly evidence: LifecycleReadinessEvidence }[],
+    activations: [] as {
+      readonly assignment: RuntimeAssignment;
+      readonly evidence: LifecycleReadinessEvidence;
+    }[],
+    authProbeCalls: 0,
     deactivations: 0,
     released: [] as string[],
   };
@@ -146,7 +174,7 @@ function harness(options: HarnessOptions = {}) {
   const census = (): WriterCensus => ({
     complete: true,
     providerObservationId: `pods-rv-${counters.stops.length}-${counters.starts.length}-${writers.length}`,
-    observedAt: new Date().toISOString(),
+    observedAt: new Date(options.now?.() ?? Date.now()).toISOString(),
     matchedWriterCount: writers.length,
     writers: writers.map((item) => ({
       runtimeEpoch: item.runtimeEpoch,
@@ -174,7 +202,10 @@ function harness(options: HarnessOptions = {}) {
       uncertainPublication: false,
     },
     lastConfirmedRemoteRevision: "a".repeat(40),
-    observedAt: new Date().toISOString(),
+    observedAt:
+      typeof options.producerObservedAt === "function"
+        ? options.producerObservedAt()
+        : (options.producerObservedAt ?? new Date(options.now?.() ?? Date.now()).toISOString()),
   });
   const runtime: LifecycleRuntimeProvider = {
     async censusWriters() {
@@ -189,7 +220,8 @@ function harness(options: HarnessOptions = {}) {
     },
     async start(value) {
       counters.starts.push(value.runtimeEpoch);
-      if (!writers.some((writer) => writer.runtimeEpoch === value.runtimeEpoch)) writers.push(value);
+      if (!writers.some((writer) => writer.runtimeEpoch === value.runtimeEpoch))
+        writers.push(value);
       if (
         !crashedAfterStart &&
         (options.crashAfterStart || options.crashAfterStartEpoch === value.runtimeEpoch)
@@ -199,14 +231,16 @@ function harness(options: HarnessOptions = {}) {
       }
     },
     async readiness(value) {
-      return options.readiness?.(value) ?? {
-        status: "ready",
-        assignment: value,
-        providerObservationId: `runtime-observation-${value.runtimeEpoch}`,
-        actualImageDigest: value.deployment.imageDigest,
-        imageIdentityVerified: true,
-        producer: producerStatus(value),
-      };
+      return (
+        options.readiness?.(value) ?? {
+          status: "ready",
+          assignment: value,
+          providerObservationId: `runtime-observation-${value.runtimeEpoch}`,
+          actualImageDigest: value.deployment.platformManifestDigest,
+          imageIdentityVerified: true,
+          producer: producerStatus(value),
+        }
+      );
     },
   };
   const safeReceipt = (request: QuiesceRequest): QuiesceReceipt => ({
@@ -227,6 +261,7 @@ function harness(options: HarnessOptions = {}) {
   });
   const authProbe: LifecycleAuthProbeProvider = {
     async verify(value) {
+      counters.authProbeCalls += 1;
       const prefix = `auth-${value.runtimeEpoch}`;
       return {
         applicationProbeId: `app-${prefix}`,
@@ -240,7 +275,7 @@ function harness(options: HarnessOptions = {}) {
         wrongRepositoryProbeId: `wrong-repo-${prefix}`,
         wrongEpochProbeId: `wrong-epoch-${prefix}`,
         invalidServiceCredentialProbeId: `bad-service-${prefix}`,
-        observedAt: new Date(options.now?.() ?? Date.now()).toISOString(),
+        observedAt: options.authObservedAt ?? new Date(options.now?.() ?? Date.now()).toISOString(),
       };
     },
   };
@@ -267,10 +302,13 @@ function harness(options: HarnessOptions = {}) {
         return producerStatus(value);
       },
       async quiesce(request) {
-        counters.quiesces.push({ operationId: request.operationId, runtimeEpoch: request.runtimeEpoch });
+        counters.quiesces.push({
+          operationId: request.operationId,
+          runtimeEpoch: request.runtimeEpoch,
+        });
         return typeof options.quiesce === "function"
           ? options.quiesce(request)
-          : options.quiesce ?? safeReceipt(request);
+          : (options.quiesce ?? safeReceipt(request));
       },
       async resume(request) {
         counters.resumes.push(request.operationId);
@@ -312,6 +350,88 @@ function harness(options: HarnessOptions = {}) {
 }
 
 describe("LifecycleService", () => {
+  it("re-observes the exact ready target before reporting a recovered completed replacement", async () => {
+    const target = assignment(5);
+    const h = harness({
+      operation: operation({
+        phase: "complete",
+        target: target.deployment,
+        targetEpoch: target.runtimeEpoch,
+        targetReservationId: target.reservationId,
+        writerAbsenceProof: {
+          instanceId: "ins_01",
+          repositoryId: 123456,
+          retiredRuntimeEpoch: 4,
+          providerObservationId: "pods-rv-before-start",
+          censusObservedAt: new Date().toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: [],
+          source: "runtime-provider-census",
+        },
+      }),
+      initialWriters: [target],
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result).toEqual({ status: "complete", observed: target });
+    expect(h.counters.authProbeCalls).toBeGreaterThan(0);
+  });
+
+  it("does not report a completed replacement when its target is no longer the sole writer", async () => {
+    const target = assignment(5);
+    const h = harness({
+      operation: operation({
+        phase: "complete",
+        target: target.deployment,
+        targetEpoch: target.runtimeEpoch,
+        targetReservationId: target.reservationId,
+        writerAbsenceProof: {
+          instanceId: "ins_01",
+          repositoryId: 123456,
+          retiredRuntimeEpoch: 4,
+          providerObservationId: "pods-rv-before-start",
+          censusObservedAt: new Date().toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: [],
+          source: "runtime-provider-census",
+        },
+      }),
+      initialWriters: [],
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result).toMatchObject({ status: "unknown", code: "completed_target_writer_mismatch" });
+    expect(h.counters.authProbeCalls).toBe(0);
+  });
+
+  it("re-censuses a completed stop before publishing stopped observation", async () => {
+    const h = harness({
+      operation: operation({
+        kind: "stop",
+        phase: "complete",
+        target: null,
+        targetEpoch: null,
+        writerAbsenceProof: {
+          instanceId: "ins_01",
+          repositoryId: 123456,
+          retiredRuntimeEpoch: 4,
+          providerObservationId: "pods-rv-stopped",
+          censusObservedAt: new Date().toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: [],
+          source: "runtime-provider-census",
+        },
+      }),
+      initialWriters: [],
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result).toEqual({ status: "complete", observed: null });
+  });
+
   it("keeps the current writer active while the target artifact is still building", async () => {
     const current = assignment(4);
     const h = harness({
@@ -437,7 +557,8 @@ describe("LifecycleService", () => {
     const firstContext = {
       ...h.context,
       async report(phase: string) {
-        if (phase === "old-quiesced") throw new Error("simulated worker exit after durable quiesce checkpoint");
+        if (phase === "old-quiesced")
+          throw new Error("simulated worker exit after durable quiesce checkpoint");
       },
     };
 
@@ -475,7 +596,7 @@ describe("LifecycleService", () => {
     expect(h.counters.stops).toEqual([4]);
     expect(h.counters.starts).toEqual([5]);
     expect(h.counters.activations).toHaveLength(1);
-    expect(h.counters.activations[0]?.evidence.actualImageDigest).toBe(digestA);
+    expect(h.counters.activations[0]?.evidence.actualImageDigest).toBe(platformDigest);
     expect(h.counters.activations[0]?.evidence.providerObservationId).toBe("runtime-observation-5");
     expect(h.counters.activations[0]?.evidence.validGrantProbeId).toBe("grant-auth-5");
   });
@@ -497,6 +618,34 @@ describe("LifecycleService", () => {
 
     expect(result.status).toBe("unknown");
     expect(h.counters.activations).toHaveLength(0);
+  });
+
+  it("does not activate on stale producer status or stale authentication probes", async () => {
+    const now = Date.now();
+    let producerTicks = 0;
+    const staleProducer = harness({
+      now: () => now + producerTicks++ * 10,
+      producerObservedAt: new Date(now - 60_000).toISOString(),
+      readinessTimeoutMs: 1_000,
+      quiesceTimeoutMs: 10_000,
+    });
+    const staleProducerResult = await staleProducer.service.execute("op-01", staleProducer.context);
+    expect(staleProducerResult.status).toBe("unknown");
+    expect(staleProducer.counters.authProbeCalls).toBe(0);
+    expect(staleProducer.counters.activations).toHaveLength(0);
+
+    let authTicks = 0;
+    const staleAuth = harness({
+      now: () => now + authTicks++ * 10,
+      producerObservedAt: () => new Date(now + authTicks++).toISOString(),
+      authObservedAt: new Date(now - 60_000).toISOString(),
+      readinessTimeoutMs: 1_000,
+      quiesceTimeoutMs: 10_000,
+    });
+    const staleAuthResult = await staleAuth.service.execute("op-01", staleAuth.context);
+    expect(staleAuthResult.status).toBe("unknown");
+    expect(staleAuth.counters.authProbeCalls).toBeGreaterThan(0);
+    expect(staleAuth.counters.activations).toHaveLength(0);
   });
 
   it("recovers a worker exit after the target starts without starting a second writer", async () => {
@@ -566,7 +715,7 @@ describe("LifecycleService", () => {
           status: "ready",
           assignment: value,
           providerObservationId: `observation-${value.runtimeEpoch}`,
-          actualImageDigest: value.deployment.imageDigest,
+          actualImageDigest: value.deployment.platformManifestDigest,
           imageIdentityVerified: true,
           producer: null,
         };
@@ -613,7 +762,8 @@ describe("LifecycleService", () => {
         status: value.runtimeEpoch === 5 ? "not-ready" : "ready",
         assignment: value,
         providerObservationId: `observation-${value.runtimeEpoch}`,
-        actualImageDigest: value.runtimeEpoch === 5 ? null : value.deployment.imageDigest,
+        actualImageDigest:
+          value.runtimeEpoch === 5 ? null : value.deployment.platformManifestDigest,
         imageIdentityVerified: value.runtimeEpoch !== 5,
         producer: null,
       }),

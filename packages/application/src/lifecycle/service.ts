@@ -17,6 +17,7 @@ import {
 
 const DEFAULT_QUIESCE_TIMEOUT_MS = 30_000;
 const DEFAULT_READINESS_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_READINESS_EVIDENCE_MAX_AGE_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const CLEANUP_TIMEOUT_MS = 3_000;
 
@@ -46,8 +47,10 @@ function validSha256(value: string): boolean {
 }
 
 function validIsoTimestamp(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u.test(value) &&
-    Number.isFinite(Date.parse(value));
+  return (
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u.test(value) &&
+    Number.isFinite(Date.parse(value))
+  );
 }
 
 function validRemoteRevision(value: string | null): boolean {
@@ -76,7 +79,8 @@ function boundReason(value: string): string {
 }
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", abort);
@@ -102,13 +106,52 @@ function validateDeployment(
   if (!validSha256(deployment.imageDigest) || !validSha256(deployment.compositionManifestDigest)) {
     return "target_digest_invalid";
   }
+  if (
+    !/^[a-z0-9][a-z0-9./:_-]{0,254}@sha256:[0-9a-f]{64}$/u.test(deployment.artifactRef) ||
+    !deployment.artifactRef.endsWith(`@${deployment.imageDigest}`) ||
+    !validSha256(deployment.platformManifestDigest)
+  )
+    return "target_artifact_reference_invalid";
   if (new Set(deployment.enabledModuleIds).size !== deployment.enabledModuleIds.length) {
     return "target_module_set_invalid";
   }
   if (
     deployment.enabledModuleIds.length > 256 ||
     deployment.enabledModuleIds.some((moduleId) => !/^[a-z][a-z0-9-]{0,63}$/u.test(moduleId))
-  ) return "target_module_set_invalid";
+  )
+    return "target_module_set_invalid";
+  if (
+    !/^[a-f0-9]{40}$/u.test(deployment.runtimeMetadata.producerRevision) ||
+    !Number.isSafeInteger(deployment.runtimeMetadata.listenerPort) ||
+    deployment.runtimeMetadata.listenerPort < 1 ||
+    deployment.runtimeMetadata.listenerPort > 65_535 ||
+    !Number.isSafeInteger(deployment.runtimeMetadata.shutdownTimeoutSeconds) ||
+    deployment.runtimeMetadata.shutdownTimeoutSeconds < 1 ||
+    deployment.runtimeMetadata.shutdownTimeoutSeconds > 600 ||
+    deployment.runtimeMetadata.statusPath !== "/api/platform/v1/status" ||
+    deployment.runtimeMetadata.quiescePath !== "/api/platform/v1/quiesce" ||
+    deployment.runtimeMetadata.resumePath !== "/api/platform/v1/resume" ||
+    [
+      deployment.runtimeMetadata.livenessPath,
+      deployment.runtimeMetadata.readinessPath,
+      deployment.runtimeMetadata.metadataPath,
+      deployment.runtimeMetadata.shutdownPath,
+      deployment.runtimeMetadata.statusPath,
+      deployment.runtimeMetadata.quiescePath,
+      deployment.runtimeMetadata.resumePath,
+    ].some((path) => !/^\/(?!\/)[^\r\n?#]{1,256}$/u.test(path))
+  )
+    return "target_runtime_metadata_invalid";
+  if (
+    !/^[a-z][a-z0-9-]{0,63}$/u.test(deployment.resourceProfileId) ||
+    !Number.isSafeInteger(deployment.resources.cpuMilli) ||
+    deployment.resources.cpuMilli < 1 ||
+    !Number.isSafeInteger(deployment.resources.memoryMiB) ||
+    deployment.resources.memoryMiB < 1 ||
+    !Number.isSafeInteger(deployment.resources.ephemeralStorageMiB) ||
+    deployment.resources.ephemeralStorageMiB < 1
+  )
+    return "target_resource_profile_invalid";
   try {
     const issuer = new URL(deployment.grantPolicy.issuer);
     const jwks = new URL(deployment.grantPolicy.jwksUrl);
@@ -117,19 +160,42 @@ function validateDeployment(
     const hostname = new URL(`https://${deployment.hostname}`);
     const locator = new URL(deployment.repositoryLocator);
     if (
-      issuer.protocol !== "https:" || jwks.protocol !== "https:" ||
-      controlIssuer.protocol !== "https:" || controlJwks.protocol !== "https:" ||
-      issuer.username !== "" || issuer.password !== "" || issuer.search !== "" || issuer.hash !== "" ||
-      jwks.username !== "" || jwks.password !== "" || jwks.search !== "" || jwks.hash !== "" ||
-      controlIssuer.username !== "" || controlIssuer.password !== "" || controlIssuer.search !== "" || controlIssuer.hash !== "" ||
-      controlJwks.username !== "" || controlJwks.password !== "" || controlJwks.search !== "" || controlJwks.hash !== "" ||
+      issuer.protocol !== "https:" ||
+      jwks.protocol !== "https:" ||
+      controlIssuer.protocol !== "https:" ||
+      controlJwks.protocol !== "https:" ||
+      issuer.username !== "" ||
+      issuer.password !== "" ||
+      issuer.search !== "" ||
+      issuer.hash !== "" ||
+      jwks.username !== "" ||
+      jwks.password !== "" ||
+      jwks.search !== "" ||
+      jwks.hash !== "" ||
+      controlIssuer.username !== "" ||
+      controlIssuer.password !== "" ||
+      controlIssuer.search !== "" ||
+      controlIssuer.hash !== "" ||
+      controlJwks.username !== "" ||
+      controlJwks.password !== "" ||
+      controlJwks.search !== "" ||
+      controlJwks.hash !== "" ||
       hostname.hostname !== deployment.hostname ||
-      hostname.protocol !== "https:" || hostname.port !== "" || hostname.pathname !== "/" ||
-      hostname.username !== "" || hostname.password !== "" || hostname.search !== "" || hostname.hash !== "" ||
-      locator.protocol !== "https:" || locator.hostname !== "github.com" ||
-      locator.port !== "" || locator.username !== "" || locator.password !== "" ||
+      hostname.protocol !== "https:" ||
+      hostname.port !== "" ||
+      hostname.pathname !== "/" ||
+      hostname.username !== "" ||
+      hostname.password !== "" ||
+      hostname.search !== "" ||
+      hostname.hash !== "" ||
+      locator.protocol !== "https:" ||
+      locator.hostname !== "github.com" ||
+      locator.port !== "" ||
+      locator.username !== "" ||
+      locator.password !== "" ||
       !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(locator.pathname) ||
-      locator.search !== "" || locator.hash !== ""
+      locator.search !== "" ||
+      locator.hash !== ""
     ) {
       return "target_auth_or_host_invalid";
     }
@@ -141,7 +207,8 @@ function validateDeployment(
     deployment.controlServicePolicy.audience.length === 0 ||
     deployment.defaultBranchPolicy.length === 0 ||
     deployment.credentialBrokerLocator.length === 0
-  ) return "target_runtime_assignment_incomplete";
+  )
+    return "target_runtime_assignment_incomplete";
   if (deployment.resourceProfileId.length === 0) return "target_resource_profile_missing";
   return null;
 }
@@ -173,11 +240,10 @@ function receiptMatches(
     validRemoteRevision(receipt.lastConfirmedRemoteRevision) &&
     receipt.reasonCodes.length <= 64 &&
     receipt.reasonCodes.every((code) => /^[A-Z][A-Z0-9_]{0,63}$/u.test(code)) &&
-    (receipt.disposition !== "safe" || (
-      receivedAt < Date.parse(request.deadline) &&
-      Date.parse(receipt.observedAt) < Date.parse(request.deadline) &&
-      Date.parse(receipt.observedAt) <= receivedAt
-    ))
+    (receipt.disposition !== "safe" ||
+      (receivedAt < Date.parse(request.deadline) &&
+        Date.parse(receipt.observedAt) < Date.parse(request.deadline) &&
+        Date.parse(receipt.observedAt) <= receivedAt))
   );
 }
 
@@ -198,7 +264,11 @@ function persistedSafeReceiptMatches(
     "target-ready",
     "route-activated",
   ].includes(operation.phase);
-  return acceptedPhase && receiptMatches(receipt, request, Date.parse(receipt.observedAt)) && quiesceIsSafe(receipt);
+  return (
+    acceptedPhase &&
+    receiptMatches(receipt, request, Date.parse(receipt.observedAt)) &&
+    quiesceIsSafe(receipt)
+  );
 }
 
 function quiesceIsSafe(receipt: QuiesceReceipt): boolean {
@@ -237,7 +307,7 @@ function provesPreviousWriterAbsent(
     proof !== null &&
     proof.instanceId === assignment.instanceId &&
     proof.repositoryId === assignment.repositoryId &&
-    (proof.retiredEpoch === null || proof.retiredEpoch < targetEpoch) &&
+    (proof.retiredRuntimeEpoch === null || proof.retiredRuntimeEpoch < targetEpoch) &&
     proof.providerObservationId.length > 0 &&
     Number.isFinite(Date.parse(proof.censusObservedAt)) &&
     proof.remainingWriters === 0 &&
@@ -254,22 +324,110 @@ export class LifecycleService {
   private readonly now: () => number;
   private readonly quiesceTimeoutMs: number;
   private readonly readinessTimeoutMs: number;
+  private readonly readinessEvidenceMaxAgeMs: number;
   private readonly pollIntervalMs: number;
 
   constructor(private readonly dependencies: LifecycleDependencies) {
     this.now = dependencies.now ?? Date.now;
     this.quiesceTimeoutMs = dependencies.quiesceTimeoutMs ?? DEFAULT_QUIESCE_TIMEOUT_MS;
     this.readinessTimeoutMs = dependencies.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
+    this.readinessEvidenceMaxAgeMs =
+      dependencies.readinessEvidenceMaxAgeMs ?? DEFAULT_READINESS_EVIDENCE_MAX_AGE_MS;
+    if (
+      !Number.isSafeInteger(this.readinessEvidenceMaxAgeMs) ||
+      this.readinessEvidenceMaxAgeMs < 1
+    ) {
+      throw new RangeError("readiness evidence age bound must be a positive integer");
+    }
     this.pollIntervalMs = dependencies.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   }
 
   async execute(operationId: string, context: LifecycleExecutionContext): Promise<LifecycleResult> {
     let operation = await this.dependencies.journal.load(operationId, context.signal);
-    if (operation === null) return { status: "failed", code: "operation_missing", reason: "operation not found" };
+    if (operation === null)
+      return { status: "failed", code: "operation_missing", reason: "operation not found" };
     if (operation.phase === "complete") {
-      return { status: "complete", observed: operation.targetEpoch === null || operation.target === null
-        ? null
-        : assignmentFor(operation, operation.target, operation.targetEpoch, operation.targetReservationId) };
+      await context.assertLease();
+      const census = await this.dependencies.runtime.censusWriters(
+        operation.instanceId,
+        operation.repositoryId,
+        context.signal,
+      );
+      if (!censusIsComplete(census)) {
+        return {
+          status: "unknown",
+          code: "completed_writer_census_incomplete",
+          reason: "cannot verify the completed runtime writer set",
+        };
+      }
+      if (operation.kind === "stop") {
+        const proof = operation.writerAbsenceProof;
+        if (
+          proof === null ||
+          proof.instanceId !== operation.instanceId ||
+          proof.repositoryId !== operation.repositoryId ||
+          proof.remainingWriters !== 0 ||
+          proof.source !== "runtime-provider-census" ||
+          proof.providerObservationId.length === 0
+        ) {
+          return {
+            status: "unknown",
+            code: "completed_stop_absence_proof_missing",
+            reason: "completed stop checkpoint lacks a bound writer absence proof",
+          };
+        }
+        return census.writers.length === 0
+          ? { status: "complete", observed: null }
+          : {
+              status: "unknown",
+              code: "completed_stop_writer_present",
+              reason: "a runtime writer is present after the stop checkpoint",
+            };
+      }
+      if (operation.targetEpoch === null || operation.target === null) {
+        return {
+          status: "unknown",
+          code: "completed_target_missing",
+          reason: "completed lifecycle checkpoint lacks its target identity",
+        };
+      }
+      const assignment = assignmentFor(
+        operation,
+        operation.target,
+        operation.targetEpoch,
+        operation.targetReservationId,
+      );
+      if (
+        !provesPreviousWriterAbsent(
+          operation.writerAbsenceProof,
+          assignment,
+          assignment.runtimeEpoch,
+        )
+      ) {
+        return {
+          status: "unknown",
+          code: "completed_target_absence_proof_missing",
+          reason: "completed replacement checkpoint lacks a bound old-writer absence proof",
+        };
+      }
+      if (
+        census.writers.length !== 1 ||
+        census.writers[0]?.runtimeEpoch !== assignment.runtimeEpoch
+      ) {
+        return {
+          status: "unknown",
+          code: "completed_target_writer_mismatch",
+          reason: "the completed target is not the sole observed runtime writer",
+        };
+      }
+      const evidence = await this.verifyReadiness(assignment, context);
+      return evidence === null
+        ? {
+            status: "unknown",
+            code: "completed_target_not_ready",
+            reason: "the completed target no longer passes fresh readiness checks",
+          }
+        : { status: "complete", observed: assignment };
     }
     if (operation.phase === "blocked") {
       return {
@@ -306,7 +464,11 @@ export class LifecycleService {
       reason: string,
     ): Promise<LifecycleResult> => {
       const phase: LifecyclePhase = status;
-      await checkpoint({ phase, failureCode: code.slice(0, 128), failureReason: boundReason(reason) });
+      await checkpoint({
+        phase,
+        failureCode: code.slice(0, 128),
+        failureReason: boundReason(reason),
+      });
       if (status === "unknown") return { status, code, reason: boundReason(reason) };
       return { status, code, reason: boundReason(reason) };
     };
@@ -324,8 +486,15 @@ export class LifecycleService {
         );
         if (retirement.status !== "retired") return retirement.result;
         await context.assertLease();
-        await this.dependencies.routes.deactivate(operation.instanceId, context.assertLease, context.signal);
-        if (operation.current?.reservationId !== null && operation.current?.reservationId !== undefined) {
+        await this.dependencies.routes.deactivate(
+          operation.instanceId,
+          context.assertLease,
+          context.signal,
+        );
+        if (
+          operation.current?.reservationId !== null &&
+          operation.current?.reservationId !== undefined
+        ) {
           await context.assertLease();
           await this.dependencies.capacity.release(
             operation.current.reservationId,
@@ -346,14 +515,18 @@ export class LifecycleService {
       if (resolution.status !== "resolved") return resolution.result;
       const target = resolution.deployment;
       const targetError = validateDeployment(target, operation);
-      if (targetError !== null) return setOutcome("failed", targetError, "target deployment identity is invalid");
+      if (targetError !== null)
+        return setOutcome("failed", targetError, "target deployment identity is invalid");
 
       if (
         operation.kind === "start" &&
         operation.current !== null &&
+        operation.current.generation === operation.generation &&
+        operation.current.runtimeEpoch === operation.runtimeEpoch &&
         operation.current.deployment.revisionId === target.revisionId &&
         operation.current.deployment.imageDigest === target.imageDigest &&
-        operation.current.deployment.compositionManifestDigest === target.compositionManifestDigest &&
+        operation.current.deployment.compositionManifestDigest ===
+          target.compositionManifestDigest &&
         sameStrings(operation.current.deployment.enabledModuleIds, target.enabledModuleIds)
       ) {
         const census = await this.dependencies.runtime.censusWriters(
@@ -361,13 +534,27 @@ export class LifecycleService {
           operation.repositoryId,
           context.signal,
         );
-        if (!censusIsComplete(census)) return setOutcome("unknown", "writer_census_incomplete", "runtime provider cannot prove the current writer set");
-        if (census.writers.length === 1 && census.writers[0]?.runtimeEpoch === operation.current.runtimeEpoch) {
+        if (!censusIsComplete(census))
+          return setOutcome(
+            "unknown",
+            "writer_census_incomplete",
+            "runtime provider cannot prove the current writer set",
+          );
+        if (
+          census.writers.length === 1 &&
+          census.writers[0]?.runtimeEpoch === operation.current.runtimeEpoch
+        ) {
           try {
             const evidence = await this.verifyReadiness(operation.current, context);
             if (evidence !== null) {
               await context.assertLease();
-              await this.dependencies.routes.activate(operation.current, evidence, context.assertLease, context.signal);
+              await this.dependencies.routes.activate(
+                operation.current,
+                evidence,
+                context.assertLease,
+                context.signal,
+              );
+              await checkpoint({ phase: "route-activated" });
               await checkpoint({ phase: "complete" });
               return { status: "complete", observed: operation.current };
             }
@@ -381,7 +568,11 @@ export class LifecycleService {
       if (targetEpoch === null) {
         targetEpoch = operation.runtimeEpoch;
         if (!Number.isSafeInteger(targetEpoch) || targetEpoch < 1) {
-          return setOutcome("failed", "target_epoch_invalid", "Control Plane did not allocate a valid runtime epoch");
+          return setOutcome(
+            "failed",
+            "target_epoch_invalid",
+            "Control Plane did not allocate a valid runtime epoch",
+          );
         }
         await checkpoint({ targetEpoch });
       }
@@ -390,7 +581,11 @@ export class LifecycleService {
         targetEpoch <= operation.current.runtimeEpoch &&
         operation.kind !== "start"
       ) {
-        return setOutcome("blocked", "target_epoch_not_new", "replacement epoch must be newer than the current runtime");
+        return setOutcome(
+          "blocked",
+          "target_epoch_not_new",
+          "replacement epoch must be newer than the current runtime",
+        );
       }
 
       if (operation.targetReservationId === null) {
@@ -405,12 +600,23 @@ export class LifecycleService {
         );
         if (reservation.status === "pending") {
           await checkpoint({ phase: "waiting-for-capacity" });
-          return { status: "waiting", phase: "waiting-for-capacity", reason: "target capacity is not available" };
+          return {
+            status: "waiting",
+            phase: "waiting-for-capacity",
+            reason: "target capacity is not available",
+          };
         }
         if (reservation.reservationId === undefined || reservation.reservationId.length === 0) {
-          return setOutcome("unknown", "reservation_identity_missing", "capacity provider did not return a durable reservation identity");
+          return setOutcome(
+            "unknown",
+            "reservation_identity_missing",
+            "capacity provider did not return a durable reservation identity",
+          );
         }
-        await checkpoint({ phase: "capacity-reserved", targetReservationId: reservation.reservationId });
+        await checkpoint({
+          phase: "capacity-reserved",
+          targetReservationId: reservation.reservationId,
+        });
       }
 
       const targetAssignment = assignmentFor(
@@ -456,7 +662,12 @@ export class LifecycleService {
         operation.repositoryId,
         context.signal,
       );
-      if (!censusIsComplete(beforeStart)) return setOutcome("unknown", "writer_census_incomplete", "runtime provider cannot prove the old writer is absent");
+      if (!censusIsComplete(beforeStart))
+        return setOutcome(
+          "unknown",
+          "writer_census_incomplete",
+          "runtime provider cannot prove the old writer is absent",
+        );
       if (beforeStart.writers.length > 0) {
         if (
           beforeStart.writers.length === 1 &&
@@ -465,7 +676,11 @@ export class LifecycleService {
         ) {
           // A prior attempt may have started the target and crashed before recording progress.
         } else {
-          return setOutcome("unknown", "writer_still_present", "an old or unexpected writer remains active");
+          return setOutcome(
+            "unknown",
+            "writer_still_present",
+            "an old or unexpected writer remains active",
+          );
         }
       } else {
         await checkpoint({ phase: "old-writer-absent", writerAbsenceProof: retirement.proof });
@@ -496,10 +711,18 @@ export class LifecycleService {
 
       await checkpoint({ phase: "target-ready" });
       await context.assertLease();
-      await this.dependencies.routes.activate(targetAssignment, readinessEvidence, context.assertLease, context.signal);
+      await this.dependencies.routes.activate(
+        targetAssignment,
+        readinessEvidence,
+        context.assertLease,
+        context.signal,
+      );
       await checkpoint({ phase: "route-activated" });
 
-      if (operation.current?.reservationId !== null && operation.current?.reservationId !== undefined) {
+      if (
+        operation.current?.reservationId !== null &&
+        operation.current?.reservationId !== undefined
+      ) {
         await context.assertLease();
         await this.dependencies.capacity.release(
           operation.current.reservationId,
@@ -515,7 +738,11 @@ export class LifecycleService {
         return { status: "unknown", code: "stale_operation", reason: error.message };
       }
       if (context.signal.aborted) {
-        return { status: "unknown", code: "operation_cancelled", reason: "operation was interrupted; recovery will inspect runtime state" };
+        return {
+          status: "unknown",
+          code: "operation_cancelled",
+          reason: "operation was interrupted; recovery will inspect runtime state",
+        };
       }
       throw error;
     }
@@ -591,10 +818,18 @@ export class LifecycleService {
     const failedTarget = operation.target;
     const rollbackEpoch = operation.rollbackEpoch;
     if (previous === null || failedTarget === null || rollbackEpoch === null) {
-      return setOutcome("unknown", "rollback_checkpoint_incomplete", "rollback checkpoint lacks its admitted runtime identity");
+      return setOutcome(
+        "unknown",
+        "rollback_checkpoint_incomplete",
+        "rollback checkpoint lacks its admitted runtime identity",
+      );
     }
     if (!(await this.dependencies.builds.isRollbackCompatible(previous.deployment, failedTarget))) {
-      return setOutcome("unknown", "rollback_compatibility_unconfirmed", "the admitted previous runtime is no longer confirmed compatible");
+      return setOutcome(
+        "unknown",
+        "rollback_compatibility_unconfirmed",
+        "the admitted previous runtime is no longer confirmed compatible",
+      );
     }
 
     const rollbackAssignment: RuntimeAssignment = {
@@ -604,9 +839,13 @@ export class LifecycleService {
     const proof = operation.writerAbsenceProof;
     if (
       !provesPreviousWriterAbsent(proof, rollbackAssignment, rollbackEpoch) ||
-      proof.retiredEpoch !== operation.targetEpoch
+      proof.retiredRuntimeEpoch !== operation.targetEpoch
     ) {
-      return setOutcome("unknown", "rollback_writer_absence_unproven", "the failed target's writer absence is not durably proven");
+      return setOutcome(
+        "unknown",
+        "rollback_writer_absence_unproven",
+        "the failed target's writer absence is not durably proven",
+      );
     }
 
     const census = await this.dependencies.runtime.censusWriters(
@@ -615,7 +854,11 @@ export class LifecycleService {
       context.signal,
     );
     if (!censusIsComplete(census)) {
-      return setOutcome("unknown", "rollback_writer_census_incomplete", "cannot verify the writer set while recovering rollback");
+      return setOutcome(
+        "unknown",
+        "rollback_writer_census_incomplete",
+        "cannot verify the writer set while recovering rollback",
+      );
     }
     if (census.writers.length === 0) {
       await context.assertLease();
@@ -627,16 +870,21 @@ export class LifecycleService {
         context.assertLease,
         context.signal,
       );
-    } else if (
-      census.writers.length !== 1 ||
-      census.writers[0]?.runtimeEpoch !== rollbackEpoch
-    ) {
-      return setOutcome("unknown", "rollback_writer_unexpected", "an unexpected writer prevents rollback startup");
+    } else if (census.writers.length !== 1 || census.writers[0]?.runtimeEpoch !== rollbackEpoch) {
+      return setOutcome(
+        "unknown",
+        "rollback_writer_unexpected",
+        "an unexpected writer prevents rollback startup",
+      );
     }
 
     const rollbackReadiness = await this.waitForReadiness(rollbackAssignment, context);
     if (rollbackReadiness === null) {
-      return setOutcome("unknown", "rollback_readiness_failed", "previous admitted runtime failed fresh readiness checks");
+      return setOutcome(
+        "unknown",
+        "rollback_readiness_failed",
+        "previous admitted runtime failed fresh readiness checks",
+      );
     }
     await checkpoint({ phase: "target-ready" });
     await context.assertLease();
@@ -689,7 +937,13 @@ export class LifecycleService {
     if (!censusIsComplete(census)) {
       return {
         status: "blocked",
-        result: await this.saveOutcome(operation, checkpoint, "unknown", "writer_census_incomplete", "runtime provider could not prove the complete writer set"),
+        result: await this.saveOutcome(
+          operation,
+          checkpoint,
+          "unknown",
+          "writer_census_incomplete",
+          "runtime provider could not prove the complete writer set",
+        ),
       };
     }
     if (census.writers.length === 0) {
@@ -704,7 +958,13 @@ export class LifecycleService {
     ) {
       return {
         status: "blocked",
-        result: await this.saveOutcome(operation, checkpoint, "unknown", "unexpected_writer_present", "an unbound or concurrent writer prevents safe replacement"),
+        result: await this.saveOutcome(
+          operation,
+          checkpoint,
+          "unknown",
+          "unexpected_writer_present",
+          "an unbound or concurrent writer prevents safe replacement",
+        ),
       };
     }
 
@@ -717,29 +977,41 @@ export class LifecycleService {
       deadline: new Date(this.now() + this.quiesceTimeoutMs).toISOString(),
     };
     const persistedRequest = operation.quiesceRequest;
-    const request = persistedRequest !== null &&
-        persistedRequest.operationId === proposedRequest.operationId &&
-        persistedRequest.instanceId === proposedRequest.instanceId &&
-        persistedRequest.runtimeEpoch === proposedRequest.runtimeEpoch &&
-        persistedRequest.reason === proposedRequest.reason
-      ? persistedRequest
-      : proposedRequest;
+    const request =
+      persistedRequest !== null &&
+      persistedRequest.operationId === proposedRequest.operationId &&
+      persistedRequest.instanceId === proposedRequest.instanceId &&
+      persistedRequest.runtimeEpoch === proposedRequest.runtimeEpoch &&
+      persistedRequest.reason === proposedRequest.reason
+        ? persistedRequest
+        : proposedRequest;
     let receipt: QuiesceReceipt;
     const storedReceipt = operation.quiesceReceipt;
-    const persistedSafeReceipt = storedReceipt !== null && persistedSafeReceiptMatches(operation, storedReceipt, request);
+    const persistedSafeReceipt =
+      storedReceipt !== null && persistedSafeReceiptMatches(operation, storedReceipt, request);
     if (persistedSafeReceipt) {
       receipt = storedReceipt;
     } else {
       await checkpoint({ phase: "quiescing-old", quiesceRequest: request, quiesceReceipt: null });
       try {
         await context.assertLease();
-        receipt = await this.dependencies.producer.quiesce(request, context.assertLease, context.signal);
+        receipt = await this.dependencies.producer.quiesce(
+          request,
+          context.assertLease,
+          context.signal,
+        );
       } catch (error) {
         const resumed = await this.resumeMatching(request, context);
         if (!resumed) {
           return {
             status: "blocked",
-            result: await this.saveOutcome(operation, checkpoint, "unknown", "quiesce_outcome_unknown", "producer quiesce outcome is unknown and matching resume was not confirmed"),
+            result: await this.saveOutcome(
+              operation,
+              checkpoint,
+              "unknown",
+              "quiesce_outcome_unknown",
+              "producer quiesce outcome is unknown and matching resume was not confirmed",
+            ),
           };
         }
         await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });
@@ -755,7 +1027,9 @@ export class LifecycleService {
           checkpoint,
           "unknown",
           "quiesce_binding_invalid",
-          resumed ? "producer returned a mismatched quiesce receipt" : "producer returned a mismatched receipt and could not be resumed",
+          resumed
+            ? "producer returned a mismatched quiesce receipt"
+            : "producer returned a mismatched receipt and could not be resumed",
         ),
       };
     }
@@ -768,7 +1042,9 @@ export class LifecycleService {
           operation,
           checkpoint,
           disposition,
-          receipt.disposition === "blocked" ? "producer_quiesce_blocked" : "producer_quiesce_unknown",
+          receipt.disposition === "blocked"
+            ? "producer_quiesce_blocked"
+            : "producer_quiesce_unknown",
           resumed
             ? `producer quiesce ${receipt.disposition}; unpublished work, active work, or unknown durability blocks retirement`
             : `producer quiesce ${receipt.disposition}; matching resume could not be confirmed`,
@@ -780,21 +1056,39 @@ export class LifecycleService {
     await checkpoint({ phase: "stopping-old" });
     try {
       await context.assertLease();
-      await this.dependencies.runtime.stop(assignment, operationId, context.assertLease, context.signal);
-    } catch (error) {
-      census = await this.dependencies.runtime.censusWriters(
-        operation.instanceId,
-        operation.repositoryId,
+      await this.dependencies.runtime.stop(
+        assignment,
+        operationId,
+        context.assertLease,
         context.signal,
-      ).catch(() => ({ complete: false, providerObservationId: "", observedAt: "", matchedWriterCount: 0, writers: [] }));
-      const stillOldWriter = censusIsComplete(census) && census.writers.length === 1 &&
+      );
+    } catch (error) {
+      census = await this.dependencies.runtime
+        .censusWriters(operation.instanceId, operation.repositoryId, context.signal)
+        .catch(() => ({
+          complete: false,
+          providerObservationId: "",
+          observedAt: "",
+          matchedWriterCount: 0,
+          writers: [],
+        }));
+      const stillOldWriter =
+        censusIsComplete(census) &&
+        census.writers.length === 1 &&
         census.writers[0]?.runtimeEpoch === assignment.runtimeEpoch;
       const resumed = stillOldWriter ? await this.resumeMatching(request, context) : false;
-      if (resumed) await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });
+      if (resumed)
+        await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });
       if (!stillOldWriter) {
         return {
           status: "blocked",
-          result: await this.saveOutcome(operation, checkpoint, "unknown", "stop_outcome_unknown", "runtime stop did not prove whether the old writer remains"),
+          result: await this.saveOutcome(
+            operation,
+            checkpoint,
+            "unknown",
+            "stop_outcome_unknown",
+            "runtime stop did not prove whether the old writer remains",
+          ),
         };
       }
       throw error;
@@ -804,10 +1098,20 @@ export class LifecycleService {
     if (proof === null) {
       return {
         status: "blocked",
-        result: await this.saveOutcome(operation, checkpoint, "unknown", "old_writer_absence_unproven", "old writer termination is not proven; no replacement will start"),
+        result: await this.saveOutcome(
+          operation,
+          checkpoint,
+          "unknown",
+          "old_writer_absence_unproven",
+          "old writer termination is not proven; no replacement will start",
+        ),
       };
     }
-    await checkpoint({ phase: "old-writer-absent", quiesceReceipt: receipt, writerAbsenceProof: proof });
+    await checkpoint({
+      phase: "old-writer-absent",
+      quiesceReceipt: receipt,
+      writerAbsenceProof: proof,
+    });
     return { status: "retired", proof };
   }
 
@@ -845,7 +1149,7 @@ export class LifecycleService {
     return {
       instanceId: operation.instanceId,
       repositoryId: operation.repositoryId,
-      retiredEpoch: retired?.runtimeEpoch ?? null,
+      retiredRuntimeEpoch: retired?.runtimeEpoch ?? null,
       providerObservationId: census.providerObservationId,
       censusObservedAt: census.observedAt,
       remainingWriters: 0,
@@ -863,10 +1167,17 @@ export class LifecycleService {
       observed.status !== "ready" ||
       !sameAssignmentIdentity(observed.assignment, assignment) ||
       !observed.imageIdentityVerified ||
-      observed.actualImageDigest !== assignment.deployment.imageDigest ||
+      observed.actualImageDigest !== assignment.deployment.platformManifestDigest ||
       observed.providerObservationId.length === 0
-    ) return null;
-    const producer = observed.producer ?? await this.dependencies.producer.status(assignment, context.signal);
+    )
+      return null;
+    const producer =
+      observed.producer ?? (await this.dependencies.producer.status(assignment, context.signal));
+    const producerObservedAt = Date.parse(producer.observedAt);
+    const producerEvidenceTimeValid =
+      Number.isFinite(producerObservedAt) &&
+      producerObservedAt <= this.now() &&
+      this.now() - producerObservedAt <= this.readinessEvidenceMaxAgeMs;
     if (
       !producer.ready ||
       producer.contractVersion !== SCRIPTORIUM_PLATFORM_CONTRACT_VERSION ||
@@ -876,10 +1187,16 @@ export class LifecycleService {
       producer.imageDigest !== assignment.deployment.imageDigest ||
       producer.compositionManifestDigest !== assignment.deployment.compositionManifestDigest ||
       !sameStrings(producer.enabledModuleIds, assignment.deployment.enabledModuleIds) ||
-      !Number.isFinite(Date.parse(producer.observedAt))
-    ) return null;
+      !producerEvidenceTimeValid
+    )
+      return null;
     const auth = await this.dependencies.authProbe.verify(assignment, context.signal);
-    const authPassed = (
+    const authObservedAt = Date.parse(auth.observedAt);
+    const authEvidenceTimeValid =
+      Number.isFinite(authObservedAt) &&
+      authObservedAt <= this.now() &&
+      this.now() - authObservedAt <= this.readinessEvidenceMaxAgeMs;
+    const authPassed =
       auth.grantPolicyMatched &&
       auth.controlServicePolicyMatched &&
       auth.validGrantAccepted &&
@@ -891,8 +1208,7 @@ export class LifecycleService {
       auth.wrongRepositoryProbeId.length > 0 &&
       auth.wrongEpochProbeId.length > 0 &&
       auth.invalidServiceCredentialProbeId.length > 0 &&
-      Number.isFinite(Date.parse(auth.observedAt))
-    );
+      authEvidenceTimeValid;
     if (!authPassed) return null;
     return {
       assignment,
@@ -938,10 +1254,17 @@ export class LifecycleService {
     readinessReason: string,
     context: LifecycleExecutionContext,
     checkpoint: (patch: Partial<Omit<LifecycleOperation, "id" | "version">>) => Promise<void>,
-    setOutcome: (status: "blocked" | "failed" | "unknown", code: string, reason: string) => Promise<LifecycleResult>,
+    setOutcome: (
+      status: "blocked" | "failed" | "unknown",
+      code: string,
+      reason: string,
+    ) => Promise<LifecycleResult>,
   ): Promise<LifecycleResult> {
     const previous = operation.current;
-    if (previous === null || !(await this.dependencies.builds.isRollbackCompatible(previous.deployment, target))) {
+    if (
+      previous === null ||
+      !(await this.dependencies.builds.isRollbackCompatible(previous.deployment, target))
+    ) {
       return setOutcome(
         "unknown",
         "target_readiness_failed_no_compatible_rollback",
@@ -967,7 +1290,11 @@ export class LifecycleService {
         context.signal,
       );
       if (!Number.isSafeInteger(rollbackEpoch) || rollbackEpoch <= failedAssignment.runtimeEpoch) {
-        return setOutcome("blocked", "rollback_epoch_invalid", "Control Plane did not allocate a fresh rollback epoch");
+        return setOutcome(
+          "blocked",
+          "rollback_epoch_invalid",
+          "Control Plane did not allocate a fresh rollback epoch",
+        );
       }
       await checkpoint({ rollbackEpoch });
     }
@@ -980,7 +1307,12 @@ export class LifecycleService {
       operation.repositoryId,
       context.signal,
     );
-    if (!censusIsComplete(existing)) return setOutcome("unknown", "rollback_writer_census_incomplete", "cannot prove the failed target writer is absent before rollback");
+    if (!censusIsComplete(existing))
+      return setOutcome(
+        "unknown",
+        "rollback_writer_census_incomplete",
+        "cannot prove the failed target writer is absent before rollback",
+      );
     if (existing.writers.length === 0) {
       await checkpoint({ phase: "starting-target" });
       await context.assertLease();
@@ -994,15 +1326,28 @@ export class LifecycleService {
       existing.writers.length !== 1 ||
       existing.writers[0]?.runtimeEpoch !== rollbackEpoch
     ) {
-      return setOutcome("unknown", "rollback_writer_unexpected", "an unexpected writer prevents rollback startup");
+      return setOutcome(
+        "unknown",
+        "rollback_writer_unexpected",
+        "an unexpected writer prevents rollback startup",
+      );
     }
     const rollbackReadiness = await this.waitForReadiness(rollbackAssignment, context);
     if (rollbackReadiness === null) {
-      return setOutcome("unknown", "rollback_readiness_failed", "previous admitted runtime failed fresh readiness checks");
+      return setOutcome(
+        "unknown",
+        "rollback_readiness_failed",
+        "previous admitted runtime failed fresh readiness checks",
+      );
     }
     await checkpoint({ phase: "target-ready" });
     await context.assertLease();
-    await this.dependencies.routes.activate(rollbackAssignment, rollbackReadiness, context.assertLease, context.signal);
+    await this.dependencies.routes.activate(
+      rollbackAssignment,
+      rollbackReadiness,
+      context.assertLease,
+      context.signal,
+    );
     if (operation.targetReservationId !== null) {
       await context.assertLease();
       await this.dependencies.capacity.release(
@@ -1049,7 +1394,11 @@ export class LifecycleService {
     code: string,
     reason: string,
   ): Promise<LifecycleResult> {
-    await checkpoint({ phase: status, failureCode: code.slice(0, 128), failureReason: boundReason(reason) });
+    await checkpoint({
+      phase: status,
+      failureCode: code.slice(0, 128),
+      failureReason: boundReason(reason),
+    });
     void operation;
     return { status, code, reason: boundReason(reason) };
   }

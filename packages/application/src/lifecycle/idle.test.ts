@@ -28,6 +28,8 @@ function observation(overrides: Partial<IdleObservation> = {}): IdleObservation 
         repositoryLocator: "https://github.com/owner/repository",
         defaultBranchPolicy: "repository-default",
         imageDigest: digest,
+        artifactRef: `ghcr.io/praetorium/scriptorium@${digest}`,
+        platformManifestDigest: digest,
         compositionManifestDigest: digest,
         enabledModuleIds: ["core"],
         credentialBrokerLocator: "platform://credential-broker",
@@ -41,8 +43,21 @@ function observation(overrides: Partial<IdleObservation> = {}): IdleObservation 
           jwksUrl: "https://platform.example.test/.well-known/jwks.json",
           audience: "praetorium-runtime-control",
         },
+        runtimeMetadata: {
+          producerRevision: "a".repeat(40),
+          listenerPort: 3000,
+          livenessPath: "/health/live",
+          readinessPath: "/health/ready",
+          metadataPath: "/api/platform/v1/metadata",
+          shutdownPath: "/shutdown",
+          statusPath: "/api/platform/v1/status",
+          quiescePath: "/api/platform/v1/quiesce",
+          resumePath: "/api/platform/v1/resume",
+          shutdownTimeoutSeconds: 30,
+        },
         hostname: "instance.example.test",
         resourceProfileId: "small",
+        resources: { cpuMilli: 500, memoryMiB: 512, ephemeralStorageMiB: 256 },
       },
     },
     ...overrides,
@@ -55,7 +70,11 @@ describe("IdleLifecycle", () => {
     const value = observation();
     const scheduled: IdleObservation[] = [];
     const lifecycle = new IdleLifecycle({
-      observations: { async observe() { return value; } },
+      observations: {
+        async observe() {
+          return value;
+        },
+      },
       operations: {
         async createIdleStop(input) {
           scheduled.push(input);
@@ -74,12 +93,23 @@ describe("IdleLifecycle", () => {
   it("does not count health or status polling as meaningful user activity", async () => {
     const oldMeaningfulActivity = new Date(now - DEFAULT_IDLE_TIMEOUT_MS - 5_000).toISOString();
     const lifecycle = new IdleLifecycle({
-      observations: { async observe() { return observation({ lastMeaningfulActivityAt: oldMeaningfulActivity }); } },
-      operations: { async createIdleStop() { return "op-idle"; } },
+      observations: {
+        async observe() {
+          return observation({ lastMeaningfulActivityAt: oldMeaningfulActivity });
+        },
+      },
+      operations: {
+        async createIdleStop() {
+          return "op-idle";
+        },
+      },
       now: () => now,
     });
 
-    expect(await lifecycle.evaluate("ins_01")).toMatchObject({ status: "scheduled", operationId: "op-idle" });
+    expect(await lifecycle.evaluate("ins_01")).toMatchObject({
+      status: "scheduled",
+      operationId: "op-idle",
+    });
   });
 
   it("keeps active requests, mutations, jobs, unknown activity, and user-stopped runtimes out of idle scheduling", async () => {
@@ -96,8 +126,16 @@ describe("IdleLifecycle", () => {
 
     for (const [override, reason] of cases) {
       const lifecycle = new IdleLifecycle({
-        observations: { async observe() { return observation(override); } },
-        operations: { async createIdleStop() { return "unexpected"; } },
+        observations: {
+          async observe() {
+            return observation(override);
+          },
+        },
+        operations: {
+          async createIdleStop() {
+            return "unexpected";
+          },
+        },
         now: () => now,
       });
       expect(await lifecycle.evaluate("ins_01")).toMatchObject({ status: "not-idle", reason });

@@ -54,6 +54,9 @@ export interface ProvisionerInstanceSnapshot {
   readonly desiredRevisionId: string | null;
   readonly currentArtifactDigest: string | null;
   readonly desiredArtifactDigest: string | null;
+  readonly reservationState: "none" | "pending" | "reserved" | "allocated" | "blocked" | "released";
+  readonly reservationId: string | null;
+  readonly clusterId: string | null;
 }
 
 export interface ProvisionerBindingSnapshot {
@@ -105,11 +108,60 @@ export interface ClaimedProvisionerOperation {
     readonly instance: ProvisionerInstanceSnapshot;
   };
   readonly reservation: ProvisionerReservation | null;
+  readonly currentReservation: ProvisionerReservation | null;
   readonly deploymentRevision: ProvisionerDeploymentRevision | null;
+  readonly currentDeploymentRevision: ProvisionerDeploymentRevision | null;
+  readonly runtimeContext: {
+    readonly current: ProvisionerResolvedRuntime | null;
+    readonly target: ProvisionerResolvedRuntime | null;
+  };
+}
+
+export interface ProvisionerResolvedRuntime {
+  readonly revisionId: string;
+  readonly artifactRef: string;
+  readonly platformManifestDigest: string;
+  readonly resourceProfileId: string;
+  readonly hostname: string;
+  readonly resources: RuntimeResources;
+  readonly assignment: {
+    readonly contractVersion: "scriptorium-platform/v1";
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly repositoryLocator: string;
+    readonly defaultBranchPolicy: string;
+    readonly runtimeEpoch: number;
+    readonly imageDigest: string;
+    readonly compositionManifestDigest: string;
+    readonly enabledModuleIds: readonly string[];
+    readonly credentialBrokerLocator: string;
+    readonly grantPolicy: ProvisionerAuthenticationPolicy;
+    readonly controlServicePolicy: ProvisionerAuthenticationPolicy;
+  };
+  readonly metadata: {
+    readonly contractVersion: "scriptorium-platform/v1";
+    readonly producerRevision: string;
+    readonly listener: { readonly port: number };
+    readonly paths: {
+      readonly liveness: string;
+      readonly readiness: string;
+      readonly metadata: string;
+      readonly shutdown: string;
+      readonly status: "/api/platform/v1/status";
+      readonly quiesce: "/api/platform/v1/quiesce";
+      readonly resume: "/api/platform/v1/resume";
+    };
+    readonly shutdownTimeoutSeconds: number;
+  };
+}
+
+export interface ProvisionerAuthenticationPolicy {
+  readonly issuer: string;
+  readonly jwksUrl: string;
+  readonly audience: string;
 }
 
 export interface ProvisionerObservation {
-  readonly operationId: string;
   readonly instanceId: string;
   readonly repositoryId: number;
   readonly generation: number;
@@ -118,6 +170,7 @@ export interface ProvisionerObservation {
   readonly observedState: ProvisionerObservedState;
   readonly observedArtifactDigest: string | null;
   readonly observedRevisionId: string | null;
+  readonly reportedAt: string;
 }
 
 export interface RuntimeResources {
@@ -152,6 +205,24 @@ export interface CapacitySnapshotInput {
     readonly podResourceVersion: string;
   };
   readonly representedReservationIds: readonly string[];
+}
+
+export interface ControlCredentialRequest {
+  readonly operationId: string;
+  readonly workerId: string;
+  readonly leaseToken: string;
+  readonly leaseEpoch: number;
+  readonly instanceId: string;
+  readonly repositoryId: number;
+  readonly runtimeEpoch: number;
+  readonly action: "status" | "quiesce" | "resume";
+  readonly payloadDigest: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface ControlCredentialResponse {
+  readonly token: string;
+  readonly expiresAt: string;
 }
 
 export interface HttpOperationServiceOptions {
@@ -212,7 +283,10 @@ export interface ProvisionerOperationService {
     readonly clusterId: string;
     readonly signal?: AbortSignal;
   }): Promise<ReservationSnapshot>;
-  recordCapacitySnapshot(input: CapacitySnapshotInput & { readonly signal?: AbortSignal }): Promise<number | null>;
+  recordCapacitySnapshot(
+    input: CapacitySnapshotInput & { readonly signal?: AbortSignal },
+  ): Promise<number | null>;
+  issueControlCredential(input: ControlCredentialRequest): Promise<ControlCredentialResponse>;
   releaseRuntime(input: {
     readonly reservationId: string;
     readonly operationId: string;
@@ -228,10 +302,14 @@ export interface ProvisionerOperationService {
     readonly leaseToken: string;
     readonly leaseEpoch: number;
     readonly sequence: number;
-    readonly observation: ProvisionerObservation;
+    readonly observation: ProvisionerObservation | null;
     readonly terminal?: ProvisionerTerminal | null;
     readonly signal?: AbortSignal;
-  }): Promise<{ readonly operation: ProvisionerOperationRecord; readonly applied: boolean; readonly duplicate: boolean }>;
+  }): Promise<{
+    readonly operation: ProvisionerOperationRecord;
+    readonly applied: boolean;
+    readonly duplicate: boolean;
+  }>;
 }
 
 export class OperationServiceHttpError extends Error {
@@ -262,7 +340,8 @@ function nonEmptyString(value: unknown, message: string): string {
 }
 
 function safeInteger(value: unknown, message: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new TypeError(message);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new TypeError(message);
   return value;
 }
 
@@ -283,14 +362,57 @@ function enumValue<T extends string>(value: unknown, allowed: readonly T[], mess
 }
 
 const lifecyclePhases: readonly LifecyclePhase[] = [
-  "accepted", "waiting-for-artifact", "waiting-for-capacity", "capacity-reserved",
-  "quiescing-old", "old-quiesced", "stopping-old", "old-writer-absent",
-  "starting-target", "target-ready", "route-activated", "complete", "blocked", "failed", "unknown",
+  "accepted",
+  "waiting-for-artifact",
+  "waiting-for-capacity",
+  "capacity-reserved",
+  "quiescing-old",
+  "old-quiesced",
+  "stopping-old",
+  "old-writer-absent",
+  "starting-target",
+  "target-ready",
+  "route-activated",
+  "complete",
+  "blocked",
+  "failed",
+  "unknown",
 ];
 const operationKinds: readonly ProvisionerOperationKind[] = ["start", "stop", "redeploy", "update"];
-const operationStatuses: readonly ProvisionerOperationStatus[] = ["pending", "claimed", "running", "succeeded", "failed", "blocked"];
-const observedStates: readonly ProvisionerObservedState[] = ["absent", "starting", "ready", "stopping", "stopped", "failed", "unknown"];
-const reservationStatuses: readonly ProvisionerReservation["status"][] = ["pending", "reserved", "allocated", "released", "blocked"];
+const operationStatuses: readonly ProvisionerOperationStatus[] = [
+  "pending",
+  "claimed",
+  "running",
+  "succeeded",
+  "failed",
+  "blocked",
+];
+const observedStates: readonly ProvisionerObservedState[] = [
+  "absent",
+  "starting",
+  "ready",
+  "stopping",
+  "stopped",
+  "failed",
+  "unknown",
+];
+const reservationStatuses: readonly ProvisionerReservation["status"][] = [
+  "pending",
+  "reserved",
+  "allocated",
+  "released",
+  "blocked",
+];
+const reservationStates: readonly ProvisionerInstanceSnapshot["reservationState"][] = [
+  "none",
+  "pending",
+  "reserved",
+  "allocated",
+  "blocked",
+  "released",
+];
+const sha256 = /^sha256:[0-9a-f]{64}$/u;
+const moduleId = /^[a-z][a-z0-9-]{0,63}$/u;
 
 function parseResources(input: unknown, message: string): RuntimeResources {
   const value = object(input, message);
@@ -298,6 +420,162 @@ function parseResources(input: unknown, message: string): RuntimeResources {
     cpuMilli: safeInteger(value.cpuMilli, message),
     memoryMiB: safeInteger(value.memoryMiB, message),
     ephemeralStorageMiB: safeInteger(value.ephemeralStorageMiB, message),
+  };
+}
+
+function parsePolicy(input: unknown, message: string): ProvisionerAuthenticationPolicy {
+  const value = object(input, message);
+  const issuer = nonEmptyString(value.issuer, message);
+  const jwksUrl = nonEmptyString(value.jwksUrl, message);
+  const audience = nonEmptyString(value.audience, message);
+  for (const candidate of [issuer, jwksUrl]) {
+    const url = new URL(candidate);
+    if (
+      url.protocol !== "https:" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.search !== "" ||
+      url.hash !== ""
+    ) {
+      throw new TypeError(message);
+    }
+  }
+  return { issuer, jwksUrl, audience };
+}
+
+function parseRuntimeMetadata(input: unknown): ProvisionerResolvedRuntime["metadata"] {
+  const metadata = object(input, "runtime metadata invalid");
+  const listener = object(metadata.listener, "runtime listener invalid");
+  const paths = object(metadata.paths, "runtime paths invalid");
+  const producerRevision = nonEmptyString(metadata.producerRevision, "producer revision missing");
+  if (!/^[a-f0-9]{40}$/u.test(producerRevision)) throw new TypeError("producer revision invalid");
+  const port = positiveInteger(listener.port, "runtime port invalid");
+  if (port > 65_535) throw new TypeError("runtime port invalid");
+  const path = (key: string) => {
+    const value = nonEmptyString(paths[key], "runtime path missing");
+    if (!/^\/(?!\/)[^\r\n?#]{1,256}$/u.test(value)) throw new TypeError("runtime path invalid");
+    return value;
+  };
+  if (
+    metadata.contractVersion !== "scriptorium-platform/v1" ||
+    paths.status !== "/api/platform/v1/status" ||
+    paths.quiesce !== "/api/platform/v1/quiesce" ||
+    paths.resume !== "/api/platform/v1/resume"
+  )
+    throw new TypeError("runtime metadata contract version or control paths invalid");
+  return {
+    contractVersion: "scriptorium-platform/v1",
+    producerRevision,
+    listener: { port },
+    paths: {
+      liveness: path("liveness"),
+      readiness: path("readiness"),
+      metadata: path("metadata"),
+      shutdown: path("shutdown"),
+      status: "/api/platform/v1/status",
+      quiesce: "/api/platform/v1/quiesce",
+      resume: "/api/platform/v1/resume",
+    },
+    shutdownTimeoutSeconds: positiveInteger(
+      metadata.shutdownTimeoutSeconds,
+      "runtime shutdown timeout invalid",
+    ),
+  };
+}
+
+function parseResolvedRuntime(input: unknown): ProvisionerResolvedRuntime {
+  const value = object(input, "resolved runtime context invalid");
+  const assignment = object(value.assignment, "runtime assignment invalid");
+  if (assignment.contractVersion !== "scriptorium-platform/v1")
+    throw new TypeError("runtime assignment contract version invalid");
+  const enabledModuleIds = assignment.enabledModuleIds;
+  if (
+    !Array.isArray(enabledModuleIds) ||
+    enabledModuleIds.length > 256 ||
+    enabledModuleIds.some((item) => typeof item !== "string" || !moduleId.test(item)) ||
+    new Set(enabledModuleIds).size !== enabledModuleIds.length
+  ) {
+    throw new TypeError("runtime assignment module set invalid");
+  }
+  const imageDigest = nonEmptyString(assignment.imageDigest, "runtime image digest missing");
+  const compositionManifestDigest = nonEmptyString(
+    assignment.compositionManifestDigest,
+    "runtime composition digest missing",
+  );
+  const platformManifestDigest = nonEmptyString(
+    value.platformManifestDigest,
+    "runtime platform manifest digest missing",
+  );
+  if (
+    !sha256.test(imageDigest) ||
+    !sha256.test(compositionManifestDigest) ||
+    !sha256.test(platformManifestDigest)
+  ) {
+    throw new TypeError("runtime artifact digest invalid");
+  }
+  const artifactRef = nonEmptyString(value.artifactRef, "runtime artifact reference missing");
+  if (
+    !/^[a-z0-9][a-z0-9./:_-]{0,254}@sha256:[0-9a-f]{64}$/u.test(artifactRef) ||
+    !artifactRef.endsWith(`@${imageDigest}`)
+  ) {
+    throw new TypeError("runtime artifact reference is not bound to its admitted digest");
+  }
+  const repositoryLocator = nonEmptyString(
+    assignment.repositoryLocator,
+    "runtime repository locator missing",
+  );
+  const repositoryUrl = new URL(repositoryLocator);
+  if (
+    repositoryUrl.protocol !== "https:" ||
+    repositoryUrl.hostname !== "github.com" ||
+    repositoryUrl.port !== "" ||
+    repositoryUrl.username !== "" ||
+    repositoryUrl.password !== "" ||
+    !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repositoryUrl.pathname) ||
+    repositoryUrl.search !== "" ||
+    repositoryUrl.hash !== ""
+  )
+    throw new TypeError("runtime repository locator invalid");
+  const hostname = nonEmptyString(value.hostname, "runtime hostname missing");
+  if (!/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/u.test(hostname) || hostname.includes("..")) {
+    throw new TypeError("runtime hostname invalid");
+  }
+  const resourceProfileId = nonEmptyString(
+    value.resourceProfileId,
+    "runtime resource profile missing",
+  );
+  if (!moduleId.test(resourceProfileId)) throw new TypeError("runtime resource profile invalid");
+  return {
+    revisionId: nonEmptyString(value.revisionId, "runtime revision ID missing"),
+    artifactRef,
+    platformManifestDigest,
+    resourceProfileId,
+    hostname,
+    resources: parseResources(value.resources, "runtime resource profile invalid"),
+    assignment: {
+      contractVersion: "scriptorium-platform/v1",
+      instanceId: nonEmptyString(assignment.instanceId, "runtime instance ID missing"),
+      repositoryId: positiveInteger(assignment.repositoryId, "runtime repository ID missing"),
+      repositoryLocator,
+      defaultBranchPolicy: nonEmptyString(
+        assignment.defaultBranchPolicy,
+        "runtime branch policy missing",
+      ),
+      runtimeEpoch: positiveInteger(assignment.runtimeEpoch, "runtime epoch missing"),
+      imageDigest,
+      compositionManifestDigest,
+      enabledModuleIds: [...enabledModuleIds] as string[],
+      credentialBrokerLocator: nonEmptyString(
+        assignment.credentialBrokerLocator,
+        "credential broker locator missing",
+      ),
+      grantPolicy: parsePolicy(assignment.grantPolicy, "runtime grant policy invalid"),
+      controlServicePolicy: parsePolicy(
+        assignment.controlServicePolicy,
+        "runtime control policy invalid",
+      ),
+    },
+    metadata: parseRuntimeMetadata(value.metadata),
   };
 }
 
@@ -318,12 +596,21 @@ function parseOperation(input: unknown): ProvisionerOperationRecord {
     reportSequence: safeInteger(operation.reportSequence, "report sequence missing"),
     phase: enumValue(operation.phase, lifecyclePhases, "operation phase invalid"),
     checkpointSequence: safeInteger(operation.checkpointSequence, "checkpoint sequence missing"),
-    checkpoint: operation.checkpoint === null ? null : object(operation.checkpoint, "invalid operation checkpoint"),
+    checkpoint:
+      operation.checkpoint === null
+        ? null
+        : object(operation.checkpoint, "invalid operation checkpoint"),
     clusterId: nullableString(operation.clusterId, "operation cluster ID invalid"),
     reservationId: nullableString(operation.reservationId, "operation reservation ID invalid"),
-    deploymentRevisionId: nullableString(operation.deploymentRevisionId, "operation deployment revision ID invalid"),
+    deploymentRevisionId: nullableString(
+      operation.deploymentRevisionId,
+      "operation deployment revision ID invalid",
+    ),
     buildId: nullableString(operation.buildId, "operation build ID invalid"),
-    prerequisiteBuildId: nullableString(operation.prerequisiteBuildId, "operation prerequisite build ID invalid"),
+    prerequisiteBuildId: nullableString(
+      operation.prerequisiteBuildId,
+      "operation prerequisite build ID invalid",
+    ),
   };
 }
 
@@ -339,7 +626,10 @@ function parseReservation(input: unknown): ProvisionerReservation {
     clusterId,
     status: enumValue(value.status, reservationStatuses, "reservation status invalid"),
     resources: parseResources(value.resources, "reservation resources invalid"),
-    capacitySnapshotEpoch: safeInteger(value.capacitySnapshotEpoch, "reservation capacity epoch missing"),
+    capacitySnapshotEpoch: safeInteger(
+      value.capacitySnapshotEpoch,
+      "reservation capacity epoch missing",
+    ),
     createdAt: safeInteger(value.createdAt, "reservation created time missing"),
     updatedAt: safeInteger(value.updatedAt, "reservation updated time missing"),
   };
@@ -352,8 +642,14 @@ function parseCapacity(input: unknown): ReservationSnapshot["capacity"] {
   return {
     allocatable: parseResources(value.allocatable, "capacity allocatable resources invalid"),
     requested: parseResources(value.requested, "capacity requested resources invalid"),
-    nodeResourceVersion: nonEmptyString(value.nodeResourceVersion, "capacity node resource version missing"),
-    podResourceVersion: nonEmptyString(value.podResourceVersion, "capacity Pod resource version missing"),
+    nodeResourceVersion: nonEmptyString(
+      value.nodeResourceVersion,
+      "capacity node resource version missing",
+    ),
+    podResourceVersion: nonEmptyString(
+      value.podResourceVersion,
+      "capacity Pod resource version missing",
+    ),
   };
 }
 
@@ -368,25 +664,34 @@ function parseReservationSnapshot(input: unknown): ReservationSnapshot {
     observedAt: safeInteger(value.observedAt, "capacity observation time missing"),
     complete: value.complete === true,
     capacity: parseCapacity(value.capacity),
-    representedReservationIds: value.representedReservationIds.map((item) => nonEmptyString(item, "invalid represented reservation ID")),
+    representedReservationIds: value.representedReservationIds.map((item) =>
+      nonEmptyString(item, "invalid represented reservation ID"),
+    ),
     reservations: value.reservations.map(parseReservation),
   };
 }
 
-function parseOperationEnvelope(input: unknown): { readonly operation: ProvisionerOperationRecord } {
+function parseOperationEnvelope(input: unknown): {
+  readonly operation: ProvisionerOperationRecord;
+} {
   const value = object(input, "invalid operation response");
   return { operation: parseOperation(value.operation) };
 }
 
 function assertOperationResponse(
   operation: ProvisionerOperationRecord,
-  expected: { readonly operationId: string; readonly leaseEpoch: number; readonly leaseToken: string },
+  expected: {
+    readonly operationId: string;
+    readonly leaseEpoch: number;
+    readonly leaseToken: string;
+  },
 ): void {
   if (
     operation.id !== expected.operationId ||
     operation.leaseEpoch !== expected.leaseEpoch ||
     operation.leaseToken !== expected.leaseToken
-  ) throw new TypeError("Operation Service returned a mismatched lease response");
+  )
+    throw new TypeError("Operation Service returned a mismatched lease response");
 }
 
 function parseReservationOrNull(input: unknown): ProvisionerReservation | null {
@@ -402,12 +707,27 @@ function parseClaim(input: unknown): ClaimedProvisionerOperation | null {
   const snapshot = object(response.snapshot, "invalid claimed snapshot");
   const binding = object(snapshot.binding, "invalid repository binding");
   const instance = object(snapshot.instance, "invalid instance snapshot");
-  const reservation = response.reservation === null
-    ? null
-    : object(response.reservation, "invalid runtime reservation");
-  const deploymentRevision = response.deploymentRevision === null
-    ? null
-    : object(response.deploymentRevision, "invalid deployment revision");
+  const reservation =
+    response.reservation === null
+      ? null
+      : object(response.reservation, "invalid runtime reservation");
+  const currentReservation =
+    response.currentReservation === null
+      ? null
+      : object(response.currentReservation, "invalid current runtime reservation");
+  const deploymentRevision =
+    response.deploymentRevision === null
+      ? null
+      : object(response.deploymentRevision, "invalid deployment revision");
+  const currentDeploymentRevision =
+    response.currentDeploymentRevision === null
+      ? null
+      : object(response.currentDeploymentRevision, "invalid current deployment revision");
+  const runtimeContext = object(response.runtimeContext, "resolved runtime context missing");
+  const currentRuntime =
+    runtimeContext.current === null ? null : parseResolvedRuntime(runtimeContext.current);
+  const targetRuntime =
+    runtimeContext.target === null ? null : parseResolvedRuntime(runtimeContext.target);
 
   const parsedOperation = parseOperation(operation);
   const parsedBinding: ProvisionerBindingSnapshot = {
@@ -416,7 +736,10 @@ function parseClaim(input: unknown): ClaimedProvisionerOperation | null {
     installationId: positiveInteger(binding.installationId, "binding installation missing"),
     owner: nonEmptyString(binding.owner, "binding owner missing"),
     name: nonEmptyString(binding.name, "binding name missing"),
-    authorizationRevision: safeInteger(binding.authorizationRevision, "binding authorization missing"),
+    authorizationRevision: safeInteger(
+      binding.authorizationRevision,
+      "binding authorization missing",
+    ),
     bindingEpoch: positiveInteger(binding.bindingEpoch, "binding epoch missing"),
     suspended: binding.suspended === true,
   };
@@ -425,14 +748,47 @@ function parseClaim(input: unknown): ClaimedProvisionerOperation | null {
     repositoryId: positiveInteger(instance.repositoryId, "instance repository missing"),
     generation: positiveInteger(instance.generation, "instance generation missing"),
     runtimeEpoch: positiveInteger(instance.runtimeEpoch, "instance epoch missing"),
-    observedGeneration: instance.observedGeneration === null ? null : safeInteger(instance.observedGeneration, "observed generation invalid"),
-    desiredState: enumValue(instance.desiredState, ["running", "stopped"], "instance desired state invalid"),
-    observedState: enumValue(instance.observedState, observedStates, "instance observed state invalid"),
-    observedRuntimeEpoch: instance.observedRuntimeEpoch === null ? null : safeInteger(instance.observedRuntimeEpoch, "observed runtime epoch invalid"),
-    observedRevisionId: instance.observedRevisionId === null ? null : nonEmptyString(instance.observedRevisionId, "observed revision ID invalid"),
-    desiredRevisionId: instance.desiredRevisionId === null ? null : nonEmptyString(instance.desiredRevisionId, "desired revision ID invalid"),
-    currentArtifactDigest: instance.currentArtifactDigest === null ? null : nonEmptyString(instance.currentArtifactDigest, "current artifact digest invalid"),
-    desiredArtifactDigest: instance.desiredArtifactDigest === null ? null : nonEmptyString(instance.desiredArtifactDigest, "desired artifact digest invalid"),
+    observedGeneration:
+      instance.observedGeneration === null
+        ? null
+        : safeInteger(instance.observedGeneration, "observed generation invalid"),
+    desiredState: enumValue(
+      instance.desiredState,
+      ["running", "stopped"],
+      "instance desired state invalid",
+    ),
+    observedState: enumValue(
+      instance.observedState,
+      observedStates,
+      "instance observed state invalid",
+    ),
+    observedRuntimeEpoch:
+      instance.observedRuntimeEpoch === null
+        ? null
+        : safeInteger(instance.observedRuntimeEpoch, "observed runtime epoch invalid"),
+    observedRevisionId:
+      instance.observedRevisionId === null
+        ? null
+        : nonEmptyString(instance.observedRevisionId, "observed revision ID invalid"),
+    desiredRevisionId:
+      instance.desiredRevisionId === null
+        ? null
+        : nonEmptyString(instance.desiredRevisionId, "desired revision ID invalid"),
+    currentArtifactDigest:
+      instance.currentArtifactDigest === null
+        ? null
+        : nonEmptyString(instance.currentArtifactDigest, "current artifact digest invalid"),
+    desiredArtifactDigest:
+      instance.desiredArtifactDigest === null
+        ? null
+        : nonEmptyString(instance.desiredArtifactDigest, "desired artifact digest invalid"),
+    reservationState: enumValue(
+      instance.reservationState,
+      reservationStates,
+      "instance reservation state invalid",
+    ),
+    reservationId: nullableString(instance.reservationId, "instance reservation ID invalid"),
+    clusterId: nullableString(instance.clusterId, "instance cluster ID invalid"),
   };
   if (
     parsedOperation.status !== "claimed" ||
@@ -445,7 +801,42 @@ function parseClaim(input: unknown): ClaimedProvisionerOperation | null {
     parsedOperation.repositoryId !== parsedInstance.repositoryId ||
     parsedOperation.generation !== parsedInstance.generation ||
     parsedOperation.runtimeEpoch !== parsedInstance.runtimeEpoch
-  ) throw new TypeError("claimed operation identity is inconsistent");
+  )
+    throw new TypeError("claimed operation identity is inconsistent");
+
+  for (const resolved of [currentRuntime, targetRuntime]) {
+    if (
+      resolved !== null &&
+      (resolved.assignment.instanceId !== parsedOperation.instanceId ||
+        resolved.assignment.repositoryId !== parsedOperation.repositoryId)
+    )
+      throw new TypeError("resolved runtime belongs to another repository instance");
+  }
+  if (
+    currentRuntime !== null &&
+    (parsedInstance.observedRuntimeEpoch !== currentRuntime.assignment.runtimeEpoch ||
+      parsedInstance.observedGeneration === null ||
+      parsedInstance.observedRevisionId !== currentRuntime.revisionId ||
+      parsedInstance.currentArtifactDigest !== currentRuntime.assignment.imageDigest ||
+      parsedInstance.clusterId !== parsedOperation.clusterId)
+  )
+    throw new TypeError("resolved current runtime differs from the observed instance state");
+  if (currentRuntime === null && parsedInstance.observedState === "ready") {
+    throw new TypeError("ready instance is missing its resolved current runtime");
+  }
+  if (parsedOperation.kind === "stop") {
+    if (targetRuntime !== null)
+      throw new TypeError("stop operation unexpectedly carries a target runtime");
+  } else if (
+    targetRuntime === null ||
+    targetRuntime.assignment.runtimeEpoch !== parsedOperation.runtimeEpoch ||
+    parsedOperation.deploymentRevisionId !== targetRuntime.revisionId ||
+    (deploymentRevision !== null &&
+      (deploymentRevision.revisionId !== targetRuntime.revisionId ||
+        deploymentRevision.status !== "admitted" ||
+        deploymentRevision.artifactDigest !== targetRuntime.assignment.imageDigest))
+  )
+    throw new TypeError("target runtime is not bound to the admitted deployment revision");
 
   return {
     operation: parsedOperation,
@@ -454,24 +845,115 @@ function parseClaim(input: unknown): ClaimedProvisionerOperation | null {
       instance: parsedInstance,
     },
     reservation: reservation === null ? null : parseReservation(reservation),
-    deploymentRevision: deploymentRevision === null ? null : {
-      revisionId: nonEmptyString(deploymentRevision.revisionId, "deployment revision ID missing"),
-      instanceId: nonEmptyString(deploymentRevision.instanceId, "deployment revision instance missing"),
-      repositoryId: positiveInteger(deploymentRevision.repositoryId, "deployment revision repository missing"),
-      generation: positiveInteger(deploymentRevision.generation, "deployment revision generation missing"),
-      buildKey: nonEmptyString(deploymentRevision.buildKey, "deployment revision build key missing"),
-      buildId: nonEmptyString(deploymentRevision.buildId, "deployment revision build ID missing"),
-      selection: object(deploymentRevision.selection, "deployment revision selection invalid"),
-      resources: parseResources(deploymentRevision.resources, "deployment revision resources invalid"),
-      artifactDigest: deploymentRevision.artifactDigest === null ? null : nonEmptyString(deploymentRevision.artifactDigest, "deployment revision artifact digest invalid"),
-      status: enumValue(deploymentRevision.status, ["building", "admitted", "failed", "superseded"], "deployment revision status invalid"),
-    },
+    currentReservation: currentReservation === null ? null : parseReservation(currentReservation),
+    deploymentRevision:
+      deploymentRevision === null
+        ? null
+        : {
+            revisionId: nonEmptyString(
+              deploymentRevision.revisionId,
+              "deployment revision ID missing",
+            ),
+            instanceId: nonEmptyString(
+              deploymentRevision.instanceId,
+              "deployment revision instance missing",
+            ),
+            repositoryId: positiveInteger(
+              deploymentRevision.repositoryId,
+              "deployment revision repository missing",
+            ),
+            generation: positiveInteger(
+              deploymentRevision.generation,
+              "deployment revision generation missing",
+            ),
+            buildKey: nonEmptyString(
+              deploymentRevision.buildKey,
+              "deployment revision build key missing",
+            ),
+            buildId: nonEmptyString(
+              deploymentRevision.buildId,
+              "deployment revision build ID missing",
+            ),
+            selection: object(
+              deploymentRevision.selection,
+              "deployment revision selection invalid",
+            ),
+            resources: parseResources(
+              deploymentRevision.resources,
+              "deployment revision resources invalid",
+            ),
+            artifactDigest:
+              deploymentRevision.artifactDigest === null
+                ? null
+                : nonEmptyString(
+                    deploymentRevision.artifactDigest,
+                    "deployment revision artifact digest invalid",
+                  ),
+            status: enumValue(
+              deploymentRevision.status,
+              ["building", "admitted", "failed", "superseded"],
+              "deployment revision status invalid",
+            ),
+          },
+    currentDeploymentRevision:
+      currentDeploymentRevision === null
+        ? null
+        : {
+            revisionId: nonEmptyString(
+              currentDeploymentRevision.revisionId,
+              "current deployment revision ID missing",
+            ),
+            instanceId: nonEmptyString(
+              currentDeploymentRevision.instanceId,
+              "current deployment revision instance missing",
+            ),
+            repositoryId: positiveInteger(
+              currentDeploymentRevision.repositoryId,
+              "current deployment revision repository missing",
+            ),
+            generation: positiveInteger(
+              currentDeploymentRevision.generation,
+              "current deployment revision generation missing",
+            ),
+            buildKey: nonEmptyString(
+              currentDeploymentRevision.buildKey,
+              "current deployment revision build key missing",
+            ),
+            buildId: nonEmptyString(
+              currentDeploymentRevision.buildId,
+              "current deployment revision build ID missing",
+            ),
+            selection: object(
+              currentDeploymentRevision.selection,
+              "current deployment revision selection invalid",
+            ),
+            resources: parseResources(
+              currentDeploymentRevision.resources,
+              "current deployment revision resources invalid",
+            ),
+            artifactDigest:
+              currentDeploymentRevision.artifactDigest === null
+                ? null
+                : nonEmptyString(
+                    currentDeploymentRevision.artifactDigest,
+                    "current deployment revision artifact digest invalid",
+                  ),
+            status: enumValue(
+              currentDeploymentRevision.status,
+              ["building", "admitted", "failed", "superseded"],
+              "current deployment revision status invalid",
+            ),
+          },
+    runtimeContext: { current: currentRuntime, target: targetRuntime },
   };
 }
 
 function normalizeBaseUrl(value: string): string {
   const url = new URL(value);
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(url.hostname))) {
+  if (
+    url.protocol !== "https:" &&
+    !(url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(url.hostname))
+  ) {
     throw new TypeError("Control Plane URL must use HTTPS outside localhost");
   }
   if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
@@ -492,7 +974,8 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     if (options.credential.length === 0 || options.credential.length > 4096) {
       throw new TypeError("Operation Service credential is invalid");
     }
-    if (/[\r\n]/u.test(options.credential)) throw new TypeError("Operation Service credential is invalid");
+    if (/[\r\n]/u.test(options.credential))
+      throw new TypeError("Operation Service credential is invalid");
   }
 
   async claimNext(input: {
@@ -501,11 +984,15 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     readonly leaseSeconds: number;
     readonly signal?: AbortSignal;
   }): Promise<ClaimedProvisionerOperation | null> {
-    const result = await this.post("/claim", {
-      workerId: input.workerId,
-      clusterId: input.clusterId,
-      leaseSeconds: input.leaseSeconds,
-    }, input.signal);
+    const result = await this.post(
+      "/claim",
+      {
+        workerId: input.workerId,
+        clusterId: input.clusterId,
+        leaseSeconds: input.leaseSeconds,
+      },
+      input.signal,
+    );
     const claim = parseClaim(result);
     if (claim !== null && claim.operation.clusterId !== input.clusterId) {
       throw new TypeError("claimed operation belongs to a different runtime cluster");
@@ -526,7 +1013,10 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
       const value = object(result, "invalid heartbeat response");
       const operation = parseOperation(value.operation);
       assertOperationResponse(operation, input);
-      return { leaseExpiresAt: positiveInteger(value.leaseExpiresAt, "lease expiry response invalid"), operation };
+      return {
+        leaseExpiresAt: positiveInteger(value.leaseExpiresAt, "lease expiry response invalid"),
+        operation,
+      };
     });
   }
 
@@ -582,13 +1072,41 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     readonly clusterId: string;
     readonly signal?: AbortSignal;
   }): Promise<ReservationSnapshot> {
-    return this.post("/reservations/current", withoutSignal(input), input.signal).then(parseReservationSnapshot);
+    return this.post("/reservations/current", withoutSignal(input), input.signal).then(
+      parseReservationSnapshot,
+    );
   }
 
-  async recordCapacitySnapshot(input: CapacitySnapshotInput & { readonly signal?: AbortSignal }): Promise<number | null> {
-    const response = object(await this.post("/capacity/record", withoutSignal(input), input.signal), "invalid capacity record response");
+  async recordCapacitySnapshot(
+    input: CapacitySnapshotInput & { readonly signal?: AbortSignal },
+  ): Promise<number | null> {
+    const response = object(
+      await this.post("/capacity/record", withoutSignal(input), input.signal),
+      "invalid capacity record response",
+    );
     if (response.capacityEpoch === null) return null;
     return positiveInteger(response.capacityEpoch, "capacity epoch response invalid");
+  }
+
+  async issueControlCredential(
+    input: ControlCredentialRequest,
+  ): Promise<ControlCredentialResponse> {
+    if (!/^sha256:[a-f0-9]{64}$/u.test(input.payloadDigest)) {
+      throw new TypeError("runtime control payload digest is invalid");
+    }
+    const value = object(
+      await this.post("/control-credential", withoutSignal(input), input.signal),
+      "invalid runtime control credential response",
+    );
+    const token = nonEmptyString(value.token, "runtime control credential token missing");
+    if (token.length > 8192 || /[\r\n]/u.test(token))
+      throw new TypeError("runtime control credential token is invalid");
+    const expiresAt = nonEmptyString(value.expiresAt, "runtime control credential expiry missing");
+    const expiryMs = Date.parse(expiresAt);
+    if (!Number.isFinite(expiryMs) || expiryMs <= Date.now() || expiryMs > Date.now() + 61_000) {
+      throw new TypeError("runtime control credential expiry is outside its short lifetime");
+    }
+    return { token, expiresAt };
   }
 
   async releaseRuntime(input: {
@@ -609,10 +1127,14 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     readonly leaseToken: string;
     readonly leaseEpoch: number;
     readonly sequence: number;
-    readonly observation: ProvisionerObservation;
+    readonly observation: ProvisionerObservation | null;
     readonly terminal?: ProvisionerTerminal | null;
     readonly signal?: AbortSignal;
-  }): Promise<{ readonly operation: ProvisionerOperationRecord; readonly applied: boolean; readonly duplicate: boolean }> {
+  }): Promise<{
+    readonly operation: ProvisionerOperationRecord;
+    readonly applied: boolean;
+    readonly duplicate: boolean;
+  }> {
     return this.post("/report", withoutSignal(input), input.signal).then((result) => {
       const value = object(result, "invalid report response");
       const operation = parseOperation(value.operation);
@@ -625,9 +1147,10 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
   }
 
   private async post(path: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
-    const requestSignal = signal === undefined
-      ? AbortSignal.timeout(this.timeoutMs)
-      : AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]);
+    const requestSignal =
+      signal === undefined
+        ? AbortSignal.timeout(this.timeoutMs)
+        : AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]);
     let response: Response;
     try {
       response = await this.fetchImplementation(`${this.baseUrl}${SERVICE_PATH}${path}`, {
@@ -649,28 +1172,45 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     const text = await readBounded(response, MAX_RESPONSE_BYTES);
     let payload: unknown;
     try {
-      payload = text.length === 0 ? null : JSON.parse(text) as unknown;
+      payload = text.length === 0 ? null : (JSON.parse(text) as unknown);
     } catch {
-      throw new OperationServiceHttpError("operation_service_invalid_response", response.status, response.status >= 500);
+      throw new OperationServiceHttpError(
+        "operation_service_invalid_response",
+        response.status,
+        response.status >= 500,
+      );
     }
     if (!response.ok) {
-      const envelope = typeof payload === "object" && payload !== null
-        ? payload as Record<string, unknown>
-        : {};
-      const error = typeof envelope.error === "object" && envelope.error !== null && !Array.isArray(envelope.error)
-        ? envelope.error as Record<string, unknown>
-        : envelope;
-      const code = typeof error.code === "string" && /^[A-Z0-9_]{1,64}$/u.test(error.code)
-        ? error.code.toLowerCase()
-        : `http_${response.status}`;
-      throw new OperationServiceHttpError(code, response.status, response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500);
+      const envelope =
+        typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+      const error =
+        typeof envelope.error === "object" &&
+        envelope.error !== null &&
+        !Array.isArray(envelope.error)
+          ? (envelope.error as Record<string, unknown>)
+          : envelope;
+      const code =
+        typeof error.code === "string" && /^[A-Z0-9_]{1,64}$/u.test(error.code)
+          ? error.code.toLowerCase()
+          : `http_${response.status}`;
+      throw new OperationServiceHttpError(
+        code,
+        response.status,
+        response.status === 408 ||
+          response.status === 425 ||
+          response.status === 429 ||
+          response.status >= 500,
+      );
     }
     return payload;
   }
 }
 
 function withoutSignal<T extends { readonly signal?: AbortSignal }>(input: T): Omit<T, "signal"> {
-  return Object.fromEntries(Object.entries(input).filter(([key]) => key !== "signal")) as Omit<T, "signal">;
+  return Object.fromEntries(Object.entries(input).filter(([key]) => key !== "signal")) as Omit<
+    T,
+    "signal"
+  >;
 }
 
 async function readBounded(response: Response, maxBytes: number): Promise<string> {
@@ -684,7 +1224,11 @@ async function readBounded(response: Response, maxBytes: number): Promise<string
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel();
-      throw new OperationServiceHttpError("operation_service_response_too_large", response.status, false);
+      throw new OperationServiceHttpError(
+        "operation_service_response_too_large",
+        response.status,
+        false,
+      );
     }
     chunks.push(value);
   }

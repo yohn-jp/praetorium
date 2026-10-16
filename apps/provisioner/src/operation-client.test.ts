@@ -1,9 +1,57 @@
 import { describe, expect, it } from "vitest";
-import {
-  OperationServiceHttpClient,
-} from "./operation-client.js";
+import { OperationServiceHttpClient } from "./operation-client.js";
 
 const resources = { cpuMilli: 500, memoryMiB: 512, ephemeralStorageMiB: 256 };
+
+const metadata = {
+  contractVersion: "scriptorium-platform/v1",
+  producerRevision: "a".repeat(40),
+  listener: { port: 3000 },
+  paths: {
+    liveness: "/health/live",
+    readiness: "/health/ready",
+    metadata: "/api/platform/v1/metadata",
+    shutdown: "/shutdown",
+    status: "/api/platform/v1/status",
+    quiesce: "/api/platform/v1/quiesce",
+    resume: "/api/platform/v1/resume",
+  },
+  shutdownTimeoutSeconds: 30,
+};
+
+function resolvedRuntime(revisionId: string, epoch: number, digest: string) {
+  return {
+    revisionId,
+    artifactRef: `ghcr.io/example/scriptorium@${digest}`,
+    platformManifestDigest: `sha256:${"d".repeat(64)}`,
+    resourceProfileId: "small",
+    hostname: "instance.example.test",
+    resources,
+    assignment: {
+      contractVersion: "scriptorium-platform/v1",
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      repositoryLocator: "https://github.com/owner/repository",
+      defaultBranchPolicy: "repository-default",
+      runtimeEpoch: epoch,
+      imageDigest: digest,
+      compositionManifestDigest: `sha256:${"c".repeat(64)}`,
+      enabledModuleIds: ["core"],
+      credentialBrokerLocator: "platform://credential-broker",
+      grantPolicy: {
+        issuer: "https://platform.example.test",
+        jwksUrl: "https://platform.example.test/.well-known/jwks.json",
+        audience: "https://instance.example.test",
+      },
+      controlServicePolicy: {
+        issuer: "https://platform.example.test",
+        jwksUrl: "https://platform.example.test/.well-known/jwks.json",
+        audience: "praetorium-runtime-control",
+      },
+    },
+    metadata,
+  };
+}
 
 function claimBody(overrides: Record<string, unknown> = {}) {
   return {
@@ -51,12 +99,46 @@ function claimBody(overrides: Record<string, unknown> = {}) {
         observedRuntimeEpoch: 4,
         observedRevisionId: "rev_old",
         desiredRevisionId: "rev_01",
-        currentArtifactDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        desiredArtifactDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        currentArtifactDigest:
+          "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        desiredArtifactDigest:
+          "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        reservationState: "allocated",
+        reservationId: "res_old",
+        clusterId: "cluster-a",
       },
     },
     reservation: null,
-    deploymentRevision: null,
+    currentReservation: {
+      reservationId: "res_old",
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      runtimeEpoch: 4,
+      generation: 1,
+      clusterId: "cluster-a",
+      status: "allocated",
+      resources,
+      capacitySnapshotEpoch: 7,
+      createdAt: 1_800_000_000_000,
+      updatedAt: 1_800_000_000_100,
+    },
+    deploymentRevision: {
+      revisionId: "rev_01",
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      generation: 2,
+      buildKey: "build-key-01",
+      buildId: "build_01",
+      selection: { modules: ["core"] },
+      resources,
+      artifactDigest: `sha256:${"b".repeat(64)}`,
+      status: "admitted",
+    },
+    currentDeploymentRevision: null,
+    runtimeContext: {
+      current: resolvedRuntime("rev_old", 4, `sha256:${"a".repeat(64)}`),
+      target: resolvedRuntime("rev_01", 5, `sha256:${"b".repeat(64)}`),
+    },
     ...overrides,
   };
 }
@@ -79,24 +161,43 @@ describe("OperationServiceHttpClient", () => {
       return Response.json(claimBody());
     });
 
-    const claim = await service.claimNext({ workerId: "worker-a", clusterId: "cluster-a", leaseSeconds: 30 });
+    const claim = await service.claimNext({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      leaseSeconds: 30,
+    });
 
     expect(requestUrl).toBe("https://control.example.test/internal/provisioner/claim");
     expect(requestInit?.method).toBe("POST");
-    expect(new Headers(requestInit?.headers).get("authorization")).toBe("Bearer provisioner-service-secret");
-    expect(JSON.parse(String(requestInit?.body))).toEqual({ workerId: "worker-a", clusterId: "cluster-a", leaseSeconds: 30 });
-    expect(claim?.operation).toMatchObject({ id: "op_01", leaseEpoch: 1, runtimeEpoch: 5, clusterId: "cluster-a" });
+    expect(new Headers(requestInit?.headers).get("authorization")).toBe(
+      "Bearer provisioner-service-secret",
+    );
+    expect(JSON.parse(String(requestInit?.body))).toEqual({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      leaseSeconds: 30,
+    });
+    expect(claim?.operation).toMatchObject({
+      id: "op_01",
+      leaseEpoch: 1,
+      runtimeEpoch: 5,
+      clusterId: "cluster-a",
+    });
     expect(claim?.snapshot.binding.suspended).toBe(false);
   });
 
   it("rejects a claimed response whose operation, binding and instance identities diverge", async () => {
     const body = claimBody({
-      operation: { ...(claimBody() as { operation: Record<string, unknown> }).operation, repositoryId: 987654 },
+      operation: {
+        ...(claimBody() as { operation: Record<string, unknown> }).operation,
+        repositoryId: 987654,
+      },
     });
     const service = client(async () => Response.json(body));
 
-    await expect(service.claimNext({ workerId: "worker-a", clusterId: "cluster-a", leaseSeconds: 30 }))
-      .rejects.toThrow("claimed operation identity is inconsistent");
+    await expect(
+      service.claimNext({ workerId: "worker-a", clusterId: "cluster-a", leaseSeconds: 30 }),
+    ).rejects.toThrow("claimed operation identity is inconsistent");
   });
 
   it("records complete capacity evidence and parses the monotonic epoch", async () => {
@@ -123,26 +224,136 @@ describe("OperationServiceHttpClient", () => {
 
     expect(path).toBe("https://control.example.test/internal/provisioner/capacity/record");
     expect(epoch).toBe(12);
-    expect(body).toMatchObject({ clusterId: "cluster-a", complete: true, representedReservationIds: ["res_01"] });
+    expect(body).toMatchObject({
+      clusterId: "cluster-a",
+      complete: true,
+      representedReservationIds: ["res_01"],
+    });
   });
 
-  it("maps capacity conflicts to bounded non-retryable service errors", async () => {
-    const service = client(async () => Response.json(
-      { error: { code: "CAPACITY_UNAVAILABLE" } },
-      { status: 409 },
-    ));
+  it("requests a short-lived control credential bound to the lease, runtime and exact payload digest", async () => {
+    let path = "";
+    let body: unknown;
+    const service = client(async (input, init) => {
+      path = String(input);
+      body = JSON.parse(String(init?.body));
+      return Response.json({
+        token: "signed.runtime.control.jwt",
+        expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      });
+    });
 
-    await expect(service.reserveRuntime({
+    const result = await service.issueControlCredential({
+      operationId: "op_01",
+      workerId: "worker-a",
+      leaseToken: "opaque-lease-token",
+      leaseEpoch: 7,
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      runtimeEpoch: 9,
+      action: "quiesce",
+      payloadDigest: `sha256:${"a".repeat(64)}`,
+    });
+
+    expect(path).toBe("https://control.example.test/internal/provisioner/control-credential");
+    expect(body).toEqual({
+      operationId: "op_01",
+      workerId: "worker-a",
+      leaseToken: "opaque-lease-token",
+      leaseEpoch: 7,
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      runtimeEpoch: 9,
+      action: "quiesce",
+      payloadDigest: `sha256:${"a".repeat(64)}`,
+    });
+    expect(result).toMatchObject({ token: "signed.runtime.control.jwt" });
+  });
+
+  it("keeps progress reports separate from observed runtime state", async () => {
+    let body: Record<string, unknown> | undefined;
+    const service = client(async (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({
+        operation: (claimBody() as { operation: unknown }).operation,
+        applied: true,
+        duplicate: false,
+      });
+    });
+
+    await service.report({
       operationId: "op_01",
       workerId: "worker-a",
       leaseToken: "opaque-lease-token",
       leaseEpoch: 1,
-      expectedRuntimeEpoch: 5,
-      clusterId: "cluster-a",
-      expectedCapacityEpoch: 12,
-      resources,
-      reservationId: "res_02",
-    })).rejects.toMatchObject({
+      sequence: 4,
+      observation: null,
+    });
+
+    expect(body).toEqual({
+      operationId: "op_01",
+      workerId: "worker-a",
+      leaseToken: "opaque-lease-token",
+      leaseEpoch: 1,
+      sequence: 4,
+      observation: null,
+    });
+  });
+
+  it("sends actual observations with their own target epoch and generation", async () => {
+    let body: Record<string, unknown> | undefined;
+    const service = client(async (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({
+        operation: (claimBody() as { operation: unknown }).operation,
+        applied: true,
+        duplicate: false,
+      });
+    });
+
+    const observation = {
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      generation: 2,
+      runtimeEpoch: 5,
+      sequence: 5,
+      observedState: "ready",
+      observedArtifactDigest: `sha256:${"b".repeat(64)}`,
+      observedRevisionId: "rev_01",
+      reportedAt: new Date().toISOString(),
+    } as const;
+    await service.report({
+      operationId: "op_01",
+      workerId: "worker-a",
+      leaseToken: "opaque-lease-token",
+      leaseEpoch: 1,
+      sequence: 5,
+      observation,
+      terminal: "succeeded",
+    });
+
+    expect(body?.observation).toEqual(observation);
+    expect(body).not.toHaveProperty("observation.operationId");
+  });
+
+  it("maps capacity conflicts to bounded non-retryable service errors", async () => {
+    const service = client(async () =>
+      Response.json({ error: { code: "CAPACITY_UNAVAILABLE" } }, { status: 409 }),
+    );
+
+    await expect(
+      service.reserveRuntime({
+        operationId: "op_01",
+        workerId: "worker-a",
+        leaseToken: "opaque-lease-token",
+        leaseEpoch: 1,
+        expectedRuntimeEpoch: 5,
+        clusterId: "cluster-a",
+        expectedCapacityEpoch: 12,
+        resources,
+        reservationId: "res_02",
+      }),
+    ).rejects.toMatchObject({
       code: "capacity_unavailable",
       status: 409,
       retryable: false,
@@ -150,9 +361,19 @@ describe("OperationServiceHttpClient", () => {
   });
 
   it("refuses non-TLS remote Control Plane endpoints and header injection", () => {
-    expect(() => new OperationServiceHttpClient({ baseUrl: "http://control.example.test", credential: "secret" }))
-      .toThrow("HTTPS outside localhost");
-    expect(() => new OperationServiceHttpClient({ baseUrl: "https://control.example.test", credential: "bad\r\nvalue" }))
-      .toThrow("credential is invalid");
+    expect(
+      () =>
+        new OperationServiceHttpClient({
+          baseUrl: "http://control.example.test",
+          credential: "secret",
+        }),
+    ).toThrow("HTTPS outside localhost");
+    expect(
+      () =>
+        new OperationServiceHttpClient({
+          baseUrl: "https://control.example.test",
+          credential: "bad\r\nvalue",
+        }),
+    ).toThrow("credential is invalid");
   });
 });

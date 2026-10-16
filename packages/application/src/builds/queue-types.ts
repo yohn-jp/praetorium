@@ -86,7 +86,9 @@ export interface BuildQueueStore {
     readonly now: number;
     readonly leaseSeconds: number;
   }): Promise<BuildClaim | null>;
-  heartbeat(input: BuildQueueHeartbeatInput & { readonly serverNow: number }): Promise<BuildQueueHeartbeatResult>;
+  heartbeat(
+    input: BuildQueueHeartbeatInput & { readonly serverNow: number },
+  ): Promise<BuildQueueHeartbeatResult>;
   getReportContext(input: BuildReportFence): Promise<BuildReportContext | null>;
   recordReport(input: {
     readonly request: BuildReportRequest;

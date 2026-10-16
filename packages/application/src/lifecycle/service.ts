@@ -1020,6 +1020,8 @@ export class LifecycleService {
     }
     if (!persistedSafeReceipt && !receiptMatches(receipt, request, this.now())) {
       const resumed = await this.resumeMatching(request, context);
+      if (resumed)
+        await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });
       return {
         status: "blocked",
         result: await this.saveOutcome(
@@ -1035,6 +1037,8 @@ export class LifecycleService {
     }
     if (!quiesceIsSafe(receipt)) {
       const resumed = await this.resumeMatching(request, context);
+      if (resumed)
+        await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });
       const disposition = receipt.disposition === "blocked" ? "blocked" : "unknown";
       return {
         status: "blocked",

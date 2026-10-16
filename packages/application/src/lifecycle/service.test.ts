@@ -146,6 +146,7 @@ interface HarnessOptions {
   readonly authObservedAt?: string;
   readonly readinessTimeoutMs?: number;
   readonly quiesceTimeoutMs?: number;
+  readonly resumeFailure?: boolean;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -312,6 +313,7 @@ function harness(options: HarnessOptions = {}) {
       },
       async resume(request) {
         counters.resumes.push(request.operationId);
+        if (options.resumeFailure) throw new Error("matching resume could not be confirmed");
       },
     },
     authProbe,
@@ -483,6 +485,34 @@ describe("LifecycleService", () => {
 
     expect(result.status).toBe("blocked");
     expect(h.counters.resumes).toEqual(["op-01"]);
+    expect(h.journal.value.quiesceRequest).toBeNull();
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.counters.starts).toHaveLength(0);
+  });
+
+  it("retains retirement authority fences when matching resume is unconfirmed", async () => {
+    const h = harness({
+      resumeFailure: true,
+      quiesce: (request) => ({
+        contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+        operationId: request.operationId,
+        instanceId: request.instanceId,
+        runtimeEpoch: request.runtimeEpoch,
+        quiesceRevision: "q-unconfirmed-resume",
+        disposition: "blocked",
+        activeMutations: 0,
+        activeJobs: 0,
+        restartableJobs: 0,
+        pendingCheckpoints: 1,
+        uncertainPublication: false,
+        lastConfirmedRemoteRevision: "a".repeat(40),
+        reasonCodes: ["PENDING_CHECKPOINT"],
+        observedAt: new Date().toISOString(),
+      }),
+    });
+    const result = await h.service.execute("op-01", h.context);
+    expect(result.status).toBe("blocked");
+    expect(h.journal.value.quiesceRequest?.operationId).toBe("op-01");
     expect(h.counters.stops).toHaveLength(0);
     expect(h.counters.starts).toHaveLength(0);
   });
@@ -514,6 +544,7 @@ describe("LifecycleService", () => {
 
     expect(result.status).toBe("unknown");
     expect(h.counters.resumes).toEqual(["op-01"]);
+    expect(h.journal.value.quiesceRequest).toBeNull();
     expect(h.counters.stops).toHaveLength(0);
   });
 

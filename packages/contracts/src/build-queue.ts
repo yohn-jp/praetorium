@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BuildInputSchema, DigestSchema } from "./build.js";
+import { BuilderArtifactStatementSchema, BuilderSignatureSchema } from "./artifact.js";
 const Identifier = z.string().min(1).max(128);
 const Epoch = z.number().int().positive();
 const Sequence = z.number().int().positive();
@@ -48,7 +49,12 @@ export const BuildReportRequestSchema = z.strictObject({
   ...AttemptShape,
   buildKey: DigestSchema,
   result: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("succeeded"), ...BuildCandidateSchema.shape }),
+    z.strictObject({
+      kind: z.literal("succeeded"),
+      ...BuildCandidateSchema.shape,
+      statement: BuilderArtifactStatementSchema,
+      signature: BuilderSignatureSchema,
+    }),
     z.strictObject({ kind: z.literal("failed"), ...FailureShape }),
     z.strictObject({ kind: z.literal("canceled"), ...FailureShape }),
   ]),

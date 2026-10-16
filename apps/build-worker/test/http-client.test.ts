@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildKey } from "@praetorium/contracts";
 import type { BuildInput } from "@praetorium/contracts";
-import { BuildQueueHttpClient, BuildQueueHttpError, readBuildServiceToken } from "../src/http-client.js";
+import {
+  BuildQueueHttpClient,
+  BuildQueueHttpError,
+  readBuildServiceToken,
+} from "../src/http-client.js";
 
 const roots: string[] = [];
 const input: BuildInput = {
@@ -21,7 +25,10 @@ const input: BuildInput = {
   options: {},
 };
 const digest = `sha256:${"6".repeat(64)}`;
-const composition = { repository: "registry.example/praetorium/composition", digest: `sha256:${"7".repeat(64)}` };
+const composition = {
+  repository: "registry.example/praetorium/composition",
+  digest: `sha256:${"7".repeat(64)}`,
+};
 const statement = {
   schemaVersion: "praetorium.build-artifact/v1" as const,
   buildKey: `sha256:${"8".repeat(64)}`,
@@ -37,7 +44,11 @@ const statement = {
   contractVersion: input.contractVersion,
   issuedAt: "2026-10-17T00:00:00.000Z",
 };
-const signature = { algorithm: "Ed25519" as const, keyId: "builder-1", signature: Buffer.from("test").toString("base64") };
+const signature = {
+  algorithm: "Ed25519" as const,
+  keyId: "builder-1",
+  signature: Buffer.from("test").toString("base64"),
+};
 const token = "service-token-" + "x".repeat(40);
 
 async function makeRoot(): Promise<string> {
@@ -74,7 +85,11 @@ describe("Build Control Plane HTTP adapter", () => {
       leaseExpiresAt: Date.now() + 60_000,
     };
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(claim)));
-    const result = await client(fetchMock as typeof fetch).claimNext({ workerId: "worker-1", now: 123, leaseSeconds: 60 });
+    const result = await client(fetchMock as typeof fetch).claimNext({
+      workerId: "worker-1",
+      now: 123,
+      leaseSeconds: 60,
+    });
     expect(result).toEqual(claim);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBeInstanceOf(URL);
@@ -86,7 +101,13 @@ describe("Build Control Plane HTTP adapter", () => {
 
   it("fences heartbeats and reports with attempt token, epoch, and monotonic sequence while omitting local time", async () => {
     const responses = [
-      new Response(JSON.stringify({ accepted: true, cancelRequested: false, leaseExpiresAt: Date.now() + 60_000 })),
+      new Response(
+        JSON.stringify({
+          accepted: true,
+          cancelRequested: false,
+          leaseExpiresAt: Date.now() + 60_000,
+        }),
+      ),
       new Response(JSON.stringify({ accepted: true, duplicate: false })),
     ];
     const fetchMock = vi.fn(async () => responses.shift()!);
@@ -100,38 +121,54 @@ describe("Build Control Plane HTTP adapter", () => {
       sequence: 4,
       now: 123456,
     };
-    await expect(queue.heartbeat({ ...common, progress: { stage: "building", percent: 42 } }))
-      .resolves.toMatchObject({ accepted: true, cancelRequested: false });
+    await expect(
+      queue.heartbeat({ ...common, progress: { stage: "building", percent: 42 } }),
+    ).resolves.toMatchObject({ accepted: true, cancelRequested: false });
     const buildKeyValue = await buildKey(input);
     const boundStatement = { ...statement, buildKey: buildKeyValue };
-    await expect(queue.report({
-      ...common,
-      buildKey: buildKeyValue,
-      result: {
-        kind: "succeeded",
-        candidateRef: `registry.example/praetorium/candidates@${digest}`,
-        manifestDigest: digest,
-        compositionManifest: composition,
-        statement: boundStatement,
-        signature,
-      },
-    })).resolves.toEqual({ accepted: true, duplicate: false });
+    await expect(
+      queue.report({
+        ...common,
+        buildKey: buildKeyValue,
+        result: {
+          kind: "succeeded",
+          candidateRef: `registry.example/praetorium/candidates@${digest}`,
+          manifestDigest: digest,
+          compositionManifest: composition,
+          statement: boundStatement,
+          signature,
+        },
+      }),
+    ).resolves.toEqual({ accepted: true, duplicate: false });
 
-    const heartbeatBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
-    const reportBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+    const heartbeatBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    const reportBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
     expect(heartbeatBody).not.toHaveProperty("now");
     expect(reportBody).not.toHaveProperty("now");
-    expect(reportBody).toMatchObject({ buildKey: buildKeyValue, result: { kind: "succeeded", statement: boundStatement, signature } });
+    expect(reportBody).toMatchObject({
+      buildKey: buildKeyValue,
+      result: { kind: "succeeded", statement: boundStatement, signature },
+    });
   });
 
   it("treats oversized responses and HTTP error bodies as opaque failures", async () => {
     const oversized = client(async () => new Response("x".repeat(2048)), 1024);
-    await expect(oversized.claimNext({ workerId: "worker-1", now: Date.now(), leaseSeconds: 60 }))
-      .rejects.toBeInstanceOf(BuildQueueHttpError);
+    await expect(
+      oversized.claimNext({ workerId: "worker-1", now: Date.now(), leaseSeconds: 60 }),
+    ).rejects.toBeInstanceOf(BuildQueueHttpError);
 
-    const rejected = client(async () => new Response("credential must not be parsed", { status: 403 }));
-    await expect(rejected.claimNext({ workerId: "worker-1", now: Date.now(), leaseSeconds: 60 }))
-      .rejects.toMatchObject({ status: 403 });
+    const rejected = client(
+      async () => new Response("credential must not be parsed", { status: 403 }),
+    );
+    await expect(
+      rejected.claimNext({ workerId: "worker-1", now: Date.now(), leaseSeconds: 60 }),
+    ).rejects.toMatchObject({ status: 403 });
   });
 
   it("accepts only a private owned worker-token file", async () => {

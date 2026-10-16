@@ -39,9 +39,13 @@ async function workerEnvironment(): Promise<NodeJS.ProcessEnv> {
   await writeFile(tlsCertFile, "cert");
   await writeFile(tlsKeyFile, "key", { mode: 0o600 });
   await writeFile(serviceTokenFile, "service-token-".padEnd(48, "x"), { mode: 0o600 });
-  await writeFile(path.join(dockerConfigDirectory, "config.json"), JSON.stringify({
-    auths: { "ghcr.io": { auth: Buffer.from("builder:push-token").toString("base64") } },
-  }), { mode: 0o600 });
+  await writeFile(
+    path.join(dockerConfigDirectory, "config.json"),
+    JSON.stringify({
+      auths: { "ghcr.io": { auth: Buffer.from("builder:push-token").toString("base64") } },
+    }),
+    { mode: 0o600 },
+  );
   return {
     PRAETORIUM_BUILD_WORKER_ID: "worker-1",
     PRAETORIUM_CONTROL_PLANE_URL: "https://control.example",
@@ -87,24 +91,34 @@ describe("build worker composition", () => {
     const reports: Array<{ result: unknown }> = [];
     const queue: BuildQueuePort = {
       claimNext: vi.fn(async () => claim),
-      heartbeat: vi.fn(async () => ({ accepted: true, cancelRequested: false, leaseExpiresAt: Date.now() + 60_000 })),
+      heartbeat: vi.fn(async () => ({
+        accepted: true,
+        cancelRequested: false,
+        leaseExpiresAt: Date.now() + 60_000,
+      })),
       report: vi.fn(async (report) => {
         reports.push({ result: report.result });
         return { accepted: true, duplicate: false };
       }),
     };
-    const signer: BuilderSigner = { sign: vi.fn(async () => { throw new Error("signer should not run"); }) };
+    const signer: BuilderSigner = {
+      sign: vi.fn(async () => {
+        throw new Error("signer should not run");
+      }),
+    };
     const worker = await createBuildWorker(environment, { queue, signer });
 
     await expect(worker.runOnce()).resolves.toBe(true);
-    expect(reports).toEqual([{
-      result: {
-        kind: "failed",
-        code: "BUILD_FAILED",
-        message: "BuildKit solve failed",
-        retryable: false,
+    expect(reports).toEqual([
+      {
+        result: {
+          kind: "failed",
+          code: "BUILD_FAILED",
+          message: "BuildKit solve failed",
+          retryable: false,
+        },
       },
-    }]);
+    ]);
     expect(signer.sign).not.toHaveBeenCalled();
   });
 
@@ -133,10 +147,15 @@ describe("build worker composition", () => {
       nativeDependencies: [],
       smoke: { id: "health", healthPath: "/health", timeoutSeconds: 5 },
     };
-    await expect(inspector.inspectAndSmoke({
-      imageReference: `ghcr.io/test/candidates@${digest}`,
-      image,
-      compositionManifest,
-    }, new AbortController().signal)).rejects.toThrow(/unavailable/u);
+    await expect(
+      inspector.inspectAndSmoke(
+        {
+          imageReference: `ghcr.io/test/candidates@${digest}`,
+          image,
+          compositionManifest,
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/unavailable/u);
   });
 });

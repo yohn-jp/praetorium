@@ -50,7 +50,10 @@ async function readMetadataDigest(file: string): Promise<string> {
   return metadataDigest(raw);
 }
 
-function safeProgress(callback: ((value: BuildProgress) => void) | undefined, value: BuildProgress): void {
+function safeProgress(
+  callback: ((value: BuildProgress) => void) | undefined,
+  value: BuildProgress,
+): void {
   try {
     callback?.(value);
   } catch {
@@ -81,7 +84,8 @@ export class BuildKitProvider implements BuildProvider {
       !ATTEMPT_ID.test(request.attemptId) ||
       !Number.isSafeInteger(request.leaseEpoch) ||
       request.leaseEpoch < 1 ||
-      !Number.isSafeInteger(request.attempt) || request.attempt < 1 ||
+      !Number.isSafeInteger(request.attempt) ||
+      request.attempt < 1 ||
       request.buildId.length < 1 ||
       request.buildId.length > 128 ||
       !IMAGE_DIGEST.test(request.buildKey) ||
@@ -105,21 +109,33 @@ export class BuildKitProvider implements BuildProvider {
     const attemptHash = await sha256(request.attemptId);
     const outputTag = `${this.config.outputRepository}:candidate-${request.buildKey.slice("sha256:".length)}-${attemptHash.slice(0, 20)}`;
     const frontendRef = `${this.config.buildkitRepository}@${input.buildKitDigest}`;
-    const buildDirectory = await mkdtemp(path.join(this.config.temporaryDirectory, "praetorium-build-"));
+    const buildDirectory = await mkdtemp(
+      path.join(this.config.temporaryDirectory, "praetorium-build-"),
+    );
     const metadataFile = path.join(buildDirectory, "metadata.json");
     const args = [
-      "--addr", this.config.address,
-      "--tlsservername", this.config.tlsServerName,
-      "--tlscacert", this.config.tlsCaFile,
-      "--tlscert", this.config.tlsCertFile,
-      "--tlskey", this.config.tlsKeyFile,
+      "--addr",
+      this.config.address,
+      "--tlsservername",
+      this.config.tlsServerName,
+      "--tlscacert",
+      this.config.tlsCaFile,
+      "--tlscert",
+      this.config.tlsCertFile,
+      "--tlskey",
+      this.config.tlsKeyFile,
       "build",
       "--progress=rawjson",
-      "--frontend", "gateway.v0",
-      "--opt", `source=${frontendRef}`,
-      "--opt", `${FRONTEND_INPUT_OPTION}=${encodedInput}`,
-      "--output", `type=image,name=${outputTag},push=true`,
-      "--metadata-file", metadataFile,
+      "--frontend",
+      "gateway.v0",
+      "--opt",
+      `source=${frontendRef}`,
+      "--opt",
+      `${FRONTEND_INPUT_OPTION}=${encodedInput}`,
+      "--output",
+      `type=image,name=${outputTag},push=true`,
+      "--metadata-file",
+      metadataFile,
     ];
     const cwd = tmpdir();
 

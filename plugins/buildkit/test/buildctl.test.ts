@@ -7,7 +7,9 @@ import type { BuildctlRunOptions } from "../src/buildctl.js";
 
 const directories: string[] = [];
 
-async function makeOptions(overrides: Partial<BuildctlRunOptions> = {}): Promise<BuildctlRunOptions> {
+async function makeOptions(
+  overrides: Partial<BuildctlRunOptions> = {},
+): Promise<BuildctlRunOptions> {
   const root = await mkdtemp(path.join(tmpdir(), "praetorium-buildctl-test-"));
   directories.push(root);
   return {
@@ -24,7 +26,9 @@ async function makeOptions(overrides: Partial<BuildctlRunOptions> = {}): Promise
 }
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("remote buildctl execution", () => {
@@ -45,8 +49,9 @@ describe("remote buildctl execution", () => {
   it("kills a solve that exceeds its deadline", async () => {
     const options = await makeOptions({ buildTimeoutMs: 1000 });
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });
-    await expect(runner(["-e", "setInterval(() => undefined, 1000)"], options))
-      .rejects.toMatchObject({ code: "BUILD_TIMEOUT" });
+    await expect(
+      runner(["-e", "setInterval(() => undefined, 1000)"], options),
+    ).rejects.toMatchObject({ code: "BUILD_TIMEOUT" });
   });
 
   it("terminates the child when the attempt is canceled", async () => {
@@ -62,7 +67,8 @@ describe("remote buildctl execution", () => {
   it("terminates a child that exceeds aggregate progress bytes", async () => {
     const options = await makeOptions({ maxProgressBytes: 2048 });
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });
-    const script = "process.stdout.write('x'.repeat(8192)+'\\n'); setInterval(() => undefined, 1000)";
+    const script =
+      "process.stdout.write('x'.repeat(8192)+'\\n'); setInterval(() => undefined, 1000)";
     await expect(runner(["-e", script], options)).rejects.toMatchObject({ code: "BUILD_FAILED" });
   });
 });

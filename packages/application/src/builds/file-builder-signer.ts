@@ -1,9 +1,6 @@
 import { createPrivateKey, sign as cryptoSign } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
-import {
-  BuilderArtifactStatementSchema,
-  BuilderSignatureSchema,
-} from "@praetorium/contracts";
+import { BuilderArtifactStatementSchema, BuilderSignatureSchema } from "@praetorium/contracts";
 import type { BuilderArtifactStatement, BuilderSignature } from "@praetorium/contracts";
 import type { BuilderSigner } from "./types.js";
 
@@ -31,7 +28,8 @@ export async function loadFileBuilderSigner(input: {
     if (
       !info.isFile() ||
       info.isSymbolicLink() ||
-      info.size < 1 || info.size > MAX_KEY_BYTES ||
+      info.size < 1 ||
+      info.size > MAX_KEY_BYTES ||
       (info.mode & 0o077) !== 0 ||
       (typeof process.getuid === "function" && info.uid !== process.getuid())
     ) {
@@ -49,7 +47,10 @@ export async function loadFileBuilderSigner(input: {
 }
 
 export class Ed25519BuilderSigner implements BuilderSigner {
-  constructor(private readonly privateKey: ReturnType<typeof createPrivateKey>, private readonly keyId: string) {
+  constructor(
+    private readonly privateKey: ReturnType<typeof createPrivateKey>,
+    private readonly keyId: string,
+  ) {
     if (privateKey.asymmetricKeyType !== "ed25519" || !KEY_ID.test(keyId)) {
       throw new BuilderSignerConfigurationError();
     }
@@ -57,7 +58,11 @@ export class Ed25519BuilderSigner implements BuilderSigner {
 
   async sign(value: BuilderArtifactStatement): Promise<BuilderSignature> {
     const statement = BuilderArtifactStatementSchema.parse(value);
-    const signature = cryptoSign(null, canonicalBuilderStatement(statement), this.privateKey).toString("base64");
+    const signature = cryptoSign(
+      null,
+      canonicalBuilderStatement(statement),
+      this.privateKey,
+    ).toString("base64");
     return BuilderSignatureSchema.parse({ algorithm: "Ed25519", keyId: this.keyId, signature });
   }
 }
@@ -72,5 +77,9 @@ function sortJsonKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJsonKeys);
   if (typeof value !== "object" || value === null) return value;
   const record = value as Record<string, unknown>;
-  return Object.fromEntries(Object.keys(record).sort().map((key) => [key, sortJsonKeys(record[key])]));
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, sortJsonKeys(record[key])]),
+  );
 }

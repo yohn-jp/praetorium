@@ -50,8 +50,13 @@ export class BuildKitAttemptError extends Error {
     readonly code: BuildKitFailureCode,
     readonly retryable: boolean,
   ) {
-    super(code === "BUILD_TIMEOUT" ? "Build exceeded its configured deadline" :
-      code === "BUILD_CANCELED" ? "Build was canceled" : "BuildKit solve failed");
+    super(
+      code === "BUILD_TIMEOUT"
+        ? "Build exceeded its configured deadline"
+        : code === "BUILD_CANCELED"
+          ? "Build was canceled"
+          : "BuildKit solve failed",
+    );
     this.name = "BuildKitAttemptError";
   }
 }

@@ -113,7 +113,11 @@ export type BuildQueueReportResult = { accepted: boolean; duplicate: boolean };
  * is an attempt-scoped fence and must never be sent to BuildKit or a recipe.
  */
 export interface BuildQueuePort {
-  claimNext(input: { workerId: string; now: number; leaseSeconds: number }): Promise<BuildClaim | null>;
+  claimNext(input: {
+    workerId: string;
+    now: number;
+    leaseSeconds: number;
+  }): Promise<BuildClaim | null>;
   heartbeat(input: BuildQueueHeartbeatInput): Promise<BuildQueueHeartbeatResult>;
   report(input: BuildQueueReportInput): Promise<BuildQueueReportResult>;
 }

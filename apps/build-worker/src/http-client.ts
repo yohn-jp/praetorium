@@ -23,7 +23,10 @@ const HeartbeatResponseSchema = z.strictObject({
 const ReportResponseSchema = z.strictObject({ accepted: z.boolean(), duplicate: z.boolean() });
 
 export class BuildQueueHttpError extends Error {
-  constructor(readonly status: number | null, message = "Build Control Plane request failed") {
+  constructor(
+    readonly status: number | null,
+    message = "Build Control Plane request failed",
+  ) {
     super(message);
     this.name = "BuildQueueHttpError";
   }
@@ -50,12 +53,24 @@ export class BuildQueueHttpClient implements BuildQueuePort {
       throw new TypeError("Build Control Plane URL is invalid");
     }
     if (
-      url.protocol !== "https:" || url.username !== "" || url.password !== "" ||
-      url.pathname !== "/" || url.search !== "" || url.hash !== "" ||
-      !Number.isSafeInteger(options.requestTimeoutMs) || options.requestTimeoutMs < 100 || options.requestTimeoutMs > 60_000 ||
-      !Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1024 || options.maxResponseBytes > 1_048_576 ||
-      !Number.isSafeInteger(options.leaseSeconds) || options.leaseSeconds < 15 || options.leaseSeconds > 300 ||
-      options.serviceToken.length < 32 || options.serviceToken.length > 4096 || /[^\x21-\x7e]/u.test(options.serviceToken)
+      url.protocol !== "https:" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== "" ||
+      !Number.isSafeInteger(options.requestTimeoutMs) ||
+      options.requestTimeoutMs < 100 ||
+      options.requestTimeoutMs > 60_000 ||
+      !Number.isSafeInteger(options.maxResponseBytes) ||
+      options.maxResponseBytes < 1024 ||
+      options.maxResponseBytes > 1_048_576 ||
+      !Number.isSafeInteger(options.leaseSeconds) ||
+      options.leaseSeconds < 15 ||
+      options.leaseSeconds > 300 ||
+      options.serviceToken.length < 32 ||
+      options.serviceToken.length > 4096 ||
+      /[^\x21-\x7e]/u.test(options.serviceToken)
     ) {
       throw new TypeError("Build Control Plane client configuration is invalid");
     }
@@ -63,8 +78,15 @@ export class BuildQueueHttpClient implements BuildQueuePort {
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  async claimNext(input: { workerId: string; now: number; leaseSeconds: number }): Promise<BuildClaim | null> {
-    const body = BuildClaimRequestSchema.parse({ workerId: input.workerId, leaseSeconds: input.leaseSeconds });
+  async claimNext(input: {
+    workerId: string;
+    now: number;
+    leaseSeconds: number;
+  }): Promise<BuildClaim | null> {
+    const body = BuildClaimRequestSchema.parse({
+      workerId: input.workerId,
+      leaseSeconds: input.leaseSeconds,
+    });
     const response = await this.post("/internal/builds/claim", body);
     if (response.status === 204 || response.value === null) return null;
     return BuildClaimSchema.parse(response.value);
@@ -81,7 +103,10 @@ export class BuildQueueHttpClient implements BuildQueuePort {
       leaseSeconds: input.leaseSeconds ?? this.options.leaseSeconds,
       ...(input.progress ? { progress: input.progress } : {}),
     });
-    const response = await this.post(`/internal/builds/${encodeURIComponent(input.buildId)}/heartbeat`, body);
+    const response = await this.post(
+      `/internal/builds/${encodeURIComponent(input.buildId)}/heartbeat`,
+      body,
+    );
     return HeartbeatResponseSchema.parse(response.value);
   }
 
@@ -96,7 +121,10 @@ export class BuildQueueHttpClient implements BuildQueuePort {
       sequence: input.sequence,
       result: input.result,
     });
-    const response = await this.post(`/internal/builds/${encodeURIComponent(input.buildId)}/report`, body);
+    const response = await this.post(
+      `/internal/builds/${encodeURIComponent(input.buildId)}/report`,
+      body,
+    );
     return ReportResponseSchema.parse(response.value);
   }
 
@@ -139,7 +167,10 @@ export class BuildQueueHttpClient implements BuildQueuePort {
       return { status: response.status, value };
     } catch (error) {
       if (error instanceof BuildQueueHttpError) throw error;
-      throw new BuildQueueHttpError(response.status, "Build Control Plane response exceeded its bound");
+      throw new BuildQueueHttpError(
+        response.status,
+        "Build Control Plane response exceeded its bound",
+      );
     } finally {
       clearTimeout(timeout);
     }
@@ -151,11 +182,14 @@ export async function readBuildServiceToken(filePath: string): Promise<string> {
   try {
     const info = await lstat(filePath);
     if (
-      !info.isFile() || info.isSymbolicLink() ||
-      info.size < 32 || info.size > 4098 ||
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.size < 32 ||
+      info.size > 4098 ||
       (info.mode & 0o077) !== 0 ||
       (typeof process.getuid === "function" && info.uid !== process.getuid())
-    ) throw new TypeError("Build worker service credential is invalid");
+    )
+      throw new TypeError("Build worker service credential is invalid");
     let token = await readFile(filePath, "utf8");
     if (token.endsWith("\r\n")) token = token.slice(0, -2);
     else if (token.endsWith("\n")) token = token.slice(0, -1);

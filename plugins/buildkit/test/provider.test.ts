@@ -41,9 +41,13 @@ async function config(): Promise<BuildKitProviderConfig> {
   await writeFile(tlsCaFile, "ca");
   await writeFile(tlsCertFile, "cert");
   await writeFile(tlsKeyFile, "key", { mode: 0o600 });
-  await writeFile(path.join(dockerConfigDirectory, "config.json"), JSON.stringify({
-    auths: { "registry.example": { auth: Buffer.from("user:token").toString("base64") } },
-  }), { mode: 0o600 });
+  await writeFile(
+    path.join(dockerConfigDirectory, "config.json"),
+    JSON.stringify({
+      auths: { "registry.example": { auth: Buffer.from("user:token").toString("base64") } },
+    }),
+    { mode: 0o600 },
+  );
   return {
     address: "tcp://buildkit.example:1234",
     tlsServerName: "buildkit.example",
@@ -86,15 +90,19 @@ describe("BuildKitProvider", () => {
     const progress: unknown[] = [];
     const provider = new BuildKitProvider(configuration, { runBuildctl, receiptReader: reader() });
     const key = await buildKey(input);
-    const candidate = await provider.execute({
-      buildId: "build-1",
-      buildKey: key,
-      attemptId: "attempt-1",
-      attempt: 1,
-      leaseEpoch: 1,
-      input,
-      onProgress: (value) => progress.push(value),
-    }, new AbortController().signal, async () => undefined);
+    const candidate = await provider.execute(
+      {
+        buildId: "build-1",
+        buildKey: key,
+        attemptId: "attempt-1",
+        attempt: 1,
+        leaseEpoch: 1,
+        input,
+        onProgress: (value) => progress.push(value),
+      },
+      new AbortController().signal,
+      async () => undefined,
+    );
 
     expect(candidate).toEqual({
       candidateRef: `registry.example/praetorium/candidates@${imageDigest}`,
@@ -108,9 +116,21 @@ describe("BuildKitProvider", () => {
     const optionIndex = args.indexOf("--opt", args.indexOf("--opt") + 1);
     const inputOption = args[optionIndex + 1]!;
     expect(inputOption.startsWith(`${FRONTEND_INPUT_OPTION}=`)).toBe(true);
-    expect(JSON.parse(Buffer.from(inputOption.slice(FRONTEND_INPUT_OPTION.length + 1), "base64url").toString("utf8"))).toEqual(input);
-    expect(args.some((arg) => ["--local", "--secret", "--ssh", "--file", "--build-arg"].includes(arg))).toBe(false);
-    expect(args[args.indexOf("--output") + 1]).toMatch(new RegExp(`^type=image,name=registry\\.example/praetorium/candidates:candidate-${key.slice(7)}-[a-f0-9]{20},push=true$`));
+    expect(
+      JSON.parse(
+        Buffer.from(inputOption.slice(FRONTEND_INPUT_OPTION.length + 1), "base64url").toString(
+          "utf8",
+        ),
+      ),
+    ).toEqual(input);
+    expect(
+      args.some((arg) => ["--local", "--secret", "--ssh", "--file", "--build-arg"].includes(arg)),
+    ).toBe(false);
+    expect(args[args.indexOf("--output") + 1]).toMatch(
+      new RegExp(
+        `^type=image,name=registry\\.example/praetorium/candidates:candidate-${key.slice(7)}-[a-f0-9]{20},push=true$`,
+      ),
+    );
     expect(runBuildctl).toHaveBeenCalledOnce();
     expect(await readdir(configuration.temporaryDirectory)).toEqual([]);
   });
@@ -120,14 +140,20 @@ describe("BuildKitProvider", () => {
     const runBuildctl = vi.fn();
     const provider = new BuildKitProvider(configuration, { runBuildctl, receiptReader: undefined });
     const key = await buildKey(input);
-    await expect(provider.execute({
-      buildId: "build-1",
-      buildKey: key,
-      attemptId: "attempt-1",
-      attempt: 1,
-      leaseEpoch: 1,
-      input,
-    }, new AbortController().signal, async () => undefined)).rejects.toMatchObject({
+    await expect(
+      provider.execute(
+        {
+          buildId: "build-1",
+          buildKey: key,
+          attemptId: "attempt-1",
+          attempt: 1,
+          leaseEpoch: 1,
+          input,
+        },
+        new AbortController().signal,
+        async () => undefined,
+      ),
+    ).rejects.toMatchObject({
       code: "BUILD_FAILED",
       retryable: false,
     });
@@ -139,14 +165,20 @@ describe("BuildKitProvider", () => {
     const configuration = await config();
     const runBuildctl = vi.fn();
     const provider = new BuildKitProvider(configuration, { runBuildctl, receiptReader: reader() });
-    await expect(provider.execute({
-      buildId: "build-1",
-      buildKey: `sha256:${"0".repeat(64)}`,
-      attemptId: "attempt-1",
-      attempt: 1,
-      leaseEpoch: 0,
-      input,
-    }, new AbortController().signal, async () => undefined)).rejects.toThrow("binding is invalid");
+    await expect(
+      provider.execute(
+        {
+          buildId: "build-1",
+          buildKey: `sha256:${"0".repeat(64)}`,
+          attemptId: "attempt-1",
+          attempt: 1,
+          leaseEpoch: 0,
+          input,
+        },
+        new AbortController().signal,
+        async () => undefined,
+      ),
+    ).rejects.toThrow("binding is invalid");
     expect(runBuildctl).not.toHaveBeenCalled();
   });
 
@@ -160,14 +192,22 @@ describe("BuildKitProvider", () => {
     });
     const provider = new BuildKitProvider(configuration, { runBuildctl, receiptReader: reader() });
     const key = await buildKey(input);
-    await expect(provider.execute({
-      buildId: "build-1",
-      buildKey: key,
-      attemptId: "attempt-1",
-      attempt: 1,
-      leaseEpoch: 1,
-      input,
-    }, new AbortController().signal, async () => { fenceCalls++; })).rejects.toMatchObject({ code: "BUILD_FAILED" });
+    await expect(
+      provider.execute(
+        {
+          buildId: "build-1",
+          buildKey: key,
+          attemptId: "attempt-1",
+          attempt: 1,
+          leaseEpoch: 1,
+          input,
+        },
+        new AbortController().signal,
+        async () => {
+          fenceCalls++;
+        },
+      ),
+    ).rejects.toMatchObject({ code: "BUILD_FAILED" });
     expect(fenceCalls).toBe(1);
     expect(await readdir(configuration.temporaryDirectory)).toEqual([]);
   });
@@ -184,14 +224,20 @@ describe("BuildKitProvider", () => {
     });
     const provider = new BuildKitProvider(configuration, { runBuildctl, receiptReader });
     const key = await buildKey(input);
-    await expect(provider.execute({
-      buildId: "build-1",
-      buildKey: key,
-      attemptId: "attempt-1",
-      attempt: 1,
-      leaseEpoch: 1,
-      input,
-    }, controller.signal, async () => undefined)).rejects.toMatchObject({ code: "BUILD_CANCELED" });
+    await expect(
+      provider.execute(
+        {
+          buildId: "build-1",
+          buildKey: key,
+          attemptId: "attempt-1",
+          attempt: 1,
+          leaseEpoch: 1,
+          input,
+        },
+        controller.signal,
+        async () => undefined,
+      ),
+    ).rejects.toMatchObject({ code: "BUILD_CANCELED" });
     expect(readReceipt).not.toHaveBeenCalled();
     expect(await readdir(configuration.temporaryDirectory)).toEqual([]);
   });

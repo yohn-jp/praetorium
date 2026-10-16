@@ -16,12 +16,18 @@ export async function readRegistryPullCredential(filePath: string): Promise<Regi
   try {
     const info = await lstat(filePath);
     if (
-      !info.isFile() || info.isSymbolicLink() || info.size < 2 || info.size > MAX_CREDENTIAL_BYTES ||
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.size < 2 ||
+      info.size > MAX_CREDENTIAL_BYTES ||
       (info.mode & 0o077) !== 0 ||
       (typeof process.getuid === "function" && info.uid !== process.getuid())
-    ) throw new TypeError("Registry pull credential is invalid");
+    )
+      throw new TypeError("Registry pull credential is invalid");
 
-    const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readFile(filePath)));
+    const parsed: unknown = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(await readFile(filePath)),
+    );
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new TypeError("Registry pull credential is invalid");
     }
@@ -29,11 +35,16 @@ export async function readRegistryPullCredential(filePath: string): Promise<Regi
     if (
       Object.keys(record).length !== 2 ||
       Object.keys(record).some((key) => key !== "username" && key !== "password") ||
-      typeof record.username !== "string" || typeof record.password !== "string" ||
-      record.username.length < 1 || record.username.length > 256 ||
-      record.password.length < 1 || record.password.length > 2048 ||
-      hasControlCharacters(record.username) || hasControlCharacters(record.password)
-    ) throw new TypeError("Registry pull credential is invalid");
+      typeof record.username !== "string" ||
+      typeof record.password !== "string" ||
+      record.username.length < 1 ||
+      record.username.length > 256 ||
+      record.password.length < 1 ||
+      record.password.length > 2048 ||
+      hasControlCharacters(record.username) ||
+      hasControlCharacters(record.password)
+    )
+      throw new TypeError("Registry pull credential is invalid");
     return { username: record.username, password: record.password };
   } catch {
     throw new TypeError("Registry pull credential is invalid");

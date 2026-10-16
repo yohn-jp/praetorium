@@ -4,7 +4,11 @@ import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { BuilderArtifactStatement } from "@praetorium/contracts";
-import { BuilderSignerConfigurationError, canonicalBuilderStatement, loadFileBuilderSigner } from "./file-builder-signer.js";
+import {
+  BuilderSignerConfigurationError,
+  canonicalBuilderStatement,
+  loadFileBuilderSigner,
+} from "./file-builder-signer.js";
 
 const roots: string[] = [];
 
@@ -23,7 +27,10 @@ const statement: BuilderArtifactStatement = {
     platformManifestDigest: `sha256:${"3".repeat(64)}`,
     platform: "linux/amd64",
   },
-  compositionManifest: { repository: "registry.example/praetorium/compositions", digest: `sha256:${"4".repeat(64)}` },
+  compositionManifest: {
+    repository: "registry.example/praetorium/compositions",
+    digest: `sha256:${"4".repeat(64)}`,
+  },
   producerRevision: "a".repeat(40),
   resolvedModules: [],
   contractVersion: "scriptorium-build/v1",
@@ -39,31 +46,45 @@ describe("Ed25519BuilderSigner", () => {
     const root = await makeRoot();
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     const privateKeyPath = path.join(root, "builder-key.pem");
-    await writeFile(privateKeyPath, privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
+    await writeFile(privateKeyPath, privateKey.export({ format: "pem", type: "pkcs8" }), {
+      mode: 0o600,
+    });
     const signer = await loadFileBuilderSigner({ privateKeyPath, keyId: "builder-key-v1" });
     const signature = await signer.sign(statement);
     expect(signature.algorithm).toBe("Ed25519");
     expect(signature.keyId).toBe("builder-key-v1");
-    expect(cryptoVerify(null, canonicalBuilderStatement(statement), publicKey, Buffer.from(signature.signature, "base64"))).toBe(true);
+    expect(
+      cryptoVerify(
+        null,
+        canonicalBuilderStatement(statement),
+        publicKey,
+        Buffer.from(signature.signature, "base64"),
+      ),
+    ).toBe(true);
   });
 
   it("rejects readable, linked, malformed, and non-Ed25519 key files", async () => {
     const root = await makeRoot();
     const generated = generateKeyPairSync("ed25519");
     const privateKeyPath = path.join(root, "builder-key.pem");
-    await writeFile(privateKeyPath, generated.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
+    await writeFile(privateKeyPath, generated.privateKey.export({ format: "pem", type: "pkcs8" }), {
+      mode: 0o600,
+    });
     await chmod(privateKeyPath, 0o644);
-    await expect(loadFileBuilderSigner({ privateKeyPath, keyId: "builder-key-v1" }))
-      .rejects.toBeInstanceOf(BuilderSignerConfigurationError);
+    await expect(
+      loadFileBuilderSigner({ privateKeyPath, keyId: "builder-key-v1" }),
+    ).rejects.toBeInstanceOf(BuilderSignerConfigurationError);
     await chmod(privateKeyPath, 0o600);
 
     const linkedPath = path.join(root, "linked-key.pem");
     await symlink(privateKeyPath, linkedPath);
-    await expect(loadFileBuilderSigner({ privateKeyPath: linkedPath, keyId: "builder-key-v1" }))
-      .rejects.toBeInstanceOf(BuilderSignerConfigurationError);
+    await expect(
+      loadFileBuilderSigner({ privateKeyPath: linkedPath, keyId: "builder-key-v1" }),
+    ).rejects.toBeInstanceOf(BuilderSignerConfigurationError);
 
     await writeFile(privateKeyPath, "not a private key", { mode: 0o600 });
-    await expect(loadFileBuilderSigner({ privateKeyPath, keyId: "builder-key-v1" }))
-      .rejects.toBeInstanceOf(BuilderSignerConfigurationError);
+    await expect(
+      loadFileBuilderSigner({ privateKeyPath, keyId: "builder-key-v1" }),
+    ).rejects.toBeInstanceOf(BuilderSignerConfigurationError);
   });
 });

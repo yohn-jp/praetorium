@@ -47,44 +47,87 @@ describe("Build worker startup configuration", () => {
   });
 
   it("rejects HTTP control URLs, relative secret paths, unbounded values, and a heartbeat longer than the lease", () => {
-    expect(() => readBuildWorkerConfig({ ...environment, PRAETORIUM_CONTROL_PLANE_URL: "http://control.example" })).toThrow();
-    expect(() => readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_SIGNING_KEY_FILE: "key.pem" })).toThrow();
-    expect(() => readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILDKIT_MAX_PROGRESS_BYTES: "999999999" })).toThrow();
-    expect(() => readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_REGISTRY_URL: "http://registry.example" })).toThrow();
-    expect(() => readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_COMPOSITION_REPOSITORY: "../praetorium/compositions" })).toThrow();
-    expect(() => readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_MAX_IMAGE_LAYER_BYTES: "0" })).toThrow();
-    expect(() => readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_MAX_IMAGE_VERIFICATION_MS: "999999999" })).toThrow();
-    expect(() => readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_MAX_REGISTRY_REQUEST_MS: "0" })).toThrow();
-    expect(() => readBuildWorkerConfig({
-      ...environment,
-      PRAETORIUM_BUILD_LEASE_SECONDS: "15",
-      PRAETORIUM_BUILD_HEARTBEAT_MS: "15000",
-    })).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_CONTROL_PLANE_URL: "http://control.example",
+      }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_SIGNING_KEY_FILE: "key.pem" }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILDKIT_MAX_PROGRESS_BYTES: "999999999",
+      }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_REGISTRY_URL: "http://registry.example",
+      }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_COMPOSITION_REPOSITORY: "../praetorium/compositions",
+      }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_MAX_IMAGE_LAYER_BYTES: "0" }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_MAX_IMAGE_VERIFICATION_MS: "999999999",
+      }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({ ...environment, PRAETORIUM_BUILD_MAX_REGISTRY_REQUEST_MS: "0" }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_LEASE_SECONDS: "15",
+        PRAETORIUM_BUILD_HEARTBEAT_MS: "15000",
+      }),
+    ).toThrow();
   });
 
   it("allows operator-owned HTTPS registries and explicit HTTP loopback acceptance only", () => {
-    expect(readBuildWorkerConfig({
-      ...environment,
-      PRAETORIUM_BUILD_REGISTRY_URL: "https://registry.internal.example:5443",
-    }).registryUrl).toBe("https://registry.internal.example:5443");
-    expect(readBuildWorkerConfig({
-      ...environment,
-      PRAETORIUM_BUILD_REGISTRY_URL: "http://127.0.0.1:39567",
-      PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY: "1",
-    })).toMatchObject({ registryUrl: "http://127.0.0.1:39567", registryAllowInsecureLoopback: true });
-    expect(() => readBuildWorkerConfig({
-      ...environment,
-      PRAETORIUM_BUILD_REGISTRY_URL: "http://127.0.0.1:39567",
-    })).toThrow();
-    expect(() => readBuildWorkerConfig({
-      ...environment,
-      PRAETORIUM_BUILD_REGISTRY_URL: "http://registry.internal.example:39567",
-      PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY: "1",
-    })).toThrow();
-    expect(() => readBuildWorkerConfig({
-      ...environment,
-      PRAETORIUM_BUILD_REGISTRY_URL: "http://127.0.0.1:39567",
-      PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY: "true",
-    })).toThrow();
+    expect(
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_REGISTRY_URL: "https://registry.internal.example:5443",
+      }).registryUrl,
+    ).toBe("https://registry.internal.example:5443");
+    expect(
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_REGISTRY_URL: "http://127.0.0.1:39567",
+        PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY: "1",
+      }),
+    ).toMatchObject({ registryUrl: "http://127.0.0.1:39567", registryAllowInsecureLoopback: true });
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_REGISTRY_URL: "http://127.0.0.1:39567",
+      }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_REGISTRY_URL: "http://registry.internal.example:39567",
+        PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY: "1",
+      }),
+    ).toThrow();
+    expect(() =>
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_REGISTRY_URL: "http://127.0.0.1:39567",
+        PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY: "true",
+      }),
+    ).toThrow();
   });
 });

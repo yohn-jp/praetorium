@@ -3,7 +3,8 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { BuildKitConfigurationError, type BuildKitProviderConfig } from "./types.js";
 
-const REPOSITORY = /^(?<host>[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?)(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u;
+const REPOSITORY =
+  /^(?<host>[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?)(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u;
 const MAX_INPUT_BYTES = 65_536;
 const MAX_PROGRESS_BYTES = 16 * 1024 * 1024;
 const MAX_BUILD_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -22,25 +23,29 @@ function repositoryHost(value: string): string {
 function validTcpAddress(value: string): boolean {
   try {
     const address = new URL(value);
-    return address.protocol === "tcp:" &&
+    return (
+      address.protocol === "tcp:" &&
       address.hostname !== "" &&
       address.port !== "" &&
       address.username === "" &&
       address.password === "" &&
       (address.pathname === "" || address.pathname === "/") &&
       address.search === "" &&
-      address.hash === "";
+      address.hash === ""
+    );
   } catch {
     return false;
   }
 }
 
 function validTlsServerName(value: string): boolean {
-  return value.length <= 253 &&
+  return (
+    value.length <= 253 &&
     !/[\s\0\\/]/u.test(value) &&
     /^[A-Za-z0-9.-]+$/u.test(value) &&
     !value.startsWith(".") &&
-    !value.endsWith(".");
+    !value.endsWith(".")
+  );
 }
 
 export function validateBuildKitConfig(config: BuildKitProviderConfig): void {
@@ -62,7 +67,10 @@ export function validateBuildKitConfig(config: BuildKitProviderConfig): void {
 
   repositoryHost(config.buildkitRepository);
   const outputHost = repositoryHost(config.outputRepository);
-  if (config.allowInsecureLoopbackRegistry === true && !/^127\.0\.0\.1:[1-9][0-9]{0,4}$/u.test(outputHost)) {
+  if (
+    config.allowInsecureLoopbackRegistry === true &&
+    !/^127\.0\.0\.1:[1-9][0-9]{0,4}$/u.test(outputHost)
+  ) {
     throw new BuildKitConfigurationError();
   }
 
@@ -81,23 +89,33 @@ export function validateBuildKitConfig(config: BuildKitProviderConfig): void {
   }
 }
 
-async function assertFile(filePath: string, options: { executable?: boolean; secret?: boolean } = {}): Promise<void> {
+async function assertFile(
+  filePath: string,
+  options: { executable?: boolean; secret?: boolean } = {},
+): Promise<void> {
   const info = options.secret ? await lstat(filePath) : await stat(filePath);
   if (!info.isFile()) throw new BuildKitConfigurationError();
   if (options.executable) await access(filePath, constants.X_OK);
   if (
     options.secret &&
-    (info.isSymbolicLink() || info.size < 1 || info.size > 16 * 1024 || (info.mode & 0o077) !== 0 ||
+    (info.isSymbolicLink() ||
+      info.size < 1 ||
+      info.size > 16 * 1024 ||
+      (info.mode & 0o077) !== 0 ||
       (typeof process.getuid === "function" && info.uid !== process.getuid()))
-  ) throw new BuildKitConfigurationError();
+  )
+    throw new BuildKitConfigurationError();
 }
 
 async function assertPrivateDirectory(directoryPath: string): Promise<void> {
   const info = await lstat(directoryPath);
   if (
-    !info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077) !== 0 ||
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    (info.mode & 0o077) !== 0 ||
     (typeof process.getuid === "function" && info.uid !== process.getuid())
-  ) throw new BuildKitConfigurationError();
+  )
+    throw new BuildKitConfigurationError();
   await access(directoryPath, constants.W_OK | constants.X_OK);
 }
 
@@ -112,7 +130,8 @@ function authRegistryHost(value: string): string | null {
       parsed.search !== "" ||
       parsed.hash !== "" ||
       (parsed.pathname !== "/" && parsed.pathname !== "")
-    ) return null;
+    )
+      return null;
     return parsed.host.toLowerCase();
   } catch {
     return null;
@@ -130,9 +149,15 @@ export async function validateRegistryAuth(config: BuildKitProviderConfig): Prom
     const directory = await lstat(config.dockerConfigDirectory);
     const file = await lstat(configPath);
     if (
-      !directory.isDirectory() || directory.isSymbolicLink() || !file.isFile() || file.isSymbolicLink() ||
-      file.size > 64 * 1024 || (directory.mode & 0o077) !== 0 || (file.mode & 0o077) !== 0 ||
-      (typeof process.getuid === "function" && (directory.uid !== process.getuid() || file.uid !== process.getuid()))
+      !directory.isDirectory() ||
+      directory.isSymbolicLink() ||
+      !file.isFile() ||
+      file.isSymbolicLink() ||
+      file.size > 64 * 1024 ||
+      (directory.mode & 0o077) !== 0 ||
+      (file.mode & 0o077) !== 0 ||
+      (typeof process.getuid === "function" &&
+        (directory.uid !== process.getuid() || file.uid !== process.getuid()))
     ) {
       throw new BuildKitConfigurationError();
     }
@@ -141,7 +166,12 @@ export async function validateRegistryAuth(config: BuildKitProviderConfig): Prom
       throw new BuildKitConfigurationError();
     }
     const value = parsed as Record<string, unknown>;
-    if (Object.keys(value).some((key) => key !== "auths") || typeof value.auths !== "object" || value.auths === null || Array.isArray(value.auths)) {
+    if (
+      Object.keys(value).some((key) => key !== "auths") ||
+      typeof value.auths !== "object" ||
+      value.auths === null ||
+      Array.isArray(value.auths)
+    ) {
       throw new BuildKitConfigurationError();
     }
     const allowedHosts = new Set([
@@ -151,14 +181,28 @@ export async function validateRegistryAuth(config: BuildKitProviderConfig): Prom
     const authenticatedHosts = new Set<string>();
     for (const [server, credentials] of Object.entries(value.auths as Record<string, unknown>)) {
       const host = authRegistryHost(server);
-      if (host === null || !allowedHosts.has(host) || typeof credentials !== "object" || credentials === null || Array.isArray(credentials)) {
+      if (
+        host === null ||
+        !allowedHosts.has(host) ||
+        typeof credentials !== "object" ||
+        credentials === null ||
+        Array.isArray(credentials)
+      ) {
         throw new BuildKitConfigurationError();
       }
       const entry = credentials as Record<string, unknown>;
-      if (Object.keys(entry).some((key) => !["auth", "identitytoken", "username", "password", "email"].includes(key))) {
+      if (
+        Object.keys(entry).some(
+          (key) => !["auth", "identitytoken", "username", "password", "email"].includes(key),
+        )
+      ) {
         throw new BuildKitConfigurationError();
       }
-      if (!["auth", "identitytoken", "username", "password"].some((key) => typeof entry[key] === "string" && entry[key] !== "")) {
+      if (
+        !["auth", "identitytoken", "username", "password"].some(
+          (key) => typeof entry[key] === "string" && entry[key] !== "",
+        )
+      ) {
         throw new BuildKitConfigurationError();
       }
       authenticatedHosts.add(host);

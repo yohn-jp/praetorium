@@ -34,13 +34,20 @@ const statement = {
     platformManifestDigest: `sha256:${"8".repeat(64)}`,
     platform: "linux/amd64" as const,
   },
-  compositionManifest: { repository: "praetorium/compositions", digest: `sha256:${"9".repeat(64)}` },
+  compositionManifest: {
+    repository: "praetorium/compositions",
+    digest: `sha256:${"9".repeat(64)}`,
+  },
   producerRevision: input.producerRevision,
   resolvedModules: [],
   contractVersion: input.contractVersion,
   issuedAt: "2026-10-17T00:00:00.000Z",
 };
-const signature = { algorithm: "Ed25519" as const, keyId: "test-builder", signature: Buffer.from("sig").toString("base64") };
+const signature = {
+  algorithm: "Ed25519" as const,
+  keyId: "test-builder",
+  signature: Buffer.from("sig").toString("base64"),
+};
 
 function buildClaim(buildKey: string): BuildClaim {
   return {
@@ -88,7 +95,11 @@ async function harness(options: { cancelHeartbeat?: number; staleHeartbeat?: num
   const provider = { execute };
   const attest = vi.fn(async (attestationInput) => {
     await attestationInput.beforeEffect();
-    return { ...attestationInput.candidate, statement: { ...statement, buildKey: attestationInput.buildKey }, signature };
+    return {
+      ...attestationInput.candidate,
+      statement: { ...statement, buildKey: attestationInput.buildKey },
+      signature,
+    };
   });
   const attestor: BuildAttestor = { attest };
   const worker = new BuildWorkerService(queue, provider, attestor, {
@@ -108,9 +119,15 @@ describe("BuildWorkerService", () => {
     expect(h.execute).toHaveBeenCalledOnce();
     const providerRequest = h.execute.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(providerRequest).not.toHaveProperty("leaseToken");
-    expect(providerRequest).toMatchObject({ buildKey: h.claim.buildKey, attemptId: h.claim.attemptId, attempt: 1 });
+    expect(providerRequest).toMatchObject({
+      buildKey: h.claim.buildKey,
+      attemptId: h.claim.attemptId,
+      attempt: 1,
+    });
     expect(h.attest).toHaveBeenCalledOnce();
-    expect(h.heartbeats.every((heartbeat) => heartbeat.leaseToken === h.claim.leaseToken)).toBe(true);
+    expect(h.heartbeats.every((heartbeat) => heartbeat.leaseToken === h.claim.leaseToken)).toBe(
+      true,
+    );
     expect(h.reports).toHaveLength(1);
     expect(h.reports[0]).toMatchObject({
       buildKey: h.claim.buildKey,
@@ -125,7 +142,10 @@ describe("BuildWorkerService", () => {
         signature,
       },
     });
-    const sequences = [...h.heartbeats.map((heartbeat) => heartbeat.sequence), h.reports[0]!.sequence];
+    const sequences = [
+      ...h.heartbeats.map((heartbeat) => heartbeat.sequence),
+      h.reports[0]!.sequence,
+    ];
     expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
   });
 
@@ -134,7 +154,11 @@ describe("BuildWorkerService", () => {
     await h.worker.runOnce();
     expect(h.execute).not.toHaveBeenCalled();
     expect(h.attest).not.toHaveBeenCalled();
-    expect(h.reports[0]?.result).toMatchObject({ kind: "canceled", code: "BUILD_CANCELED", retryable: false });
+    expect(h.reports[0]?.result).toMatchObject({
+      kind: "canceled",
+      code: "BUILD_CANCELED",
+      retryable: false,
+    });
   });
 
   it("drops a stale attempt without reporting any result", async () => {
@@ -146,7 +170,9 @@ describe("BuildWorkerService", () => {
 
   it("reports provider failures without letting report errors become a second build failure", async () => {
     const h = await harness();
-    h.execute.mockRejectedValueOnce(Object.assign(new Error("private raw output"), { code: "BUILD_TIMEOUT", retryable: true }));
+    h.execute.mockRejectedValueOnce(
+      Object.assign(new Error("private raw output"), { code: "BUILD_TIMEOUT", retryable: true }),
+    );
     await h.worker.runOnce();
     expect(h.reports[0]?.result).toEqual({
       kind: "failed",

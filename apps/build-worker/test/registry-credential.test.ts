@@ -15,7 +15,9 @@ async function credentialFile(value: unknown): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("registry-only pull credentials", () => {
@@ -30,7 +32,9 @@ describe("registry-only pull credentials", () => {
   it("rejects extra fields and group-readable files", async () => {
     const file = await credentialFile({ username: "reader", password: "token", helper: "exec" });
     await expect(readRegistryPullCredential(file)).rejects.toThrow();
-    await writeFile(file, JSON.stringify({ username: "reader", password: "token" }), { mode: 0o600 });
+    await writeFile(file, JSON.stringify({ username: "reader", password: "token" }), {
+      mode: 0o600,
+    });
     await chmod(file, 0o640);
     await expect(readRegistryPullCredential(file)).rejects.toThrow();
   });

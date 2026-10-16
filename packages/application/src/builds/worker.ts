@@ -36,23 +36,34 @@ type WorkerOptions = {
 };
 
 function failureFor(error: unknown): BuildFailure {
-  const retryable = error && typeof error === "object" && "retryable" in error
-    ? (error as { retryable?: unknown }).retryable === true
-    : true;
+  const retryable =
+    error && typeof error === "object" && "retryable" in error
+      ? (error as { retryable?: unknown }).retryable === true
+      : true;
   if (error && typeof error === "object" && "code" in error) {
     const code = (error as { code?: unknown }).code;
-    if (code === "BUILD_TIMEOUT") return { kind: "failed", code, message: "Build exceeded its configured deadline", retryable };
-    if (code === "BUILD_CANCELED") return { kind: "canceled", code, message: "Build was canceled", retryable: false };
+    if (code === "BUILD_TIMEOUT")
+      return { kind: "failed", code, message: "Build exceeded its configured deadline", retryable };
+    if (code === "BUILD_CANCELED")
+      return { kind: "canceled", code, message: "Build was canceled", retryable: false };
   }
   if (error instanceof BuildCancellationError) {
-    return { kind: "canceled", code: "BUILD_CANCELED", message: "Build was canceled", retryable: false };
+    return {
+      kind: "canceled",
+      code: "BUILD_CANCELED",
+      message: "Build was canceled",
+      retryable: false,
+    };
   }
   return { kind: "failed", code: "BUILD_FAILED", message: "BuildKit solve failed", retryable };
 }
 
 function validProgress(value: BuildProgress): boolean {
-  return (value.stage === "preparing" || value.stage === "building" || value.stage === "publishing") &&
-    (value.percent === null || (Number.isInteger(value.percent) && value.percent >= 0 && value.percent <= 100));
+  return (
+    (value.stage === "preparing" || value.stage === "building" || value.stage === "publishing") &&
+    (value.percent === null ||
+      (Number.isInteger(value.percent) && value.percent >= 0 && value.percent <= 100))
+  );
 }
 
 export class BuildWorkerService {
@@ -66,9 +77,13 @@ export class BuildWorkerService {
     private readonly options: WorkerOptions,
   ) {
     if (
-      !options.workerId || options.workerId.length > 128 ||
-      !Number.isSafeInteger(options.leaseSeconds) || options.leaseSeconds < 15 || options.leaseSeconds > 3600 ||
-      !Number.isSafeInteger(options.heartbeatIntervalMs) || options.heartbeatIntervalMs < 250 ||
+      !options.workerId ||
+      options.workerId.length > 128 ||
+      !Number.isSafeInteger(options.leaseSeconds) ||
+      options.leaseSeconds < 15 ||
+      options.leaseSeconds > 3600 ||
+      !Number.isSafeInteger(options.heartbeatIntervalMs) ||
+      options.heartbeatIntervalMs < 250 ||
       options.heartbeatIntervalMs >= options.leaseSeconds * 1000
     ) {
       throw new TypeError("Build worker limits are invalid");
@@ -107,7 +122,8 @@ export class BuildWorkerService {
   }
 
   private async runClaim(claim: BuildClaim, shutdownSignal?: AbortSignal): Promise<void> {
-    if (await buildKey(claim.input) !== claim.buildKey) throw new TypeError("Build claim input binding is invalid");
+    if ((await buildKey(claim.input)) !== claim.buildKey)
+      throw new TypeError("Build claim input binding is invalid");
     const controller = new AbortController();
     this.currentAbort = controller;
     const detachShutdown = linkAbort(shutdownSignal, controller);
@@ -140,7 +156,11 @@ export class BuildWorkerService {
         };
         try {
           const response = await this.queue.heartbeat(input);
-          if (!response.accepted || response.leaseExpiresAt === null || !Number.isFinite(response.leaseExpiresAt)) {
+          if (
+            !response.accepted ||
+            response.leaseExpiresAt === null ||
+            !Number.isFinite(response.leaseExpiresAt)
+          ) {
             leaseLost = true;
             controller.abort(new BuildLeaseLostError());
             resolveResult(response);
@@ -169,7 +189,11 @@ export class BuildWorkerService {
     const heartbeatTimer = setInterval(() => {
       if (heartbeatInFlight || controller.signal.aborted) return;
       heartbeatInFlight = true;
-      void sendHeartbeat().catch(() => undefined).finally(() => { heartbeatInFlight = false; });
+      void sendHeartbeat()
+        .catch(() => undefined)
+        .finally(() => {
+          heartbeatInFlight = false;
+        });
     }, this.options.heartbeatIntervalMs);
     heartbeatTimer.unref();
 
@@ -179,7 +203,8 @@ export class BuildWorkerService {
       if (!heartbeat.accepted || heartbeat.leaseExpiresAt === null) {
         throw new BuildLeaseLostError();
       }
-      if (heartbeat.cancelRequested || controller.signal.aborted) throw controller.signal.reason ?? new BuildCancellationError();
+      if (heartbeat.cancelRequested || controller.signal.aborted)
+        throw controller.signal.reason ?? new BuildCancellationError();
     };
 
     let candidate: BuildCandidate | undefined;
@@ -214,11 +239,17 @@ export class BuildWorkerService {
       await heartbeatChain;
       if (heartbeatError || leaseLost) return;
 
-      if (executionError !== undefined || !candidate || !signedCandidate || controller.signal.aborted) {
+      if (
+        executionError !== undefined ||
+        !candidate ||
+        !signedCandidate ||
+        controller.signal.aborted
+      ) {
         if (controller.signal.reason instanceof BuildLeaseLostError) return;
-        const failure = cancelRequested || controller.signal.aborted
-          ? failureFor(new BuildCancellationError())
-          : failureFor(executionError);
+        const failure =
+          cancelRequested || controller.signal.aborted
+            ? failureFor(new BuildCancellationError())
+            : failureFor(executionError);
         await this.report(claim, sequence++, failure);
         return;
       }
@@ -227,7 +258,11 @@ export class BuildWorkerService {
         await beforeEffect();
       } catch (error) {
         if (leaseLost || controller.signal.reason instanceof BuildLeaseLostError) return;
-        if (cancelRequested || controller.signal.aborted || error instanceof BuildCancellationError) {
+        if (
+          cancelRequested ||
+          controller.signal.aborted ||
+          error instanceof BuildCancellationError
+        ) {
           await this.report(claim, sequence++, failureFor(new BuildCancellationError()));
           return;
         }

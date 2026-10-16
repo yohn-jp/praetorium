@@ -25,7 +25,9 @@ const statement: BuilderArtifactStatement = {
 };
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("builder signer interoperability", () => {
@@ -34,15 +36,23 @@ describe("builder signer interoperability", () => {
     directories.push(directory);
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     const privateKeyFile = path.join(directory, "builder-key.pem");
-    await writeFile(privateKeyFile, privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
-    const signer = await loadFileBuilderSigner({ privateKeyPath: privateKeyFile, keyId: "builder-key-v1" });
+    await writeFile(privateKeyFile, privateKey.export({ format: "pem", type: "pkcs8" }), {
+      mode: 0o600,
+    });
+    const signer = await loadFileBuilderSigner({
+      privateKeyPath: privateKeyFile,
+      keyId: "builder-key-v1",
+    });
     const signature = await signer.sign(statement);
     const rawPublicKey = publicKey.export({ format: "der", type: "spki" }).subarray(-32);
-    const verifier = new OperatorBuilderSignatureVerifier([
-      { keyId: signature.keyId, publicKeyBase64: rawPublicKey.toString("base64") },
-    ], () => Date.parse(statement.issuedAt));
+    const verifier = new OperatorBuilderSignatureVerifier(
+      [{ keyId: signature.keyId, publicKeyBase64: rawPublicKey.toString("base64") }],
+      () => Date.parse(statement.issuedAt),
+    );
 
-    expect(Buffer.from(builderStatementBytes(statement))).toEqual(canonicalBuilderStatement(statement));
+    expect(Buffer.from(builderStatementBytes(statement))).toEqual(
+      canonicalBuilderStatement(statement),
+    );
     await expect(verifier.verify(statement, signature)).resolves.toMatchObject({
       verified: true,
       keyId: signature.keyId,

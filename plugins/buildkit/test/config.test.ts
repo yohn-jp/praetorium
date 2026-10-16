@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, writeFile, chmod, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { BuildKitProviderConfig } from "../src/types.js";
-import { validateBuildKitConfig, validateBuildKitFiles, validateRegistryAuth } from "../src/config.js";
+import {
+  validateBuildKitConfig,
+  validateBuildKitFiles,
+  validateRegistryAuth,
+} from "../src/config.js";
 
 const directories: string[] = [];
 
@@ -20,9 +24,13 @@ async function createConfig(): Promise<BuildKitProviderConfig> {
   await writeFile(tlsCaFile, "ca");
   await writeFile(tlsCertFile, "cert");
   await writeFile(tlsKeyFile, "key", { mode: 0o600 });
-  await writeFile(path.join(dockerConfigDirectory, "config.json"), JSON.stringify({
-    auths: { "registry.example": { auth: Buffer.from("user:token").toString("base64") } },
-  }), { mode: 0o600 });
+  await writeFile(
+    path.join(dockerConfigDirectory, "config.json"),
+    JSON.stringify({
+      auths: { "registry.example": { auth: Buffer.from("user:token").toString("base64") } },
+    }),
+    { mode: 0o600 },
+  );
   return {
     address: "tcp://buildkit.example:1234",
     tlsServerName: "buildkit.example",
@@ -42,7 +50,9 @@ async function createConfig(): Promise<BuildKitProviderConfig> {
 }
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("BuildKit worker configuration", () => {
@@ -54,22 +64,34 @@ describe("BuildKit worker configuration", () => {
 
   it("rejects non-TLS endpoints, malformed server names, unsafe repositories and excessive limits", async () => {
     const config = await createConfig();
-    expect(() => validateBuildKitConfig({ ...config, address: "tcp://buildkit.example:1234?tls=0" })).toThrow();
-    expect(() => validateBuildKitConfig({ ...config, tlsServerName: "buildkit.example\n--tls=false" })).toThrow();
-    expect(() => validateBuildKitConfig({ ...config, outputRepository: "registry.example/../../other" })).toThrow();
+    expect(() =>
+      validateBuildKitConfig({ ...config, address: "tcp://buildkit.example:1234?tls=0" }),
+    ).toThrow();
+    expect(() =>
+      validateBuildKitConfig({ ...config, tlsServerName: "buildkit.example\n--tls=false" }),
+    ).toThrow();
+    expect(() =>
+      validateBuildKitConfig({ ...config, outputRepository: "registry.example/../../other" }),
+    ).toThrow();
     expect(() => validateBuildKitConfig({ ...config, maxBuildInputBytes: 65_537 })).toThrow();
   });
 
   it("rejects credential helpers and auth entries outside the two approved registry hosts", async () => {
     const config = await createConfig();
     const file = path.join(config.dockerConfigDirectory, "config.json");
-    await writeFile(file, JSON.stringify({ credsStore: "secretservice", auths: {} }), { mode: 0o600 });
+    await writeFile(file, JSON.stringify({ credsStore: "secretservice", auths: {} }), {
+      mode: 0o600,
+    });
     await expect(validateRegistryAuth(config)).rejects.toThrow();
 
     await writeFile(file, JSON.stringify({ auths: {} }), { mode: 0o600 });
     await expect(validateRegistryAuth(config)).rejects.toThrow();
 
-    await writeFile(file, JSON.stringify({ auths: { "attacker.invalid": { auth: "dXNlcjpwYXNz" } } }), { mode: 0o600 });
+    await writeFile(
+      file,
+      JSON.stringify({ auths: { "attacker.invalid": { auth: "dXNlcjpwYXNz" } } }),
+      { mode: 0o600 },
+    );
     await expect(validateRegistryAuth(config)).rejects.toThrow();
   });
 
@@ -91,6 +113,11 @@ describe("BuildKit worker configuration", () => {
     await writeFile(file, JSON.stringify({ auths: {} }), { mode: 0o600 });
     expect(() => validateBuildKitConfig(local)).not.toThrow();
     await expect(validateRegistryAuth(local)).resolves.toBeUndefined();
-    expect(() => validateBuildKitConfig({ ...local, outputRepository: "registry.example/praetorium/candidates" })).toThrow();
+    expect(() =>
+      validateBuildKitConfig({
+        ...local,
+        outputRepository: "registry.example/praetorium/candidates",
+      }),
+    ).toThrow();
   });
 });

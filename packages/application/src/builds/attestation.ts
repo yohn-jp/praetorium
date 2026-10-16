@@ -1,7 +1,4 @@
-import {
-  BuilderArtifactStatementSchema,
-  BuilderSignatureSchema,
-} from "@praetorium/contracts";
+import { BuilderArtifactStatementSchema, BuilderSignatureSchema } from "@praetorium/contracts";
 import type {
   BuildAttestor,
   BuildCandidateVerifier,
@@ -28,12 +25,14 @@ export class VerifiedBuildAttestor implements BuildAttestor {
 
   async attest(input: Parameters<BuildAttestor["attest"]>[0]): Promise<SignedBuildCandidate> {
     await input.beforeEffect();
-    const statement = BuilderArtifactStatementSchema.parse(await this.verifier.verify({
-      buildKey: input.buildKey,
-      expected: input.expected,
-      candidate: input.candidate,
-      signal: input.signal,
-    }));
+    const statement = BuilderArtifactStatementSchema.parse(
+      await this.verifier.verify({
+        buildKey: input.buildKey,
+        expected: input.expected,
+        candidate: input.candidate,
+        signal: input.signal,
+      }),
+    );
     assertStatementBinding(statement, input);
     await input.beforeEffect();
     const signature = BuilderSignatureSchema.parse(await this.signer.sign(statement));
@@ -55,13 +54,16 @@ function assertStatementBinding(
   const registryHost = registrySeparator > 0 ? imageReference.slice(0, registrySeparator) : "";
   const repository = registrySeparator > 0 ? imageReference.slice(registrySeparator + 1) : "";
   const refDigest = separator > 0 ? input.candidate.candidateRef.slice(separator + 1) : "";
-  const expectedModules = [...input.expected.resolvedModules].sort((a, b) => a.id.localeCompare(b.id));
+  const expectedModules = [...input.expected.resolvedModules].sort((a, b) =>
+    a.id.localeCompare(b.id),
+  );
   const statementModules = statement.resolvedModules;
   if (
     statement.buildKey !== input.buildKey ||
     !registryHost ||
     statement.artifact.repository !== repository ||
-    input.candidate.candidateRef !== `${registryHost}/${statement.artifact.repository}@${input.candidate.manifestDigest}` ||
+    input.candidate.candidateRef !==
+      `${registryHost}/${statement.artifact.repository}@${input.candidate.manifestDigest}` ||
     statement.artifact.digest !== input.candidate.manifestDigest ||
     refDigest !== input.candidate.manifestDigest ||
     statement.compositionManifest.repository !== input.candidate.compositionManifest.repository ||

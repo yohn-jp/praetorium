@@ -23,6 +23,7 @@ export * from "./access.js";
 export * from "./oauth.js";
 export * from "./app-jwt.js";
 export * from "./installation-token.js";
+export * from "./runtime-identity-authenticator.js";
 export * from "./credential-broker.js";
 export * from "./webhooks.js";
 

@@ -7,7 +7,8 @@
     "checkedAt": "2026-10-17",
     "repository": "yohn-jp/praetorium",
     "branch": "worker/t14",
-    "head": "6884c185e542b9a64ea2fc2591cdf989729d6180",
+    "head": "4538bc3cdbc998b5b9aaefd67692ce15b79bd41e",
+    "integratedMainHead": "d98f2b6b23c851925c78e04fb5ee627b7e697e1c",
     "sourceRepository": "yohn-jp/arcadia-platform",
     "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
     "producerRepository": "yohn-jp/scriptorium",
@@ -16,31 +17,49 @@
   },
   "environment": {
     "inventoryId": "praetorium-t14-local",
-    "inventoryPath": "T12 worktree draft: infrastructure/test/acceptance-inventory.json",
+    "inventoryPath": "infrastructure/test/acceptance-inventory.json",
     "owned": false,
     "disposable": false,
     "production": false,
     "declaredOwnerIdentity": "operator-supplied before provisioning",
     "resourcesAvailable": false,
-    "reason": "T12's inventory is an unprovisioned draft with no owner identity and all seven resources missing."
+    "reason": "The integrated T12 inventory remains an unprovisioned draft: its owner is unresolved and all seven T14 categories are missing."
+  },
+  "localSubstrateEvidence": {
+    "status": "PARTIAL_SUBSTRATE_VERIFIED",
+    "ownedDisposableEnvironment": {
+      "owner": "sophia",
+      "uid": 1000,
+      "runtime": "rootless Podman with private VFS graph/run storage and private XDG directories",
+      "registryBinding": "127.0.0.1:39567",
+      "production": false
+    },
+    "buildkitScratchRoundTrip": {
+      "status": "PASS",
+      "dockerfile": "FROM scratch; COPY note.txt /note.txt",
+      "cacheMode": "no-cache",
+      "imageReference": "127.0.0.1:39567/praetorium-substrate/smoke:probe-nocache",
+      "imageDigest": "sha256:ea44323dade82d7a22a7b3bdfdf0ed244fdd91f26fc539e61ae12fa13caaf141",
+      "measuredBuildMs": 161,
+      "producerAcceptance": false
+    },
+    "ociRegistryClientRoundTrip": {
+      "status": "PASS",
+      "imageReference": "praetorium-t05/probe:t05-roundtrip",
+      "manifestDigest": "sha256:e86e73bd4bf12b319b27847b1cd184e67f6e0722a7cdab758e74f44d4137df8d",
+      "configBytes": 228,
+      "configDigest": "sha256:a7669961c35960d70259293704f135d2b5ca9ed49b69baf5cd32782309bb2591",
+      "layerBytes": 141,
+      "layerDigest": "sha256:f48f4ff044cc8b6c66b559500e5903dde8857c9479a61542e3240d6b66e0a569",
+      "t14ReadReverification": "PASS",
+      "producerAcceptance": false
+    },
+    "evidenceSource": "docs/migration/tasks/T05.md and disposable local substrate logs",
+    "limitation": "These generic scratch/OCI probes verify local BuildKit and Distribution transport only. They are not Scriptorium compositions, do not satisfy S01-S05, and do not verify product artifact admission."
   },
   "capabilityProbe": {
     "node": "v24.21.0",
     "pnpm": "11.18.0",
-    "foundFromShellPath": ["node", "pnpm"],
-    "notFoundFromShellPath": [
-      "wrangler",
-      "docker",
-      "podman",
-      "buildctl",
-      "nerdctl",
-      "kubectl",
-      "k3d",
-      "kind",
-      "chromium",
-      "chromium-browser",
-      "google-chrome"
-    ],
     "workspaceDevTools": {
       "wrangler": "4.118.0",
       "miniflare": "4.20260730.0",
@@ -48,45 +67,42 @@
       "playwright": "1.64.1"
     },
     "cachedChromium": {
-      "location": "Playwright cache",
       "binaryPresent": true,
       "versionProbeStatus": "PASS_WITH_LOCAL_LIBRARY_OVERLAY",
-      "versionProbeExitCode": 0,
       "version": "Google Chrome for Testing 156.0.8078.4",
-      "sharedLibraryProbeStatus": "PASS",
-      "unresolvedSharedLibraryCount": 0,
-      "runtimeOverlayValuesRecorded": false
+      "unresolvedSharedLibraryCount": 0
     },
     "browserCapabilitySmoke": {
       "status": "PASS",
-      "runner": "@playwright/test 1.64.1",
-      "browserVersion": "Google Chrome for Testing 156.0.8078.4",
-      "loadedDocument": "data:text/html with a capability-only title",
+      "loadedDocument": "local data: URL capability page",
       "productAcceptance": false,
       "externalNavigation": false
     },
-    "deployableWorkerOrControlPlaneBundlePresent": false,
-    "gatewayUiSourcePresent": true,
-    "githubPluginSourcePresent": true,
-    "ghcrPluginSourcePresent": true,
-    "scriptoriumAdapterPresent": true,
-    "legacyRecoveryToolSourcePresent": true,
-    "workerBundlePresent": false,
-    "controlPlaneBundlePresent": false,
-    "localD1DoBindingConfigurationPresent": false
+    "controlPlane": {
+      "migrationFiles": ["apps/control-plane/migrations/0001_repository_platform.sql"],
+      "workerEntryPresent": false,
+      "localD1DoBindingsPresent": false,
+      "acceptanceRunnerPresent": true,
+      "acceptanceRunnerExecuted": false
+    },
+    "kubernetesAttempt": {
+      "status": "BLOCKED",
+      "result": "kind node image extraction failed with ENOSPC before cluster creation",
+      "clusterEndpointPresent": false
+    }
   },
   "harnessVerification": {
     "status": "PASS",
-    "scope": "inventory validation and effect-free planning only",
+    "scope": "strict inventory validation, fixed-runner safety, source-handler mapping, and effect-free planning",
     "producerAcceptance": false,
     "tests": {
       "command": "node --test tests/integration/verify-integration.test.mjs",
       "status": "PASS",
-      "passed": 8,
+      "passed": 9,
       "failed": 0
     },
     "inventoryPlan": {
-      "command": "node scripts/verify-integration.mjs --plan --environment /tmp/praetorium-t12/infrastructure/test/acceptance-inventory.json",
+      "command": "node scripts/verify-integration.mjs --plan --environment infrastructure/test/acceptance-inventory.json",
       "status": "BLOCKED",
       "exitCode": 2,
       "effectsExecuted": false,
@@ -101,24 +117,28 @@
         "stable-rollout"
       ]
     },
-    "fixedAcceptanceRunnerPathsPresent": false
+    "fixedAcceptanceRunnerPaths": {
+      "workers-d1-do": { "present": true, "executed": false },
+      "github-access": { "present": false, "executed": false },
+      "buildkit-registry": { "present": false, "executed": false },
+      "kubernetes-isolation": { "present": false, "executed": false },
+      "browser-entry": { "present": false, "executed": false },
+      "producer-recovery": { "present": false, "executed": false },
+      "stable-rollout": { "present": false, "executed": false }
+    }
   },
   "workspaceVerification": {
     "frozenInstall": {
-      "checkedHead": "6884c185e542b9a64ea2fc2591cdf989729d6180",
+      "checkedHead": "4538bc3cdbc998b5b9aaefd67692ce15b79bd41e",
       "command": "corepack pnpm@11.18.0 install --frozen-lockfile",
       "status": "FAIL",
-      "failure": "Lockfile is not up to date with plugins/ghcr/package.json; eight dependency specifiers are missing."
+      "failure": "pnpm-lock.yaml is missing workspace dependency entries for apps/build-worker and plugins/buildkit (@praetorium/application and @praetorium/contracts)."
     },
     "check": {
-      "checkedHead": "219bd8eaa4023a2c614df2dcf801ffbba6ecc704",
-      "command": "corepack pnpm@11.18.0 check",
-      "status": "FAIL",
-      "currentEvidenceCutStatus": "NOT_RUN_AFTER_FROZEN_INSTALL_FAILURE",
-      "failure": [
-        "packages/auth/src/access-grant.ts:2 requires an import type declaration.",
-        "packages/auth/src/oauth/flow.ts:84 uses a forbidden import() type annotation."
-      ]
+      "command": "PATH=/tmp/praetorium-pnpm11:$PATH corepack pnpm@11.18.0 check",
+      "status": "PASS_AFTER_LOCAL_LOCK_REFRESH",
+      "details": "All package build, lint, typecheck, test, boundary, and contract-schema checks passed after pnpm auto-resolved the missing workspace entries. The generated lockfile diff was restored because root lockfile ownership remains with Sol.",
+      "repeatableWithCommittedLock": false
     }
   },
   "handlerInventory": {
@@ -142,43 +162,43 @@
       "id": "workers-d1-do",
       "status": "BLOCKED",
       "proofStatus": "NOT_CHECKED",
-      "blocker": "No Worker bundle, local D1/DO bindings or owned environment inventory."
+      "blocker": "The production Worker entry apps/control-plane/src/worker.ts is not present. The fixed runner was added but cannot substitute an application fixture, so actual D1/DO acceptance was not run."
     },
     {
       "id": "github-access",
       "status": "BLOCKED",
       "proofStatus": "NOT_CHECKED",
-      "blocker": "No explicit test GitHub App, authorized test users, owned test repository or credentials."
+      "blocker": "No explicitly owned test GitHub App, authorized users, test repository, or scoped credentials are configured."
     },
     {
       "id": "buildkit-registry",
       "status": "BLOCKED",
       "proofStatus": "NOT_CHECKED",
-      "blocker": "No local BuildKit runtime or owned disposable OCI registry with immutable producer artifacts."
+      "partialEvidence": "Generic local BuildKit scratch push and OCI manifest/config/layer hash round-trip passed; no approved Scriptorium composition or product admission proof exists."
     },
     {
       "id": "kubernetes-isolation",
       "status": "BLOCKED",
       "proofStatus": "NOT_CHECKED",
-      "blocker": "No owned disposable Kubernetes cluster, ingress or runtime tools."
+      "blocker": "No cluster was created; kind node image extraction stopped with ENOSPC before cluster startup."
     },
     {
       "id": "browser-entry",
       "status": "BLOCKED",
       "proofStatus": "NOT_CHECKED",
-      "blocker": "No integrated Gateway/Instance Access route or explicitly owned stable test origin at this HEAD."
+      "blocker": "Chromium capability passed, but no integrated Gateway/Instance Access Worker route or owned stable test origin is available."
     },
     {
       "id": "producer-recovery",
       "status": "BLOCKED",
       "proofStatus": "NOT_CHECKED",
-      "blocker": "S01-S05 are marked missing in PRODUCER-STATUS.json; no real producer image or recovery evidence."
+      "blocker": "Producer S01-S05 remain missing and BLOCKED in docs/migration/PRODUCER-STATUS.json; no real producer artifact or recovery evidence exists."
     },
     {
       "id": "stable-rollout",
       "status": "BLOCKED",
       "proofStatus": "NOT_CHECKED",
-      "blocker": "No integrated rollout runtime, disposable cluster, registry artifact or canary evidence."
+      "blocker": "No integrated rollout runtime, disposable cluster, producer artifact, or canary evidence is available."
     }
   ],
   "producerGates": [
@@ -190,8 +210,10 @@
   ],
   "measurements": null,
   "notes": [
-    "The checkout contains Gateway UI source but no deployable Worker or Control Plane bundle, local D1/DO binding configuration, or infrastructure/test tree at the recorded HEAD.",
-    "The eight harness tests use fixture-only inventory data and verify preflight behavior only; they are not product acceptance.",
-    "No credentials, worker, registry, cluster, product page or producer process was used; the browser capability smoke only loaded a local data URL."
+    "The repository source and handler map are read-only reproductions from the immutable Arcadia snapshot at b96a03a8734bfff2e5b965e6966007c45a2c7dc9.",
+    "The new workers-d1-do runner bundles only apps/control-plane/src/worker.ts with esbuild, applies checked-in D1 SQL migrations to ephemeral Miniflare D1/DO storage, and requires a valid explicit runner inventory. It remains unexecuted until the production Worker entry is integrated.",
+    "T12's static inventory remains an unprovisioned draft. The --plan run returned BLOCKED/NOT_CHECKED, exit 2, and effectsExecuted=false.",
+    "T05 local BuildKit/OCI substrate proofs used generic scratch content and a generic OCI image. They do not prove Scriptorium integration, GHCR authentication, product artifact admission, or producer recovery.",
+    "No external GitHub service, production credential, production cluster, product stable origin, or Scriptorium producer process was used."
   ]
 }

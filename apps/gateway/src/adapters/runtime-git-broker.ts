@@ -90,7 +90,15 @@ function validateTimeout(value: number | undefined, name: string, fallback: numb
   return timeout;
 }
 
-async function boundedJson(response: Response, maximumBytes: number): Promise<unknown> {
+function abortError(): DOMException {
+  return new DOMException("Control Plane request timed out", "AbortError");
+}
+
+async function boundedJson(
+  response: Response,
+  maximumBytes: number,
+  signal: AbortSignal,
+): Promise<unknown> {
   const contentLength = response.headers.get("Content-Length");
   if (contentLength !== null) {
     if (!/^(0|[1-9][0-9]*)$/u.test(contentLength) || Number(contentLength) > maximumBytes)
@@ -103,19 +111,43 @@ async function boundedJson(response: Response, maximumBytes: number): Promise<un
 
   const chunks: Uint8Array[] = [];
   let size = 0;
+  let readPending = false;
+  let abortListener: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abortListener = () => reject(abortError());
+    if (signal.aborted) abortListener();
+    else signal.addEventListener("abort", abortListener, { once: true });
+  });
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const read = reader.read().then(
+        (result) => {
+          readPending = false;
+          return result;
+        },
+        (error: unknown) => {
+          readPending = false;
+          throw error;
+        },
+      );
+      readPending = true;
+      const { done, value } = await Promise.race([read, aborted]);
       if (done) break;
       size += value.byteLength;
       if (size > maximumBytes) throw new TypeError("Control Plane response is too large");
       chunks.push(value);
     }
   } catch (error) {
-    await reader.cancel().catch(() => undefined);
+    // Cancellation may itself wait for a misbehaving upstream. Start it without
+    // holding the request open; the deadline race above is the completion bound.
+    void reader.cancel().catch(() => undefined);
     throw error;
   } finally {
-    reader.releaseLock();
+    if (abortListener) signal.removeEventListener("abort", abortListener);
+    // Releasing a reader with an unresolved read request throws. On abort the
+    // pending read is deliberately detached from the request and cancellation
+    // has already been started, so leave that reader to the stream.
+    if (!readPending) reader.releaseLock();
   }
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -143,8 +175,14 @@ function createBoundedControlPlaneReader(
     missingIsNull = false,
   ): Promise<unknown | null> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(abortError());
+      }, timeoutMs);
+    });
+    const request = (async () => {
       const response = await binding.fetch(`${CONTROL_PLANE_ORIGIN}${path}`, {
         method: "GET",
         redirect: "error",
@@ -154,17 +192,24 @@ function createBoundedControlPlaneReader(
           ...(authenticated ? { [CONTROL_PLANE_GATEWAY_AUTH_HEADER]: gatewayAuth } : {}),
         },
       });
+      if (controller.signal.aborted) {
+        void response.body?.cancel().catch(() => undefined);
+        throw abortError();
+      }
       if (response.status === 404 && missingIsNull) {
-        await response.body?.cancel().catch(() => undefined);
+        void response.body?.cancel().catch(() => undefined);
         return null;
       }
       if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined);
+        void response.body?.cancel().catch(() => undefined);
         throw new TypeError(`Control Plane read failed with status ${response.status}`);
       }
-      return await boundedJson(response, maximumBytes);
+      return await boundedJson(response, maximumBytes, controller.signal);
+    })();
+    try {
+      return await Promise.race([request, deadline]);
     } finally {
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
     }
   }
 

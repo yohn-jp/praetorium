@@ -244,20 +244,14 @@ describe("runtime Git credential broker composition", () => {
 
   it("aborts a stalled Control Plane read at the configured deadline", async () => {
     const h = await setup();
+    let requestSignal: AbortSignal | undefined;
     const stalledControlPlane = {
       async fetch(_input: RequestInfo | URL, init?: RequestInit) {
+        requestSignal = init?.signal ?? undefined;
         return await new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal;
-          if (!signal) throw new Error("Control Plane request must have an abort signal");
-          if (signal.aborted) {
-            reject(new DOMException("request aborted", "AbortError"));
-            return;
-          }
-          signal.addEventListener(
-            "abort",
-            () => reject(new DOMException("request aborted", "AbortError")),
-            { once: true },
-          );
+          // Deliberately ignore abort and reject later. The deadline must return
+          // independently, and Promise.race must observe this late rejection.
+          setTimeout(() => reject(new Error("late service-binding rejection")), 30);
         });
       },
     } as unknown as Fetcher;
@@ -286,6 +280,49 @@ describe("runtime Git credential broker composition", () => {
       status: "unavailable",
       reason: "runtime_identity_unavailable",
     });
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it("returns on deadline when a response body read and cancellation both stall", async () => {
+    const h = await setup();
+    let cancelCalled = false;
+    const stalledBody = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelCalled = true;
+        return new Promise<void>(() => undefined);
+      },
+    });
+    const stalledBodyControlPlane = {
+      async fetch() {
+        return new Response(stalledBody, { headers: { "Content-Type": "application/json" } });
+      },
+    } as unknown as Fetcher;
+    const timedBroker = createRuntimeGitCredentialBroker({
+      controlPlane: stalledBodyControlPlane,
+      controlPlaneGatewayAuth: GATEWAY_AUTH,
+      runtimeIdentityIssuer: ISSUER,
+      gatewayOrigin: GATEWAY_ORIGIN,
+      githubAppId: 12345,
+      githubAppPrivateKeyPem: await appPrivateKeyPem(),
+      repositoryBindings: {
+        async getByRepositoryId() {
+          return null;
+        },
+      },
+      accessProvider: h.accessProvider,
+      gatewayKeyRegistry: [],
+      controlPlaneTimeoutMs: 10,
+      now: () => NOW,
+      githubFetchImpl: async () => {
+        throw new Error("GitHub must not be called after a stalled response body");
+      },
+    });
+
+    await expect(timedBroker.issue({ proof: h.proof, operation: "fetch" })).resolves.toEqual({
+      status: "unavailable",
+      reason: "runtime_identity_unavailable",
+    });
+    expect(cancelCalled).toBe(true);
   });
 
   it("requires an active current binding before asking GitHub for an installation token", async () => {

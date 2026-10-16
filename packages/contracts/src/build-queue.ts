@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { BuildInputSchema, DigestSchema } from "./build.js";
+import {
+  buildKey,
+  canonicalBuildInput,
+  BuildInputSchema,
+  DigestSchema,
+  type BuildInput,
+} from "./build.js";
 import { BuilderArtifactStatementSchema, BuilderSignatureSchema } from "./artifact.js";
 const Identifier = z.string().min(1).max(128);
 const Epoch = z.number().int().positive();
@@ -39,6 +45,7 @@ export const BuildHeartbeatRequestSchema = z.strictObject({
 export const BuildCandidateSchema = z.strictObject({
   candidateRef: z.string().regex(/^[a-z0-9./:_-]+@sha256:[a-f0-9]{64}$/),
   manifestDigest: DigestSchema,
+  compositionManifest: BuilderArtifactStatementSchema.shape.compositionManifest,
 });
 const FailureShape = {
   code: z.enum(["BUILD_FAILED", "BUILD_TIMEOUT", "BUILD_CANCELED"]),
@@ -63,3 +70,32 @@ export type BuildClaim = z.infer<typeof BuildClaimSchema>;
 export type BuildClaimRequest = z.infer<typeof BuildClaimRequestSchema>;
 export type BuildHeartbeatRequest = z.infer<typeof BuildHeartbeatRequestSchema>;
 export type BuildReportRequest = z.infer<typeof BuildReportRequestSchema>;
+
+/** Semantic report validation after attempt fencing and cryptographic signer verification. */
+export async function assertBuildReportBindings(
+  input: BuildInput,
+  reportInput: unknown,
+  approved: { registryHost: string; repository: string },
+): Promise<void> {
+  const report = BuildReportRequestSchema.parse(reportInput);
+  const expectedKey = await buildKey(input);
+  if (report.buildKey !== expectedKey) throw new Error("Build report key mismatch");
+  if (report.result.kind !== "succeeded") return;
+  const result = report.result,
+    statement = result.statement;
+  const normalized = BuildInputSchema.parse(JSON.parse(canonicalBuildInput(input)));
+  if (
+    statement.buildKey !== expectedKey ||
+    statement.producerRevision !== input.producerRevision ||
+    statement.contractVersion !== input.contractVersion ||
+    statement.artifact.platform !== input.platform ||
+    statement.artifact.repository !== approved.repository ||
+    statement.artifact.digest !== result.manifestDigest ||
+    result.candidateRef !==
+      `${approved.registryHost}/${approved.repository}@${result.manifestDigest}` ||
+    statement.compositionManifest.repository !== result.compositionManifest.repository ||
+    statement.compositionManifest.digest !== result.compositionManifest.digest ||
+    JSON.stringify(statement.resolvedModules) !== JSON.stringify(normalized.resolvedModules)
+  )
+    throw new Error("Build report artifact binding mismatch");
+}

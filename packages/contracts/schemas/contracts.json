@@ -101,11 +101,30 @@
       "manifestDigest": {
         "type": "string",
         "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "compositionManifest": {
+        "type": "object",
+        "properties": {
+          "repository": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "repository",
+          "digest"
+        ],
+        "additionalProperties": false
       }
     },
     "required": [
       "candidateRef",
-      "manifestDigest"
+      "manifestDigest",
+      "compositionManifest"
     ],
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
@@ -810,6 +829,24 @@
                 "type": "string",
                 "pattern": "^sha256:[a-f0-9]{64}$"
               },
+              "compositionManifest": {
+                "type": "object",
+                "properties": {
+                  "repository": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
+                  },
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "repository",
+                  "digest"
+                ],
+                "additionalProperties": false
+              },
               "statement": {
                 "type": "object",
                 "properties": {
@@ -952,6 +989,7 @@
               "kind",
               "candidateRef",
               "manifestDigest",
+              "compositionManifest",
               "statement",
               "signature"
             ],

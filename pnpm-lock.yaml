@@ -51,6 +51,15 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  packages/auth:
+    dependencies:
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@praetorium/domain':
+        specifier: workspace:*
+        version: link:../domain
+
   packages/config:
     dependencies:
       zod:
@@ -70,6 +79,20 @@ importers:
         version: 4.4.3
 
   packages/observability: {}
+
+  plugins/github:
+    dependencies:
+      '@praetorium/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@praetorium/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+
+  plugins/legacy-recovery: {}
 
   plugins/scriptorium:
     dependencies:

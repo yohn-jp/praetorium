@@ -1,10 +1,7 @@
 import { z } from "zod";
-import {
-  BuildCatalogSchema,
-  ResourceRequirementsSchema,
-  RuntimeMetadataSchema,
-} from "./producer.js";
+import { BuildCatalogSchema, RuntimeMetadataSchema } from "./producer.js";
 import { DigestSchema } from "./build.js";
+import { ResourceRequirementsSchema } from "./lifecycle.js";
 import { PublicOperationSchema, RepositorySnapshotSchema } from "./repository.js";
 import { BuildProgressSchema } from "./build-queue.js";
 const Id = z.string().min(1).max(128);

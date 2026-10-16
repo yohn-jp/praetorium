@@ -30,6 +30,8 @@ export function validateGrantBinding(
     now: number;
   },
 ): AccessGrant {
+  if (!Number.isSafeInteger(expected.now) || expected.now < 0)
+    throw new Error("Invalid grant verification clock");
   const grant = AccessGrantSchema.parse(value);
   if (
     grant.iss !== expected.issuer ||
@@ -37,6 +39,8 @@ export function validateGrantBinding(
     grant.instanceId !== expected.instanceId ||
     grant.repositoryId !== expected.repositoryId ||
     grant.runtimeEpoch !== expected.runtimeEpoch ||
+    grant.iat > expected.now ||
+    grant.exp - expected.now > 300 ||
     grant.exp <= expected.now ||
     grant.nbf > expected.now
   )

@@ -72,3 +72,31 @@ it("rejects wrong host repository epoch and expired grants", () => {
   ])
     expect(() => validateGrantBinding({ ...grant, ...changed }, expected)).toThrow();
 });
+
+it("rejects malformed verification clocks and future-issued grants", () => {
+  const expected = {
+    issuer: "https://gateway.test",
+    audience: "https://i.test",
+    instanceId: "i",
+    repositoryId: 1,
+    runtimeEpoch: 2,
+    now: 100,
+  };
+  const grant = {
+    iss: expected.issuer,
+    sub: "u",
+    aud: expected.audience,
+    instanceId: "i",
+    repositoryId: 1,
+    runtimeEpoch: 2,
+    permissions: ["read"],
+    sessionRevision: 1,
+    authorizationRevision: 1,
+    iat: 101,
+    nbf: 90,
+    exp: 200,
+    jti: "j",
+  };
+  expect(() => validateGrantBinding(grant, expected)).toThrow();
+  expect(() => validateGrantBinding({ ...grant, iat: 90 }, { ...expected, now: NaN })).toThrow();
+});

@@ -39,6 +39,8 @@ export function assertMutationReceiptBinding(
     now: number;
   },
 ): MutationAuthorizationReceipt {
+  if (!Number.isSafeInteger(expected.now) || expected.now < 0)
+    throw new Error("Invalid mutation authorization clock");
   const receipt = MutationAuthorizationReceiptSchema.parse(value);
   if (
     receipt.iss !== expected.issuer ||

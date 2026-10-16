@@ -230,6 +230,18 @@ function actionService(allowMaintain = true) {
       operation: management.operations[0],
       replayed: false,
     })),
+    retryOperation: vi.fn(async () => ({
+      id: "operation-retry-1",
+      instanceId,
+      generation: activeSnapshot.instance.generation + 1,
+      runtimeEpoch: activeSnapshot.instance.runtimeEpoch + 1,
+      kind: "redeploy" as const,
+      status: "pending" as const,
+      phase: "queued",
+      attempt: 0,
+      createdAt: 1_800_000_000_010,
+      updatedAt: 1_800_000_000_010,
+    })),
   };
   const githubAccess = {
     authorize: vi.fn(async (_userId: string, _repositoryId: number, action: string) => ({
@@ -405,6 +417,119 @@ describe("PortalService Control Plane projection", () => {
     });
     expect(result).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
     expect(controlPlane.planConfiguration).not.toHaveBeenCalled();
+  });
+
+  it("marks only failed or blocked operations on the current generation retryable", async () => {
+    const statuses = [
+      { id: "failed-current", generation: 2, status: "failed" as const },
+      { id: "blocked-current", generation: 2, status: "blocked" as const },
+      { id: "failed-old", generation: 1, status: "failed" as const },
+      { id: "blocked-old", generation: 1, status: "blocked" as const },
+      { id: "running-current", generation: 2, status: "running" as const },
+      { id: "succeeded-current", generation: 2, status: "succeeded" as const },
+    ];
+    const view: InstanceDashboard = {
+      ...management,
+      operations: statuses.map((item) => ({ ...management.operations[0]!, ...item })),
+    };
+    const { service } = serviceContext(view);
+
+    const result = await service.getRepository({ userId: "12345" }, "41");
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error("expected repository dashboard");
+    expect(result.value.operations.map(({ operationId, retryable }) => [operationId, retryable])).toEqual([
+      ["failed-current", true],
+      ["blocked-current", true],
+      ["failed-old", false],
+      ["blocked-old", false],
+      ["running-current", false],
+      ["succeeded-current", false],
+    ]);
+  });
+
+  it("retries a failed current-generation operation after fresh maintain authorization", async () => {
+    const { service, controlPlane, githubAccess, checkedEpochs, activeSnapshot } = actionService();
+    controlPlane.getDashboard.mockResolvedValue({
+      ...management,
+      snapshot: activeSnapshot,
+      operations: [{ ...management.operations[0]!, status: "failed" }],
+    });
+
+    const result = await service.execute({ userId: "12345" }, "41", {
+      kind: "retry",
+      operationId: "operation-1",
+      idempotencyKey: "retry-idempotency-key-01",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "operation", operation: { operationId: "operation-retry-1", retryable: false } },
+    });
+    expect(githubAccess.authorize).toHaveBeenCalledWith("12345", 41, "maintain");
+    expect(githubAccess.checkBoundAccess).toHaveBeenCalledOnce();
+    expect(checkedEpochs).toEqual([4]);
+    expect(controlPlane.retryOperation).toHaveBeenCalledWith("operation-1", {
+      actorId: "12345",
+      bindingEpoch: activeSnapshot.binding.bindingEpoch,
+      authorizationRevision: activeSnapshot.binding.authorizationRevision,
+      expectedGeneration: activeSnapshot.instance.generation,
+      idempotencyKey: "retry-idempotency-key-01",
+      requestId: "config-request",
+    });
+  });
+
+  it("lets the Control Plane reject stale retries and refuses active operations", async () => {
+    const { service, controlPlane, activeSnapshot } = actionService();
+    const stale = {
+      ...management.operations[0]!,
+      generation: activeSnapshot.instance.generation - 1,
+      status: "failed" as const,
+    };
+    controlPlane.getDashboard.mockResolvedValueOnce({
+      ...management,
+      snapshot: activeSnapshot,
+      operations: [stale],
+    });
+    controlPlane.retryOperation.mockRejectedValueOnce({ status: 409, code: "OPERATION_RETRY_CONFLICT" });
+    await expect(service.execute({ userId: "12345" }, "41", {
+      kind: "retry",
+      operationId: stale.id,
+      idempotencyKey: "retry-idempotency-key-02",
+    })).resolves.toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+    expect(controlPlane.retryOperation).toHaveBeenCalledWith(stale.id, expect.objectContaining({
+      expectedGeneration: stale.generation,
+      idempotencyKey: "retry-idempotency-key-02",
+    }));
+
+    const active = {
+      ...management.operations[0]!,
+      generation: activeSnapshot.instance.generation,
+      status: "running" as const,
+    };
+    controlPlane.getDashboard.mockResolvedValueOnce({
+      ...management,
+      snapshot: activeSnapshot,
+      operations: [active],
+    });
+    await expect(service.execute({ userId: "12345" }, "41", {
+      kind: "retry",
+      operationId: active.id,
+      idempotencyKey: "retry-idempotency-key-04",
+    })).resolves.toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+    expect(controlPlane.retryOperation).toHaveBeenCalledOnce();
+  });
+
+  it("denies a read-only principal before retrying", async () => {
+    const { service, controlPlane } = actionService(false);
+    const result = await service.execute({ userId: "12345" }, "41", {
+      kind: "retry",
+      operationId: "operation-1",
+      idempotencyKey: "retry-idempotency-key-03",
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    expect(controlPlane.retryOperation).not.toHaveBeenCalled();
   });
 
   it("redeploys the current immutable selection in a new runtime epoch", async () => {

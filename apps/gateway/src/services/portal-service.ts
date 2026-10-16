@@ -71,7 +71,10 @@ function summary(
   };
 }
 
-function operation(op: NonNullable<InstanceDashboard["operations"][number]>): PortalOperation {
+function operation(
+  op: NonNullable<InstanceDashboard["operations"][number]>,
+  currentGeneration?: number,
+): PortalOperation {
   const state = op.status === "pending" ? "queued"
     : op.status === "claimed" || op.status === "running" ? "running"
       : op.status === "succeeded" ? "succeeded"
@@ -84,8 +87,7 @@ function operation(op: NonNullable<InstanceDashboard["operations"][number]>): Po
     progressPercent: null,
     message: op.phase || null,
     error: null,
-    // The Control Plane does not expose a public retry route in this contract.
-    retryable: false,
+    retryable: (op.status === "failed" || op.status === "blocked") && op.generation === currentGeneration,
   };
 }
 
@@ -210,7 +212,7 @@ function dashboard(
   managed: InstanceDashboard | null,
   availableReleases: readonly InstanceDashboard["releases"][number][] = [],
 ): PortalRepositoryDashboard {
-  const operations = managed?.operations.map(operation) ?? [];
+  const operations = managed?.operations.map((op) => operation(op, snapshot?.instance.generation)) ?? [];
   const repo = summary(repository, snapshot, operations[0] ?? null);
   const instance = snapshot?.instance;
   const releases: readonly InstanceDashboard["releases"][number][] = managed?.releases ?? availableReleases;
@@ -560,7 +562,32 @@ export function createPortalService(context: GatewayContext): PortalService {
           return { ok: false, error: mapControlPlaneError(error) };
         }
       }
-      return failure("UNAVAILABLE", "Operation retry is not available from the Control Plane.", true);
+      if (command.kind === "retry") {
+        try {
+          const oldOperation = authority.value.management.operations.find((op) => op.id === command.operationId) ??
+            await context.controlPlane.getOperation(command.operationId);
+          if (
+            !oldOperation ||
+            oldOperation.instanceId !== snapshot.instance.instanceId ||
+            (oldOperation.status !== "failed" && oldOperation.status !== "blocked")
+          ) return failure("CONFLICT", "Operation state changed. Reload and try again.");
+          // On a fresh retry this equals the current generation. Keeping the recorded generation
+          // also lets the Control Plane recognize an idempotent receipt after generation advances;
+          // it rejects any stale key without a matching receipt.
+          const retried = await context.controlPlane.retryOperation(command.operationId, {
+            actorId: actor.userId,
+            bindingEpoch: snapshot.binding.bindingEpoch,
+            authorizationRevision,
+            expectedGeneration: oldOperation.generation,
+            idempotencyKey: command.idempotencyKey,
+            requestId: context.requestId,
+          });
+          return success({ kind: "operation", operation: operation(retried) });
+        } catch (error) {
+          return { ok: false, error: mapControlPlaneError(error) };
+        }
+      }
+      return failure("INVALID_REQUEST", "The requested operation is invalid.");
     },
   };
 }

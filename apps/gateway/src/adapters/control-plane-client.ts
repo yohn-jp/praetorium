@@ -108,6 +108,16 @@ export interface DesiredStateInput {
   readonly now: number;
 }
 
+export interface RetryOperationInput {
+  readonly actorId: string;
+  readonly bindingEpoch: number;
+  readonly authorizationRevision: number;
+  readonly expectedGeneration: number;
+  readonly idempotencyKey: string;
+  /** Transport metadata; sent as X-Request-Id, not included in the strict JSON body. */
+  readonly requestId: string;
+}
+
 export interface ControlPlaneClient {
   getByRepositoryId(repositoryId: number): Promise<RepositorySnapshot | null>;
   getByInstanceId(instanceId: string): Promise<RepositorySnapshot | null>;
@@ -119,6 +129,7 @@ export interface ControlPlaneClient {
   getOperation(operationId: string): Promise<PublicOperation | null>;
   resolveRepository(input: ResolveRepositoryInput): Promise<RepositorySnapshot & { readonly created: boolean }>;
   requestDesiredState(instanceId: string, input: DesiredStateInput): Promise<DesiredStateResult>;
+  retryOperation(operationId: string, input: RetryOperationInput): Promise<PublicOperation>;
 }
 
 export class ControlPlaneError extends Error {
@@ -254,6 +265,16 @@ export function createControlPlaneClient(binding: Fetcher, gatewaySecret: string
         "POST",
         body,
         requestId,
+      ));
+    },
+    async retryOperation(operationId, input) {
+      const { requestId, ...body } = input;
+      return PublicOperationSchema.parse(await request(
+        `/v1/operations/${encodeURIComponent(operationId)}/retry`,
+        "POST",
+        body,
+        requestId,
+        input.idempotencyKey,
       ));
     },
   };

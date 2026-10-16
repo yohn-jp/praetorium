@@ -297,6 +297,48 @@ describe("Control Plane service client", () => {
     });
   });
 
+  it("posts strict retry authority to the operation route", async () => {
+    const operation = {
+      id: "operation-retry-1",
+      instanceId: snapshot.instance.instanceId,
+      generation: 3,
+      runtimeEpoch: 6,
+      kind: "redeploy",
+      status: "pending",
+      phase: "queued",
+      attempt: 0,
+      createdAt: 1_800_000_000_010,
+      updatedAt: 1_800_000_000_010,
+    } as const;
+    let captured: Request | undefined;
+    const controlPlane = client(async (request) => {
+      captured = request;
+      return Response.json(operation);
+    });
+
+    await expect(controlPlane.retryOperation("operation-old", {
+      actorId: "12345",
+      bindingEpoch: 4,
+      authorizationRevision: 3,
+      expectedGeneration: 2,
+      idempotencyKey: "retry-key-1234567890",
+      requestId: "request-retry",
+    })).resolves.toEqual(operation);
+
+    expect(captured?.method).toBe("POST");
+    expect(new URL(captured!.url).pathname).toBe("/v1/operations/operation-old/retry");
+    expect(captured?.headers.get("X-Control-Plane-Gateway-Auth")).toBe("c".repeat(48));
+    expect(captured?.headers.get("X-Request-Id")).toBe("request-retry");
+    expect(captured?.headers.get("Idempotency-Key")).toBe("retry-key-1234567890");
+    expect(await captured?.json()).toEqual({
+      actorId: "12345",
+      bindingEpoch: 4,
+      authorizationRevision: 3,
+      expectedGeneration: 2,
+      idempotencyKey: "retry-key-1234567890",
+    });
+  });
+
   it("preserves the upstream error code and status without leaking response bodies", async () => {
     const unavailable = client(async () => Response.json({ error: { code: "BINDING_CONFLICT" } }, { status: 409 }));
 

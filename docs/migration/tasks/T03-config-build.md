@@ -1,0 +1,9 @@
+# T03 configuration and build persistence
+
+`ConfigurationService` resolves a selection through a trusted producer planner, validates the returned canonical `BuildInput`, resource requirements and producer `RuntimeMetadata`, and commits a new deployment revision with an expected-generation and repository-authorization fence. The `D1ConfigurationStore` coalesces builds by canonical build key, keeps the running instance's current image until deployment, preserves stopped intent, and stores the revision, operation (when running), idempotency response and audit event in one D1 batch. A plan replay is available by repository and idempotency key so a rollout can recover after restarting.
+
+`BuildQueueService` uses Control Plane time, canonical worker request schemas and a fixed operator-approved registry destination. `D1BuildStore` fences claims, heartbeats and reports by attempt, lease token, epoch, expiry and sequence. A successful report is admitted only after the artifact service verifies the signature and live OCI/composition content against the persisted immutable build input. Rejected or conflicting results cannot replace an admitted artifact; retries remain possible only for persisted retryable failures.
+
+The durable adapters use the shared T03 D1 interfaces and existing schema. The configuration planner is a neutral application port; production wiring must supply the real producer-backed catalog/resource/runtime metadata source. The producer's missing resolver and real composition artifact remain explicit producer acceptance gates.
+
+Verification in this worktree: application TypeScript typecheck passed after building the contracts dependency. The D1 configuration/build stores have not yet been exercised against the local D1-semantic adapter or Miniflare, and no real producer image or OCI registry round-trip was performed. Those integration gates remain for root acceptance; unit fixtures must not be used to mark them complete.

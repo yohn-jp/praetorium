@@ -6,6 +6,7 @@ import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/pers
 import { createGitHubWebhookRoutes, type GitHubWebhookDelivery } from "./github-webhook-routes.js";
 
 const SECRET = "a-gateway-service-secret-with-enough-entropy";
+const GITHUB_WEBHOOK_SECRET = "a-github-webhook-secret-with-enough-entropy";
 const MIGRATIONS = [
   "0001_repository_platform.sql",
   "0002_stable_release_rollouts.sql",
@@ -87,6 +88,133 @@ describe("Control Plane GitHub webhook route against migrated SQLite D1", () => 
       action: "github.webhook.delivery",
     });
     expect(count(h.database, "github:binding:delivery-unknown:%")).toBe(0);
+  });
+
+  it("conservatively suspends an installation for a selected event with no removed IDs", async () => {
+    const h = createHarness();
+    seedBinding(h.database, "instance-71", 71, 700);
+    seedBinding(h.database, "instance-72", 72, 700);
+    seedBinding(h.database, "instance-73", 73, 701);
+    seedOperation(h.database, "operation-71", "instance-71", 71, "redeploy", "running");
+    seedOperation(h.database, "operation-72", "instance-72", 72, "update", "claimed");
+
+    const delivery = webhook({
+      deliveryId: "delivery-selection-narrowed",
+      event: "installation_repositories",
+      action: "removed",
+      installationId: 700,
+      repositoryIds: [],
+      repositorySelection: "selected",
+    });
+    const response = await h.post(delivery);
+    expect(response.status).toBe(202);
+    expect(bindingRow(h.database, 71)).toMatchObject({ binding_epoch: 2, suspended: 1 });
+    expect(bindingRow(h.database, 72)).toMatchObject({ binding_epoch: 2, suspended: 1 });
+    expect(bindingRow(h.database, 73)).toMatchObject({ binding_epoch: 1, suspended: 0 });
+    expect(operationRow(h.database, "operation-71")).toMatchObject({
+      status: "blocked",
+      worker_id: null,
+      lease_token: null,
+      lease_expires_at: null,
+    });
+    expect(operationRow(h.database, "operation-72")).toMatchObject({
+      status: "blocked",
+      worker_id: null,
+      lease_token: null,
+      lease_expires_at: null,
+    });
+
+    const duplicate = await h.post(delivery);
+    expect(duplicate.status).toBe(200);
+    expect(bindingRow(h.database, 71)).toMatchObject({ binding_epoch: 2, suspended: 1 });
+    expect(bindingRow(h.database, 72)).toMatchObject({ binding_epoch: 2, suspended: 1 });
+  });
+
+  it("passes a signed all-to-selected delivery through the actual Gateway and Control Plane factories", async () => {
+    const h = createHarness();
+    seedBinding(h.database, "instance-71", 71, 700);
+    seedBinding(h.database, "instance-72", 72, 700);
+    seedBinding(h.database, "instance-73", 73, 701);
+    seedOperation(h.database, "operation-71", "instance-71", 71, "redeploy", "running");
+    seedOperation(h.database, "operation-72", "instance-72", 72, "update", "claimed");
+
+    const gatewayModule = await import(
+      new URL("../../gateway/src/github-webhook.ts", import.meta.url).href
+    );
+    const controlPlaneClient = gatewayModule.createGitHubWebhookControlPlaneClient(
+      {
+        async fetch(input: RequestInfo | URL, init?: RequestInit) {
+          return h.routes.fetch(new Request(input, init));
+        },
+      },
+      SECRET,
+    );
+    const gateway = gatewayModule.createGitHubWebhookRoutes({
+      webhookSecret: GITHUB_WEBHOOK_SECRET,
+      controlPlane: controlPlaneClient,
+    });
+    const rawBody = new TextEncoder().encode(
+      JSON.stringify({
+        action: "removed",
+        repository_selection: "selected",
+        installation: { id: 700 },
+        repositories_removed: [],
+      }),
+    );
+    const response = await gateway.request("/", {
+      method: "POST",
+      headers: await signedGitHubHeaders(rawBody, "delivery-all-to-selected"),
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ status: "accepted" });
+    expect(bindingRow(h.database, 71)).toMatchObject({ binding_epoch: 2, suspended: 1 });
+    expect(bindingRow(h.database, 72)).toMatchObject({ binding_epoch: 2, suspended: 1 });
+    expect(bindingRow(h.database, 73)).toMatchObject({ binding_epoch: 1, suspended: 0 });
+    expect(operationRow(h.database, "operation-71")).toMatchObject({
+      status: "blocked",
+      worker_id: null,
+      lease_token: null,
+      lease_expires_at: null,
+    });
+    expect(operationRow(h.database, "operation-72")).toMatchObject({
+      status: "blocked",
+      worker_id: null,
+      lease_token: null,
+      lease_expires_at: null,
+    });
+    const metadata = receiptRow(h.database, "delivery-all-to-selected")?.metadata_json;
+    expect(metadata).not.toContain("repository_selection");
+    expect(metadata).not.toContain("repositories_removed");
+    expect(metadata).not.toContain("rawBody");
+  });
+
+  it("rejects unrecognized summary fields while retaining bounded compatibility for old summaries", async () => {
+    const h = createHarness();
+    seedBinding(h.database, "instance-71", 71, 700);
+
+    const response = await h.routes.request("/internal/github/webhook", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Control-Plane-Gateway-Auth": SECRET,
+      },
+      body: JSON.stringify({ ...webhook({ deliveryId: "delivery-extra-field" }), extra: true }),
+    });
+    expect(response.status).toBe(400);
+
+    const legacySummary = await h.post(
+      webhook({
+        deliveryId: "delivery-legacy-empty-removal",
+        event: "installation_repositories",
+        action: "removed",
+        installationId: 700,
+        repositoryIds: [],
+      }),
+    );
+    expect(legacySummary.status).toBe(202);
+    expect(bindingRow(h.database, 71)).toMatchObject({ binding_epoch: 1, suspended: 0 });
   });
 
   it("suspends all bindings only for a deleted installation and never unsuspends from a webhook", async () => {
@@ -225,6 +353,9 @@ function webhook(
     action: overrides.action ?? null,
     installationId: overrides.installationId ?? null,
     repositoryIds: overrides.repositoryIds ?? [],
+    ...(overrides.repositorySelection === undefined
+      ? {}
+      : { repositorySelection: overrides.repositorySelection }),
   };
 }
 
@@ -314,6 +445,26 @@ function count(database: DatabaseSync, eventIdPattern: string): number {
     count: number;
   };
   return row.count;
+}
+
+async function signedGitHubHeaders(rawBody: Uint8Array, deliveryId: string): Promise<Headers> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(GITHUB_WEBHOOK_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const body = new Uint8Array(rawBody.byteLength);
+  body.set(rawBody);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, body.buffer));
+  const hex = [...signature].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return new Headers({
+    "Content-Type": "application/json",
+    "X-Hub-Signature-256": `sha256=${hex}`,
+    "X-GitHub-Delivery": deliveryId,
+    "X-GitHub-Event": "installation_repositories",
+  });
 }
 
 class SQLiteD1Database implements D1Database {

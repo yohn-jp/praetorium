@@ -18,6 +18,7 @@ const WebhookInput = z.strictObject({
   action: Action,
   installationId: PositiveId.nullable(),
   repositoryIds: z.array(PositiveId).max(100),
+  repositorySelection: z.enum(["all", "selected"]).optional(),
 });
 
 export type GitHubWebhookDelivery = z.infer<typeof WebhookInput>;
@@ -190,7 +191,14 @@ function invalidationScope(input: GitHubWebhookDelivery): InvalidationScope | nu
       reason: `GitHub installation ${input.action}`,
     };
   if (input.event === "installation_repositories" && input.action === "removed") {
-    if (input.repositoryIds.length === 0) return null;
+    if (input.repositoryIds.length === 0) {
+      if (input.repositorySelection !== "selected") return null;
+      return {
+        installationId: input.installationId,
+        repositoryIds: null,
+        reason: "GitHub App installation switched to selected repositories",
+      };
+    }
     return {
       installationId: input.installationId,
       repositoryIds: input.repositoryIds,

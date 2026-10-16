@@ -13,6 +13,7 @@ describe("Gateway GitHub webhook boundary", () => {
     const rawBody = new TextEncoder().encode(
       JSON.stringify({
         action: "removed",
+        repository_selection: "selected",
         installation: { id: 71 },
         repositories_added: [{ id: 1001 }],
         repositories_removed: [{ id: 1002 }, { id: 1003 }],
@@ -44,6 +45,7 @@ describe("Gateway GitHub webhook boundary", () => {
       action: "removed",
       installationId: 71,
       repositoryIds: [1002, 1003],
+      repositorySelection: "selected",
     });
     expect(JSON.stringify(forwardedDelivery)).not.toContain("repositories_removed");
     expect(JSON.stringify(forwardedDelivery)).not.toContain("repositories_added");
@@ -76,6 +78,34 @@ describe("Gateway GitHub webhook boundary", () => {
     expect(response.status).toBe(401);
     expect(receiveGitHubWebhook).not.toHaveBeenCalled();
     expect(received).toEqual([]);
+  });
+
+  it("rejects an invalid installation repository selection before forwarding", async () => {
+    const rawBody = new TextEncoder().encode(
+      JSON.stringify({
+        action: "removed",
+        repository_selection: "unexpected",
+        installation: { id: 71 },
+        repositories_removed: [],
+      }),
+    );
+    const receiveGitHubWebhook = vi.fn(async () => "accepted" as const);
+    const app = createGitHubWebhookRoutes({
+      webhookSecret: SECRET,
+      controlPlane: { receiveGitHubWebhook },
+    });
+    const response = await app.request("/", {
+      method: "POST",
+      headers: await githubHeaders(
+        rawBody,
+        "installation_repositories",
+        "delivery-invalid-selection",
+      ),
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(400);
+    expect(receiveGitHubWebhook).not.toHaveBeenCalled();
   });
 
   it("authenticates the private Control Plane call with the configured service secret", async () => {

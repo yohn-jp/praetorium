@@ -12,6 +12,7 @@ export interface GitHubWebhookDelivery {
   readonly action: string | null;
   readonly installationId: number | null;
   readonly repositoryIds: readonly number[];
+  readonly repositorySelection?: "all" | "selected";
 }
 
 export type GitHubWebhookForwardResult = "accepted" | "duplicate" | "conflict";
@@ -118,6 +119,15 @@ async function boundedDelivery(
   }
   if (!isRecord(payload)) return null;
 
+  let repositorySelection: "all" | "selected" | undefined;
+  if (verified.event === "installation_repositories") {
+    const selection = payload.repository_selection;
+    if (selection !== undefined) {
+      if (selection !== "all" && selection !== "selected") return null;
+      repositorySelection = selection;
+    }
+  }
+
   let repositoryIds = [...verified.repositoryIds];
   if (verified.event === "installation") {
     repositoryIds = [];
@@ -163,6 +173,7 @@ async function boundedDelivery(
     action: verified.action,
     installationId: verified.installationId,
     repositoryIds,
+    ...(repositorySelection === undefined ? {} : { repositorySelection }),
   };
 }
 

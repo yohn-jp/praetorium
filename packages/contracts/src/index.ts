@@ -6,3 +6,4 @@ export * from "./provider.js";
 export * from "./producer.js";
 export * from "./instance-access.js";
 export * from "./artifact.js";
+export * from "./build-queue.js";

@@ -1,9 +1,10 @@
 {
   "checkedAt": "2026-10-17",
   "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
-  "producerRevision": "969e4791ce85055be69548eef2fe6c0e91abec4f",
-  "previousProducerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
+  "producerRevision": "4c163a3c8162b5d7bc4becb63f00a04617cab5dc",
+  "previousProducerRevision": "969e4791ce85055be69548eef2fe6c0e91abec4f",
   "artifactDigest": null,
+  "artifactDigestReason": "No current-revision published OCI reference or digest was supplied. Scriptorium verification docs describe local builds and explicitly do not claim publication. Anonymous GHCR tag/manifest requests and the GitHub package-version API returned HTTP 401, so registry enumeration was unavailable; that is not evidence that the package does not exist.",
   "producerModified": false,
   "capabilities": [
     {
@@ -20,8 +21,8 @@
         "modules/*/package.json",
         "Dockerfile"
       ],
-      "missing": "The source now includes the full-profile module packages and a profile resolver, but there is no versioned scriptorium-build/v1 BuildCatalog resolver, digest/resource catalog, immutable Runtime Base or Build Kit, approved gateway.v0 recipe/receipt, or versioned composition manifest binding the selected image closure. scripts/profile-build.mjs accepts only core/full and uses the existing ModuleManifest resolver.",
-      "attempt": "Read detached remote main tree at 969e4791ce85055be69548eef2fe6c0e91abec4f; inspected profile generation, module-runtime exports, package manifests, Dockerfile and OCI evidence. No current producer build or conformance run was performed.",
+      "missing": "At 4c163a3c all eight module packages are present in profiles/full.json, and scripts/profile-build.mjs still accepts only core/full and resolves ModuleManifest through resolveModulePlan. There is no versioned scriptorium-build/v1 BuildCatalog resolver, digest/resource catalog, immutable Runtime Base or Build Kit, approved gateway.v0 recipe/receipt, or versioned composition manifest binding the selected image closure. The new shared NLP token counter is module functionality, not a build contract.",
+      "attempt": "Read-only detached snapshot of remote main at 4c163a3c8162b5d7bc4becb63f00a04617cab5dc; compared 969e4791ce85055be69548eef2fe6c0e91abec4f..4c163a3c8162b5d7bc4becb63f00a04617cab5dc and inspected profile-build/profile-package, module-runtime exports, package manifests, Dockerfile and OCI evidence. No producer build or conformance run was performed.",
       "minimumUnblock": "Existing producer coordinator publishes the versioned resolver/catalog and immutable Runtime Base/Build Kit recipe, then supplies owned disposable-image evidence for Core and two distinct legal non-preset compositions with backend/browser/native closure verification."
     },
     {
@@ -32,8 +33,8 @@
         "packages/api/src/server.ts",
         "packages/api/src/server.test.ts"
       ],
-      "missing": "The API accepts one shared SCRIPTORIUM_AUTH_TOKEN; /api/login creates an owner cookie session and /api/version declares cookie-owner plus bearer-read-compute-propose modes. There is no issuer/audience/JWKS AccessGrant verifier, repository/instance/epoch binding, per-principal hosted role authorization or mutation receipt.",
-      "attempt": "Read current API authentication and route dispatch at 969e4791ce85055be69548eef2fe6c0e91abec4f. The publishing module's share grants are content-sharing records, not Platform AccessGrant verification.",
+      "missing": "The API still accepts one shared SCRIPTORIUM_AUTH_TOKEN; /api/login creates an owner cookie session and /api/version declares cookie-owner plus bearer-read-compute-propose modes. The 969..4c API additions are owner-session job-history/inbox features, not hosted identity. There is no issuer/audience/JWKS AccessGrant verifier, repository/instance/epoch binding, per-principal hosted role authorization or mutation receipt.",
+      "attempt": "Read the current API authentication and route dispatch at 4c163a3c8162b5d7bc4becb63f00a04617cab5dc and compared its diff from 969e4791ce85055be69548eef2fe6c0e91abec4f. The publishing module's share grants are content-sharing records, not Platform AccessGrant verification.",
       "minimumUnblock": "Existing producer coordinator delivers hosted-grant and role enforcement plus negative issuer/repository/instance/epoch/expiry and read-only-role tests against an owned disposable runtime; static-token fallback is rejected."
     },
     {
@@ -46,8 +47,8 @@
         "tests/e2e/container-recovery.acceptance.mjs",
         "docs/verification/P13-BROWSER-RECOVERY.md"
       ],
-      "missing": "CoreStore accepts a token string through githubToken or SCRIPTORIUM_GITHUB_TOKEN and uses a temporary GIT_ASKPASS helper, but there is no assignment-enforced repository binding, renewable GitCredentialProvider for installation tokens, App-scope verification or signed actor-bound publish authorization receipt. Existing GitHub browser acceptance uses a supplied token and does not prove App-token renewal.",
-      "attempt": "Read current CoreStore options/token path and browser acceptance harness at 969e4791ce85055be69548eef2fe6c0e91abec4f. No live credential-expiry or App-installation push test was run.",
+      "missing": "CoreStore still accepts one token string through CoreStoreOptions.githubToken or SCRIPTORIUM_GITHUB_TOKEN and uses a temporary GIT_ASKPASS helper. The 969..4c CoreStore changes concern fresh remote observations and replacement safety; they do not add assignment-enforced repository binding, renewable GitCredentialProvider installation tokens, App-scope verification or a signed actor-bound publish authorization receipt. Existing GitHub browser acceptance uses a supplied token and does not prove App-token renewal.",
+      "attempt": "Read CoreStoreOptions, constructor/token handling and Git askpass execution in the detached 4c163a3c tree and reviewed the 969..4c CoreStore diff. No live credential-expiry or App-installation push test was run.",
       "minimumUnblock": "Existing producer coordinator delivers numeric repository assignment enforcement, scoped installation-token brokerage and renewal, plus an owned private test-repository run proving fresh clone, mismatch rejection, actual expiry/renewal and actor-authorized push."
     },
     {
@@ -56,10 +57,14 @@
       "gate": "BLOCKED",
       "availableSourcePaths": [
         "packages/api/src/server.ts",
-        "packages/core/src/index.ts"
+        "packages/api/src/job-history-store.ts",
+        "packages/core/src/index.ts",
+        "packages/module-runtime/src/index.ts",
+        "packages/module-runtime/src/module-runtime.ts",
+        "packages/module-runtime/src/worker-supervisor.ts"
       ],
-      "missing": "Readiness reports process requests and pending local checkpoints and shutdown drains requests, but no versioned platform status/activity/jobs contract or operation/runtime-epoch-fenced quiesce/resume control surface is present.",
-      "attempt": "Read current API readiness and shutdown paths at 969e4791ce85055be69548eef2fe6c0e91abec4f; no /api/platform/v1 status, quiesce or resume routes were found. No new endpoints were assumed.",
+      "missing": "The 969..4c changes add WorkerJobLifecycleSnapshot/Listener/State, WorkerSupervisor.subscribeJobLifecycle(), activeJobCount/activeJobCountFor and ModuleRuntime.subscribeJobLifecycle(); the API persists owner-only job history and exposes GET /api/jobs, /api/jobs/:id and /api/jobs/events. This is useful internal worker activity, but there is still no versioned hosted status/activity contract or /api/platform/v1 status, quiesce or resume surface, API/MCP and publication activity binding, assignment/epoch fence, or safe quiesce state transition.",
+      "attempt": "Read the 969..4c diff for module-runtime exports, worker lifecycle and API job-history routes, then searched the complete current tree for platform status/quiesce/resume routes. No producer build or quiesce conformance run was performed.",
       "minimumUnblock": "Existing producer coordinator delivers authenticated versioned status/activity and quiesce/resume interfaces, then proves in-flight work, checkpoints, uncertain publication, duplicate quiesce, stale resume and healthy-empty replacement cases."
     },
     {
@@ -74,8 +79,8 @@
         "docs/verification/P13-PACKAGING.md",
         "docs/verification/P13-BROWSER-RECOVERY.md"
       ],
-      "missing": "The source supplies a profile-image Dockerfile and generic health/readiness/profile metadata; no current published producer OCI reference/digest, hosted assignment/composition metadata or current-revision stable-origin reconstruction proof was supplied. Historical local-image evidence is for earlier source revisions only. GitHub Packages enumeration was denied for missing read:packages scope and anonymous GHCR tag listing required authentication, so no external package claim is made.",
-      "attempt": "Read current Dockerfile, runtime metadata routes and OCI evidence at 969e4791ce85055be69548eef2fe6c0e91abec4f. No producer image was built or published and no registry credentials were used.",
+      "missing": "The source supplies a profile-image Dockerfile and generic health/readiness/profile metadata; no current published producer OCI reference/digest, hosted assignment/composition metadata or current-revision stable-origin reconstruction proof was supplied. Verification docs say the producer images were built locally and publication is not claimed. Historical local-image evidence is for earlier source revisions only. Anonymous GHCR tag/manifest and GitHub package-version lookups returned HTTP 401, so registry contents could not be enumerated and absence is not claimed.",
+      "attempt": "Read the current Dockerfile, runtime metadata routes, OCI/acceptance docs and historical image evidence at 4c163a3c8162b5d7bc4becb63f00a04617cab5dc. Read-only anonymous GHCR tag and manifest queries and the GitHub package-version API returned HTTP 401. No current producer image was built or published, and no registry credentials were used.",
       "minimumUnblock": "Existing producer coordinator supplies an immutable hosted composition image and digest plus a disposable replacement run at a stable origin; verify confirmed repository data, browser journal reconciliation, and runtime/OCI composition metadata against the same digest."
     }
   ]

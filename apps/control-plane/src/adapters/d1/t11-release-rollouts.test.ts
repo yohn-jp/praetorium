@@ -153,20 +153,13 @@ function store(db: SQLiteD1) {
 }
 
 function installSchema(db: SQLiteD1) {
-  db.database.exec(`
-    CREATE TABLE logical_instances(instance_id TEXT PRIMARY KEY);
-    CREATE TABLE deployment_revisions(revision_id TEXT PRIMARY KEY);
-    CREATE TABLE operations(operation_id TEXT PRIMARY KEY);
-    CREATE TABLE audit_events(
-      event_id TEXT PRIMARY KEY, repository_id INTEGER, instance_id TEXT, operation_id TEXT,
-      actor_id TEXT, actor_kind TEXT, action TEXT, outcome TEXT, request_id TEXT,
-      metadata_json TEXT, occurred_at INTEGER
-    );
-  `);
-  const doc = readFileSync("docs/migration/tasks/T11.md", "utf8");
-  const schema = doc.match(/```sql\n([\s\S]*?)\n```/u)?.[1];
-  if (!schema) throw new Error("T11 D1 schema proposal is missing its SQL block");
-  db.database.exec(schema);
+  db.database.exec("PRAGMA foreign_keys = ON");
+  for (const migration of [
+    "../../../migrations/0001_repository_platform.sql",
+    "../../../migrations/0002_stable_release_rollouts.sql",
+  ]) {
+    db.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
+  }
 }
 
 function follower(instanceId: string, clusterId = "cluster-1"): StableFollower {
@@ -334,7 +327,11 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     const first = store(db);
     await first.createCandidate(release);
     await first.promoteStable({ releaseId: release.id, expectedRevision: 0, promotedAt: TIME });
-    db.database.prepare("INSERT INTO logical_instances(instance_id) VALUES (?)").run("instance-1");
+    db.database
+      .prepare(
+        "INSERT INTO logical_instances(instance_id, repository_id, desired_state, created_at, updated_at) VALUES (?, ?, 'running', ?, ?)",
+      )
+      .run("instance-1", 101, NOW, NOW);
     expect(
       await first.recordFollowerPage({
         releaseId: release.id,

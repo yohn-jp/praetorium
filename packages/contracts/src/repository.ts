@@ -7,6 +7,7 @@ export const RepositoryBindingSchema = z.strictObject({
   owner: z.string().min(1),
   name: z.string().min(1),
   authorizationRevision: z.number().int().nonnegative(),
+  bindingEpoch: z.number().int().nonnegative(),
   suspended: z.boolean(),
 });
 export const LogicalInstanceSchema = z.strictObject({

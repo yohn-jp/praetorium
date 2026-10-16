@@ -33,7 +33,10 @@
   ],
   "baseResources": { "cpuMilli": 1000, "memoryMiB": 1024, "ephemeralStorageMiB": 2048 },
   "sharedResourceGroups": [
-    { "id": "embedding-pool", "resources": { "cpuMilli": 300, "memoryMiB": 1024, "ephemeralStorageMiB": 512 } }
+    {
+      "id": "embedding-pool",
+      "resources": { "cpuMilli": 300, "memoryMiB": 1024, "ephemeralStorageMiB": 512 }
+    }
   ],
   "resourceProfiles": [
     { "id": "small", "cpuMilli": 1500, "memoryMiB": 2048, "ephemeralStorageMiB": 3072 },

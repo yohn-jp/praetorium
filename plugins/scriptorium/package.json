@@ -9,14 +9,18 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@praetorium/contracts": "workspace:*"
   },
   "devDependencies": {
     "typescript": "5.9.3",

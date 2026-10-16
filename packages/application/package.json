@@ -7,6 +7,42 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./builds": {
+      "types": "./dist/builds/index.d.ts",
+      "import": "./dist/builds/index.js"
+    },
+    "./instances": {
+      "types": "./dist/instances/index.d.ts",
+      "import": "./dist/instances/index.js"
+    },
+    "./configurations": {
+      "types": "./dist/configurations/index.d.ts",
+      "import": "./dist/configurations/index.js"
+    },
+    "./operations": {
+      "types": "./dist/operations/index.d.ts",
+      "import": "./dist/operations/index.js"
+    },
+    "./lifecycle": {
+      "types": "./dist/lifecycle/index.d.ts",
+      "import": "./dist/lifecycle/index.js"
+    },
+    "./releases": {
+      "types": "./dist/releases/index.d.ts",
+      "import": "./dist/releases/index.js"
+    },
+    "./rollouts": {
+      "types": "./dist/rollouts/index.d.ts",
+      "import": "./dist/rollouts/index.js"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts/index.d.ts",
+      "import": "./dist/artifacts/index.js"
+    },
+    "./build-cache": {
+      "types": "./dist/build-cache/index.d.ts",
+      "import": "./dist/build-cache/index.js"
     }
   },
   "scripts": {
@@ -16,6 +52,8 @@
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@praetorium/contracts": "workspace:*",
+    "@praetorium/domain": "workspace:*"
   }
 }

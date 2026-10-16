@@ -2,7 +2,9 @@
   "metadata": {
     "contractVersion": "scriptorium-platform/v1",
     "producerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
-    "listener": { "port": 3000 },
+    "listener": {
+      "port": 3000
+    },
     "paths": {
       "liveness": "/api/health",
       "readiness": "/api/ready",
@@ -72,6 +74,11 @@
     "enabledModuleIds": ["nlp", "diagnostics"],
     "credentialBrokerLocator": "service://github-credential-broker",
     "grantPolicy": {
+      "issuer": "https://gateway.example.invalid",
+      "jwksUrl": "https://gateway.example.invalid/.well-known/jwks.json",
+      "audience": "ins_synthetic_fixture"
+    },
+    "controlServicePolicy": {
       "issuer": "https://gateway.example.invalid",
       "jwksUrl": "https://gateway.example.invalid/.well-known/jwks.json",
       "audience": "ins_synthetic_fixture"

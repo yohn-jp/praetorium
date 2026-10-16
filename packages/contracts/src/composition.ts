@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BuildInputSchema, DigestSchema } from "./build.js";
+import { buildKey, canonicalBuildInput, BuildInputSchema, DigestSchema } from "./build.js";
 
 const ModuleIdentitySchema = z.strictObject({
   id: z.string().min(1).max(128),
@@ -65,8 +65,11 @@ export const CompositionManifestSchema = z
 export type CompositionManifest = z.infer<typeof CompositionManifestSchema>;
 
 /** Structural checks independent of the asynchronous image inspector. */
-export function validateCompositionBindings(value: CompositionManifest): boolean {
-  const input = value.buildInput;
+export async function validateCompositionBindings(value: CompositionManifest): Promise<boolean> {
+  const input = BuildInputSchema.parse(JSON.parse(canonicalBuildInput(value.buildInput)));
+  if (value.buildKey !== (await buildKey(input))) return false;
+  const resolvedIds = new Set(input.resolvedModules.map((module) => module.id));
+  if (input.requestedModules.some((id) => !resolvedIds.has(id))) return false;
   if (
     value.producerRevision !== input.producerRevision ||
     value.platform !== input.platform ||

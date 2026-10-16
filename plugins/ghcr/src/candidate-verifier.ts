@@ -55,8 +55,15 @@ export interface UnsignedBuildCandidate {
   };
 }
 
+export interface ApprovedCandidateOutput {
+  /** Canonical origin recorded by the Control Plane; transport overrides never change it. */
+  readonly registryHost: string;
+  /** Trusted derived-output repository from the persisted build request. */
+  readonly repository: string;
+}
+
 export class CandidateVerificationError extends Error {
-  constructor(readonly reason: "invalid_candidate" | "registry" | "composition" | "closure" | "smoke", message: string) {
+  constructor(readonly reason: "invalid_candidate" | "registry" | "composition" | "closure" | "smoke" | "canceled", message: string) {
     super(message);
     this.name = "CandidateVerificationError";
   }
@@ -70,8 +77,13 @@ export class GhcrCandidateVerifier {
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
-  async verifyUnsignedCandidate(candidate: UnsignedBuildCandidate): Promise<BuilderArtifactStatement> {
-    const repository = parseCandidateReference(candidate.candidateRef, candidate.manifestDigest);
+  async verifyUnsignedCandidate(
+    candidate: UnsignedBuildCandidate,
+    approvedOutput: ApprovedCandidateOutput,
+    signal: AbortSignal,
+  ): Promise<BuilderArtifactStatement> {
+    if (signal.aborted) throw new CandidateVerificationError("canceled", "candidate verification was canceled");
+    const repository = parseCandidateReference(candidate.candidateRef, candidate.manifestDigest, approvedOutput);
     if (!repository || !isSha256Digest(candidate.expectedBuildKey) || !isSha256Digest(candidate.compositionManifest.digest)) {
       throw new CandidateVerificationError("invalid_candidate", "candidate reference or digest is invalid");
     }
@@ -90,10 +102,11 @@ export class GhcrCandidateVerifier {
     let compositionBlob;
     try {
       [image, compositionBlob] = await Promise.all([
-        this.registry.verifyImage(repository, candidate.manifestDigest, platform),
-        this.registry.readBlob(candidate.compositionManifest.repository, candidate.compositionManifest.digest),
+        this.registry.verifyImage(repository, candidate.manifestDigest, platform, signal),
+        this.registry.readBlob(candidate.compositionManifest.repository, candidate.compositionManifest.digest, undefined, signal),
       ]);
     } catch {
+      if (signal.aborted) throw new CandidateVerificationError("canceled", "candidate registry verification was canceled");
       throw new CandidateVerificationError("registry", "registry could not verify the candidate and composition bytes");
     }
     if (
@@ -157,6 +170,9 @@ export class GhcrCandidateVerifier {
     }
 
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", abortFromCaller, { once: true });
+    if (signal.aborted) controller.abort(signal.reason);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
@@ -167,7 +183,7 @@ export class GhcrCandidateVerifier {
     try {
       const inspection = await Promise.race([
         this.inspector.inspectAndSmoke({
-          imageReference: `${repository}@${candidate.manifestDigest}`,
+          imageReference: `${approvedOutput.registryHost}/${repository}@${candidate.manifestDigest}`,
           image,
           compositionManifest,
         }, controller.signal),
@@ -185,23 +201,24 @@ export class GhcrCandidateVerifier {
       }
     } catch (error) {
       if (error instanceof CandidateVerificationError) throw error;
+      if (signal.aborted) throw new CandidateVerificationError("canceled", "candidate inspection was canceled");
       if (controller.signal.aborted) throw new CandidateVerificationError("smoke", "declared composition smoke timed out");
       throw new CandidateVerificationError("closure", "image closure inspection or smoke failed");
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
+      signal.removeEventListener("abort", abortFromCaller);
     }
 
     return statement;
   }
 }
 
-function parseCandidateReference(reference: string, digest: string): string | null {
+function parseCandidateReference(reference: string, digest: string, approvedOutput: ApprovedCandidateOutput): string | null {
   if (!isSha256Digest(digest) || typeof reference !== "string") return null;
-  const at = reference.lastIndexOf("@");
-  if (at < 1 || reference.slice(at + 1) !== digest) return null;
-  const repository = reference.slice(0, at);
+  if (approvedOutput.registryHost !== "ghcr.io" || typeof approvedOutput.repository !== "string") return null;
+  const repository = approvedOutput.repository;
   if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u.test(repository)) return null;
-  return repository;
+  return reference === `${approvedOutput.registryHost}/${repository}@${digest}` ? repository : null;
 }
 
 function toOciPlatform(platform: BuildInput["platform"]): OciPlatform {

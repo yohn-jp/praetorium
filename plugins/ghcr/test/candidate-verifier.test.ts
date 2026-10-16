@@ -1,5 +1,5 @@
 import { buildKey, type BuildInput, type CompositionManifest } from "@praetorium/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CandidateVerificationError, GhcrCandidateVerifier, type CompositionArtifactInspector } from "../src/candidate-verifier.js";
 import { sha256Digest } from "../src/digest.js";
 import type { GhcrRegistryClient } from "../src/oci-registry-client.js";
@@ -8,6 +8,7 @@ import type { VerifiedOciImage } from "../src/oci-types.js";
 const digestA = `sha256:${"a".repeat(64)}` as const;
 const digestB = `sha256:${"b".repeat(64)}` as const;
 const digestC = `sha256:${"c".repeat(64)}` as const;
+const activeSignal = new AbortController().signal;
 const input: BuildInput = {
   contractVersion: "scriptorium-build/v1",
   producerRevision: "a".repeat(40),
@@ -49,15 +50,15 @@ async function fixture() {
     reachableLayerBytes: 0,
   };
   const registry = {
-    async verifyImage(repository: string, manifestDigest: string) {
+    verifyImage: vi.fn(async (repository: string, manifestDigest: string) => {
       return { ...image, repository, manifestDigest };
-    },
-    async readBlob(repository: string, digest: string) {
+    }),
+    readBlob: vi.fn(async (repository: string, digest: string) => {
       return { repository, digest, mediaType: "application/json", size: compositionBytes.byteLength, bytes: compositionBytes };
-    },
+    }),
   } as unknown as GhcrRegistryClient;
   const inspection: CompositionArtifactInspector = {
-    async inspectAndSmoke() {
+    inspectAndSmoke: vi.fn(async () => {
       return {
         imageDigest: digestA,
         compositionManifestDigest: compositionDigest,
@@ -68,24 +69,26 @@ async function fixture() {
         nativeDependencies: [],
         smoke: { id: "runtime-ready", healthPath: "/health", passed: true },
       };
-    },
+    }),
   };
   const verifier = new GhcrCandidateVerifier(registry, inspection, () => new Date("2026-10-17T00:00:00.000Z"));
   const candidate = {
     expectedInput: input,
     expectedBuildKey: key as typeof digestA,
-    candidateRef: `praetorium/derived@${digestA}`,
+    candidateRef: `ghcr.io/praetorium/derived@${digestA}`,
     manifestDigest: digestA,
     compositionManifest: { repository: "praetorium/derived", digest: compositionDigest },
   };
-  return { verifier, registry, candidate, compositionDigest };
+  return { verifier, registry, inspection, candidate, compositionDigest };
 }
+
+const approvedOutput = { registryHost: "ghcr.io", repository: "praetorium/derived" } as const;
 
 describe("GHCR candidate verification", () => {
   it("returns a canonical statement only after persisted-input, composition, closure, and smoke checks", async () => {
-    const { verifier, candidate, compositionDigest } = await fixture();
+    const { verifier, inspection, candidate, compositionDigest } = await fixture();
 
-    await expect(verifier.verifyUnsignedCandidate(candidate)).resolves.toEqual({
+    await expect(verifier.verifyUnsignedCandidate(candidate, approvedOutput, activeSignal)).resolves.toEqual({
       schemaVersion: "praetorium.build-artifact/v1",
       buildKey: candidate.expectedBuildKey,
       artifact: {
@@ -100,6 +103,10 @@ describe("GHCR candidate verification", () => {
       contractVersion: "scriptorium-build/v1",
       issuedAt: "2026-10-17T00:00:00.000Z",
     });
+    expect(inspection.inspectAndSmoke).toHaveBeenCalledWith(
+      expect.objectContaining({ imageReference: `ghcr.io/praetorium/derived@${digestA}` }),
+      expect.any(AbortSignal),
+    );
   });
 
   it("rejects a mismatched closure and a failed smoke instead of returning a signable statement", async () => {
@@ -120,7 +127,7 @@ describe("GHCR candidate verification", () => {
     };
     const badVerifier = new GhcrCandidateVerifier(registry, badInspector);
 
-    await expect(badVerifier.verifyUnsignedCandidate(candidate)).rejects.toBeInstanceOf(CandidateVerificationError);
+    await expect(badVerifier.verifyUnsignedCandidate(candidate, approvedOutput, activeSignal)).rejects.toBeInstanceOf(CandidateVerificationError);
   });
 
   it("rejects a failed declared health smoke even when the inspected closure matches", async () => {
@@ -140,13 +147,39 @@ describe("GHCR candidate verification", () => {
       },
     };
 
-    await expect(new GhcrCandidateVerifier(registry, failedSmoke).verifyUnsignedCandidate(candidate))
+    await expect(new GhcrCandidateVerifier(registry, failedSmoke).verifyUnsignedCandidate(candidate, approvedOutput, activeSignal))
       .rejects.toMatchObject({ reason: "smoke" });
   });
 
   it("rejects when persisted input does not hash to the expected build key", async () => {
     const { verifier, candidate } = await fixture();
-    await expect(verifier.verifyUnsignedCandidate({ ...candidate, expectedBuildKey: digestC }))
+    await expect(verifier.verifyUnsignedCandidate({ ...candidate, expectedBuildKey: digestC }, approvedOutput, activeSignal))
       .rejects.toMatchObject({ reason: "invalid_candidate" });
+  });
+
+  it("requires canonical GHCR candidate references before resolving a repository", async () => {
+    const { verifier, candidate } = await fixture();
+    await expect(verifier.verifyUnsignedCandidate({
+      ...candidate,
+      candidateRef: `docker.io/praetorium/derived@${digestA}`,
+    }, approvedOutput, activeSignal)).rejects.toMatchObject({ reason: "invalid_candidate" });
+  });
+
+  it("rejects a valid digest from a different repository than the persisted output approval", async () => {
+    const { verifier, candidate } = await fixture();
+    await expect(verifier.verifyUnsignedCandidate({
+      ...candidate,
+      candidateRef: `ghcr.io/praetorium/source@${digestA}`,
+    }, approvedOutput, activeSignal)).rejects.toMatchObject({ reason: "invalid_candidate" });
+  });
+
+  it("stops before registry access when the build attempt has been canceled", async () => {
+    const { verifier, registry, candidate } = await fixture();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(verifier.verifyUnsignedCandidate(candidate, approvedOutput, controller.signal))
+      .rejects.toMatchObject({ reason: "canceled" });
+    expect(registry.verifyImage).not.toHaveBeenCalled();
   });
 });

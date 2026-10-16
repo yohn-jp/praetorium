@@ -4,6 +4,11 @@ import { GhcrRegistryClient, RegistryError } from "../src/oci-registry-client.js
 
 const encoder = new TextEncoder();
 const repository = "praetorium/derived";
+const imageLimits = {
+  maxImageLayerBytes: 1024 * 1024,
+  maxImageVerificationMs: 5_000,
+  maxRegistryRequestMs: 1_000,
+};
 
 async function digestOf(bytes: Uint8Array): Promise<string> {
   return sha256Digest(bytes);
@@ -16,12 +21,22 @@ interface ImageFixture {
   readonly childDigest: string;
   readonly configBytes: Uint8Array;
   readonly configDigest: string;
+  readonly layerBytes: Uint8Array;
   readonly layerDigest: string;
   readonly layerSize: number;
 }
 
-async function imageFixture(options: { readonly configArchitecture?: string } = {}): Promise<ImageFixture> {
-  const configBytes = encoder.encode(JSON.stringify({ os: "linux", architecture: options.configArchitecture ?? "amd64" }));
+async function imageFixture(options: {
+  readonly configArchitecture?: string;
+  readonly configVariant?: string;
+  readonly indexArchitecture?: string;
+  readonly indexVariant?: string;
+} = {}): Promise<ImageFixture> {
+  const configBytes = encoder.encode(JSON.stringify({
+    os: "linux",
+    architecture: options.configArchitecture ?? "amd64",
+    ...(options.configVariant === undefined ? {} : { variant: options.configVariant }),
+  }));
   const configDigest = await digestOf(configBytes);
   const layerBytes = encoder.encode("opaque layer content");
   const layerDigest = await digestOf(layerBytes);
@@ -39,7 +54,11 @@ async function imageFixture(options: { readonly configArchitecture?: string } = 
       mediaType: "application/vnd.oci.image.manifest.v1+json",
       digest: childDigest,
       size: childBytes.byteLength,
-      platform: { os: "linux", architecture: "amd64" },
+      platform: {
+        os: "linux",
+        architecture: options.indexArchitecture ?? "amd64",
+        ...(options.indexVariant === undefined ? {} : { variant: options.indexVariant }),
+      },
     }],
   }));
   return {
@@ -49,6 +68,7 @@ async function imageFixture(options: { readonly configArchitecture?: string } = 
     childDigest,
     configBytes,
     configDigest,
+    layerBytes,
     layerDigest,
     layerSize: layerBytes.byteLength,
   };
@@ -68,6 +88,7 @@ function jsonResponse(bytes: Uint8Array, mediaType: string, digest?: string): Re
 function imageFetch(fixture: ImageFixture, options: {
   readonly missingLayer?: boolean;
   readonly omitLayerHeaders?: boolean;
+  readonly alteredLayer?: Uint8Array;
   readonly alteredChild?: Uint8Array;
   readonly record?: (url: URL, init?: RequestInit) => void;
 } = {}): typeof fetch {
@@ -91,10 +112,11 @@ function imageFetch(fixture: ImageFixture, options: {
     }
     if (decodeURIComponent(url.pathname).endsWith(`/blobs/${fixture.layerDigest}`)) {
       if (options.missingLayer) return new Response(null, { status: 404 });
-      return new Response(null, {
+      const bytes = options.alteredLayer ?? fixture.layerBytes;
+      return new Response(bytes, {
         status: 200,
         headers: options.omitLayerHeaders ? {} : {
-          "content-length": String(fixture.layerSize),
+          "content-length": String(bytes.byteLength),
           "docker-content-digest": fixture.layerDigest,
         },
       });
@@ -118,7 +140,7 @@ describe("GHCR OCI registry adapter", () => {
       }
       return new Response(null, { status: 404 });
     }) as typeof fetch;
-    const client = new GhcrRegistryClient({ allowedRepositories: [repository], fetch: fetcher });
+    const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [repository], fetch: fetcher });
 
     const initial = await client.discoverTag(repository, "stable");
     tagBytes = secondBytes;
@@ -132,6 +154,7 @@ describe("GHCR OCI registry adapter", () => {
   it("verifies the index, selected child, config platform, and every layer reference", async () => {
     const fixture = await imageFixture();
     const client = new GhcrRegistryClient({
+      ...imageLimits,
       allowedRepositories: [repository],
       fetch: imageFetch(fixture),
     });
@@ -154,6 +177,7 @@ describe("GHCR OCI registry adapter", () => {
       layers: [],
     }));
     const client = new GhcrRegistryClient({
+      ...imageLimits,
       allowedRepositories: [repository],
       fetch: imageFetch(fixture, { alteredChild }),
     });
@@ -164,15 +188,30 @@ describe("GHCR OCI registry adapter", () => {
 
   it("rejects a config whose actual platform differs from the selected index descriptor", async () => {
     const fixture = await imageFixture({ configArchitecture: "arm64" });
-    const client = new GhcrRegistryClient({ allowedRepositories: [repository], fetch: imageFetch(fixture) });
+    const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [repository], fetch: imageFetch(fixture) });
 
     await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
       .rejects.toMatchObject({ reason: "invalid_content" });
   });
 
+  it("accepts the single OCI platform variant for the contracted OS/architecture target", async () => {
+    const fixture = await imageFixture({
+      configArchitecture: "arm64",
+      configVariant: "v8",
+      indexArchitecture: "arm64",
+      indexVariant: "v8",
+    });
+    const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [repository], fetch: imageFetch(fixture) });
+
+    const image = await client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "arm64" });
+
+    expect(image.platform).toEqual({ os: "linux", architecture: "arm64", variant: "v8" });
+  });
+
   it("rejects an image when any layer content reference is missing", async () => {
     const fixture = await imageFixture();
     const client = new GhcrRegistryClient({
+      ...imageLimits,
       allowedRepositories: [repository],
       fetch: imageFetch(fixture, { missingLayer: true }),
     });
@@ -181,15 +220,115 @@ describe("GHCR OCI registry adapter", () => {
       .rejects.toMatchObject({ reason: "not_found" });
   });
 
-  it("rejects a reachable layer whose registry response omits digest and exact size", async () => {
+  it("rejects layers whose downloaded bytes do not match their immutable descriptor", async () => {
+    const fixture = await imageFixture();
+    const alteredLayer = fixture.layerBytes.slice();
+    alteredLayer[0] = alteredLayer[0]! ^ 0xff;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      allowedRepositories: [repository],
+      fetch: imageFetch(fixture, { alteredLayer }),
+    });
+
+    await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
+      .rejects.toMatchObject({ reason: "invalid_content" });
+  });
+
+  it("rejects an image before layer download when the aggregate byte cap is too small", async () => {
+    const fixture = await imageFixture();
+    let layerRequested = false;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      maxImageLayerBytes: fixture.layerSize - 1,
+      allowedRepositories: [repository],
+      fetch: imageFetch(fixture, { record: (url) => {
+        if (url.pathname.endsWith(`/blobs/${fixture.layerDigest}`)) layerRequested = true;
+      } }),
+    });
+
+    await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
+      .rejects.toMatchObject({ reason: "invalid_content" });
+    expect(layerRequested).toBe(false);
+  });
+
+  it("times out a registry request that never returns response headers", async () => {
+    const fetcher = (async (input: RequestInfo | URL) => {
+      if (new URL(input instanceof Request ? input.url : String(input)).pathname === "/token") {
+        return new Response(JSON.stringify({ token: "token" }));
+      }
+      return new Promise<Response>(() => undefined);
+    }) as typeof fetch;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      maxRegistryRequestMs: 20,
+      allowedRepositories: [repository],
+      fetch: fetcher,
+    });
+
+    await expect(client.discoverTag(repository, "stable")).rejects.toMatchObject({ reason: "unavailable" });
+  });
+
+  it("bounds manifest body reads and the full image verification operation", async () => {
+    const fixture = await imageFixture();
+    const stalledBody = new ReadableStream<Uint8Array>({
+      pull() { return new Promise<void>(() => undefined); },
+      cancel() { return undefined; },
+    });
+    const fetcher = (async (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname === "/token") return new Response(JSON.stringify({ token: "token" }));
+      if (decodeURIComponent(url.pathname).endsWith(`/manifests/${fixture.rootDigest}`)) {
+        return new Response(stalledBody, {
+          headers: {
+            "content-type": "application/vnd.oci.image.index.v1+json",
+            "content-length": String(fixture.rootBytes.byteLength),
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      maxImageVerificationMs: 20,
+      maxRegistryRequestMs: 1_000,
+      allowedRepositories: [repository],
+      fetch: fetcher,
+    });
+
+    await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
+      .rejects.toMatchObject({ reason: "unavailable" });
+  });
+
+  it("propagates an operator cancellation to an in-flight registry request", async () => {
+    let requestSignal: AbortSignal | null = null;
+    const fetcher = ((_: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal as AbortSignal;
+      return new Promise<Response>(() => undefined);
+    }) as typeof fetch;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      maxRegistryRequestMs: 1_000,
+      allowedRepositories: [repository],
+      fetch: fetcher,
+    });
+    const controller = new AbortController();
+    const request = client.discoverTag(repository, "stable", controller.signal);
+    setTimeout(() => controller.abort(), 10);
+
+    await expect(request).rejects.toMatchObject({ reason: "unavailable" });
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it("hashes layer bytes when digest and size headers are absent", async () => {
     const fixture = await imageFixture();
     const client = new GhcrRegistryClient({
+      ...imageLimits,
       allowedRepositories: [repository],
       fetch: imageFetch(fixture, { omitLayerHeaders: true }),
     });
 
     await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
-      .rejects.toMatchObject({ reason: "invalid_content" });
+      .resolves.toMatchObject({ reachableLayerBytes: fixture.layerSize });
   });
 
   it("cancels manifest streams that exceed the hard byte limit without Content-Length", async () => {
@@ -208,7 +347,7 @@ describe("GHCR OCI registry adapter", () => {
       }
       return new Response(null, { status: 404 });
     }) as typeof fetch;
-    const client = new GhcrRegistryClient({ allowedRepositories: [repository], fetch: fetcher });
+    const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [repository], fetch: fetcher });
 
     await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
       .rejects.toMatchObject({ reason: "invalid_content" });
@@ -222,6 +361,7 @@ describe("GHCR OCI registry adapter", () => {
       return new Response(JSON.stringify({ token: `token-${seen.length}` }));
     }) as typeof fetch;
     const client = new GhcrRegistryClient({
+      ...imageLimits,
       allowedRepositories: [repository, "praetorium/runtime-base"],
       publishRepositories: [repository],
       pullCredential: { username: "runtime-reader", password: "read-secret" },
@@ -243,7 +383,7 @@ describe("GHCR OCI registry adapter", () => {
 
   it("rejects an unallowlisted repository before network access", async () => {
     const fetcher = vi.fn<typeof fetch>();
-    const client = new GhcrRegistryClient({ allowedRepositories: [], fetch: fetcher });
+    const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [], fetch: fetcher });
 
     await expect(client.discoverTag(repository, "stable")).rejects.toMatchObject({ reason: "not_found" });
     expect(fetcher).not.toHaveBeenCalled();

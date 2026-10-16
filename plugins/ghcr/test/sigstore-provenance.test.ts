@@ -83,4 +83,34 @@ describe("source Sigstore provenance verification", () => {
     expect(result.verified).toBe(false);
     expect(result.evidence[0]).toContain("exceeds the configured size limit");
   });
+
+  it("times out provenance retrieval when response headers never arrive", async () => {
+    const verifier = new SigstoreProvenanceVerifier({
+      signerIdentityAllowlist: [{ subjectAlternativeName: identity }],
+      maxRequestMs: 20,
+      fetch: (async () => new Promise<Response>(() => undefined)) as typeof fetch,
+    });
+
+    const result = await verifier.verify({ imageDigest: digest, signatureRef: "https://example.com/bundle", provenanceRef: null });
+
+    expect(result.verified).toBe(false);
+    expect(result.evidence[0]).toContain("configured time limit");
+  });
+
+  it("cancels a stalled provenance body within the request time limit", async () => {
+    const stalledBody = new ReadableStream<Uint8Array>({
+      pull() { return new Promise<void>(() => undefined); },
+      cancel() { return undefined; },
+    });
+    const verifier = new SigstoreProvenanceVerifier({
+      signerIdentityAllowlist: [{ subjectAlternativeName: identity }],
+      maxRequestMs: 20,
+      fetch: (async () => new Response(stalledBody, { headers: { "content-length": "10" } })) as typeof fetch,
+    });
+
+    const result = await verifier.verify({ imageDigest: digest, signatureRef: "https://example.com/bundle", provenanceRef: null });
+
+    expect(result.verified).toBe(false);
+    expect(result.evidence[0]).toContain("configured time limit");
+  });
 });

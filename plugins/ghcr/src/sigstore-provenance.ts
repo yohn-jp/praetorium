@@ -3,6 +3,8 @@ import { TrustedRoot } from "@sigstore/protobuf-specs";
 import { toSignedEntity, toTrustMaterial, Verifier, type VerificationPolicy } from "@sigstore/verify";
 import trustedRootJson from "./assets/trusted-root.json" with { type: "json" };
 
+const MAX_TIMER_MS = 2_147_483_647;
+
 export interface ProvenanceVerificationInput {
   readonly imageDigest: string;
   readonly signatureRef: string | null;
@@ -26,34 +28,59 @@ export interface SigstoreProvenanceVerifierOptions {
   readonly fetch?: typeof fetch;
   readonly verifier?: Verifier;
   readonly maxBundleBytes?: number;
+  /** Bound for provenance response headers and body. */
+  readonly maxRequestMs?: number;
 }
 
 interface InTotoStatement {
   readonly subject?: readonly { readonly digest?: { readonly sha256?: string } }[];
 }
 
-async function readBoundedBody(response: Response, maxBytes: number): Promise<Uint8Array> {
+async function readBoundedBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<Uint8Array> {
   const headerLength = response.headers.get("content-length");
   if (headerLength !== null && /^\d+$/.test(headerLength) && Number(headerLength) > maxBytes) {
+    void response.body?.cancel().catch(() => undefined);
     throw new RangeError("provenance bundle exceeds the configured size limit");
+  }
+  if (signal.aborted) {
+    void response.body?.cancel().catch(() => undefined);
+    throw new Error("provenance request was canceled");
   }
   if (response.body === null) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
+  let rejectAborted: ((error: Error) => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => { rejectAborted = reject; });
+  void aborted.catch(() => undefined);
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined);
+    rejectAborted?.(new Error("provenance body read aborted"));
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const read = reader.read();
+      const { done, value } = await Promise.race([read, aborted]);
       if (done) break;
       size += value.byteLength;
       if (!Number.isSafeInteger(size) || size > maxBytes) {
-        await reader.cancel().catch(() => undefined);
+        void reader.cancel().catch(() => undefined);
         throw new RangeError("provenance bundle exceeds the configured size limit");
       }
       chunks.push(value);
     }
+  } catch (error) {
+    if (signal.aborted) throw new Error("provenance request was canceled");
+    throw error;
   } finally {
-    reader.releaseLock();
+    signal.removeEventListener("abort", onAbort);
+    try { reader.releaseLock(); } catch { /* an aborted stream can still have a pending read */ }
+  }
+  if (signal.aborted) throw new Error("provenance request was canceled");
+  if (headerLength !== null && /^\d+$/.test(headerLength) && Number(headerLength) !== size) {
+    throw new Error("provenance bundle content length does not match its header");
   }
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -92,17 +119,22 @@ export class SigstoreProvenanceVerifier {
   private readonly verifier: Verifier;
   private readonly fetchImplementation: typeof fetch;
   private readonly maxBundleBytes: number;
+  private readonly maxRequestMs: number;
 
   constructor(private readonly options: SigstoreProvenanceVerifierOptions) {
     this.verifier = options.verifier ?? new Verifier(toTrustMaterial(TrustedRoot.fromJSON(trustedRootJson)));
     this.fetchImplementation = options.fetch ?? globalThis.fetch;
     this.maxBundleBytes = options.maxBundleBytes ?? 2 * 1024 * 1024;
+    this.maxRequestMs = options.maxRequestMs ?? 15_000;
     if (!Number.isSafeInteger(this.maxBundleBytes) || this.maxBundleBytes < 1) {
       throw new TypeError("maxBundleBytes must be a positive safe integer");
     }
+    if (!Number.isSafeInteger(this.maxRequestMs) || this.maxRequestMs < 1 || this.maxRequestMs > MAX_TIMER_MS) {
+      throw new TypeError("maxRequestMs must be a positive timer duration");
+    }
   }
 
-  async verify(input: ProvenanceVerificationInput): Promise<ProvenanceVerificationResult> {
+  async verify(input: ProvenanceVerificationInput, signal?: AbortSignal): Promise<ProvenanceVerificationResult> {
     const bundleRef = input.signatureRef ?? input.provenanceRef;
     if (bundleRef === null) return { verified: false, evidence: ["no provenance bundle was supplied"] };
     if (!/^sha256:[0-9a-f]{64}$/.test(input.imageDigest)) {
@@ -122,28 +154,68 @@ export class SigstoreProvenanceVerifier {
       return { verified: false, evidence: ["provenance reference must be an HTTPS URL without embedded credentials"] };
     }
 
+    const controller = new AbortController();
+    let timedOut = false;
+    let rejectAborted: ((error: Error) => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => { rejectAborted = reject; });
+    void aborted.catch(() => undefined);
+    const onAbort = () => rejectAborted?.(new Error("provenance fetch aborted"));
+    const onCallerAbort = () => controller.abort(signal?.reason);
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) controller.abort(signal.reason);
+    else signal?.addEventListener("abort", onCallerAbort, { once: true });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error("provenance request timed out"));
+    }, this.maxRequestMs);
+
     let response: Response;
     try {
-      response = await this.fetchImplementation(bundleUrl, { redirect: "error" });
+      if (controller.signal.aborted) throw new Error("provenance request was canceled");
+      response = await Promise.race([
+        this.fetchImplementation(bundleUrl, { redirect: "error", signal: controller.signal }),
+        aborted,
+      ]);
     } catch {
-      return { verified: false, evidence: ["fetching the provenance bundle failed"] };
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onAbort);
+      signal?.removeEventListener("abort", onCallerAbort);
+      return {
+        verified: false,
+        evidence: [timedOut ? "provenance request exceeded its configured time limit" : "fetching the provenance bundle failed"],
+      };
     }
     if (!response.ok) {
+      void response.body?.cancel().catch(() => undefined);
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onAbort);
+      signal?.removeEventListener("abort", onCallerAbort);
       return { verified: false, evidence: [`provenance bundle request returned ${response.status}`] };
     }
     let bundleJson: unknown;
     try {
-      const bytes = await readBoundedBody(response, this.maxBundleBytes);
+      const bytes = await readBoundedBody(response, this.maxBundleBytes, controller.signal);
       if (bytes.byteLength === 0 || bytes.byteLength > this.maxBundleBytes) {
+        clearTimeout(timer);
+        controller.signal.removeEventListener("abort", onAbort);
+        signal?.removeEventListener("abort", onCallerAbort);
         return { verified: false, evidence: ["provenance bundle has an invalid size"] };
       }
       bundleJson = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     } catch (error) {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onAbort);
+      signal?.removeEventListener("abort", onCallerAbort);
+      if (timedOut) return { verified: false, evidence: ["provenance request exceeded its configured time limit"] };
+      if (signal?.aborted) return { verified: false, evidence: ["provenance request was canceled"] };
       if (error instanceof RangeError) {
         return { verified: false, evidence: ["provenance bundle exceeds the configured size limit"] };
       }
       return { verified: false, evidence: ["provenance bundle is not valid JSON"] };
     }
+    clearTimeout(timer);
+    controller.signal.removeEventListener("abort", onAbort);
+    signal?.removeEventListener("abort", onCallerAbort);
 
     let bundle: Bundle;
     try {

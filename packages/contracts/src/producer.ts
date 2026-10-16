@@ -236,6 +236,7 @@ export type RuntimeAssignment = z.infer<typeof RuntimeAssignmentSchema>;
 export function assertQuiesceResultBoundToRequest(
   requestInput: unknown,
   resultInput: unknown,
+  receivedAt = Date.now(),
 ): { request: QuiesceRequest; result: QuiesceResult } {
   const request = QuiesceRequestSchema.parse(requestInput);
   const result = QuiesceResultSchema.parse(resultInput);
@@ -245,6 +246,14 @@ export function assertQuiesceResultBoundToRequest(
     request.runtimeEpoch !== result.runtimeEpoch
   ) {
     throw new TypeError("quiesce result binding does not match its request");
+  }
+  if (
+    result.disposition === "safe" &&
+    (receivedAt >= Date.parse(request.deadline) ||
+      Date.parse(result.observedAt) >= Date.parse(request.deadline) ||
+      Date.parse(result.observedAt) > receivedAt)
+  ) {
+    throw new TypeError("quiesce timeout or invalid observation time cannot prove safety");
   }
   return { request, result };
 }

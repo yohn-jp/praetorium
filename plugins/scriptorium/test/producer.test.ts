@@ -75,3 +75,28 @@ describe("Scriptorium producer contract schemas", () => {
     ).toBe(false);
   });
 });
+
+it("rejects safe quiesce received or observed after deadline", () => {
+  const receiveTime = Date.parse(platformFixture.quiesceRequest.deadline);
+  expect(() =>
+    assertQuiesceResultBoundToRequest(
+      platformFixture.quiesceRequest,
+      platformFixture.quiesceResult,
+      receiveTime,
+    ),
+  ).toThrow(/timeout/);
+  expect(() =>
+    assertQuiesceResultBoundToRequest(
+      platformFixture.quiesceRequest,
+      { ...platformFixture.quiesceResult, observedAt: platformFixture.quiesceRequest.deadline },
+      receiveTime - 1,
+    ),
+  ).toThrow(/timeout/);
+  expect(
+    assertQuiesceResultBoundToRequest(
+      platformFixture.quiesceRequest,
+      platformFixture.quiesceResult,
+      receiveTime - 1000,
+    ).result.disposition,
+  ).toBe("safe");
+});

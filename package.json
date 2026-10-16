@@ -27,6 +27,11 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.38.0",
     "vitest": "3.2.4",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "esbuild": "0.28.1",
+    "miniflare": "4.20260730.0",
+    "wrangler": "4.118.0",
+    "@cloudflare/workers-types": "5.20260801.1",
+    "@playwright/test": "1.64.1"
   }
 }

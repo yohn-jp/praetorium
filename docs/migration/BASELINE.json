@@ -13,5 +13,23 @@
     "Foundation only; no runtime/producer certification",
     "Host pnpm is 12.10.1; use PATH with isolated 11.18.0 executable for nested scripts"
   ],
-  "sourcePolicy": "Only bounded owner-directed tooling and observability imported; no workflows/history/private inventory."
+  "sourcePolicy": "Only bounded owner-directed tooling and observability imported; no workflows/history/private inventory.",
+  "localRuntimeCapabilities": {
+    "workerd": {
+      "status": "available",
+      "probe": "Miniflare 4.20260730.0 actual dispatchFetch -> HTTP200 ok; capability probe only, not product bundle acceptance"
+    },
+    "browser": {
+      "status": "available",
+      "probe": "Cached Chrome for Testing156.0.8078.4 --version exit0 with existing local Nix runtime libraries; capability probe only"
+    },
+    "BuildKit": {
+      "status": "unconfigured",
+      "reason": "No buildctl/buildkitd/docker/podman or explicitly owned remote endpoint"
+    },
+    "Kubernetes": {
+      "status": "unconfigured",
+      "reason": "No kubectl/kind or explicitly owned test cluster inventory"
+    }
+  }
 }

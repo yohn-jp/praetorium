@@ -22,6 +22,12 @@
     "instanceHostnameSuffix": "instances.praetorium.localhost",
     "tlsSecretName": "praetorium-instance-tls"
   },
+  "gateway": {
+    "allowedRepositoryOwner": null,
+    "githubAppId": null,
+    "githubOauthClientId": null,
+    "tokenEncryptionKeyId": null
+  },
   "buildkit": {
     "endpoint": null,
     "tlsSecretName": "praetorium-buildkit-client",
@@ -33,6 +39,19 @@
     "signingKeyId": null,
     "compositionRepository": null,
     "buildctlPath": null
+  },
+  "buildPolicy": {
+    "registryUrl": "https://ghcr.io",
+    "maxImageLayerBytes": 17179869184,
+    "maxImageVerificationMs": 120000,
+    "maxRegistryRequestMs": 60000,
+    "targetPlatform": null,
+    "runtimeResourceLimits": {
+      "cpuMilli": 2000,
+      "memoryMiB": 4096,
+      "ephemeralStorageMiB": 8192
+    },
+    "builderKeys": []
   },
   "images": {
     "provisioner": null,
@@ -60,6 +79,10 @@
     "buildWorkerRegistryPush": {
       "name": "praetorium-registry-push",
       "key": "config.json"
+    },
+    "buildWorkerRegistryPull": {
+      "name": "praetorium-registry-pull",
+      "key": "credential.json"
     },
     "applicationImagePull": {
       "name": "praetorium-application-image-pull",

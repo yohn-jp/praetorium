@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/wrangler@4/config-schema.json",
   "name": "praetorium-gateway",
   "main": "../../apps/gateway/src/worker.ts",
-  "compatibility_date": "2026-10-17",
+  "compatibility_date": "2026-07-30",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "observability": { "enabled": true },
@@ -37,5 +37,15 @@
       "service": "praetorium-control-plane"
     }
   ],
-  "vars": {}
+  "vars": {
+    "GATEWAY_ORIGIN": "@@GATEWAY_ORIGIN@@",
+    "GATEWAY_SESSION_TTL_SECONDS": "43200",
+    "GATEWAY_HANDOFF_TTL_SECONDS": "60",
+    "GATEWAY_ACCESS_GRANT_TTL_SECONDS": "300",
+    "GATEWAY_INSTANCE_HOSTNAME_SUFFIX": "@@GATEWAY_INSTANCE_HOSTNAME_SUFFIX@@",
+    "GATEWAY_ALLOWED_REPOSITORY_OWNER": "@@GATEWAY_ALLOWED_REPOSITORY_OWNER@@",
+    "GITHUB_APP_ID": "@@GITHUB_APP_ID@@",
+    "GITHUB_OAUTH_CLIENT_ID": "@@GITHUB_OAUTH_CLIENT_ID@@",
+    "GATEWAY_TOKEN_ENCRYPTION_KEY_ID": "@@GATEWAY_TOKEN_ENCRYPTION_KEY_ID@@"
+  }
 }

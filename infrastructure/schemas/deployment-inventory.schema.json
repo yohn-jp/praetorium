@@ -10,8 +10,10 @@
     "clusterId",
     "cloudflare",
     "domains",
+    "gateway",
     "buildkit",
     "buildWorker",
+    "buildPolicy",
     "images",
     "secretRefs",
     "acmeContactEmail"
@@ -39,7 +41,11 @@
       "properties": {
         "mode": { "enum": ["local", "remote-disposable"] },
         "accountId": { "type": ["string", "null"] },
-        "controlPlaneDatabaseId": { "type": "string", "format": "uuid", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" },
+        "controlPlaneDatabaseId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
         "gatewayKvNamespaceId": { "type": "string", "pattern": "^[a-f0-9]{32}$" }
       },
       "allOf": [
@@ -54,11 +60,20 @@
           }
         },
         {
-          "if": { "properties": { "mode": { "const": "remote-disposable" } }, "required": ["mode"] },
+          "if": {
+            "properties": { "mode": { "const": "remote-disposable" } },
+            "required": ["mode"]
+          },
           "then": {
             "properties": {
-              "accountId": { "type": "string", "pattern": "^[a-f0-9]{32}$", "not": { "const": "00000000000000000000000000000000" } },
-              "controlPlaneDatabaseId": { "not": { "pattern": "^00000000-0000-0000-0000-[0-9]{12}$" } },
+              "accountId": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{32}$",
+                "not": { "const": "00000000000000000000000000000000" }
+              },
+              "controlPlaneDatabaseId": {
+                "not": { "pattern": "^00000000-0000-0000-0000-[0-9]{12}$" }
+              },
               "gatewayKvNamespaceId": { "not": { "const": "00000000000000000000000000000000" } }
             }
           }
@@ -68,7 +83,13 @@
     "domains": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["gatewayOrigin", "gatewayServiceUrl", "controlPlaneUrl", "instanceHostnameSuffix", "tlsSecretName"],
+      "required": [
+        "gatewayOrigin",
+        "gatewayServiceUrl",
+        "controlPlaneUrl",
+        "instanceHostnameSuffix",
+        "tlsSecretName"
+      ],
       "properties": {
         "gatewayOrigin": { "type": ["string", "null"], "format": "uri" },
         "gatewayServiceUrl": { "type": ["string", "null"], "format": "uri" },
@@ -77,10 +98,35 @@
         "tlsSecretName": { "type": "string", "minLength": 1 }
       }
     },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowedRepositoryOwner",
+        "githubAppId",
+        "githubOauthClientId",
+        "tokenEncryptionKeyId"
+      ],
+      "properties": {
+        "allowedRepositoryOwner": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
+        },
+        "githubAppId": { "type": ["integer", "null"], "minimum": 1 },
+        "githubOauthClientId": { "type": ["string", "null"], "maxLength": 256 },
+        "tokenEncryptionKeyId": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{1,64}$" }
+      }
+    },
     "buildkit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["endpoint", "tlsSecretName", "allowedClientCidrs", "frontendRepository", "outputRepository"],
+      "required": [
+        "endpoint",
+        "tlsSecretName",
+        "allowedClientCidrs",
+        "frontendRepository",
+        "outputRepository"
+      ],
       "properties": {
         "endpoint": { "type": ["string", "null"], "format": "uri" },
         "tlsSecretName": { "type": "string", "minLength": 1 },
@@ -97,6 +143,32 @@
         "signingKeyId": { "type": ["string", "null"] },
         "compositionRepository": { "type": ["string", "null"] },
         "buildctlPath": { "type": ["string", "null"] }
+      }
+    },
+    "buildPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registryUrl",
+        "maxImageLayerBytes",
+        "maxImageVerificationMs",
+        "maxRegistryRequestMs",
+        "targetPlatform",
+        "runtimeResourceLimits",
+        "builderKeys"
+      ],
+      "properties": {
+        "registryUrl": { "const": "https://ghcr.io" },
+        "maxImageLayerBytes": { "type": "integer", "minimum": 1, "maximum": 17179869184 },
+        "maxImageVerificationMs": { "type": "integer", "minimum": 1000, "maximum": 120000 },
+        "maxRegistryRequestMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
+        "targetPlatform": { "enum": ["linux/amd64", "linux/arm64", null] },
+        "runtimeResourceLimits": { "$ref": "#/$defs/runtimeResourceLimits" },
+        "builderKeys": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/builderKey" }
+        }
       }
     },
     "images": {
@@ -119,6 +191,7 @@
         "buildWorkerControlPlaneAuth",
         "buildWorkerSigningKey",
         "buildWorkerRegistryPush",
+        "buildWorkerRegistryPull",
         "applicationImagePull",
         "cloudflareDnsApiToken",
         "buildkitClient"
@@ -129,6 +202,7 @@
         "buildWorkerControlPlaneAuth": { "$ref": "#/$defs/secretRef" },
         "buildWorkerSigningKey": { "$ref": "#/$defs/secretRef" },
         "buildWorkerRegistryPush": { "$ref": "#/$defs/secretRef" },
+        "buildWorkerRegistryPull": { "$ref": "#/$defs/secretRef" },
         "applicationImagePull": {
           "allOf": [
             { "$ref": "#/$defs/secretRef" },
@@ -163,6 +237,36 @@
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
         "key": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" }
+      }
+    },
+    "runtimeResourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpuMilli", "memoryMiB", "ephemeralStorageMiB"],
+      "properties": {
+        "cpuMilli": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "memoryMiB": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "ephemeralStorageMiB": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "builderKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyId", "publicKeyBase64", "revoked", "validFrom", "validUntil"],
+      "properties": {
+        "keyId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "publicKeyBase64": { "type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$" },
+        "revoked": { "type": "boolean" },
+        "validFrom": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+        },
+        "validUntil": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+        }
       }
     }
   }

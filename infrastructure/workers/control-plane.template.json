@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/wrangler@4/config-schema.json",
   "name": "praetorium-control-plane",
   "main": "../../apps/control-plane/src/worker.ts",
-  "compatibility_date": "2026-10-17",
+  "compatibility_date": "2026-07-30",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "observability": { "enabled": true },
@@ -28,5 +28,12 @@
       "new_sqlite_classes": ["RepositoryCoordinator"]
     }
   ],
-  "vars": {}
+  "vars": {
+    "BUILD_POLICY_JSON": "@@BUILD_POLICY_JSON@@",
+    "BUILD_WORKER_ID": "@@BUILD_WORKER_ID@@",
+    "CONTROL_PLANE_ORIGIN": "@@CONTROL_PLANE_ORIGIN@@",
+    "GATEWAY_ORIGIN": "@@GATEWAY_ORIGIN@@",
+    "INSTANCE_HOST_SUFFIX": "@@INSTANCE_HOST_SUFFIX@@",
+    "RUNTIME_REGISTRY_HOST": "@@RUNTIME_REGISTRY_HOST@@"
+  }
 }

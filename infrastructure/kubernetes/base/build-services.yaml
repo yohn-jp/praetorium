@@ -20,9 +20,10 @@ data:
   PRAETORIUM_BUILD_SIGNING_KEY_FILE: /var/run/secrets/signing/key.pem
   PRAETORIUM_BUILD_SIGNING_KEY_ID: "@@BUILD_WORKER_SIGNING_KEY_ID@@"
   PRAETORIUM_BUILD_COMPOSITION_REPOSITORY: "@@BUILD_WORKER_COMPOSITION_REPOSITORY@@"
-  PRAETORIUM_BUILD_MAX_IMAGE_LAYER_BYTES: "17179869184"
-  PRAETORIUM_BUILD_MAX_IMAGE_VERIFICATION_MS: "900000"
-  PRAETORIUM_BUILD_MAX_REGISTRY_REQUEST_MS: "60000"
+  PRAETORIUM_BUILD_REGISTRY_URL: "@@BUILD_REGISTRY_URL@@"
+  PRAETORIUM_BUILD_MAX_IMAGE_LAYER_BYTES: "@@BUILD_MAX_IMAGE_LAYER_BYTES@@"
+  PRAETORIUM_BUILD_MAX_IMAGE_VERIFICATION_MS: "@@BUILD_MAX_IMAGE_VERIFICATION_MS@@"
+  PRAETORIUM_BUILD_MAX_REGISTRY_REQUEST_MS: "@@BUILD_MAX_REGISTRY_REQUEST_MS@@"
   PRAETORIUM_BUILDKIT_ADDRESS: "@@BUILDKIT_ENDPOINT@@"
   PRAETORIUM_BUILDKIT_TLS_SERVER_NAME: "@@BUILDKIT_SERVER_NAME@@"
   PRAETORIUM_BUILDKIT_TLS_CA_FILE: /var/run/secrets/buildkit/ca.crt
@@ -78,7 +79,7 @@ spec:
                 name: praetorium-build-worker-config
           env:
             - name: PRAETORIUM_BUILD_REGISTRY_PULL_CREDENTIAL_FILE
-              value: /var/run/secrets/registry/config.json
+              value: /var/run/secrets/registry-pull/credential.json
           resources:
             requests:
               cpu: 100m
@@ -104,6 +105,9 @@ spec:
               readOnly: true
             - name: registry-push
               mountPath: /var/run/secrets/registry
+              readOnly: true
+            - name: registry-pull
+              mountPath: /var/run/secrets/registry-pull
               readOnly: true
             - name: control-plane-auth
               mountPath: /var/run/secrets/control-plane
@@ -132,6 +136,13 @@ spec:
             items:
               - key: "@@SECRET_REGISTRY_PUSH_KEY@@"
                 path: config.json
+        - name: registry-pull
+          secret:
+            secretName: "@@SECRET_REGISTRY_PULL@@"
+            defaultMode: 0440
+            items:
+              - key: "@@SECRET_REGISTRY_PULL_KEY@@"
+                path: credential.json
         - name: control-plane-auth
           secret:
             secretName: "@@SECRET_BUILD_WORKER_AUTH@@"
@@ -149,4 +160,3 @@ spec:
         - name: worker-temporary
           emptyDir:
             sizeLimit: 2Gi
----

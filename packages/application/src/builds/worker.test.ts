@@ -1,14 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildKey } from "@praetorium/contracts";
 import { BuildWorkerService } from "./worker.js";
+import type { BuildAttestor, BuildCandidate } from "./types.js";
 import type {
-  BuildAttestor,
-  BuildCandidate,
   BuildClaim,
   BuildQueueHeartbeatInput,
   BuildQueuePort,
   BuildQueueReportInput,
-} from "./types.js";
+} from "./queue-types.js";
 import type { BuildInput } from "@praetorium/contracts";
 
 const input: BuildInput = {

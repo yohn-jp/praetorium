@@ -1,7 +1,6 @@
 import type {
   BuilderArtifactStatement,
   BuilderSignature,
-  BuildClaim as ContractBuildClaim,
   BuildReportRequest,
 } from "@praetorium/contracts";
 import type { BuildInput } from "@praetorium/contracts";
@@ -69,55 +68,4 @@ export interface BuildAttestor {
     signal: AbortSignal;
     beforeEffect: () => Promise<void>;
   }): Promise<SignedBuildCandidate>;
-}
-
-/** Canonical claim returned by the Control Plane contract, including the fence. */
-export type BuildClaim = ContractBuildClaim;
-
-export type BuildQueueProgress = BuildProgress;
-
-export type BuildQueueHeartbeatInput = {
-  buildId: string;
-  attemptId: string;
-  workerId: string;
-  leaseToken: string;
-  leaseEpoch: number;
-  sequence: number;
-  now: number;
-  progress?: BuildQueueProgress;
-  leaseSeconds?: number;
-};
-
-export type BuildQueueHeartbeatResult = {
-  accepted: boolean;
-  cancelRequested: boolean;
-  leaseExpiresAt: number | null;
-};
-
-export type BuildQueueReportInput = {
-  buildId: string;
-  buildKey: string;
-  attemptId: string;
-  workerId: string;
-  leaseToken: string;
-  leaseEpoch: number;
-  sequence: number;
-  now: number;
-  result: BuildReportResult;
-};
-
-export type BuildQueueReportResult = { accepted: boolean; duplicate: boolean };
-
-/**
- * Application port implemented by the Control Plane adapter. The lease token
- * is an attempt-scoped fence and must never be sent to BuildKit or a recipe.
- */
-export interface BuildQueuePort {
-  claimNext(input: {
-    workerId: string;
-    now: number;
-    leaseSeconds: number;
-  }): Promise<BuildClaim | null>;
-  heartbeat(input: BuildQueueHeartbeatInput): Promise<BuildQueueHeartbeatResult>;
-  report(input: BuildQueueReportInput): Promise<BuildQueueReportResult>;
 }

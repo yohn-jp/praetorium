@@ -1,18 +1,20 @@
 import { buildKey } from "@praetorium/contracts";
 import type {
   BuildCandidate,
-  BuildClaim,
   BuildExecutionRequest,
   BuildFailure,
   BuildProgress,
   BuildProvider,
+  BuildAttestor,
+  SignedBuildCandidate,
+} from "./types.js";
+import type {
+  BuildClaim,
   BuildQueueHeartbeatInput,
   BuildQueueHeartbeatResult,
   BuildQueueReportInput,
   BuildQueuePort,
-  BuildAttestor,
-  SignedBuildCandidate,
-} from "./types.js";
+} from "./queue-types.js";
 
 export class BuildLeaseLostError extends Error {
   constructor() {

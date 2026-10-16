@@ -11,6 +11,7 @@
     "cloudflare",
     "domains",
     "buildkit",
+    "buildWorker",
     "images",
     "secretRefs",
     "acmeContactEmail"
@@ -34,21 +35,44 @@
     "cloudflare": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "accountId", "platformDatabaseId", "gatewayAuthDatabaseId"],
+      "required": ["mode", "accountId", "controlPlaneDatabaseId", "gatewayKvNamespaceId"],
       "properties": {
         "mode": { "enum": ["local", "remote-disposable"] },
         "accountId": { "type": ["string", "null"] },
-        "platformDatabaseId": { "type": "string", "format": "uuid" },
-        "gatewayAuthDatabaseId": { "type": "string", "format": "uuid" }
-      }
+        "controlPlaneDatabaseId": { "type": "string", "format": "uuid", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" },
+        "gatewayKvNamespaceId": { "type": "string", "pattern": "^[a-f0-9]{32}$" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "local" } }, "required": ["mode"] },
+          "then": {
+            "properties": {
+              "accountId": { "type": "null" },
+              "controlPlaneDatabaseId": { "pattern": "^00000000-0000-0000-0000-[0-9]{12}$" },
+              "gatewayKvNamespaceId": { "const": "00000000000000000000000000000000" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "remote-disposable" } }, "required": ["mode"] },
+          "then": {
+            "properties": {
+              "accountId": { "type": "string", "pattern": "^[a-f0-9]{32}$", "not": { "const": "00000000000000000000000000000000" } },
+              "controlPlaneDatabaseId": { "not": { "pattern": "^00000000-0000-0000-0000-[0-9]{12}$" } },
+              "gatewayKvNamespaceId": { "not": { "const": "00000000000000000000000000000000" } }
+            }
+          }
+        }
+      ]
     },
     "domains": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["gatewayOrigin", "controlPlaneUrl", "instanceHostnameSuffix", "tlsSecretName"],
+      "required": ["gatewayOrigin", "gatewayServiceUrl", "controlPlaneUrl", "instanceHostnameSuffix", "tlsSecretName"],
       "properties": {
-        "gatewayOrigin": { "type": "string", "format": "uri" },
-        "controlPlaneUrl": { "type": "string", "format": "uri" },
+        "gatewayOrigin": { "type": ["string", "null"], "format": "uri" },
+        "gatewayServiceUrl": { "type": ["string", "null"], "format": "uri" },
+        "controlPlaneUrl": { "type": ["string", "null"], "format": "uri" },
         "instanceHostnameSuffix": { "type": "string", "minLength": 1 },
         "tlsSecretName": { "type": "string", "minLength": 1 }
       }
@@ -56,11 +80,23 @@
     "buildkit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["endpoint", "tlsSecretName", "allowedClientCidrs"],
+      "required": ["endpoint", "tlsSecretName", "allowedClientCidrs", "frontendRepository", "outputRepository"],
       "properties": {
         "endpoint": { "type": ["string", "null"], "format": "uri" },
         "tlsSecretName": { "type": "string", "minLength": 1 },
-        "allowedClientCidrs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        "allowedClientCidrs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "frontendRepository": { "type": ["string", "null"] },
+        "outputRepository": { "type": ["string", "null"] }
+      }
+    },
+    "buildWorker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signingKeyId", "compositionRepository", "buildctlPath"],
+      "properties": {
+        "signingKeyId": { "type": ["string", "null"] },
+        "compositionRepository": { "type": ["string", "null"] },
+        "buildctlPath": { "type": ["string", "null"] }
       }
     },
     "images": {
@@ -81,6 +117,7 @@
         "controlPlaneCredential",
         "instanceAccessServiceAuth",
         "buildWorkerControlPlaneAuth",
+        "buildWorkerSigningKey",
         "buildWorkerRegistryPush",
         "applicationImagePull",
         "cloudflareDnsApiToken",
@@ -90,6 +127,7 @@
         "controlPlaneCredential": { "$ref": "#/$defs/secretRef" },
         "instanceAccessServiceAuth": { "$ref": "#/$defs/secretRef" },
         "buildWorkerControlPlaneAuth": { "$ref": "#/$defs/secretRef" },
+        "buildWorkerSigningKey": { "$ref": "#/$defs/secretRef" },
         "buildWorkerRegistryPush": { "$ref": "#/$defs/secretRef" },
         "applicationImagePull": {
           "allOf": [

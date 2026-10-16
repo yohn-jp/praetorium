@@ -8,24 +8,24 @@
   "observability": { "enabled": true },
   "d1_databases": [
     {
-      "binding": "PLATFORM_DB",
+      "binding": "CONTROL_PLANE_DB",
       "database_name": "praetorium-platform",
-      "database_id": "@@PLATFORM_DATABASE_ID@@",
-      "migrations_dir": "../../packages/persistence/migrations"
+      "database_id": "@@CONTROL_PLANE_DATABASE_ID@@",
+      "migrations_dir": "../../apps/control-plane/migrations"
     }
   ],
   "durable_objects": {
     "bindings": [
       {
-        "name": "INSTANCE_COORDINATOR",
-        "class_name": "InstanceCoordinator"
+        "name": "REPOSITORY_COORDINATOR",
+        "class_name": "RepositoryCoordinator"
       }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["InstanceCoordinator"]
+      "new_sqlite_classes": ["RepositoryCoordinator"]
     }
   ],
   "vars": {}

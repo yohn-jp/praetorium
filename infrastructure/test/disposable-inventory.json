@@ -12,19 +12,27 @@
   "cloudflare": {
     "mode": "local",
     "accountId": null,
-    "platformDatabaseId": "00000000-0000-0000-0000-000000000001",
-    "gatewayAuthDatabaseId": "00000000-0000-0000-0000-000000000002"
+    "controlPlaneDatabaseId": "00000000-0000-0000-0000-000000000001",
+    "gatewayKvNamespaceId": "00000000000000000000000000000000"
   },
   "domains": {
-    "gatewayOrigin": "http://gateway.praetorium.localhost:8787",
-    "controlPlaneUrl": "http://control.praetorium.localhost:8788",
+    "gatewayOrigin": null,
+    "gatewayServiceUrl": null,
+    "controlPlaneUrl": null,
     "instanceHostnameSuffix": "instances.praetorium.localhost",
     "tlsSecretName": "praetorium-instance-tls"
   },
   "buildkit": {
     "endpoint": null,
     "tlsSecretName": "praetorium-buildkit-client",
-    "allowedClientCidrs": []
+    "allowedClientCidrs": [],
+    "frontendRepository": null,
+    "outputRepository": null
+  },
+  "buildWorker": {
+    "signingKeyId": null,
+    "compositionRepository": null,
+    "buildctlPath": null
   },
   "images": {
     "provisioner": null,
@@ -44,6 +52,10 @@
     "buildWorkerControlPlaneAuth": {
       "name": "praetorium-build-worker-auth",
       "key": "token"
+    },
+    "buildWorkerSigningKey": {
+      "name": "praetorium-build-worker-signing-key",
+      "key": "private-key.pem"
     },
     "buildWorkerRegistryPush": {
       "name": "praetorium-registry-push",

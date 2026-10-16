@@ -17,7 +17,8 @@ data:
   INSTANCE_ACCESS_PORT: "8080"
   INSTANCE_ACCESS_INSTANCE_HOSTNAME_SUFFIX: "@@INSTANCE_HOSTNAME_SUFFIX@@"
   GATEWAY_ORIGIN: "@@GATEWAY_ORIGIN@@"
-  CONTROL_PLANE_URL: "@@CONTROL_PLANE_URL@@"
+  GATEWAY_URL: "@@GATEWAY_SERVICE_URL@@"
+  NODE_ENV: "@@NODE_ENV@@"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -135,9 +136,21 @@ metadata:
   name: praetorium-provisioner-config
   namespace: praetorium-system
 data:
-  PROVISIONER_ENVIRONMENT: "@@ENVIRONMENT@@"
   PROVISIONER_CONTROL_PLANE_URL: "@@CONTROL_PLANE_URL@@"
   PROVISIONER_NAMESPACE_PREFIX: praetorium-instances
+  PROVISIONER_CONTROL_NAMESPACE: praetorium-system
+  PROVISIONER_CONTROL_SERVICE: provisioner
+  PROVISIONER_CLUSTER_ID: "@@CLUSTER_ID@@"
+  PROVISIONER_WORKER_ID: "@@PROVISIONER_WORKER_ID@@"
+  PROVISIONER_CREDENTIAL_PATH: /var/run/secrets/control-plane/credential
+  PROVISIONER_INGRESS_NAMESPACE: traefik
+  PROVISIONER_INSTANCE_ACCESS_NAMESPACE: praetorium-system
+  PROVISIONER_INSTANCE_ACCESS_SERVICE: instance-access
+  PROVISIONER_MAX_CPU_MILLI: "2000"
+  PROVISIONER_MAX_MEMORY_MIB: "4096"
+  PROVISIONER_MAX_EPHEMERAL_STORAGE_MIB: "8192"
+  PROVISIONER_MAX_CAPACITY_AGE_MS: "30000"
+  PROVISIONER_HEALTH_PORT: "8080"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -184,13 +197,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: praetorium-provisioner-config
-          env:
-            - name: PROVISIONER_CONTROL_PLANE_CREDENTIAL
-              valueFrom:
-                secretKeyRef:
-                  name: "@@SECRET_PROVISIONER_CREDENTIAL@@"
-                  key: "@@SECRET_PROVISIONER_CREDENTIAL_KEY@@"
-                  optional: false
+          volumeMounts:
+            - name: control-plane-credential
+              mountPath: /var/run/secrets/control-plane
+              readOnly: true
           startupProbe:
             httpGet:
               path: /healthz
@@ -231,6 +241,14 @@ spec:
               type: RuntimeDefault
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: control-plane-credential
+          secret:
+            secretName: "@@SECRET_PROVISIONER_CREDENTIAL@@"
+            defaultMode: 0440
+            items:
+              - key: "@@SECRET_PROVISIONER_CREDENTIAL_KEY@@"
+                path: credential
 ---
 apiVersion: v1
 kind: Service

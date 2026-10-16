@@ -19,6 +19,7 @@ const inventoryKeys = [
   "cloudflare",
   "domains",
   "buildkit",
+  "buildWorker",
   "images",
   "secretRefs",
   "acmeContactEmail",
@@ -29,6 +30,7 @@ const secretKeys = [
   "controlPlaneCredential",
   "instanceAccessServiceAuth",
   "buildWorkerControlPlaneAuth",
+  "buildWorkerSigningKey",
   "buildWorkerRegistryPush",
   "applicationImagePull",
   "cloudflareDnsApiToken",
@@ -67,6 +69,14 @@ function dnsSuffix(value) {
       /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label),
     )
   );
+}
+
+function reservedHostname(value) {
+  return /(^|\.)(localhost|test|invalid|example)$|(^|\.)example\.(com|net|org)$/i.test(value);
+}
+
+function reservedRepositoryPath(value) {
+  return /(^|\/)(example|placeholder|replace|changeme|todo|sample|dummy|test)(\/|$)/i.test(value);
 }
 
 function validateSecretRef(value, name, errors) {
@@ -133,7 +143,7 @@ export function validateInventory(value) {
 
   exactKeys(
     value.cloudflare,
-    ["mode", "accountId", "platformDatabaseId", "gatewayAuthDatabaseId"],
+    ["mode", "accountId", "controlPlaneDatabaseId", "gatewayKvNamespaceId"],
     "cloudflare",
     errors,
   );
@@ -142,42 +152,61 @@ export function validateInventory(value) {
   }
   if (value.cloudflare?.mode === "local") {
     if (value.cloudflare.accountId !== null) errors.push("local Cloudflare mode must not include an accountId");
-    for (const field of ["platformDatabaseId", "gatewayAuthDatabaseId"]) {
-      if (!/^00000000-0000-0000-0000-[0-9]{12}$/.test(value.cloudflare?.[field] ?? "")) {
-        errors.push(`local Cloudflare mode requires a local-only ${field}`);
-      }
+    if (!/^00000000-0000-0000-0000-[0-9]{12}$/.test(value.cloudflare?.controlPlaneDatabaseId ?? "")) {
+      errors.push("local Cloudflare mode requires a local-only controlPlaneDatabaseId");
+    }
+    if (value.cloudflare?.gatewayKvNamespaceId !== "00000000000000000000000000000000") {
+      errors.push("local Cloudflare mode requires the local-only gatewayKvNamespaceId");
     }
   } else {
     requiredString(value.cloudflare?.accountId, "cloudflare.accountId", errors);
-    if (!/^[a-f0-9]{32}$/i.test(value.cloudflare?.accountId ?? "")) {
+    if (!/^[a-f0-9]{32}$/.test(value.cloudflare?.accountId ?? "") || value.cloudflare?.accountId === "00000000000000000000000000000000") {
       errors.push("cloudflare.accountId must be a 32-character account ID");
     }
-    for (const field of ["platformDatabaseId", "gatewayAuthDatabaseId"]) {
-      if (!/^[a-f0-9-]{36}$/i.test(value.cloudflare?.[field] ?? "")) {
-        errors.push(`cloudflare.${field} must be a D1 database ID`);
-      }
+    requiredString(value.cloudflare?.controlPlaneDatabaseId, "cloudflare.controlPlaneDatabaseId", errors);
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value.cloudflare?.controlPlaneDatabaseId ?? "") ||
+      /^00000000-0000-0000-0000-[0-9]{12}$/.test(value.cloudflare?.controlPlaneDatabaseId ?? "")) {
+      errors.push("cloudflare.controlPlaneDatabaseId must be a real non-placeholder D1 database ID");
+    }
+    requiredString(value.cloudflare?.gatewayKvNamespaceId, "cloudflare.gatewayKvNamespaceId", errors);
+    if (!/^[a-f0-9]{32}$/.test(value.cloudflare?.gatewayKvNamespaceId ?? "") ||
+      value.cloudflare?.gatewayKvNamespaceId === "00000000000000000000000000000000") {
+      errors.push("cloudflare.gatewayKvNamespaceId must be a real non-placeholder KV namespace ID");
     }
   }
 
   exactKeys(
     value.domains,
-    ["gatewayOrigin", "controlPlaneUrl", "instanceHostnameSuffix", "tlsSecretName"],
+    ["gatewayOrigin", "gatewayServiceUrl", "controlPlaneUrl", "instanceHostnameSuffix", "tlsSecretName"],
     "domains",
     errors,
   );
-  for (const field of ["gatewayOrigin", "controlPlaneUrl"]) {
+  for (const field of ["gatewayOrigin", "controlPlaneUrl", "gatewayServiceUrl"]) {
     const raw = value.domains?.[field];
+    if (raw === null && field === "gatewayOrigin") {
+      blockers.push("HTTPS Gateway origin has not been supplied");
+      continue;
+    }
+    if (raw === null && field === "controlPlaneUrl") {
+      blockers.push("HTTPS Control Plane URL reachable from the Provisioner pod has not been supplied");
+      continue;
+    }
+    if (raw === null && field === "gatewayServiceUrl") {
+      blockers.push("Gateway service URL reachable from the Node Instance Access pod has not been supplied");
+      continue;
+    }
     requiredString(raw, `domains.${field}`, errors);
     try {
       const url = new URL(raw);
       const local = value.environment === "disposable-test";
-      if (url.protocol !== (local ? "http:" : "https:")) {
-        errors.push(`domains.${field} must use ${local ? "HTTP for local tests" : "HTTPS"}`);
-      }
+      const allowedProtocols = field === "gatewayOrigin" || field === "controlPlaneUrl"
+        ? ["https:"]
+        : local ? ["http:", "https:"] : ["https:"];
+      if (!allowedProtocols.includes(url.protocol)) errors.push(`domains.${field} must use ${allowedProtocols.join(" or ")}`);
       if (url.username || url.password || url.hash || url.search || url.pathname !== "/") {
         errors.push(`domains.${field} must be an origin without credentials, path, query, or fragment`);
       }
-      if (!local && /(^|\.)(localhost|test|invalid|example)$|(^|\.)example\.(com|net|org)$/i.test(url.hostname)) {
+      if (!local && reservedHostname(url.hostname)) {
         errors.push(`domains.${field} uses a reserved test or placeholder hostname`);
       }
     } catch {
@@ -189,7 +218,7 @@ export function validateInventory(value) {
   }
   if (
     value.environment !== "disposable-test" &&
-    /(^|\.)(localhost|test|invalid|example)$|(^|\.)example\.(com|net|org)$/i.test(value.domains?.instanceHostnameSuffix ?? "")
+    reservedHostname(value.domains?.instanceHostnameSuffix ?? "")
   ) {
     errors.push("domains.instanceHostnameSuffix uses a reserved test or placeholder suffix");
   }
@@ -199,11 +228,13 @@ export function validateInventory(value) {
     errors.push("domains.tlsSecretName must be a Kubernetes DNS subdomain");
   }
 
-  exactKeys(value.buildkit, ["endpoint", "tlsSecretName", "allowedClientCidrs"], "buildkit", errors);
+  exactKeys(value.buildkit, ["endpoint", "tlsSecretName", "allowedClientCidrs", "frontendRepository", "outputRepository"], "buildkit", errors);
   if (value.buildkit?.endpoint !== null) {
     requiredString(value.buildkit?.endpoint, "buildkit.endpoint", errors);
     if (!/^tcp:\/\/[a-z0-9.-]+:[0-9]{1,5}$/.test(value.buildkit?.endpoint ?? "")) {
       errors.push("buildkit.endpoint must be tcp://host:port or null");
+    } else if (value.environment !== "disposable-test" && reservedHostname(value.buildkit.endpoint.slice("tcp://".length).replace(/:[0-9]+$/, ""))) {
+      errors.push("buildkit.endpoint must not use a reserved test or placeholder hostname");
     }
   } else {
     blockers.push("BuildKit mTLS endpoint has not been supplied");
@@ -224,6 +255,36 @@ export function validateInventory(value) {
         errors.push(`buildkit.allowedClientCidrs[${index}] must be an IPv4 CIDR`);
       }
     }
+  }
+
+  for (const field of ["frontendRepository", "outputRepository"]) {
+    const repository = value.buildkit?.[field];
+    if (repository === null) {
+      blockers.push(`BuildKit ${field} has not been supplied`);
+      continue;
+    }
+    requiredString(repository, `buildkit.${field}`, errors);
+    if (typeof repository === "string" && (!/^ghcr\.io\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u.test(repository) || reservedRepositoryPath(repository))) {
+      errors.push(`buildkit.${field} must be a real GHCR repository path`);
+    }
+  }
+
+  exactKeys(value.buildWorker, ["signingKeyId", "compositionRepository", "buildctlPath"], "buildWorker", errors);
+  for (const field of ["signingKeyId", "compositionRepository", "buildctlPath"]) {
+    if (value.buildWorker?.[field] === null) {
+      blockers.push(`Build Worker ${field} has not been supplied`);
+    } else {
+      requiredString(value.buildWorker?.[field], `buildWorker.${field}`, errors);
+    }
+  }
+  if (typeof value.buildWorker?.signingKeyId === "string" && (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(value.buildWorker.signingKeyId) || /^(?:example|placeholder|replace|changeme|todo|sample|dummy|test)(?:$|[^a-z0-9])/i.test(value.buildWorker.signingKeyId))) {
+    errors.push("buildWorker.signingKeyId must be a safe public key identifier");
+  }
+  if (typeof value.buildWorker?.compositionRepository === "string" && (!/^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u.test(value.buildWorker.compositionRepository) || reservedRepositoryPath(value.buildWorker.compositionRepository))) {
+    errors.push("buildWorker.compositionRepository must be a real owner/repository path");
+  }
+  if (typeof value.buildWorker?.buildctlPath === "string" && (!value.buildWorker.buildctlPath.startsWith("/") || value.buildWorker.buildctlPath.split("/").includes(".."))) {
+    errors.push("buildWorker.buildctlPath must be an absolute path without parent traversal");
   }
 
   exactKeys(value.images, imageKeys, "images", errors);

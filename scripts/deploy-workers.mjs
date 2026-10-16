@@ -54,16 +54,15 @@ function validate(file) {
 
 function render(template, inventory) {
   return template
-    .replaceAll("@@PLATFORM_DATABASE_ID@@", inventory.cloudflare.platformDatabaseId)
-    .replaceAll("@@GATEWAY_AUTH_DATABASE_ID@@", inventory.cloudflare.gatewayAuthDatabaseId);
+    .replaceAll("@@CONTROL_PLANE_DATABASE_ID@@", inventory.cloudflare.controlPlaneDatabaseId)
+    .replaceAll("@@GATEWAY_KV_NAMESPACE_ID@@", inventory.cloudflare.gatewayKvNamespaceId);
 }
 
 function checkPaths() {
   const paths = [
     "apps/control-plane/src/worker.ts",
     "apps/gateway/src/worker.ts",
-    "packages/persistence/migrations",
-    "apps/gateway/migrations",
+    "apps/control-plane/migrations",
   ];
   return Object.fromEntries(paths.map((entry) => [entry, existsSync(path.join(repoRoot, entry))]));
 }
@@ -93,8 +92,42 @@ try {
       action: "plan",
       inventory: inventoryResult.absolutePath,
       environment: inventory.environment,
-      databaseBindings: ["PLATFORM_DB", "GATEWAY_AUTH_DB"],
+      databaseBindings: ["CONTROL_PLANE_DB"],
+      gatewayKvBinding: "GATEWAY_KV",
+      durableObjectBindings: ["REPOSITORY_COORDINATOR", "USER_AUTH_STATE", "EPHEMERAL_CODES"],
       serviceBinding: "GATEWAY.CONTROL_PLANE -> praetorium-control-plane",
+      requiredGatewayVariables: [
+        "GATEWAY_ORIGIN",
+        "GATEWAY_INSTANCE_HOSTNAME_SUFFIX",
+        "GATEWAY_ALLOWED_REPOSITORY_OWNER",
+        "GITHUB_APP_ID",
+        "GITHUB_OAUTH_CLIENT_ID",
+      ],
+      requiredWorkerSecrets: {
+        controlPlane: ["CONTROL_PLANE_GATEWAY_AUTH"],
+        gateway: [
+          "GITHUB_OAUTH_CLIENT_SECRET",
+          "CONTROL_PLANE_GATEWAY_AUTH",
+          "INSTANCE_ACCESS_SERVICE_AUTH_TOKEN",
+          "GATEWAY_SESSION_DIGEST_PEPPER",
+          "GATEWAY_CREDENTIAL_DIGEST_PEPPER",
+          "GATEWAY_HANDOFF_DIGEST_PEPPER",
+          "GATEWAY_TOKEN_ENCRYPTION_KEY",
+          "GATEWAY_SIGNING_KEY",
+        ],
+      },
+      optionalProvisionerRoute: {
+        secret: "PROVISIONER_AUTH_TOKEN",
+        variables: [
+          "PROVISIONER_WORKER_ID",
+          "PROVISIONER_CLUSTER_ID",
+          "GATEWAY_ORIGIN",
+          "CONTROL_PLANE_ORIGIN",
+          "INSTANCE_HOST_SUFFIX",
+          "RUNTIME_REGISTRY_HOST",
+          "GIT_CREDENTIAL_BROKER_LOCATOR",
+        ],
+      },
       actions: ["apply only local D1 migrations", "keep all local D1 state under the disposable inventory directory"],
       remoteCalls: false,
       missingProjectInputs: missing,
@@ -124,26 +157,17 @@ try {
     const inventoryState = path.join(os.tmpdir(), "praetorium-t12-workers", inventory.ownership.clusterName);
     const configs = [];
     try {
-      for (const [templateName, configName] of [
-        ["control-plane.template.json", "control-plane.json"],
-        ["gateway.template.json", "gateway.json"],
-      ]) {
-        const template = readFileSync(path.join(templatesDir, templateName), "utf8");
-        const configPath = path.join(templatesDir, `.runtime-${process.pid}-${randomUUID()}-${configName}`);
-        writeFileSync(configPath, render(template, inventory), { mode: 0o600 });
-        configs.push(configPath);
-      }
-      for (const [database, config] of [
-        ["praetorium-platform", configs[0]],
-        ["praetorium-gateway-auth", configs[1]],
-      ]) {
-        command(["exec", "wrangler", "d1", "migrations", "apply", database, "--local", "--persist-to", inventoryState, "--config", config]);
-      }
+      const template = readFileSync(path.join(templatesDir, "control-plane.template.json"), "utf8");
+      const configPath = path.join(templatesDir, `.runtime-${process.pid}-${randomUUID()}-control-plane.json`);
+      writeFileSync(configPath, render(template, inventory), { mode: 0o600 });
+      configs.push(configPath);
+      command(["exec", "wrangler", "d1", "migrations", "apply", "praetorium-platform", "--local", "--persist-to", inventoryState, "--config", configPath]);
       process.stdout.write(`${JSON.stringify({
         action: "apply-local",
         inventory: inventoryResult.absolutePath,
         owner: inventory.ownership.clusterName,
-        databases: ["praetorium-platform", "praetorium-gateway-auth"],
+        databases: ["praetorium-platform"],
+        gatewayKv: "local Worker binding; no D1 migration",
         persistenceDirectory: inventoryState,
         remoteCalls: false,
         sideEffects: ["local D1 migration state was created or updated"],

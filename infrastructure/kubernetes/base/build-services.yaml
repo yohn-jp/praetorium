@@ -14,13 +14,26 @@ metadata:
   name: praetorium-build-worker-config
   namespace: praetorium-build
 data:
-  BUILD_WORKER_CONTROL_PLANE_URL: "@@CONTROL_PLANE_URL@@"
-  BUILD_WORKER_BUILDKIT_ENDPOINT: "@@BUILDKIT_ENDPOINT@@"
-  BUILD_WORKER_BUILDKIT_TLS: "true"
-  BUILD_WORKER_BUILDKIT_CA_PATH: /var/run/secrets/buildkit/ca.crt
-  BUILD_WORKER_BUILDKIT_CERT_PATH: /var/run/secrets/buildkit/tls.crt
-  BUILD_WORKER_BUILDKIT_KEY_PATH: /var/run/secrets/buildkit/tls.key
-  BUILD_WORKER_REGISTRY_CONFIG_PATH: /var/run/secrets/registry/config.json
+  PRAETORIUM_BUILD_WORKER_ID: "@@BUILD_WORKER_ID@@"
+  PRAETORIUM_CONTROL_PLANE_URL: "@@BUILD_WORKER_CONTROL_PLANE_URL@@"
+  PRAETORIUM_BUILD_SERVICE_TOKEN_FILE: /var/run/secrets/control-plane/token
+  PRAETORIUM_BUILD_SIGNING_KEY_FILE: /var/run/secrets/signing/key.pem
+  PRAETORIUM_BUILD_SIGNING_KEY_ID: "@@BUILD_WORKER_SIGNING_KEY_ID@@"
+  PRAETORIUM_BUILD_COMPOSITION_REPOSITORY: "@@BUILD_WORKER_COMPOSITION_REPOSITORY@@"
+  PRAETORIUM_BUILD_MAX_IMAGE_LAYER_BYTES: "17179869184"
+  PRAETORIUM_BUILD_MAX_IMAGE_VERIFICATION_MS: "900000"
+  PRAETORIUM_BUILD_MAX_REGISTRY_REQUEST_MS: "60000"
+  PRAETORIUM_BUILDKIT_ADDRESS: "@@BUILDKIT_ENDPOINT@@"
+  PRAETORIUM_BUILDKIT_TLS_SERVER_NAME: "@@BUILDKIT_SERVER_NAME@@"
+  PRAETORIUM_BUILDKIT_TLS_CA_FILE: /var/run/secrets/buildkit/ca.crt
+  PRAETORIUM_BUILDKIT_TLS_CERT_FILE: /var/run/secrets/buildkit/tls.crt
+  PRAETORIUM_BUILDKIT_TLS_KEY_FILE: /var/run/secrets/buildkit/tls.key
+  PRAETORIUM_BUILDKIT_BUILDCTL_PATH: "@@BUILD_WORKER_BUILDKIT_PATH@@"
+  PRAETORIUM_BUILDKIT_FRONTEND_REPOSITORY: "@@BUILDKIT_FRONTEND_REPOSITORY@@"
+  PRAETORIUM_BUILDKIT_OUTPUT_REPOSITORY: "@@BUILDKIT_OUTPUT_REPOSITORY@@"
+  PRAETORIUM_BUILDKIT_DOCKER_CONFIG_DIRECTORY: /var/run/secrets/registry
+  PRAETORIUM_BUILDKIT_TEMPORARY_DIRECTORY: /tmp/praetorium-build-worker
+  PRAETORIUM_BUILDKIT_SAFE_PATH: /usr/local/bin:/usr/bin:/bin
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -64,39 +77,8 @@ spec:
             - configMapRef:
                 name: praetorium-build-worker-config
           env:
-            - name: BUILD_WORKER_CONTROL_PLANE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: "@@SECRET_BUILD_WORKER_AUTH@@"
-                  key: "@@SECRET_BUILD_WORKER_AUTH_KEY@@"
-                  optional: false
-            - name: DOCKER_CONFIG
-              value: /var/run/secrets/registry
-          ports:
-            - name: metrics
-              containerPort: 9090
-              protocol: TCP
-          startupProbe:
-            httpGet:
-              path: /healthz
-              port: metrics
-            periodSeconds: 5
-            timeoutSeconds: 2
-            failureThreshold: 30
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: metrics
-            periodSeconds: 10
-            timeoutSeconds: 2
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: metrics
-            periodSeconds: 5
-            timeoutSeconds: 2
-            failureThreshold: 3
+            - name: PRAETORIUM_BUILD_REGISTRY_PULL_CREDENTIAL_FILE
+              value: /var/run/secrets/registry/config.json
           resources:
             requests:
               cpu: 100m
@@ -123,11 +105,19 @@ spec:
             - name: registry-push
               mountPath: /var/run/secrets/registry
               readOnly: true
+            - name: control-plane-auth
+              mountPath: /var/run/secrets/control-plane
+              readOnly: true
+            - name: build-signing-key
+              mountPath: /var/run/secrets/signing
+              readOnly: true
+            - name: worker-temporary
+              mountPath: /tmp/praetorium-build-worker
       volumes:
         - name: buildkit-client
           secret:
             secretName: "@@SECRET_BUILDKIT_CLIENT@@"
-            defaultMode: 0400
+            defaultMode: 0440
             items:
               - key: "@@SECRET_BUILDKIT_CA_KEY@@"
                 path: ca.crt
@@ -138,25 +128,25 @@ spec:
         - name: registry-push
           secret:
             secretName: "@@SECRET_REGISTRY_PUSH@@"
-            defaultMode: 0400
+            defaultMode: 0440
             items:
               - key: "@@SECRET_REGISTRY_PUSH_KEY@@"
                 path: config.json
+        - name: control-plane-auth
+          secret:
+            secretName: "@@SECRET_BUILD_WORKER_AUTH@@"
+            defaultMode: 0440
+            items:
+              - key: "@@SECRET_BUILD_WORKER_AUTH_KEY@@"
+                path: token
+        - name: build-signing-key
+          secret:
+            secretName: "@@SECRET_BUILD_WORKER_SIGNING_KEY@@"
+            defaultMode: 0440
+            items:
+              - key: "@@SECRET_BUILD_WORKER_SIGNING_KEY_KEY@@"
+                path: key.pem
+        - name: worker-temporary
+          emptyDir:
+            sizeLimit: 2Gi
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: praetorium-build-worker
-  namespace: praetorium-build
-  labels:
-    app.kubernetes.io/name: build-worker
-    app.kubernetes.io/part-of: praetorium
-spec:
-  type: ClusterIP
-  ports:
-    - name: metrics
-      port: 9090
-      targetPort: metrics
-      protocol: TCP
-  selector:
-    app.kubernetes.io/name: build-worker

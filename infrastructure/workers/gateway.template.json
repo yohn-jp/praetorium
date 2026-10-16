@@ -6,12 +6,29 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "observability": { "enabled": true },
-  "d1_databases": [
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "USER_AUTH_STATE",
+        "class_name": "UserAuthStateDurableObject"
+      },
+      {
+        "name": "EPHEMERAL_CODES",
+        "class_name": "EphemeralCodeDurableObject"
+      }
+    ]
+  },
+  "migrations": [
     {
-      "binding": "GATEWAY_AUTH_DB",
-      "database_name": "praetorium-gateway-auth",
-      "database_id": "@@GATEWAY_AUTH_DATABASE_ID@@",
-      "migrations_dir": "../../apps/gateway/migrations"
+      "tag": "v1",
+      "new_sqlite_classes": ["UserAuthStateDurableObject", "EphemeralCodeDurableObject"]
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "GATEWAY_KV",
+      "id": "@@GATEWAY_KV_NAMESPACE_ID@@",
+      "preview_id": "@@GATEWAY_KV_NAMESPACE_ID@@"
     }
   ],
   "services": [

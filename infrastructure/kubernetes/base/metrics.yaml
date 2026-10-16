@@ -9,18 +9,10 @@ data:
       scrape_interval: 30s
       evaluation_interval: 30s
     scrape_configs:
-      - job_name: praetorium-build-worker
-        metrics_path: /metrics
-        static_configs:
-          - targets: ["praetorium-build-worker.praetorium-build.svc.cluster.local:9090"]
       - job_name: praetorium-provisioner
         metrics_path: /metrics
         static_configs:
           - targets: ["praetorium-provisioner.praetorium-system.svc.cluster.local:8080"]
-      - job_name: praetorium-instance-access
-        metrics_path: /metrics
-        static_configs:
-          - targets: ["instance-access.praetorium-system.svc.cluster.local:8080"]
 ---
 apiVersion: apps/v1
 kind: Deployment

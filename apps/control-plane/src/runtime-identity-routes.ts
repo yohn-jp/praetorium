@@ -104,6 +104,7 @@ interface TargetLeaseRow {
 }
 
 class RequestTooLargeError extends Error {}
+class RuntimeIdentitySignerUnavailableError extends Error {}
 
 /** Route set intended to be mounted by the Control Plane after its outer auth middleware. */
 export function createRuntimeIdentityRoutes(deps: RuntimeIdentityRoutesDependencies) {
@@ -114,7 +115,7 @@ export function createRuntimeIdentityRoutes(deps: RuntimeIdentityRoutesDependenc
   if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(deps.clusterId))
     throw new TypeError("runtime identity cluster ID is invalid");
 
-  const signerPromise = crypto.subtle
+  const keySetupPromise = crypto.subtle
     .importKey("jwk", deps.signingKey.privateKeyJwk, { name: "ECDSA", namedCurve: "P-256" }, true, [
       "sign",
     ])
@@ -141,8 +142,16 @@ export function createRuntimeIdentityRoutes(deps: RuntimeIdentityRoutesDependenc
         ],
       };
       return { signingKey: { kid, privateKey }, jwks };
-    });
-  const loadSigner = async () => signerPromise;
+    })
+    .then(
+      (value) => ({ ok: true as const, value }),
+      () => ({ ok: false as const }),
+    );
+  const loadSigner = async () => {
+    const result = await keySetupPromise;
+    if (!result.ok) throw new RuntimeIdentitySignerUnavailableError();
+    return result.value;
+  };
   const now = deps.now ?? Date.now;
   const app = new Hono();
 
@@ -217,6 +226,8 @@ export function createRuntimeIdentityRoutes(deps: RuntimeIdentityRoutesDependenc
   app.onError((error, context) => {
     if (error instanceof RequestTooLargeError)
       return context.json({ error: { code: "REQUEST_TOO_LARGE" } }, 413);
+    if (error instanceof RuntimeIdentitySignerUnavailableError)
+      return context.json({ error: { code: "RUNTIME_IDENTITY_UNAVAILABLE" } }, 503);
     if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof TypeError)
       return context.json({ error: { code: "INVALID_REQUEST" } }, 400);
     return context.json({ error: { code: "RUNTIME_IDENTITY_UNAVAILABLE" } }, 503);

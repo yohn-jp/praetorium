@@ -225,7 +225,7 @@ async function harness(withTargetOperation: boolean) {
   ]);
   const signingJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
   const operations = new OperationService(new D1PlatformStore(db), () => "unused-new-lease-token");
-  const app = createRuntimeIdentityRoutes({
+  const dependencies = {
     db,
     runtimeBindings: createRuntimeBindingMetadataReader({ db, now: () => NOW }),
     operations,
@@ -234,8 +234,9 @@ async function harness(withTargetOperation: boolean) {
     workerId: WORKER_ID,
     clusterId: CLUSTER_ID,
     now: () => NOW,
-  });
-  return { db, app, keyPair };
+  };
+  const app = createRuntimeIdentityRoutes(dependencies);
+  return { db, app, keyPair, signingJwk, dependencies };
 }
 
 function baseRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -296,6 +297,22 @@ describe("runtime identity routes", () => {
       active: true,
       authority: "observed-writer",
     });
+  });
+
+  it("settles invalid curve-key import failures and returns a safe JWKS 503 without blocking metadata reads", async () => {
+    const h = await harness(false);
+    const invalidPrivateKeyJwk = { ...h.signingJwk, x: "A".repeat(43) };
+    const app = createRuntimeIdentityRoutes({
+      ...h.dependencies,
+      signingKey: { kid: "runtime-identity-invalid", privateKeyJwk: invalidPrivateKeyJwk },
+    });
+
+    const bindingResponse = await app.request("/internal/runtime-bindings/7001");
+    expect(bindingResponse.status).toBe(200);
+
+    const jwksResponse = await app.request("/.well-known/runtime-identity-jwks.json");
+    expect(jwksResponse.status).toBe(503);
+    expect(await jwksResponse.json()).toEqual({ error: { code: "RUNTIME_IDENTITY_UNAVAILABLE" } });
   });
 
   it("issues an ES256 runtime credential from current D1 binding values", async () => {

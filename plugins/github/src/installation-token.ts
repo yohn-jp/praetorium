@@ -21,9 +21,17 @@ export interface GitHubInstallationTokenIssuer {
   ): Promise<InstallationToken>;
 }
 
+export interface GitHubInstallationTokenRevoker {
+  revoke(installationToken: InstallationToken): Promise<void>;
+}
+
 export interface GitHubInstallationTokenIssuerConfig {
   readonly appId: number;
   readonly privateKeyPem: string;
+  readonly client: GitHubRestClient;
+}
+
+export interface GitHubInstallationTokenRevokerConfig {
   readonly client: GitHubRestClient;
 }
 
@@ -94,6 +102,32 @@ export function createGitHubInstallationTokenIssuer(
         repositoryId,
         permission,
       };
+    },
+  };
+}
+
+/** Revokes a stored installation bearer token. Pass credentials from the trusted token store only. */
+export function createGitHubInstallationTokenRevoker(
+  config: GitHubInstallationTokenRevokerConfig,
+): GitHubInstallationTokenRevoker {
+  return {
+    async revoke(installationToken) {
+      if (
+        !isObject(installationToken) ||
+        typeof installationToken.token !== "string" ||
+        installationToken.token.length === 0
+      ) {
+        throw new TypeError("installation token is required");
+      }
+
+      const response = await config.client.request(
+        "/installation/token",
+        installationToken.token,
+        { method: "DELETE" },
+      );
+      // GitHub documents 204 as the success response. In particular, an undocumented 401
+      // does not prove that this exact token was revoked, so leave retirement failed closed.
+      if (response.status !== 204) throw new GitHubApiError(response.status, null);
     },
   };
 }

@@ -17,7 +17,7 @@ import {
   type ConfigurationPlanReceipt,
   type ConfigurationRevision,
 } from "@praetorium/application/configurations";
-import { Hono } from "hono";
+import { Hono, type Context, type Next } from "hono";
 import { z } from "zod";
 
 const MAX_CONFIGURATION_REQUEST_BYTES = 65_536;
@@ -86,12 +86,14 @@ export function createConfigurationRoutes(options: ConfigurationRoutesOptions) {
     c.header("X-Content-Type-Options", "nosniff");
     await next();
   });
-  app.use("/v1/instances/*", async (c, next) => {
+  const rejectQuery = async (c: Context, next: Next) => {
     if (new URL(c.req.url).search !== "") {
       return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
     }
     await next();
-  });
+  };
+  app.use("/v1/instances/:instanceId/configuration", rejectQuery);
+  app.use("/v1/instances/:instanceId/configuration/*", rejectQuery);
 
   app.get("/v1/instances/:instanceId/configuration", async (c) => {
     const instanceId = InstanceId.parse(c.req.param("instanceId"));

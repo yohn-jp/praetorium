@@ -1,10 +1,16 @@
 import { z } from "zod";
 import { ResourceRequirementsSchema, buildKey } from "@praetorium/contracts";
 import { BuildQueueService } from "@praetorium/application/builds";
+import { BuildArtifactCache } from "@praetorium/application/build-cache";
 import { ArtifactAdmissionService } from "@praetorium/application/artifacts";
 import { ConfigurationService } from "@praetorium/application/configurations";
 import { ReleaseCandidateSchema } from "@praetorium/application/releases";
-import { D1BuildStore, D1ConfigurationStore, type D1Database } from "@praetorium/persistence/d1";
+import {
+  D1ArtifactCacheStore,
+  D1BuildStore,
+  D1ConfigurationStore,
+  type D1Database,
+} from "@praetorium/persistence/d1";
 import { GhcrRegistryClient } from "@praetorium/ghcr/registry";
 import { OperatorBuilderSignatureVerifier } from "@praetorium/ghcr/builder-signature";
 import { normalizeComposition, type ProducerCatalogResolver } from "@praetorium/scriptorium";
@@ -65,6 +71,8 @@ export function composeBuildServices(
     })),
   );
   const admission = new ArtifactAdmissionService(registry, signer);
+  const cacheStore = new D1ArtifactCacheStore(db);
+  const cache = new BuildArtifactCache(admission, cacheStore);
   const builds = new BuildQueueService(new D1BuildStore(db), admission, {
     approvedArtifact: { registryHost: registry.registryHost, repository: policy.outputRepository },
   });
@@ -100,20 +108,16 @@ export function composeBuildServices(
           requested.ephemeralStorageMiB > caps.ephemeralStorageMiB
         )
           throw new TypeError("Resource profile exceeds operator limits");
-        const cached = await db
-          .prepare(
-            "SELECT statement_json, signature_json FROM artifacts WHERE build_key=? AND status='admitted'",
-          )
-          .bind(await buildKey(composition.buildInput))
-          .first<{ statement_json: string; signature_json: string }>();
-        if (cached)
-          await admission.verifyCandidate(
+        const cached = await cache.lookup(await buildKey(composition.buildInput));
+        if (!cached.hit && cached.reason !== "not_found") {
+          throw Object.assign(
+            new Error("Shared artifact cache cannot be reused under current policy"),
             {
-              statement: JSON.parse(cached.statement_json),
-              signature: JSON.parse(cached.signature_json),
+              code:
+                cached.reason === "conflicted" ? "BUILD_CACHE_CONFLICT" : "BUILD_CACHE_UNAVAILABLE",
             },
-            composition.buildInput,
           );
+        }
         return {
           buildInput: composition.buildInput,
           resources: {
@@ -132,5 +136,7 @@ export function composeBuildServices(
     registry,
     admission,
     resourceLimits: policy.runtimeResourceLimits,
+    cache,
+    cacheStore,
   };
 }

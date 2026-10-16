@@ -40,6 +40,7 @@ import {
   SESSION_CONCURRENCY_LIMIT,
 } from "./constants.js";
 import type { GatewayContext } from "./context.js";
+import { createGitHubWebhookRoutes, createGitHubWebhookControlPlaneClient } from "./github-webhook.js";
 import { runtimeEpochForAccess } from "./active-runtime.js";
 import { createPortalHandler } from "./ui/index.js";
 import type { PortalActor, PortalSession } from "./ui/index.js";
@@ -828,6 +829,14 @@ function publicJwks(context: GatewayContext): Response {
 
 export function createGatewayRouter(context: GatewayContext): Hono {
   const app = new Hono();
+  if (context.env.GATEWAY_GITHUB_WEBHOOK_SECRET) {
+    app.route("/api/github/webhooks", createGitHubWebhookRoutes({
+      webhookSecret: context.env.GATEWAY_GITHUB_WEBHOOK_SECRET,
+      controlPlane: createGitHubWebhookControlPlaneClient(context.env.CONTROL_PLANE, context.config.controlPlaneSecret),
+    }));
+  } else {
+    app.post("/api/github/webhooks", (c) => c.json({ error: { code: "WEBHOOK_AUTHORITY_UNAVAILABLE" } }, 503));
+  }
   const portal = createPortalHandler({
     service: createPortalService(context),
     authenticate: async (request) => {

@@ -1,11 +1,13 @@
 import { BuildInputSchema } from "@praetorium/contracts";
 import { composeBuildServices } from "./build-composition.js";
+import { composeReleaseServices } from "./release-composition.js";
+import { createScheduledHandler } from "./scheduled.js";
 import { newInstanceId, newOperationId } from "@praetorium/domain";
 import { InstanceService, RepositoryRegistryService } from "@praetorium/application/instances";
 import { OperationService } from "@praetorium/application/operations";
 import { D1PlatformStore, type D1Database } from "@praetorium/persistence/d1";
 import { createControlCredentialIssuer } from "./control-credentials.js";
-import { resolveRuntimeContext } from "./runtime-context.js";
+import { resolveAdmittedRuntime, resolveRuntimeContext } from "./runtime-context.js";
 import { createControlPlaneApp, equalSecret, boundedJson } from "./app.js";
 export interface CoordinatorNamespace {
   idFromName(name: string): unknown;
@@ -28,8 +30,10 @@ export interface ControlPlaneEnv {
   REGISTRY_PULL_CREDENTIAL?: string;
   BUILD_WORKER_AUTH_TOKEN?: string;
   BUILD_WORKER_ID?: string;
+  RELEASE_POLICY_JSON?: string;
+  RELEASE_OPERATOR_TOKEN?: string;
 }
-export function composeControlPlane(env: ControlPlaneEnv) {
+function composeServices(env: ControlPlaneEnv) {
   const store = new D1PlatformStore(env.CONTROL_PLANE_DB);
   const registry = new RepositoryRegistryService(store, () =>
     newInstanceId(Date.now(), crypto.getRandomValues(new Uint8Array(10))),
@@ -51,12 +55,40 @@ export function composeControlPlane(env: ControlPlaneEnv) {
         instances,
         issuerOrigin: required(env.CONTROL_PLANE_ORIGIN),
         signingKey: JSON.parse(env.RUNTIME_CONTROL_SIGNING_KEY),
+        hasActiveOperation: async (instanceId) =>
+          Boolean(
+            await env.CONTROL_PLANE_DB.prepare(
+              "SELECT 1 AS active FROM operations WHERE instance_id=? AND status IN ('pending','claimed','running') LIMIT 1",
+            )
+              .bind(instanceId)
+              .first(),
+          ),
       })
     : undefined;
-  return createControlPlaneApp({
+  const releases =
+    env.RELEASE_POLICY_JSON && buildServices
+      ? composeReleaseServices({
+          db: env.CONTROL_PLANE_DB,
+          builds: buildServices,
+          instances,
+          operations,
+          policyJson: env.RELEASE_POLICY_JSON,
+          operatorToken: required(env.RELEASE_OPERATOR_TOKEN),
+        })
+      : undefined;
+  const app = createControlPlaneApp({
+    ...(releases
+      ? {
+          operatorAdmission: releases.operatorReleaseAdmission,
+          operatorToken: required(env.RELEASE_OPERATOR_TOKEN),
+        }
+      : {}),
     ...(controlIssuer ? { controlJwks: () => controlIssuer.jwks() } : {}),
     registry,
     instances,
+    webhook: { db: env.CONTROL_PLANE_DB, gatewaySecret: env.CONTROL_PLANE_GATEWAY_AUTH },
+    operationAdmin: { db: env.CONTROL_PLANE_DB, instances, operations },
+    ...(buildServices ? { configuration: { configuration: buildServices.configurations } } : {}),
     management: {
       db: env.CONTROL_PLANE_DB,
       instances,
@@ -69,6 +101,29 @@ export function composeControlPlane(env: ControlPlaneEnv) {
             queue: buildServices.builds,
             serviceToken: env.BUILD_WORKER_AUTH_TOKEN,
             workerId: required(env.BUILD_WORKER_ID),
+          },
+        }
+      : {}),
+    ...(controlIssuer && env.PROVISIONER_AUTH_TOKEN
+      ? {
+          idle: {
+            db: env.CONTROL_PLANE_DB,
+            store,
+            credentialIssuer: controlIssuer,
+            workerId: required(env.PROVISIONER_WORKER_ID),
+            clusterId: required(env.PROVISIONER_CLUSTER_ID),
+            now: Date.now,
+            newOperationId: () =>
+              newOperationId(Date.now(), crypto.getRandomValues(new Uint8Array(10))),
+            resolveCurrentRuntime: async (snapshot, revision) =>
+              resolveAdmittedRuntime(snapshot, revision, snapshot.instance.observedRuntimeEpoch, {
+                gatewayOrigin: required(env.GATEWAY_ORIGIN),
+                controlPlaneOrigin: required(env.CONTROL_PLANE_ORIGIN),
+                instanceHostSuffix: required(env.INSTANCE_HOST_SUFFIX),
+                registryHost: required(env.RUNTIME_REGISTRY_HOST),
+                credentialBrokerLocator: required(env.GIT_CREDENTIAL_BROKER_LOCATOR),
+                defaultBranchPolicy: "revalidate-current-default",
+              }),
           },
         }
       : {}),
@@ -119,6 +174,10 @@ export function composeControlPlane(env: ControlPlaneEnv) {
         }
       : {}),
   });
+  return { app, releases };
+}
+export function composeControlPlane(env: ControlPlaneEnv) {
+  return composeServices(env).app;
 }
 function required(value: string | undefined): string {
   if (!value) throw new Error("Required service binding missing");
@@ -148,6 +207,12 @@ export class RepositoryCoordinator {
   }
 }
 export default {
+  scheduled: createScheduledHandler<ControlPlaneEnv>((env) => {
+    const { releases } = composeServices(env);
+    if (!releases)
+      throw new Error("T11 release policy and isolated operator/canary bindings unavailable");
+    return releases.scheduled;
+  }),
   async fetch(request: Request, env: ControlPlaneEnv): Promise<Response> {
     try {
       const url = new URL(request.url);

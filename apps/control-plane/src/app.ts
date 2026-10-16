@@ -1,5 +1,18 @@
+import {
+  createConfigurationRoutes,
+  type ConfigurationRoutesOptions,
+} from "./configuration-routes.js";
+import {
+  createOperationAdminRoutes,
+  type OperationAdminDependencies,
+} from "./operation-admin-routes.js";
+import {
+  createProvisionerIdleRoutes,
+  type ProvisionerIdleRoutesDependencies,
+} from "./idle-routes.js";
 import { createBuildRoutes, type BuildRoutesOptions } from "./build-routes.js";
 import { Hono } from "hono";
+import { createGitHubWebhookRoutes } from "./github-webhook-routes.js";
 import { z } from "zod";
 import {
   createProvisionerRoutes,
@@ -40,14 +53,39 @@ export type ControlPlaneDependencies = {
   controlJwks?: () => Promise<unknown>;
   management?: ManagementDependencies;
   builds?: BuildRoutesOptions;
+  idle?: ProvisionerIdleRoutesDependencies;
+  configuration?: ConfigurationRoutesOptions;
+  operationAdmin?: OperationAdminDependencies;
+  webhook?: Parameters<typeof createGitHubWebhookRoutes>[0];
+  operatorAdmission?: Hono;
+  operatorToken?: string;
   now?: () => number;
 };
 /** Only authenticated control metadata enters this Worker. Actor identity comes from Gateway session authority. */
 export function createControlPlaneApp(deps: ControlPlaneDependencies) {
-  if (deps.gatewaySecret.length < 32) throw new Error("Gateway service secret required");
+  const serviceSecrets = [
+    deps.gatewaySecret,
+    deps.provisioner?.secret,
+    deps.builds?.serviceToken,
+    deps.operatorToken,
+  ].filter((value): value is string => value !== undefined);
+  if (
+    serviceSecrets.some(
+      (value) => value.length < 32 || value.length > 4096 || /[^\x21-\x7e]/u.test(value),
+    )
+  )
+    throw new Error("Bounded service credentials of at least 32 characters are required");
+  if (new Set(serviceSecrets).size !== serviceSecrets.length)
+    throw new Error("Service roles require distinct credentials");
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.header("Cache-Control", "no-store");
+    if (c.req.path === "/v1/operator/releases" || c.req.path === "/v1/operator/releases/") {
+      if (!deps.operatorAdmission)
+        return c.json({ error: { code: "RELEASE_SERVICE_UNAVAILABLE" } }, 503);
+      await next();
+      return;
+    }
     if (c.req.path === "/.well-known/control-jwks.json" && c.req.method === "GET") {
       if (!deps.controlJwks)
         return c.json({ error: { code: "CONTROL_CREDENTIAL_UNAVAILABLE" } }, 503);
@@ -124,8 +162,21 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
       operation: result.operation ? publicOperation(result.operation) : null,
     });
   });
+  if (deps.configuration) app.route("/", createConfigurationRoutes(deps.configuration));
+  else {
+    app.all("/v1/instances/:instanceId/configuration", (c) =>
+      c.json({ error: { code: "CONFIGURATION_SERVICE_UNAVAILABLE" } }, 503),
+    );
+    app.all("/v1/instances/:instanceId/configuration/*", (c) =>
+      c.json({ error: { code: "CONFIGURATION_SERVICE_UNAVAILABLE" } }, 503),
+    );
+  }
+  if (deps.operationAdmin) app.route("/", createOperationAdminRoutes(deps.operationAdmin));
+  if (deps.webhook) app.route("/", createGitHubWebhookRoutes(deps.webhook));
+  if (deps.operatorAdmission) app.route("/v1/operator/releases", deps.operatorAdmission);
   if (deps.builds) app.route("/", createBuildRoutes(deps.builds));
   if (deps.management) app.route("/", createManagementRoutes(deps.management));
+  if (deps.idle) app.route("/internal/provisioner", createProvisionerIdleRoutes(deps.idle));
   if (deps.provisioner)
     app.route("/internal/provisioner", createProvisionerRoutes(deps.provisioner));
   return app;

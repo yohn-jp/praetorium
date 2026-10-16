@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { build } from "esbuild";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { Miniflare } from "miniflare";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -169,20 +170,32 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     .sort();
   assert.ok(migrationNames.length > 0, "Control Plane D1 SQL migrations must be present");
 
-  const bundle = await build({
-    absWorkingDir: repositoryRoot,
-    entryPoints: [workerEntryPath],
-    bundle: true,
-    format: "esm",
-    platform: "browser",
-    target: "es2022",
-    tsconfig: path.join(repositoryRoot, "apps/control-plane/tsconfig.json"),
-    external: ["node:*"],
-    write: false,
-    logLevel: "silent",
-  });
-  const script = bundle.outputFiles[0]?.text;
-  assert.ok(script, "esbuild must produce the actual Control Plane Worker bundle");
+  const bundleRoot = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-worker-bundle-"));
+  let script;
+  try {
+    // Use the actual deploy bundler: nodejs_compat includes CommonJS builtin
+    // interop required by the real Sigstore provider. No provider is stubbed.
+    await promisify(execFile)(
+      process.execPath,
+      [
+        path.join(repositoryRoot, "apps/control-plane/node_modules/wrangler/bin/wrangler.js"),
+        "deploy",
+        "--dry-run",
+        "--outdir",
+        bundleRoot,
+      ],
+      {
+        cwd: path.dirname(workerConfigPath),
+        env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
+        timeout: 60000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    script = await readFile(path.join(bundleRoot, "worker.js"), "utf8");
+  } finally {
+    await rm(bundleRoot, { recursive: true, force: true });
+  }
+  assert.ok(script, "Wrangler dry-run must produce the actual Control Plane Worker bundle");
 
   const persistenceRoot = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-workers-d1-do-"));
   const secrets = {
@@ -285,6 +298,26 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     );
     assert.equal(releasesResponse.status, 200);
     assert.deepEqual(await releasesResponse.json(), { releases: [] });
+    const disabledReleaseAdmission = await miniflare.dispatchFetch(
+      "https://control-plane.test/v1/operator/releases",
+      { method: "POST" },
+    );
+    assert.equal(
+      disabledReleaseAdmission.status,
+      503,
+      "missing operator policy is an explicit unavailable gate",
+    );
+    const disabledConfiguration = await postJson(
+      miniflare,
+      `/v1/instances/${instanceId}/configuration`,
+      secrets.gateway,
+      {},
+    );
+    assert.equal(
+      disabledConfiguration.response.status,
+      503,
+      "no build policy cannot silently configure an instance",
+    );
 
     const desiredRequest = {
       actorId: "test-actor-a",
@@ -369,6 +402,42 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     assert.ok(afterRestart.every(({ response }) => [200, 201].includes(response.status)));
     assert.equal(afterRestart.filter(({ body }) => body.created === true).length, 0);
     assert.ok(afterRestart.every(({ body }) => body.binding.instanceId === instanceId));
+
+    // This is the private, Gateway-verified metadata boundary. Raw HMAC is
+    // tested separately; no real GitHub delivery or App acceptance is claimed.
+    const delivery = {
+      deliveryId: "t14-worker-delivery",
+      bodyDigest: "a".repeat(64),
+      event: "installation_repositories",
+      action: "removed",
+      installationId: testRepository.installationId,
+      repositoryIds: [testRepository.repositoryId],
+    };
+    const webhook = await postJson(
+      miniflare,
+      "/internal/github/webhook",
+      secrets.gateway,
+      delivery,
+    );
+    assert.equal(webhook.response.status, 202);
+    const duplicate = await postJson(
+      miniflare,
+      "/internal/github/webhook",
+      secrets.gateway,
+      delivery,
+    );
+    assert.equal(duplicate.response.status, 200);
+    const conflict = await postJson(miniflare, "/internal/github/webhook", secrets.gateway, {
+      ...delivery,
+      bodyDigest: "b".repeat(64),
+    });
+    assert.equal(conflict.response.status, 409);
+    const suspended = await miniflare.dispatchFetch(
+      `https://control-plane.test/v1/repositories/${testRepository.repositoryId}`,
+      { headers: gatewayHeaders(secrets.gateway) },
+    );
+    assert.equal(suspended.status, 200);
+    assert.equal((await suspended.json()).binding.suspended, true);
   } finally {
     await miniflare?.dispose();
     await rm(persistenceRoot, { recursive: true, force: true });

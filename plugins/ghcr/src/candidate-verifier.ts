@@ -10,7 +10,7 @@ import {
 } from "@praetorium/contracts";
 import { parseBuilderArtifactStatement } from "./builder-signature.js";
 import { isSha256Digest, sha256Digest, type Sha256Digest } from "./digest.js";
-import { GhcrRegistryClient, RegistryError } from "./oci-registry-client.js";
+import type { GhcrRegistryClient } from "./oci-registry-client.js";
 import type { OciPlatform, VerifiedOciImage } from "./oci-types.js";
 
 export interface CompositionArtifactInspection {

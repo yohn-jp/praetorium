@@ -132,7 +132,7 @@ describe("GHCR OCI registry adapter", () => {
     const first = await imageFixture();
     const secondBytes = encoder.encode(JSON.stringify({ schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json", manifests: [] }));
     let tagBytes = first.rootBytes;
-    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = (async (input: RequestInfo | URL) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       if (url.pathname === "/token") return new Response(JSON.stringify({ token: "token" }));
       if (url.pathname.endsWith("/manifests/stable")) {

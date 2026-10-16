@@ -22,7 +22,6 @@ const MANIFEST_ACCEPT = [
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 8 * 1024 * 1024;
 const MAX_TIMER_MS = 2_147_483_647;
-const SHA256_RE = /^sha256:[0-9a-f]{64}$/;
 const REPOSITORY_RE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/;
 const TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 

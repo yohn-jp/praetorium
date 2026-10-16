@@ -29,6 +29,17 @@ describe("Scriptorium producer contract schemas", () => {
       BuildCatalogSchema.safeParse({ ...buildCatalogFixture, runtimeBaseDigest: "latest" }).success,
     ).toBe(false);
     expect(
+      BuildCatalogSchema.safeParse({ ...buildCatalogFixture, sourceDigest: undefined }).success,
+    ).toBe(false);
+    expect(
+      BuildCatalogSchema.safeParse({
+        ...buildCatalogFixture,
+        modules: buildCatalogFixture.modules.map((module) => module.id === "nlp"
+          ? { ...module, artifactDigest: "latest" }
+          : module),
+      }).success,
+    ).toBe(false);
+    expect(
       BuildCatalogSchema.safeParse({ ...buildCatalogFixture, arbitraryEnv: { TOKEN: "secret" } })
         .success,
     ).toBe(false);
@@ -47,6 +58,13 @@ describe("Scriptorium producer contract schemas", () => {
         ...platformFixture.quiesceResult,
         activeJobs: 1,
         restartableJobs: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      QuiesceResultSchema.safeParse({
+        ...platformFixture.quiesceResult,
+        activeJobs: 1,
+        restartableJobs: 1,
       }).success,
     ).toBe(false);
   });
@@ -71,6 +89,24 @@ describe("Scriptorium producer contract schemas", () => {
       RuntimeAssignmentSchema.safeParse({
         ...platformFixture.assignment,
         environment: { SCRIPTORIUM_AUTH_TOKEN: "secret" },
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeAssignmentSchema.safeParse({
+        ...platformFixture.assignment,
+        grantPolicy: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      RuntimeAssignmentSchema.safeParse({
+        ...platformFixture.assignment,
+        controlServicePolicy: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      QuiesceResultSchema.safeParse({
+        ...platformFixture.quiesceResult,
+        pendingCheckpoints: undefined,
       }).success,
     ).toBe(false);
   });

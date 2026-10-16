@@ -5855,6 +5855,203 @@
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
+  "RuntimeGitCredentialRecordSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "tokenId": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "repositoryId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "installationId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "instanceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "runtimeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "runtimeEpoch": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "leaseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "expiresAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      },
+      "encryptedSecret": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "keyId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "iv": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{16}$"
+          },
+          "ciphertext": {
+            "type": "string",
+            "maxLength": 32768,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "version",
+          "keyId",
+          "iv",
+          "ciphertext"
+        ],
+        "additionalProperties": false
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "revocation_pending",
+          "revoked"
+        ]
+      },
+      "createdAt": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      },
+      "updatedAt": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      }
+    },
+    "required": [
+      "tokenId",
+      "repositoryId",
+      "installationId",
+      "instanceId",
+      "runtimeId",
+      "runtimeEpoch",
+      "leaseId",
+      "expiresAt",
+      "encryptedSecret",
+      "status",
+      "createdAt",
+      "updatedAt"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "RuntimeGitCredentialRegistrationSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "tokenId": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "repositoryId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "installationId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "instanceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "runtimeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "runtimeEpoch": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "leaseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "expiresAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      },
+      "encryptedSecret": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "keyId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "iv": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{16}$"
+          },
+          "ciphertext": {
+            "type": "string",
+            "maxLength": 32768,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "version",
+          "keyId",
+          "iv",
+          "ciphertext"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "tokenId",
+      "repositoryId",
+      "installationId",
+      "instanceId",
+      "runtimeId",
+      "runtimeEpoch",
+      "leaseId",
+      "expiresAt",
+      "encryptedSecret"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
   "RuntimeIdentityCredentialSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",

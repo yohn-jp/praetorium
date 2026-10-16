@@ -11,63 +11,55 @@ import {
   type ReleasePromotionRepository,
   type StableReleaseChannel,
 } from "@praetorium/application/releases";
-import type {
-  ClusterRolloutLease,
-  OperationObservation,
-  StableFollower,
-  StableRollout,
-  StableRolloutRepository,
+import {
+  stableRolloutStageIdempotencyKey,
+  type ClusterRolloutLease,
+  type OperationObservation,
+  type StableFollower,
+  type StableRollout,
+  type StableRolloutRepository,
 } from "@praetorium/application/rollouts";
+import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
 
-/** Minimal structural subset of Cloudflare D1 used by this adapter. */
-export type D1BindValue = string | number | null | boolean | ArrayBuffer | ArrayBufferView;
-
-export interface D1PreparedStatement {
-  bind(...values: D1BindValue[]): D1PreparedStatement;
-  first<T = Record<string, unknown>>(columnName?: string): Promise<T | null>;
-  all<T = Record<string, unknown>>(): Promise<D1Result<T>>;
-  run(): Promise<D1Result<never>>;
-}
-
-export interface D1Result<T> {
-  readonly results?: readonly T[];
-  readonly success?: boolean;
-  readonly meta: { readonly changes: number };
-}
-
-export interface T11D1Database {
-  prepare(sql: string): D1PreparedStatement;
-  batch<T = Record<string, unknown>>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
-}
+/** D1 bind values accepted by the persisted T11 statements. */
+export type D1BindValue = string | number | null | ArrayBuffer | Uint8Array;
+export type { D1PreparedStatement, D1Result };
+export type T11D1Database = D1Database;
 
 export type FencedUpdateResult =
   | { readonly kind: "dispatched"; readonly operationId: string; readonly generation: number }
   | { readonly kind: "stale" | "pinned" | "stopped" | "lease_lost" };
 
-/**
- * Implemented by the D1PlatformStore composition root. It executes the supplied
- * T11 statements and the normal desired-update operation in one D1 batch.
- */
-export interface FencedDesiredUpdateWriter {
-  enqueueDesiredUpdateWithFence(input: {
-    readonly operationId: string;
-    readonly fenceStatements: readonly D1PreparedStatement[];
-    readonly instanceId: string;
-    readonly repositoryId: number;
-    readonly bindingEpoch: number;
-    readonly authorizationRevision: number;
-    readonly expectedGeneration: number;
-    readonly expectedRuntimeEpoch: number;
-    readonly expectedClusterId: string;
-    readonly expectedConfigurationRevision: string;
-    readonly expectedDesiredState: "running";
-    readonly expectedPolicy: "stable";
-    readonly targetRevisionId: string;
+/** Stage lookup and activation are supplied by the persisted configuration service. */
+export interface StagedRolloutActivator {
+  findStageByIdempotency(
+    repositoryId: number,
+    idempotencyKey: string,
+  ): Promise<{
+    readonly stageId: string;
+    readonly buildKey: string;
+    readonly buildId: string;
+    readonly artifactDigest: string | null;
+    readonly status: "staged" | "activated" | "superseded";
+  } | null>;
+  activateStageUnderClusterFence(input: {
+    readonly stageId: string;
+    readonly clusterId: string;
+    readonly rolloutId: string;
+    readonly releaseId: string;
+    readonly owner: string;
+    readonly leaseEpoch: number;
+    readonly expectedRolloutRevision: number;
+    readonly expectedBuildKey: string;
+    readonly expectedBuildId: string;
+    readonly expectedArtifactDigest: string;
     readonly actorId: string;
-    readonly idempotencyKey: string;
+    readonly actorKind: "system";
     readonly requestId: string;
-    readonly now: string;
-  }): Promise<FencedUpdateResult>;
+    readonly operationId: string;
+    readonly operationIdempotencyKey: string;
+    readonly now: number;
+  }): Promise<{ readonly operationId: string; readonly generation: number } | null>;
 }
 
 type CandidateRow = {
@@ -144,7 +136,6 @@ const ACTIVE_ROLLOUT_STATES = [
   "dispatch_pending",
   "operation_pending",
 ] as const;
-const NEXT_OPERATION_POLL_MS = 5 * 60 * 1_000;
 
 function parseJson(value: string): unknown {
   return JSON.parse(value) as unknown;
@@ -314,7 +305,7 @@ export class D1T11ReleaseRolloutStore
 {
   constructor(
     private readonly db: T11D1Database,
-    private readonly updateWriter: FencedDesiredUpdateWriter,
+    private readonly stagedActivator: StagedRolloutActivator,
     private readonly createOperationId: () => string = () => crypto.randomUUID(),
   ) {}
 
@@ -949,71 +940,53 @@ export class D1T11ReleaseRolloutStore
       input.current.clusterId !== input.rollout.clusterId ||
       input.lease.activeOperationId !== null ||
       input.rollout.state !== "dispatch_pending" ||
-      !input.rollout.deploymentRevisionId
+      !input.rollout.buildKey ||
+      !input.rollout.buildId ||
+      !input.rollout.artifactDigest
     ) {
       return { kind: "lease_lost" };
     }
     const now = Date.parse(input.at);
     const operationId = this.createOperationId();
-    const fenceStatements = [
-      this.db
-        .prepare(
-          `UPDATE cluster_rollout_leases
-              SET active_operation_id = ?, updated_at = ?
-            WHERE cluster_id = ? AND rollout_id = ? AND owner = ? AND lease_epoch = ?
-              AND lease_expires_at > ? AND active_operation_id IS NULL`,
-        )
-        .bind(
-          operationId,
-          now,
-          input.lease.clusterId,
-          input.lease.rolloutId,
-          input.lease.owner,
-          input.lease.epoch,
-          now,
-        ),
-      this.db
-        .prepare(
-          `UPDATE stable_rollouts
-              SET state = 'operation_pending', operation_id = ?,
-                  next_attempt_at = ?, updated_at = ?, revision = revision + 1
-            WHERE rollout_id = ? AND revision = ? AND state = 'dispatch_pending'
-              AND operation_id IS NULL AND deployment_revision_id = ?
-              AND EXISTS (
-                SELECT 1 FROM stable_release_channels
-                 WHERE channel_key = 'stable' AND current_release_id = ?
-              )
-              AND changes() = 1`,
-        )
-        .bind(
-          operationId,
-          now + NEXT_OPERATION_POLL_MS,
-          now,
-          input.rollout.id,
-          input.rollout.revision,
-          input.rollout.deploymentRevisionId,
-          input.rollout.releaseId,
-        ),
-    ];
-    return this.updateWriter.enqueueDesiredUpdateWithFence({
-      operationId,
-      fenceStatements,
-      instanceId: input.current.instanceId,
-      repositoryId: input.current.repositoryId,
-      bindingEpoch: input.current.bindingEpoch,
-      authorizationRevision: input.current.authorizationRevision,
-      expectedGeneration: input.current.generation,
-      expectedRuntimeEpoch: input.current.runtimeEpoch,
-      expectedClusterId: input.current.clusterId,
-      expectedConfigurationRevision: input.current.configurationRevision,
-      expectedDesiredState: "running",
-      expectedPolicy: "stable",
-      targetRevisionId: input.rollout.deploymentRevisionId,
+    const stageKey = await stableRolloutStageIdempotencyKey(
+      input.rollout.releaseId,
+      input.current.instanceId,
+      input.current.configurationRevision,
+    );
+    const stage = await this.stagedActivator.findStageByIdempotency(
+      input.current.repositoryId,
+      stageKey,
+    );
+    if (
+      !stage ||
+      stage.status !== "staged" ||
+      stage.buildKey !== input.rollout.buildKey ||
+      stage.buildId !== input.rollout.buildId ||
+      stage.artifactDigest !== input.rollout.artifactDigest
+    ) {
+      return { kind: "stale" };
+    }
+    const activated = await this.stagedActivator.activateStageUnderClusterFence({
+      stageId: stage.stageId,
+      clusterId: input.lease.clusterId,
+      rolloutId: input.rollout.id,
+      releaseId: input.rollout.releaseId,
+      owner: input.lease.owner,
+      leaseEpoch: input.lease.epoch,
+      expectedRolloutRevision: input.rollout.revision,
+      expectedBuildKey: input.rollout.buildKey,
+      expectedBuildId: input.rollout.buildId,
+      expectedArtifactDigest: input.rollout.artifactDigest,
       actorId: input.actorId,
-      idempotencyKey: input.idempotencyKey,
-      requestId: `stable-rollout:${input.rollout.id}`,
-      now: input.at,
+      actorKind: "system",
+      requestId: stageKey,
+      operationId,
+      operationIdempotencyKey: input.idempotencyKey,
+      now,
     });
+    return activated
+      ? { kind: "dispatched", operationId: activated.operationId, generation: activated.generation }
+      : { kind: "stale" };
   }
 
   async setOperationResult(input: {

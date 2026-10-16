@@ -1,17 +1,37 @@
 import { describe, expect, it } from "vitest";
 import type { ReleaseCandidate } from "../releases/model.js";
-import type {
-  ClusterRolloutLease,
-  CompositionResult,
-  StableFollower,
-  StableRollout,
-  StableRolloutDeps,
-  StableRolloutRepository,
+import {
+  stableRolloutOperationIdempotencyKey,
+  stableRolloutStageIdempotencyKey,
+  type ClusterRolloutLease,
+  type CompositionResult,
+  type StableFollower,
+  type StableRollout,
+  type StableRolloutDeps,
+  type StableRolloutRepository,
 } from "./model.js";
 import { runStableRolloutBatch } from "./service.js";
 
 const TIME = "2026-01-01T00:00:00.000Z";
 const RELEASE_DIGEST = `sha256:${"a".repeat(64)}`;
+
+describe("stable rollout idempotency keys", () => {
+  it("remain deterministic and fit the configuration service key bound for maximum-length IDs", async () => {
+    const tuple = ["x".repeat(128), "y".repeat(128), "z".repeat(128)] as const;
+    const stageKey = await stableRolloutStageIdempotencyKey(...tuple);
+    const operationKey = await stableRolloutOperationIdempotencyKey(
+      tuple[0],
+      tuple[1],
+      Number.MAX_SAFE_INTEGER,
+      tuple[2],
+    );
+
+    expect(stageKey).toBe(await stableRolloutStageIdempotencyKey(...tuple));
+    expect(stageKey.length).toBeLessThanOrEqual(128);
+    expect(operationKey.length).toBeLessThanOrEqual(128);
+    expect(stageKey).not.toBe(operationKey);
+  });
+});
 
 function release(): ReleaseCandidate {
   const revision = "a".repeat(40);
@@ -215,7 +235,6 @@ function deps(input: {
           buildKey: `build-${current.configurationRevision}`,
           buildId: "build-1",
           artifactDigest: `sha256:${"b".repeat(64)}`,
-          deploymentRevisionId: `revision-${current.configurationRevision}`,
         };
       },
     },

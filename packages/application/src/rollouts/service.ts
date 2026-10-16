@@ -1,9 +1,11 @@
 import type { ReleaseCandidate } from "../releases/model.js";
-import type {
-  StableFollower,
-  StableRollout,
-  StableRolloutDeps,
-  StableRolloutPlanner,
+import {
+  stableRolloutOperationIdempotencyKey,
+  stableRolloutStageIdempotencyKey,
+  type StableFollower,
+  type StableRollout,
+  type StableRolloutDeps,
+  type StableRolloutPlanner,
 } from "./model.js";
 
 const DEFAULT_ROLLOUT_LEASE_MS = 2 * 60 * 1_000;
@@ -200,10 +202,15 @@ async function advanceRollout(
     rollout.state === "building" ||
     rollout.state === "waiting_build"
   ) {
+    const stageIdempotencyKey = await stableRolloutStageIdempotencyKey(
+      release.id,
+      current.instanceId,
+      current.configurationRevision,
+    );
     const composition = await deps.composition.compose({
       release,
       follower: current,
-      idempotencyKey: `stable-rollout-build:${release.id}:${current.instanceId}:${current.configurationRevision}`,
+      idempotencyKey: stageIdempotencyKey,
     });
     if (composition.kind === "pending") {
       await saveRollout(deps, rollout, {
@@ -228,7 +235,8 @@ async function advanceRollout(
       buildKey: composition.buildKey,
       buildId: composition.buildId,
       artifactDigest: composition.artifactDigest,
-      deploymentRevisionId: composition.deploymentRevisionId,
+      // The stage becomes a DeploymentRevision only in fenced activation.
+      deploymentRevisionId: null,
       failureCode: null,
       nextAttemptAt: null,
     });
@@ -259,12 +267,7 @@ async function advanceRollout(
     await saveRollout(deps, rollout, { state: "deferred_stopped", failureCode: null });
     return "settled";
   }
-  if (
-    !rollout.deploymentRevisionId ||
-    !rollout.artifactDigest ||
-    !rollout.buildKey ||
-    !rollout.buildId
-  ) {
+  if (!rollout.artifactDigest || !rollout.buildKey || !rollout.buildId) {
     await saveRollout(deps, rollout, {
       state: "blocked",
       failureCode: "composed_artifact_missing",
@@ -292,7 +295,12 @@ async function advanceRollout(
     rollout,
     current: latest,
     actorId: "system:stable-release",
-    idempotencyKey: `stable-rollout:${rollout.releaseId}:${rollout.instanceId}:${latest.generation}:${rollout.buildKey}`,
+    idempotencyKey: await stableRolloutOperationIdempotencyKey(
+      rollout.releaseId,
+      rollout.instanceId,
+      latest.generation,
+      rollout.buildKey,
+    ),
     at: deps.clock.now(),
   });
   if (dispatch.kind === "dispatched") return "advanced";

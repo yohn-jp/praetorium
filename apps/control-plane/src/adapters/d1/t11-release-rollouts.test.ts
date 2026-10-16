@@ -4,15 +4,21 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlit
 import { ReleaseCandidateSchema, type ReleaseCandidate } from "@praetorium/application/releases";
 import type { StableFollower } from "@praetorium/application/rollouts";
 import {
+  stableRolloutOperationIdempotencyKey,
+  stableRolloutStageIdempotencyKey,
+} from "@praetorium/application/rollouts";
+import { D1StableFollowerRepository } from "./stable-followers.js";
+import {
   D1T11ReleaseRolloutStore,
   type D1BindValue,
   type D1PreparedStatement,
   type D1Result,
-  type FencedDesiredUpdateWriter,
+  type StagedRolloutActivator,
   type T11D1Database,
 } from "./t11-release-rollouts.js";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
+const BUILD_KEY = `sha256:${"b".repeat(64)}`;
 const PRODUCER = "a".repeat(40);
 const TIME = "2026-01-01T00:00:00.000Z";
 const NOW = Date.parse(TIME);
@@ -29,9 +35,6 @@ class SQLiteD1Statement implements D1PreparedStatement {
     return this.values.map((value): SQLInputValue => {
       if (typeof value === "boolean") return Number(value);
       if (value instanceof ArrayBuffer) return new Uint8Array(value);
-      if (ArrayBuffer.isView(value) && !(value instanceof Uint8Array)) {
-        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-      }
       return value;
     });
   }
@@ -52,9 +55,9 @@ class SQLiteD1Statement implements D1PreparedStatement {
     };
   }
 
-  async run(): Promise<D1Result<never>> {
+  async run<T>(): Promise<D1Result<T>> {
     const result = this.statement.run(...this.sqlValues());
-    return { meta: { changes: Number(result.changes) } };
+    return { results: [], meta: { changes: Number(result.changes) } };
   }
 
   async executeBatch(): Promise<D1Result<unknown>> {
@@ -65,7 +68,7 @@ class SQLiteD1Statement implements D1PreparedStatement {
       };
     }
     const result = this.statement.run(...this.sqlValues());
-    return { meta: { changes: Number(result.changes) } };
+    return { results: [], meta: { changes: Number(result.changes) } };
   }
 }
 
@@ -76,7 +79,7 @@ class SQLiteD1 implements T11D1Database {
     return new SQLiteD1Statement(sql, this.database.prepare(sql));
   }
 
-  async batch<T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+  async batch<T>(statements: readonly D1PreparedStatement[]): Promise<readonly D1Result<T>[]> {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const results: D1Result<unknown>[] = [];
@@ -142,14 +145,17 @@ function candidate(id = "release-1", version = "1.0.0", digest = DIGEST): Releas
   });
 }
 
-const updateWriter: FencedDesiredUpdateWriter = {
-  async enqueueDesiredUpdateWithFence() {
-    return { kind: "stale" };
+const stagedActivator: StagedRolloutActivator = {
+  async findStageByIdempotency() {
+    return null;
+  },
+  async activateStageUnderClusterFence() {
+    return null;
   },
 };
 
-function store(db: SQLiteD1) {
-  return new D1T11ReleaseRolloutStore(db, updateWriter, () => "op-test");
+function store(db: SQLiteD1, activator = stagedActivator) {
+  return new D1T11ReleaseRolloutStore(db, activator, () => "op-test");
 }
 
 function installSchema(db: SQLiteD1) {
@@ -365,5 +371,186 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       owner: "rollout-worker-a",
       activeOperationId: null,
     });
+  });
+
+  it("activates the persisted build stage through the current cluster lease", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const release = candidate();
+    const activationCalls: unknown[] = [];
+    const activator: StagedRolloutActivator = {
+      async findStageByIdempotency(repositoryId, idempotencyKey) {
+        expect(repositoryId).toBe(101);
+        expect(idempotencyKey).toBe(
+          await stableRolloutStageIdempotencyKey("release-1", "instance-1", "revision-1"),
+        );
+        return {
+          stageId: "stage-1",
+          buildKey: BUILD_KEY,
+          buildId: "build-1",
+          artifactDigest: DIGEST,
+          status: "staged",
+        };
+      },
+      async activateStageUnderClusterFence(input) {
+        activationCalls.push(input);
+        return { operationId: "op-activated", generation: 8 };
+      },
+    };
+    const rollouts = store(db, activator);
+    await rollouts.createCandidate(release);
+    await rollouts.promoteStable({ releaseId: release.id, expectedRevision: 0, promotedAt: TIME });
+    db.database
+      .prepare(
+        "INSERT INTO logical_instances(instance_id, repository_id, desired_state, created_at, updated_at) VALUES (?, ?, 'running', ?, ?)",
+      )
+      .run("instance-1", 101, NOW, NOW);
+    await rollouts.recordFollowerPage({
+      releaseId: release.id,
+      expectedCursor: null,
+      page: { items: [follower("instance-1")], nextCursor: null },
+      at: TIME,
+    });
+    const [initial] = await rollouts.listDueRollouts(NOW, 1);
+    expect(initial).toBeDefined();
+    await rollouts.saveRollout({
+      rollout: {
+        ...initial!,
+        state: "dispatch_pending",
+        buildKey: BUILD_KEY,
+        buildId: "build-1",
+        artifactDigest: DIGEST,
+        updatedAt: TIME,
+      },
+      expectedRevision: initial!.revision,
+      at: TIME,
+    });
+    const rollout = (await rollouts.findRollout(initial!.id))!;
+    const lease = await rollouts.claimClusterLease({
+      clusterId: rollout.clusterId,
+      rolloutId: rollout.id,
+      owner: "rollout-worker",
+      now: NOW,
+      leaseMs: 60_000,
+    });
+    expect(lease).not.toBeNull();
+
+    await expect(
+      rollouts.dispatchUnderClusterLease({
+        lease: lease!,
+        rollout,
+        current: follower("instance-1"),
+        actorId: "system:stable-release",
+        idempotencyKey: await stableRolloutOperationIdempotencyKey(
+          "release-1",
+          "instance-1",
+          2,
+          BUILD_KEY,
+        ),
+        at: TIME,
+      }),
+    ).resolves.toEqual({ kind: "dispatched", operationId: "op-activated", generation: 8 });
+    expect(activationCalls).toEqual([
+      {
+        stageId: "stage-1",
+        clusterId: "cluster-1",
+        rolloutId: rollout.id,
+        releaseId: release.id,
+        owner: "rollout-worker",
+        leaseEpoch: lease!.epoch,
+        expectedRolloutRevision: rollout.revision,
+        expectedBuildKey: BUILD_KEY,
+        expectedBuildId: "build-1",
+        expectedArtifactDigest: DIGEST,
+        actorId: "system:stable-release",
+        actorKind: "system",
+        requestId: await stableRolloutStageIdempotencyKey("release-1", "instance-1", "revision-1"),
+        operationId: "op-test",
+        operationIdempotencyKey: await stableRolloutOperationIdempotencyKey(
+          "release-1",
+          "instance-1",
+          2,
+          BUILD_KEY,
+        ),
+        now: NOW,
+      },
+    ]);
+  });
+
+  it("reads the current stable configuration and assigned cluster from actual D1 rows", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const selected = {
+      releaseId: "release-old",
+      requestedModules: ["forms"],
+      resourceProfileId: "balanced",
+      policy: "stable",
+    };
+    const buildInput = {
+      contractVersion: "scriptorium-build/v1",
+      producerRevision: PRODUCER,
+      runtimeBaseDigest: DIGEST,
+      buildKitDigest: DIGEST,
+      recipeDigest: DIGEST,
+      sourceDigest: DIGEST,
+      lockDigest: DIGEST,
+      requestedModules: ["forms"],
+      resolvedModules: [{ id: "forms", version: "1.0.0", artifactDigest: DIGEST }],
+      platform: "linux/amd64",
+      options: {},
+    };
+    db.database.exec(`
+      INSERT INTO logical_instances (
+        instance_id, repository_id, desired_state, policy, generation, runtime_epoch,
+        desired_revision_id, desired_artifact_digest, current_artifact_digest,
+        reservation_state, reservation_id, created_at, updated_at
+      ) VALUES ('instance-1', 101, 'running', 'stable', 7, 4,
+        'revision-7', '${DIGEST}', '${DIGEST}', 'allocated', 'reservation-4', ${NOW}, ${NOW});
+      INSERT INTO repository_bindings (
+        repository_id, instance_id, installation_id, owner, name,
+        authorization_revision, binding_epoch, suspended, created_at, updated_at
+      ) VALUES (101, 'instance-1', 201, 'owner', 'repo', 3, 2, 0, ${NOW}, ${NOW});
+      INSERT INTO builds (build_id, build_key, build_input_json, status, created_at, updated_at)
+      VALUES ('build-7', 'key-7', '${JSON.stringify(buildInput)}', 'succeeded', ${NOW}, ${NOW});
+      INSERT INTO deployment_revisions (
+        revision_id, instance_id, repository_id, generation, build_key, build_id,
+        selection_json, resource_requirements_json, runtime_metadata_json,
+        artifact_digest, status, actor_id, created_at
+      ) VALUES ('revision-7', 'instance-1', 101, 7, 'key-7', 'build-7',
+        '${JSON.stringify(selected)}', '{"cpuMilli":100,"memoryMiB":128,"ephemeralStorageMiB":256}',
+        '{"contractVersion":"scriptorium-platform/v1","producerRevision":"${PRODUCER}","listener":{"port":3000},"paths":{"liveness":"/health/live","readiness":"/health/ready","metadata":"/api/platform/v1/metadata","shutdown":"/api/platform/v1/shutdown","status":"/api/platform/v1/status","quiesce":"/api/platform/v1/quiesce","resume":"/api/platform/v1/resume"},"shutdownTimeoutSeconds":30}',
+        NULL, 'admitted', 'actor', ${NOW});
+      INSERT INTO runtime_reservations (
+        reservation_id, instance_id, repository_id, runtime_epoch, generation,
+        cluster_id, status, capacity_snapshot_epoch, cpu_milli, memory_mib,
+        ephemeral_storage_mib, created_at, updated_at
+      ) VALUES ('reservation-4', 'instance-1', 101, 4, 7, 'cluster-actual',
+        'allocated', 1, 100, 128, 256, ${NOW}, ${NOW});
+    `);
+
+    const followers = new D1StableFollowerRepository(db, "cluster-default");
+    const page = await followers.listInstances(null, 1);
+    expect(page).toMatchObject({
+      nextCursor: null,
+      items: [
+        {
+          instanceId: "instance-1",
+          repositoryId: 101,
+          bindingEpoch: 2,
+          authorizationRevision: 3,
+          clusterId: "cluster-actual",
+          generation: 7,
+          runtimeEpoch: 4,
+          desiredState: "running",
+          policy: "stable",
+          desiredReleaseId: "release-old",
+          configurationRevision: "revision-7",
+          selectedModuleIds: ["forms"],
+          resourceProfileId: "balanced",
+          platform: "linux/amd64",
+        },
+      ],
+    });
+    expect(await followers.findCurrent("instance-1")).toEqual(page.items[0]);
   });
 });

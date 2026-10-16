@@ -19,6 +19,44 @@ export type StableFollower = {
   readonly platform: "linux/amd64" | "linux/arm64";
 };
 
+/** Keeps persisted configuration stage idempotency keys stable and under the 128-character API bound. */
+export function stableRolloutStageIdempotencyKey(
+  releaseId: string,
+  instanceId: string,
+  configurationRevision: string,
+): Promise<string> {
+  return boundedRolloutKey("stable-rollout-stage", [releaseId, instanceId, configurationRevision]);
+}
+
+/** Keeps update-operation idempotency keys stable and under the 128-character API bound. */
+export function stableRolloutOperationIdempotencyKey(
+  releaseId: string,
+  instanceId: string,
+  generation: number,
+  buildKey: string,
+): Promise<string> {
+  return boundedRolloutKey("stable-rollout-operation", [
+    releaseId,
+    instanceId,
+    generation,
+    buildKey,
+  ]);
+}
+
+async function boundedRolloutKey(
+  prefix: string,
+  tuple: readonly (number | string)[],
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(tuple)),
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  return `${prefix}:${hex}`;
+}
+
 export type StableRolloutState =
   | "pending"
   | "building"
@@ -64,7 +102,6 @@ export type CompositionResult =
       readonly buildKey: string;
       readonly buildId: string;
       readonly artifactDigest: string;
-      readonly deploymentRevisionId: string;
     }
   | {
       readonly kind: "pending";

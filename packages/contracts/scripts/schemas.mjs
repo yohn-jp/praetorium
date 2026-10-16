@@ -11,7 +11,7 @@ const target = new URL("../schemas/contracts.json", import.meta.url);
 if (process.argv.includes("--write")) {
   await mkdir(new URL("../schemas/", import.meta.url), { recursive: true });
   await writeFile(target, serialized);
-} else if ((await readFile(target, "utf8")) !== serialized) {
+} else if (JSON.stringify(JSON.parse(await readFile(target, "utf8"))) !== JSON.stringify(schemas)) {
   console.error(
     "Contract JSON schema drift: regenerate with node packages/contracts/scripts/schemas.mjs --write",
   );

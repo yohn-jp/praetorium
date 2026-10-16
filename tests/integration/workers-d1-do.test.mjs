@@ -123,6 +123,18 @@ async function assertRepositoryBinding(miniflare, secret, instanceId) {
   return snapshot;
 }
 
+function assertPublicOperation(operation, operationId, instanceId) {
+  assert.equal(operation.id, operationId);
+  assert.equal(operation.instanceId, instanceId);
+  for (const privateField of ["leaseToken", "checkpoint", "workerId"]) {
+    assert.equal(
+      Object.hasOwn(operation, privateField),
+      false,
+      `public operation must omit ${privateField}`,
+    );
+  }
+}
+
 test("production Control Plane Worker uses migrated D1 and persistent repository Durable Object", async () => {
   await assertOwnedDisposableInventory();
   const workerInfo = await stat(workerEntryPath).catch(() => null);
@@ -255,6 +267,25 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     }
 
     const snapshot = await assertRepositoryBinding(miniflare, secrets.gateway, instanceId);
+    const initialDashboardResponse = await miniflare.dispatchFetch(
+      `https://control-plane.test/v1/instances/${instanceId}/dashboard`,
+      { headers: gatewayHeaders(secrets.gateway) },
+    );
+    assert.equal(initialDashboardResponse.status, 200);
+    const initialDashboard = await initialDashboardResponse.json();
+    assert.equal(initialDashboard.snapshot.instance.instanceId, instanceId);
+    assert.equal(initialDashboard.current, null);
+    assert.equal(initialDashboard.desired, null);
+    assert.deepEqual(initialDashboard.operations, []);
+    assert.deepEqual(initialDashboard.releases, []);
+
+    const releasesResponse = await miniflare.dispatchFetch(
+      "https://control-plane.test/v1/releases",
+      { headers: gatewayHeaders(secrets.gateway) },
+    );
+    assert.equal(releasesResponse.status, 200);
+    assert.deepEqual(await releasesResponse.json(), { releases: [] });
+
     const desiredRequest = {
       actorId: "test-actor-a",
       expectedGeneration: snapshot.instance.generation,
@@ -272,6 +303,24 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     assert.equal(desired.response.status, 200);
     assert.equal(desired.body.instance.instanceId, instanceId);
     assert.equal(typeof desired.body.replayed, "boolean");
+    const operationId = desired.body.operation?.id;
+    assert.ok(typeof operationId === "string" && operationId.length > 0);
+
+    const publicOperationResponse = await miniflare.dispatchFetch(
+      `https://control-plane.test/v1/operations/${operationId}`,
+      { headers: gatewayHeaders(secrets.gateway) },
+    );
+    assert.equal(publicOperationResponse.status, 200);
+    assertPublicOperation(await publicOperationResponse.json(), operationId, instanceId);
+
+    const activeDashboardResponse = await miniflare.dispatchFetch(
+      `https://control-plane.test/v1/instances/${instanceId}/dashboard`,
+      { headers: gatewayHeaders(secrets.gateway) },
+    );
+    assert.equal(activeDashboardResponse.status, 200);
+    const activeDashboard = await activeDashboardResponse.json();
+    assert.equal(activeDashboard.operations.length, 1);
+    assertPublicOperation(activeDashboard.operations[0], operationId, instanceId);
 
     const replay = await postJson(
       miniflare,

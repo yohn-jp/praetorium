@@ -51,6 +51,13 @@ export function createGitCredentialBroker(config: GitCredentialBrokerConfig): Gi
 
   return {
     async issue(input) {
+      if (
+        !input ||
+        typeof input !== "object" ||
+        (input.operation !== "fetch" && input.operation !== "publish")
+      ) {
+        return { status: "denied", reason: "invalid_operation" };
+      }
       const instant = input.now ? new Date(input.now) : now();
       if (!Number.isFinite(instant.getTime()))
         return { status: "denied", reason: "invalid_request_time" };

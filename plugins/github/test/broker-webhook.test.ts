@@ -272,6 +272,19 @@ describe("runtime-scoped Git credentials", () => {
     });
     expect(stale.minted).toHaveLength(0);
   });
+
+  it("rejects unknown runtime operations before authorization or token minting", async () => {
+    const invalid = await broker();
+    const result = await invalid.service.issue({
+      proof: proof(),
+      operation: "push",
+      now: NOW,
+    } as never);
+
+    expect(result).toEqual({ status: "denied", reason: "invalid_operation" });
+    expect(invalid.authorizedUsers).toHaveLength(0);
+    expect(invalid.minted).toHaveLength(0);
+  });
 });
 
 describe("GitHub webhook verification and deduplication", () => {

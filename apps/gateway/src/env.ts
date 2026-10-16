@@ -11,6 +11,8 @@ export interface GatewayEnv {
   readonly GATEWAY_INSTANCE_HOSTNAME_SUFFIX?: string;
   readonly GATEWAY_ALLOWED_REPOSITORY_OWNER?: string;
   readonly GITHUB_APP_ID?: string;
+  readonly GITHUB_APP_PRIVATE_KEY?: string;
+  readonly CONTROL_PLANE_ORIGIN?: string;
   readonly GATEWAY_GITHUB_WEBHOOK_SECRET?: string;
   readonly GITHUB_OAUTH_CLIENT_ID?: string;
   readonly GITHUB_OAUTH_CLIENT_SECRET?: string;

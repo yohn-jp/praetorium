@@ -41,6 +41,7 @@ import { createControlPlaneClient, type ControlPlaneClient } from "./adapters/co
 import { createKvRateLimiter } from "./adapters/rate-limiter-kv.js";
 import { loadKeyRegistry } from "./adapters/key-registry-kv.js";
 import { createDurableObjectGitHubUserTokenStore } from "./adapters/github-user-tokens.js";
+import { createRuntimeGitCredentialBroker } from "./adapters/runtime-git-broker.js";
 
 export { type GatewayEnv } from "./env.js";
 
@@ -278,6 +279,19 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
     mutationReceiptRateLimiter: createKvRateLimiter(env.GATEWAY_KV, "mutation-receipt", { limit: 10, windowSeconds: 60 }),
     githubProvider: oauth,
     githubAccess,
+    ...(env.GITHUB_APP_PRIVATE_KEY ? {
+      githubCredentialBroker: createRuntimeGitCredentialBroker({
+        controlPlane: env.CONTROL_PLANE,
+        controlPlaneGatewayAuth: config.controlPlaneSecret,
+        runtimeIdentityIssuer: HttpsOriginSchema.parse(env.CONTROL_PLANE_ORIGIN),
+        gatewayOrigin: config.origin,
+        githubAppId: config.githubAppId,
+        githubAppPrivateKeyPem: requireSecret(env.GITHUB_APP_PRIVATE_KEY, "GITHUB_APP_PRIVATE_KEY"),
+        repositoryBindings,
+        accessProvider: githubAccess,
+        gatewayKeyRegistry: keyRegistry,
+      }),
+    } : {}),
     githubUserTokens,
     controlPlane,
     signingKey,

@@ -1,11 +1,4 @@
-import {
-  err,
-  ok,
-  AccessGrantId,
-  type Result,
-  generateUlid,
-  type UserId,
-} from "../domain.js";
+import { err, ok, AccessGrantId, type Result, generateUlid, type UserId } from "../domain.js";
 import { issueAccessGrant } from "../access-grant.js";
 import { keyedDigest } from "../digest.js";
 import type { SigningKey } from "../jwt.js";
@@ -22,6 +15,7 @@ export type AccessRefreshErrorCode =
   | "INVALID_CREDENTIAL"
   | "SESSION_INVALID"
   | "INSTANCE_BLOCKED"
+  | "AUTHORITY_UNAVAILABLE"
   | "STORAGE_UNAVAILABLE";
 
 export interface AccessRefreshError {
@@ -93,10 +87,14 @@ export async function createAccessRefreshCredential(
   store: AccessRefreshCredentialStore,
   input: CreateAccessRefreshCredentialInput,
 ): Promise<CreatedAccessRefreshCredential> {
-  if (!Number.isSafeInteger(input.repositoryId) || input.repositoryId < 1 ||
-    !Number.isSafeInteger(input.runtimeEpoch) || input.runtimeEpoch < 0 ||
+  if (
+    !Number.isSafeInteger(input.repositoryId) ||
+    input.repositoryId < 1 ||
+    !Number.isSafeInteger(input.runtimeEpoch) ||
+    input.runtimeEpoch < 0 ||
     !input.permissions.includes("read") ||
-    new Date(input.sessionExpiresAt).getTime() <= new Date(input.now).getTime()) {
+    new Date(input.sessionExpiresAt).getTime() <= new Date(input.now).getTime()
+  ) {
     throw new TypeError("refresh credential cannot outlive an inactive session");
   }
   const { plaintext, credentialId } = newCredential();
@@ -194,11 +192,22 @@ export async function refreshAccessGrant(
   } catch {
     return err({ code: "STORAGE_UNAVAILABLE", message: "instance authority unavailable" });
   }
-  if (access.status !== "allowed" || access.repositoryId !== input.repositoryId ||
-    access.instanceId !== input.instanceId || access.runtimeEpoch !== input.runtimeEpoch) {
+  if (access.status === "unavailable") {
+    return err({ code: "AUTHORITY_UNAVAILABLE", message: "repository authority unavailable" });
+  }
+  if (
+    access.status !== "allowed" ||
+    access.repositoryId !== input.repositoryId ||
+    access.instanceId !== input.instanceId ||
+    access.runtimeEpoch !== input.runtimeEpoch ||
+    access.origin !== input.origin ||
+    access.origin !== stored.record.origin
+  ) {
     return err({ code: "INSTANCE_BLOCKED", message: "repository is not currently accessible" });
   }
-  const permissions = stored.record.permissions.filter((permission) => access.permissions.includes(permission));
+  const permissions = stored.record.permissions.filter((permission) =>
+    access.permissions.includes(permission),
+  );
   if (permissions.length === 0 || !permissions.includes("read")) {
     return err({ code: "INSTANCE_BLOCKED", message: "repository is not currently accessible" });
   }
@@ -206,8 +215,15 @@ export async function refreshAccessGrant(
   const secondsRemaining = Math.floor(
     (new Date(session.expiresAt).getTime() - new Date(input.now).getTime()) / 1000,
   );
-  const accessSecondsRemaining = Math.floor((access.expiresAt - new Date(input.now).getTime()) / 1000);
-  const grantTtlSeconds = Math.min(deps.tokenTtlSeconds, 300, secondsRemaining, accessSecondsRemaining);
+  const accessSecondsRemaining = Math.floor(
+    (access.expiresAt - new Date(input.now).getTime()) / 1000,
+  );
+  const grantTtlSeconds = Math.min(
+    deps.tokenTtlSeconds,
+    300,
+    secondsRemaining,
+    accessSecondsRemaining,
+  );
   if (grantTtlSeconds < 1) {
     return err({ code: "SESSION_INVALID", message: "Gateway session is no longer active" });
   }
@@ -217,7 +233,7 @@ export async function refreshAccessGrant(
   const issued = await issueAccessGrant(deps.signingKey, {
     id: AccessGrantId.parse(`agr_${generateUlid()}`),
     issuer: deps.issuer,
-    audience: input.origin,
+    audience: access.origin,
     subjectUserId: stored.record.userId,
     repositoryId: input.repositoryId,
     audienceInstanceId: input.instanceId,

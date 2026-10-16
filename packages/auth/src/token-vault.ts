@@ -28,13 +28,20 @@ function bufferSource(bytes: Uint8Array): ArrayBuffer {
 
 export async function importTokenEncryptionKey(raw: Uint8Array): Promise<CryptoKey> {
   if (raw.byteLength !== 32) throw new TypeError("AES-256 token encryption keys must be 32 bytes");
-  return crypto.subtle.importKey("raw", bufferSource(raw), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  return crypto.subtle.importKey("raw", bufferSource(raw), { name: "AES-GCM" }, false, [
+    "encrypt",
+    "decrypt",
+  ]);
 }
 
 /** Encrypts user access and refresh tokens with authenticated, row-specific context. */
-export function createTokenVault(keys: readonly TokenEncryptionKey[], currentKeyId: string): TokenVault {
+export function createTokenVault(
+  keys: readonly TokenEncryptionKey[],
+  currentKeyId: string,
+): TokenVault {
   const byId = new Map(keys.map((key) => [key.id, key.key]));
-  if (!currentKeyId || !byId.has(currentKeyId)) throw new TypeError("current token encryption key is missing");
+  if (!currentKeyId || !byId.has(currentKeyId))
+    throw new TypeError("current token encryption key is missing");
 
   return {
     async seal(plaintext, context) {
@@ -45,12 +52,19 @@ export function createTokenVault(keys: readonly TokenEncryptionKey[], currentKey
         {
           name: "AES-GCM",
           iv: bufferSource(iv),
-          additionalData: bufferSource(encoder.encode(`praetorium-token:v1:${context}:${currentKeyId}`)),
+          additionalData: bufferSource(
+            encoder.encode(`praetorium-token:v1:${context}:${currentKeyId}`),
+          ),
         },
         key,
         bufferSource(encoder.encode(plaintext)),
       );
-      return { version: 1, keyId: currentKeyId, iv: base64UrlEncode(iv), ciphertext: base64UrlEncode(new Uint8Array(ciphertext)) };
+      return {
+        version: 1,
+        keyId: currentKeyId,
+        iv: base64UrlEncode(iv),
+        ciphertext: base64UrlEncode(new Uint8Array(ciphertext)),
+      };
     },
 
     async open(secret, context) {
@@ -61,7 +75,9 @@ export function createTokenVault(keys: readonly TokenEncryptionKey[], currentKey
         {
           name: "AES-GCM",
           iv: bufferSource(base64UrlDecode(secret.iv)),
-          additionalData: bufferSource(encoder.encode(`praetorium-token:v1:${context}:${secret.keyId}`)),
+          additionalData: bufferSource(
+            encoder.encode(`praetorium-token:v1:${context}:${secret.keyId}`),
+          ),
         },
         key,
         bufferSource(base64UrlDecode(secret.ciphertext)),

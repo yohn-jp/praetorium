@@ -158,7 +158,11 @@ export async function touchSession(store: SessionStore, input: TouchSessionInput
 }
 
 /** Immediate revocation (logout, single-session revoke). */
-export async function revokeSession(store: SessionStore, digest: string, now: string): Promise<void> {
+export async function revokeSession(
+  store: SessionStore,
+  digest: string,
+  now: string,
+): Promise<void> {
   await store.revoke(digest, now);
 }
 

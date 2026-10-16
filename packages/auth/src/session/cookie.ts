@@ -20,5 +20,7 @@ export function buildSessionCookie(config: SessionCookieConfig, rawSessionId: st
 }
 
 export function buildExpiredSessionCookie(config: Pick<SessionCookieConfig, "name">): string {
-  return [`${config.name}=`, "Path=/", "HttpOnly", "Secure", "SameSite=Lax", "Max-Age=0"].join("; ");
+  return [`${config.name}=`, "Path=/", "HttpOnly", "Secure", "SameSite=Lax", "Max-Age=0"].join(
+    "; ",
+  );
 }

@@ -1,8 +1,4 @@
-import {
-  err,
-  ok,
-  type Result,
-} from "../domain.js";
+import { err, ok, type Result } from "../domain.js";
 import { keyedDigest } from "../digest.js";
 import { generateToken } from "../random.js";
 import type { HandoffCodeRecord, HandoffCodeStore } from "./types.js";
@@ -41,9 +37,15 @@ export async function createHandoffCode(
   store: HandoffCodeStore,
   input: CreateHandoffCodeInput,
 ): Promise<CreatedHandoffCode> {
-  if (!Number.isSafeInteger(input.repositoryId) || input.repositoryId < 1 ||
-    !Number.isSafeInteger(input.runtimeEpoch) || input.runtimeEpoch < 0 ||
-    !input.requestedPermissions.includes("read") || input.ttlSeconds < 1 || input.ttlSeconds > 60) {
+  if (
+    !Number.isSafeInteger(input.repositoryId) ||
+    input.repositoryId < 1 ||
+    !Number.isSafeInteger(input.runtimeEpoch) ||
+    input.runtimeEpoch < 0 ||
+    !input.requestedPermissions.includes("read") ||
+    input.ttlSeconds < 1 ||
+    input.ttlSeconds > 60
+  ) {
     throw new TypeError("handoff binding, permissions, or lifetime is invalid");
   }
   const rawCode = generateToken(HANDOFF_CODE_ENTROPY_BITS);
@@ -146,7 +148,10 @@ export async function consumeHandoffCode(
     });
   }
   if (record.runtimeEpoch !== input.presentedRuntimeEpoch) {
-    return err({ code: "RUNTIME_EPOCH_MISMATCH", message: "handoff code is not valid for this runtime epoch" });
+    return err({
+      code: "RUNTIME_EPOCH_MISMATCH",
+      message: "handoff code is not valid for this runtime epoch",
+    });
   }
   if (record.origin !== input.presentedOrigin) {
     return err({ code: "ORIGIN_MISMATCH", message: "handoff code is not valid for this origin" });

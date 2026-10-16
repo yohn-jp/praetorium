@@ -11,7 +11,11 @@ interface JwsHeader {
   readonly typ: "JWT";
 }
 
-async function signCompactJwt(header: JwsHeader, payload: object, privateKey: CryptoKey): Promise<string> {
+async function signCompactJwt(
+  header: JwsHeader,
+  payload: object,
+  privateKey: CryptoKey,
+): Promise<string> {
   const encodedHeader = base64UrlEncode(new TextEncoder().encode(JSON.stringify(header)));
   const encodedPayload = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
@@ -92,7 +96,9 @@ export async function issueAccessToken(
   signingKey: SigningKey,
   input: IssueAccessTokenInput,
 ): Promise<string> {
-  const nowSeconds = Math.floor(new Date(input.now).getTime() / 1000);
+  const nowMs = new Date(input.now).getTime();
+  if (!Number.isFinite(nowMs)) throw new TypeError("access grant issuance time must be valid");
+  const nowSeconds = Math.floor(nowMs / 1000);
   if (!Number.isInteger(input.ttlSeconds) || input.ttlSeconds < 1 || input.ttlSeconds > 300) {
     throw new TypeError("access grant lifetime must be between 1 and 300 seconds");
   }
@@ -112,7 +118,11 @@ export async function issueAccessToken(
     jti: input.tokenId,
   });
 
-  return signCompactJwt({ alg: ALGORITHM, kid: signingKey.kid, typ: "JWT" }, claims, signingKey.privateKey);
+  return signCompactJwt(
+    { alg: ALGORITHM, kid: signingKey.kid, typ: "JWT" },
+    claims,
+    signingKey.privateKey,
+  );
 }
 
 export type AccessTokenErrorCode =
@@ -121,10 +131,12 @@ export type AccessTokenErrorCode =
   | "BAD_SIGNATURE"
   | "WRONG_ALGORITHM"
   | "WRONG_ISSUER"
+  | "WRONG_AUDIENCE"
   | "WRONG_INSTANCE"
   | "WRONG_REPOSITORY"
   | "WRONG_RUNTIME_EPOCH"
   | "INSUFFICIENT_SCOPE"
+  | "INVALID_TIME"
   | "EXPIRED"
   | "NOT_YET_VALID";
 
@@ -155,12 +167,36 @@ export interface VerifyAccessTokenInput {
 export async function verifyAccessToken(
   input: VerifyAccessTokenInput,
 ): Promise<Result<AccessTokenClaims, AccessTokenError>> {
+  const nowMs = new Date(input.now).getTime();
+  if (
+    !Number.isFinite(nowMs) ||
+    !Number.isSafeInteger(input.clockSkewSeconds) ||
+    input.clockSkewSeconds < 0 ||
+    input.clockSkewSeconds > 300
+  ) {
+    return err({
+      code: "INVALID_TIME",
+      message: "token verification time or clock skew is invalid",
+    });
+  }
   const decoded = decodeCompactJwt(input.token);
   if (!decoded) {
     return err({ code: "MALFORMED", message: "token is not a well-formed compact JWT" });
   }
 
-  const header = decoded.header as { alg?: unknown; kid?: unknown };
+  const header = decoded.header as { alg?: unknown; kid?: unknown; typ?: unknown };
+  if (
+    typeof decoded.header !== "object" ||
+    decoded.header === null ||
+    Array.isArray(decoded.header) ||
+    Object.keys(decoded.header).sort().join(",") !== "alg,kid,typ" ||
+    header.typ !== "JWT"
+  ) {
+    return err({
+      code: "MALFORMED",
+      message: "token header does not match the compact JWT contract",
+    });
+  }
   if (header.alg !== ALGORITHM) {
     return err({ code: "WRONG_ALGORITHM", message: "unsupported signing algorithm" });
   }
@@ -180,11 +216,17 @@ export async function verifyAccessToken(
 
   const parsed = AccessGrantSchema.safeParse(decoded.payload);
   if (!parsed.success) {
-    return err({ code: "MALFORMED", message: "token claims do not match the access grant contract" });
+    return err({
+      code: "MALFORMED",
+      message: "token claims do not match the access grant contract",
+    });
   }
   const payload = parsed.data;
-  if (payload.iss !== input.expectedIssuer || payload.aud !== input.expectedAudience) {
+  if (payload.iss !== input.expectedIssuer) {
     return err({ code: "WRONG_ISSUER", message: "unexpected issuer" });
+  }
+  if (payload.aud !== input.expectedAudience) {
+    return err({ code: "WRONG_AUDIENCE", message: "unexpected audience" });
   }
   if (payload.instanceId !== input.expectedInstanceId) {
     return err({ code: "WRONG_INSTANCE", message: "token is not valid for this instance" });
@@ -193,11 +235,14 @@ export async function verifyAccessToken(
     return err({ code: "WRONG_REPOSITORY", message: "token is not valid for this repository" });
   }
   if (payload.runtimeEpoch !== input.expectedRuntimeEpoch) {
-    return err({ code: "WRONG_RUNTIME_EPOCH", message: "token is not valid for this runtime epoch" });
+    return err({
+      code: "WRONG_RUNTIME_EPOCH",
+      message: "token is not valid for this runtime epoch",
+    });
   }
 
-  const nowSeconds = Math.floor(new Date(input.now).getTime() / 1000);
-  if (nowSeconds > payload.exp + input.clockSkewSeconds) {
+  const nowSeconds = nowMs / 1000;
+  if (nowSeconds >= payload.exp + input.clockSkewSeconds) {
     return err({ code: "EXPIRED", message: "token has expired" });
   }
   if (nowSeconds + input.clockSkewSeconds < payload.nbf) {

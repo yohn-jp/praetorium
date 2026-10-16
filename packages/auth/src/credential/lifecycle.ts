@@ -1,10 +1,4 @@
-import {
-  err,
-  ok,
-  type McpCredentialId,
-  type Result,
-  type UserId,
-} from "../domain.js";
+import { err, ok, type McpCredentialId, type Result, type UserId } from "../domain.js";
 import { keyedDigest } from "../digest.js";
 import { generateToken } from "../random.js";
 import { roundToBucket } from "../time-bucket.js";
@@ -54,10 +48,16 @@ export async function createMcpCredential(
   store: McpCredentialStore,
   input: CreateMcpCredentialInput,
 ): Promise<CreatedMcpCredential> {
-  if (!Number.isSafeInteger(input.sessionRevision) || input.sessionRevision < 0 ||
-    !Number.isSafeInteger(input.repositoryId) || input.repositoryId < 1 ||
-    !Number.isSafeInteger(input.runtimeEpoch) || input.runtimeEpoch < 0 ||
-    !input.permissions.includes("read") || input.ttlSeconds < 1) {
+  if (
+    !Number.isSafeInteger(input.sessionRevision) ||
+    input.sessionRevision < 0 ||
+    !Number.isSafeInteger(input.repositoryId) ||
+    input.repositoryId < 1 ||
+    !Number.isSafeInteger(input.runtimeEpoch) ||
+    input.runtimeEpoch < 0 ||
+    !input.permissions.includes("read") ||
+    input.ttlSeconds < 1
+  ) {
     throw new TypeError("MCP credential binding, permissions, or lifetime is invalid");
   }
   const plaintext = `${MCP_CREDENTIAL_PREFIX}_${generateToken(CREDENTIAL_ENTROPY_BITS)}`;
@@ -160,7 +160,10 @@ export async function touchMcpCredentialLastUsed(
   now: string,
   bucketSeconds: number,
 ): Promise<void> {
-  if (previousLastUsedAt && roundToBucket(previousLastUsedAt, bucketSeconds) === roundToBucket(now, bucketSeconds)) {
+  if (
+    previousLastUsedAt &&
+    roundToBucket(previousLastUsedAt, bucketSeconds) === roundToBucket(now, bucketSeconds)
+  ) {
     return;
   }
   await store.touchLastUsed(digest, now);

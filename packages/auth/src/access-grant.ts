@@ -1,5 +1,5 @@
 import { AccessGrantSchema, type AccessGrant } from "@praetorium/contracts";
-import { AccessGrantId, type Result, type UserId } from "./domain.js";
+import type { AccessGrantId, Result, UserId } from "./domain.js";
 import { issueAccessToken, verifyAccessToken, type SigningKey } from "./jwt.js";
 import type { AccessTokenClaims, AccessTokenError } from "./jwt.js";
 

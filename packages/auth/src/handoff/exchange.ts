@@ -64,15 +64,22 @@ export async function completeInstanceHandoff(
   try {
     session = await deps.sessionStore.get(consumed.value.gatewaySessionDigest);
   } catch {
-    return { ok: false, error: { code: "STORAGE_UNAVAILABLE", message: "session store unavailable" } };
+    return {
+      ok: false,
+      error: { code: "STORAGE_UNAVAILABLE", message: "session store unavailable" },
+    };
   }
   if (
     !session ||
     session.userId !== consumed.value.userId ||
-    (session.revokedAt !== null && new Date(session.revokedAt).getTime() <= new Date(input.now).getTime()) ||
+    (session.revokedAt !== null &&
+      new Date(session.revokedAt).getTime() <= new Date(input.now).getTime()) ||
     new Date(session.expiresAt).getTime() <= new Date(input.now).getTime()
   ) {
-    return { ok: false, error: { code: "SESSION_INVALID", message: "handoff session is no longer active" } };
+    return {
+      ok: false,
+      error: { code: "SESSION_INVALID", message: "handoff session is no longer active" },
+    };
   }
 
   let access;
@@ -85,34 +92,62 @@ export async function completeInstanceHandoff(
       input.now,
     );
   } catch {
-    return { ok: false, error: { code: "STORAGE_UNAVAILABLE", message: "repository authority unavailable" } };
+    return {
+      ok: false,
+      error: { code: "STORAGE_UNAVAILABLE", message: "repository authority unavailable" },
+    };
   }
   if (access.status === "unavailable") {
-    return { ok: false, error: { code: "STORAGE_UNAVAILABLE", message: "repository authority unavailable" } };
+    return {
+      ok: false,
+      error: { code: "STORAGE_UNAVAILABLE", message: "repository authority unavailable" },
+    };
   }
   if (
-    access.status !== "allowed" || access.repositoryId !== consumed.value.repositoryId ||
-    access.instanceId !== consumed.value.instanceId || access.runtimeEpoch !== consumed.value.runtimeEpoch
+    access.status !== "allowed" ||
+    access.repositoryId !== consumed.value.repositoryId ||
+    access.instanceId !== consumed.value.instanceId ||
+    access.runtimeEpoch !== consumed.value.runtimeEpoch ||
+    access.origin !== consumed.value.origin ||
+    access.origin !== input.presentedOrigin
   ) {
-    return { ok: false, error: { code: "INSTANCE_ACCESS_DENIED", message: "repository access is no longer allowed" } };
+    return {
+      ok: false,
+      error: { code: "INSTANCE_ACCESS_DENIED", message: "repository access is no longer allowed" },
+    };
   }
 
-  const permissions = consumed.value.requestedPermissions.filter((permission) => access.permissions.includes(permission));
+  const permissions = consumed.value.requestedPermissions.filter((permission) =>
+    access.permissions.includes(permission),
+  );
   if (permissions.length === 0 || !permissions.includes("read")) {
-    return { ok: false, error: { code: "INSTANCE_ACCESS_DENIED", message: "repository access is no longer allowed" } };
+    return {
+      ok: false,
+      error: { code: "INSTANCE_ACCESS_DENIED", message: "repository access is no longer allowed" },
+    };
   }
   const nowMs = new Date(input.now).getTime();
-  const sessionSecondsRemaining = Math.floor((new Date(session.expiresAt).getTime() - nowMs) / 1000);
+  const sessionSecondsRemaining = Math.floor(
+    (new Date(session.expiresAt).getTime() - nowMs) / 1000,
+  );
   const accessSecondsRemaining = Math.floor((access.expiresAt - nowMs) / 1000);
-  const grantTtlSeconds = Math.min(deps.tokenTtlSeconds, 300, sessionSecondsRemaining, accessSecondsRemaining);
+  const grantTtlSeconds = Math.min(
+    deps.tokenTtlSeconds,
+    300,
+    sessionSecondsRemaining,
+    accessSecondsRemaining,
+  );
   if (grantTtlSeconds < 1) {
-    return { ok: false, error: { code: "SESSION_INVALID", message: "handoff authority has expired" } };
+    return {
+      ok: false,
+      error: { code: "SESSION_INVALID", message: "handoff authority has expired" },
+    };
   }
 
   const issued = await issueAccessGrant(deps.signingKey, {
     id: AccessGrantId.parse(`agr_${generateUlid()}`),
     issuer: deps.issuer,
-    audience: consumed.value.origin,
+    audience: access.origin,
     subjectUserId: consumed.value.userId,
     repositoryId: consumed.value.repositoryId,
     audienceInstanceId: consumed.value.instanceId,
@@ -132,7 +167,7 @@ export async function completeInstanceHandoff(
     repositoryId: consumed.value.repositoryId,
     instanceId: consumed.value.instanceId,
     runtimeEpoch: consumed.value.runtimeEpoch,
-    origin: consumed.value.origin,
+    origin: access.origin,
     permissions,
     sessionExpiresAt: session.expiresAt,
   });

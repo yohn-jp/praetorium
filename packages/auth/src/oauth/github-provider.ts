@@ -116,7 +116,11 @@ export function createGitHubOAuthProvider(config: GitHubOAuthProviderConfig): Gi
         email?: unknown;
         suspended_at?: unknown;
       };
-      if (result.value.status !== 200 || typeof body.id !== "number" || typeof body.login !== "string") {
+      if (
+        result.value.status !== 200 ||
+        typeof body.id !== "number" ||
+        typeof body.login !== "string"
+      ) {
         return err({ code: "UPSTREAM_ERROR", message: "GitHub profile response was malformed" });
       }
 

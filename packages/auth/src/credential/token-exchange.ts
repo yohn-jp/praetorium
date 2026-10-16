@@ -34,7 +34,6 @@ export interface TokenExchangeInput {
   readonly requestedRepositoryId: number;
   readonly requestedInstanceId: string;
   readonly requestedRuntimeEpoch: number;
-  readonly audience: string;
   readonly requestedPermissions: readonly RepositoryPermission[];
   readonly now: string;
   readonly rateLimitKey: string;
@@ -68,7 +67,8 @@ export async function exchangeMcpCredentialForAccessToken(
     record.repositoryId !== input.requestedRepositoryId ||
     record.instanceId !== input.requestedInstanceId ||
     record.runtimeEpoch !== input.requestedRuntimeEpoch
-  ) return err({ code: "INVALID_CREDENTIAL", message: "credential is invalid" });
+  )
+    return err({ code: "INVALID_CREDENTIAL", message: "credential is invalid" });
 
   let access;
   try {
@@ -86,16 +86,22 @@ export async function exchangeMcpCredentialForAccessToken(
     return err({ code: "AUTHORITY_UNAVAILABLE", message: "repository authority is unavailable" });
   }
   if (
-    access.status !== "allowed" || access.repositoryId !== input.requestedRepositoryId ||
-    access.instanceId !== input.requestedInstanceId || access.runtimeEpoch !== input.requestedRuntimeEpoch
-  ) return err({ code: "INSTANCE_BLOCKED", message: "repository is not currently accessible" });
+    access.status !== "allowed" ||
+    access.repositoryId !== input.requestedRepositoryId ||
+    access.instanceId !== input.requestedInstanceId ||
+    access.runtimeEpoch !== input.requestedRuntimeEpoch
+  )
+    return err({ code: "INSTANCE_BLOCKED", message: "repository is not currently accessible" });
 
   const requested = new Set(input.requestedPermissions);
   const grantedPermissions = record.permissions.filter(
     (permission) => requested.has(permission) && access.permissions.includes(permission),
   );
   if (!grantedPermissions.includes("read")) {
-    return err({ code: "PERMISSION_NOT_GRANTED", message: "requested repository permissions are not granted" });
+    return err({
+      code: "PERMISSION_NOT_GRANTED",
+      message: "requested repository permissions are not granted",
+    });
   }
 
   await touchMcpCredentialLastUsed(
@@ -106,7 +112,9 @@ export async function exchangeMcpCredentialForAccessToken(
     deps.lastUsedBucketSeconds,
   );
 
-  const secondsToDecisionExpiry = Math.floor((access.expiresAt - new Date(input.now).getTime()) / 1000);
+  const secondsToDecisionExpiry = Math.floor(
+    (access.expiresAt - new Date(input.now).getTime()) / 1000,
+  );
   const grantTtlSeconds = Math.min(deps.tokenTtlSeconds, 300, secondsToDecisionExpiry);
   if (grantTtlSeconds < 1) {
     return err({ code: "INSTANCE_BLOCKED", message: "repository authorization expired" });
@@ -114,7 +122,7 @@ export async function exchangeMcpCredentialForAccessToken(
   const issued = await issueAccessGrant(deps.signingKey, {
     id: AccessGrantId.parse(`agr_${generateUlid()}`),
     issuer: deps.issuer,
-    audience: input.audience,
+    audience: access.origin,
     subjectUserId: record.userId,
     repositoryId: input.requestedRepositoryId,
     audienceInstanceId: input.requestedInstanceId,
@@ -126,5 +134,8 @@ export async function exchangeMcpCredentialForAccessToken(
     ttlSeconds: grantTtlSeconds,
   });
 
-  return ok({ token: issued.token, expiresAt: new Date(issued.descriptor.exp * 1000).toISOString() });
+  return ok({
+    token: issued.token,
+    expiresAt: new Date(issued.descriptor.exp * 1000).toISOString(),
+  });
 }

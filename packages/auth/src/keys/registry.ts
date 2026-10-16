@@ -19,11 +19,33 @@ export interface KeyRecord {
   readonly retiredAt: string | null;
 }
 
-export type KeyRotationErrorCode = "NO_NEXT_KEY" | "NEXT_KEY_ALREADY_PENDING" | "NO_ACTIVE_KEY";
+export type KeyRotationErrorCode =
+  | "NO_NEXT_KEY"
+  | "NEXT_KEY_ALREADY_PENDING"
+  | "NO_ACTIVE_KEY"
+  | "INVALID_PUBLIC_KEY";
 
 export interface KeyRotationError {
   readonly code: KeyRotationErrorCode;
   readonly message: string;
+}
+
+const PRIVATE_JWK_MEMBERS = new Set(["d", "p", "q", "dp", "dq", "qi", "oth", "k"]);
+
+/** Returns only the public P-256 members used by ES256, rejecting private key material. */
+function publicP256Members(value: JsonWebKey): Pick<JsonWebKey, "kty" | "crv" | "x" | "y"> | null {
+  const candidate = value as JsonWebKey & Record<string, unknown>;
+  if (Object.keys(candidate).some((member) => PRIVATE_JWK_MEMBERS.has(member))) return null;
+  if (
+    candidate.kty !== "EC" ||
+    candidate.crv !== "P-256" ||
+    typeof candidate.x !== "string" ||
+    candidate.x.length === 0 ||
+    typeof candidate.y !== "string" ||
+    candidate.y.length === 0
+  )
+    return null;
+  return { kty: "EC", crv: "P-256", x: candidate.x, y: candidate.y };
 }
 
 /** Registers a newly generated key as `next`. At most one `next` key may be pending at a time. */
@@ -31,10 +53,17 @@ export function addNextKey(
   keys: readonly KeyRecord[],
   candidate: Pick<KeyRecord, "kid" | "publicKeyJwk" | "createdAt">,
 ): Result<readonly KeyRecord[], KeyRotationError> {
-  if (keys.some((key) => key.status === "next")) {
-    return err({ code: "NEXT_KEY_ALREADY_PENDING", message: "a next key is already pending promotion" });
+  const publicKeyJwk = publicP256Members(candidate.publicKeyJwk);
+  if (!publicKeyJwk) {
+    return err({ code: "INVALID_PUBLIC_KEY", message: "a public P-256 signing key is required" });
   }
-  return ok([...keys, { ...candidate, status: "next", retiredAt: null }]);
+  if (keys.some((key) => key.status === "next")) {
+    return err({
+      code: "NEXT_KEY_ALREADY_PENDING",
+      message: "a next key is already pending promotion",
+    });
+  }
+  return ok([...keys, { ...candidate, publicKeyJwk, status: "next", retiredAt: null }]);
 }
 
 /**
@@ -71,8 +100,14 @@ export function promoteNextKey(
  * an unexpired token" — the compromise itself is the reason to accept that
  * cost.
  */
-export function emergencyRevokeKey(keys: readonly KeyRecord[], kid: string, now: string): readonly KeyRecord[] {
-  return keys.map((key) => (key.kid === kid ? { ...key, status: "compromised", retiredAt: now } : key));
+export function emergencyRevokeKey(
+  keys: readonly KeyRecord[],
+  kid: string,
+  now: string,
+): readonly KeyRecord[] {
+  return keys.map((key) =>
+    key.kid === kid ? { ...key, status: "compromised", retiredAt: now } : key,
+  );
 }
 
 /**
@@ -82,7 +117,11 @@ export function emergencyRevokeKey(keys: readonly KeyRecord[], kid: string, now:
  * immediately instead, and deleting the key material is a separate,
  * deliberate incident-response step outside this pure state machine.
  */
-export function canDeleteKey(key: KeyRecord, maxTokenLifetimeSeconds: number, now: string): boolean {
+export function canDeleteKey(
+  key: KeyRecord,
+  maxTokenLifetimeSeconds: number,
+  now: string,
+): boolean {
   if (key.status !== "retired" || !key.retiredAt) {
     return false;
   }
@@ -107,7 +146,11 @@ export function buildJwksDocument(keys: readonly KeyRecord[]): JwksDocument {
   return {
     keys: keys
       .filter((key) => key.status !== "compromised")
-      .map((key) => ({ ...key.publicKeyJwk, kid: key.kid, alg: "ES256", use: "sig" })),
+      .map((key) => {
+        const publicKey = publicP256Members(key.publicKeyJwk);
+        if (!publicKey) throw new TypeError("key registry contains invalid public key material");
+        return { ...publicKey, kid: key.kid, alg: "ES256", use: "sig" };
+      }),
   };
 }
 
@@ -120,5 +163,7 @@ export async function resolveVerificationKey(
   if (!record) {
     return null;
   }
-  return importPublicKeyJwk(record.publicKeyJwk);
+  const publicKey = publicP256Members(record.publicKeyJwk);
+  if (!publicKey) return null;
+  return importPublicKeyJwk(publicKey);
 }

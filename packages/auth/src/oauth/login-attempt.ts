@@ -2,6 +2,8 @@
 export interface LoginAttemptRecord {
   readonly state: string;
   readonly codeVerifier: string;
+  /** SHA-256 digest of the browser-bound nonce cookie; the nonce itself is never persisted. */
+  readonly browserNonceDigest: string;
   readonly redirectTo: string;
   readonly createdAt: string;
   readonly expiresAt: string;

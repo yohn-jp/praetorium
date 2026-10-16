@@ -9,6 +9,8 @@ export type FreshRepositoryAccessResult =
       readonly repositoryId: number;
       readonly installationId: number;
       readonly instanceId: string;
+      /** Canonical HTTPS origin resolved by the trusted repository/instance authority. */
+      readonly origin: string;
       readonly runtimeEpoch: number;
       readonly authorizationRevision: number;
       readonly permissions: readonly RepositoryPermission[];

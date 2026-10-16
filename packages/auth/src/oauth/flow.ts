@@ -1,13 +1,28 @@
 import { err, ok, type Result } from "../domain.js";
 import { deriveCodeChallengeS256, generateCodeVerifier, generateState } from "../pkce.js";
-import { isLoginAttemptExpired, type LoginAttemptRecord, type LoginAttemptStore } from "./login-attempt.js";
-import type { GitHubOAuthProvider } from "./types.js";
+import { constantTimeEqual } from "../digest.js";
+import { base64UrlEncode } from "../random.js";
+import {
+  isLoginAttemptExpired,
+  type LoginAttemptRecord,
+  type LoginAttemptStore,
+} from "./login-attempt.js";
+import type { GitHubOAuthProvider, GitHubTokenResponse } from "./types.js";
 
 function addSeconds(iso: string, seconds: number): string {
   return new Date(new Date(iso).getTime() + seconds * 1000).toISOString();
 }
 
+const BROWSER_NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+async function browserNonceDigest(browserNonce: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(browserNonce));
+  return base64UrlEncode(new Uint8Array(digest));
+}
+
 export interface StartLoginInput {
+  /** Raw 256-bit nonce carried only in the browser's HttpOnly callback cookie. */
+  readonly browserNonce: string;
   readonly redirectUri: string;
   /** Already validated by the caller via `isSafeRelativeRedirect`. */
   readonly redirectTo: string;
@@ -27,6 +42,9 @@ export async function startGithubLogin(
   attemptStore: LoginAttemptStore,
   input: StartLoginInput,
 ): Promise<StartLoginResult> {
+  if (!BROWSER_NONCE_PATTERN.test(input.browserNonce)) {
+    throw new TypeError("browser-bound login nonce must contain 256 bits of URL-safe randomness");
+  }
   const state = generateState();
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await deriveCodeChallengeS256(codeVerifier);
@@ -34,6 +52,7 @@ export async function startGithubLogin(
   const attempt: LoginAttemptRecord = {
     state,
     codeVerifier,
+    browserNonceDigest: await browserNonceDigest(input.browserNonce),
     redirectTo: input.redirectTo,
     createdAt: input.now,
     expiresAt: addSeconds(input.now, input.attemptTtlSeconds),
@@ -55,6 +74,7 @@ export type GithubCallbackErrorCode =
   | "PROVIDER_DENIED"
   | "STATE_NOT_FOUND"
   | "STATE_EXPIRED"
+  | "BROWSER_BINDING_MISMATCH"
   | "TOKEN_EXCHANGE_FAILED"
   | "PROFILE_FETCH_FAILED"
   | "CREDENTIAL_STORAGE_FAILED"
@@ -81,7 +101,7 @@ export interface GitHubUserCredentialSink {
   /** Persists the token bundle encrypted; implementations must never store or log plaintext. */
   storeEncrypted(
     githubSubject: string,
-    tokens: import("./types.js").GitHubTokenResponse,
+    tokens: GitHubTokenResponse,
     issuedAt: string,
   ): Promise<void>;
 }
@@ -98,6 +118,7 @@ export async function handleGithubCallback(
   attemptStore: LoginAttemptStore,
   redirectUri: string,
   query: GithubCallbackQuery,
+  presentedBrowserNonce: string | null,
   now: string,
 ): Promise<Result<ResolvedGithubLogin, GithubCallbackError>> {
   if (query.error) {
@@ -118,6 +139,17 @@ export async function handleGithubCallback(
 
   if (isLoginAttemptExpired(attempt, now)) {
     return err({ code: "STATE_EXPIRED", message: "login attempt expired" });
+  }
+
+  if (
+    !presentedBrowserNonce ||
+    !BROWSER_NONCE_PATTERN.test(presentedBrowserNonce) ||
+    !constantTimeEqual(attempt.browserNonceDigest, await browserNonceDigest(presentedBrowserNonce))
+  ) {
+    return err({
+      code: "BROWSER_BINDING_MISMATCH",
+      message: "login callback is not bound to this browser",
+    });
   }
 
   const tokenResult = await provider.exchangeCode({
@@ -151,6 +183,7 @@ export async function handleGithubCallbackWithCredentialSink(
   attemptStore: LoginAttemptStore,
   redirectUri: string,
   query: GithubCallbackQuery,
+  presentedBrowserNonce: string | null,
   now: string,
   credentialSink: GitHubUserCredentialSink,
 ): Promise<Result<ResolvedGithubLogin, GithubCallbackError>> {
@@ -163,10 +196,24 @@ export async function handleGithubCallbackWithCredentialSink(
 
   const attempt = await attemptStore.consume(query.state);
   if (!attempt) {
-    return err({ code: "STATE_NOT_FOUND", message: "login attempt was not found, already used, or unknown" });
+    return err({
+      code: "STATE_NOT_FOUND",
+      message: "login attempt was not found, already used, or unknown",
+    });
   }
   if (isLoginAttemptExpired(attempt, now)) {
     return err({ code: "STATE_EXPIRED", message: "login attempt expired" });
+  }
+
+  if (
+    !presentedBrowserNonce ||
+    !BROWSER_NONCE_PATTERN.test(presentedBrowserNonce) ||
+    !constantTimeEqual(attempt.browserNonceDigest, await browserNonceDigest(presentedBrowserNonce))
+  ) {
+    return err({
+      code: "BROWSER_BINDING_MISMATCH",
+      message: "login callback is not bound to this browser",
+    });
   }
 
   const tokenResult = await provider.exchangeCode({
@@ -189,7 +236,10 @@ export async function handleGithubCallbackWithCredentialSink(
   try {
     await credentialSink.storeEncrypted(profileResult.value.subject, tokenResult.value, now);
   } catch {
-    return err({ code: "CREDENTIAL_STORAGE_FAILED", message: "GitHub credentials could not be stored securely" });
+    return err({
+      code: "CREDENTIAL_STORAGE_FAILED",
+      message: "GitHub credentials could not be stored securely",
+    });
   }
 
   return ok({

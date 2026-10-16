@@ -29,10 +29,15 @@ function origin(value: string): string {
     throw new Error("Invalid runtime issuer policy");
   return u.origin;
 }
-export function resolveRuntimeContext(claim: ClaimedOperation, policy: RuntimeContextPolicy) {
+export function resolveAdmittedRuntime(
+  snapshot: ClaimedOperation["snapshot"],
+  revision: DeploymentRevisionSummary | null,
+  runtimeEpoch: number | null,
+  policy: RuntimeContextPolicy,
+) {
   const gateway = origin(policy.gatewayOrigin),
     control = origin(policy.controlPlaneOrigin);
-  const { binding, instance } = claim.snapshot;
+  const { binding, instance } = snapshot;
   if (
     binding.suspended ||
     binding.instanceId !== instance.instanceId ||
@@ -98,11 +103,26 @@ export function resolveRuntimeContext(claim: ClaimedOperation, policy: RuntimeCo
       metadata,
     };
   };
-  const current = resolve(claim.currentDeploymentRevision, instance.observedRuntimeEpoch);
+  return resolve(revision, runtimeEpoch);
+}
+
+export function resolveRuntimeContext(claim: ClaimedOperation, policy: RuntimeContextPolicy) {
+  const { instance } = claim.snapshot;
+  const current = resolveAdmittedRuntime(
+    claim.snapshot,
+    claim.currentDeploymentRevision,
+    instance.observedRuntimeEpoch,
+    policy,
+  );
   const target =
     claim.operation.kind === "stop"
       ? null
-      : resolve(claim.deploymentRevision, claim.operation.runtimeEpoch);
+      : resolveAdmittedRuntime(
+          claim.snapshot,
+          claim.deploymentRevision,
+          claim.operation.runtimeEpoch,
+          policy,
+        );
   if (claim.operation.kind !== "stop" && target === null)
     throw new Error("Target deployment is unavailable");
   if (

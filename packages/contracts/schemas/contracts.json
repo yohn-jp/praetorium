@@ -1176,6 +1176,271 @@
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
+  "CompositionManifestSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "scriptorium-composition/v1"
+      },
+      "buildInput": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "scriptorium-build/v1"
+          },
+          "producerRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "runtimeBaseDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "buildKitDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "recipeDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "sourceDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "lockDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "requestedModules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "resolvedModules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "artifactDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "artifactDigest"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "linux/amd64",
+              "linux/arm64"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "contractVersion",
+          "producerRevision",
+          "runtimeBaseDigest",
+          "buildKitDigest",
+          "recipeDigest",
+          "sourceDigest",
+          "lockDigest",
+          "requestedModules",
+          "resolvedModules",
+          "platform",
+          "options"
+        ],
+        "additionalProperties": false
+      },
+      "buildKey": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "producerRevision": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{40}$"
+      },
+      "platform": {
+        "type": "string",
+        "enum": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      },
+      "resolvedModules": {
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "artifactDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "artifactDigest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "server": {
+        "type": "object",
+        "properties": {
+          "entry": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?!\\/)[A-Za-z0-9._/-]+$"
+          },
+          "moduleIds": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "required": [
+          "entry",
+          "moduleIds"
+        ],
+        "additionalProperties": false
+      },
+      "browser": {
+        "type": "object",
+        "properties": {
+          "entry": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^(?!\\/)[A-Za-z0-9._/-]+$"
+          },
+          "moduleIds": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "required": [
+          "entry",
+          "moduleIds"
+        ],
+        "additionalProperties": false
+      },
+      "nativeDependencies": {
+        "maxItems": 512,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "artifactDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "artifactDigest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "smoke": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
+          "healthPath": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^\\/(?!\\/)[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 300
+          }
+        },
+        "required": [
+          "id",
+          "healthPath",
+          "timeoutSeconds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "buildInput",
+      "buildKey",
+      "producerRevision",
+      "platform",
+      "resolvedModules",
+      "server",
+      "browser",
+      "nativeDependencies",
+      "smoke"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
   "DigestSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "string",

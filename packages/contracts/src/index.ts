@@ -8,3 +8,4 @@ export * from "./instance-access.js";
 export * from "./artifact.js";
 export * from "./build-queue.js";
 export * from "./instance-hostname.js";
+export * from "./composition.js";

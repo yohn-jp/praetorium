@@ -9,6 +9,7 @@ export const RuntimeGitCredentialRegistrationSchema = z.strictObject({
   runtimeId: z.string().min(1).max(128),
   runtimeEpoch: z.number().int().positive().safe(),
   leaseId: z.string().min(1).max(128),
+  permission: z.enum(["read", "write"]),
   expiresAt: z.iso.datetime(),
   encryptedSecret: z.strictObject({
     version: z.literal(1),

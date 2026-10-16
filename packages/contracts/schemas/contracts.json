@@ -5893,6 +5893,13 @@
         "minLength": 1,
         "maxLength": 128
       },
+      "permission": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write"
+        ]
+      },
       "expiresAt": {
         "type": "string",
         "format": "date-time",
@@ -5955,6 +5962,7 @@
       "runtimeId",
       "runtimeEpoch",
       "leaseId",
+      "permission",
       "expiresAt",
       "encryptedSecret",
       "status",
@@ -6002,6 +6010,13 @@
         "minLength": 1,
         "maxLength": 128
       },
+      "permission": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write"
+        ]
+      },
       "expiresAt": {
         "type": "string",
         "format": "date-time",
@@ -6046,6 +6061,7 @@
       "runtimeId",
       "runtimeEpoch",
       "leaseId",
+      "permission",
       "expiresAt",
       "encryptedSecret"
     ],

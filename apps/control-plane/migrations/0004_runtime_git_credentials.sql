@@ -8,6 +8,7 @@ CREATE TABLE runtime_git_credentials (
   runtime_id TEXT NOT NULL,
   runtime_epoch INTEGER NOT NULL CHECK(runtime_epoch > 0),
   lease_id TEXT NOT NULL,
+  permission TEXT NOT NULL CHECK(permission IN ('read', 'write')),
   expires_at INTEGER NOT NULL,
   encrypted_secret_json TEXT NOT NULL CHECK(json_valid(encrypted_secret_json) AND length(encrypted_secret_json) <= 33000),
   status TEXT NOT NULL CHECK(status IN ('active', 'revocation_pending', 'revoked')),

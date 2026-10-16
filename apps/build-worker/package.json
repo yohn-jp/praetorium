@@ -1,0 +1,26 @@
+{
+  "name": "@praetorium/build-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "eslint . --max-warnings 0",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@praetorium/application": "workspace:*",
+    "@praetorium/buildkit": "workspace:*",
+    "@praetorium/contracts": "workspace:*",
+    "@praetorium/ghcr": "workspace:*"
+  }
+}

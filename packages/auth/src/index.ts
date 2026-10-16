@@ -21,6 +21,7 @@ export * from "./access-grant.js";
 export * from "./token-vault.js";
 export * from "./repository-access.js";
 export * from "./mutation-receipt.js";
+export * from "./runtime-control.js";
 export * from "./credential/token-exchange.js";
 export * from "./handoff/types.js";
 export * from "./handoff/lifecycle.js";

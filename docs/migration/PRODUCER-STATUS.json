@@ -1,8 +1,8 @@
 {
   "checkedAt": "2026-10-17",
   "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
-  "producerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
-  "previousProducerRevision": "5ee8f0f0f0b9ee63b4920f2a73f3d76baa2cef1a",
+  "producerRevision": "969e4791ce85055be69548eef2fe6c0e91abec4f",
+  "previousProducerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
   "artifactDigest": null,
   "producerModified": false,
   "capabilities": [
@@ -12,53 +12,71 @@
       "gate": "BLOCKED",
       "availableSourcePaths": [
         "scripts/profile-build.mjs",
-        "Dockerfile",
+        "scripts/profile-package.mjs",
+        "packages/module-runtime/src/module-plan.ts",
+        "packages/module-runtime/src/index.ts",
         "profiles/core.json",
-        "profiles/full.json"
+        "profiles/full.json",
+        "modules/*/package.json",
+        "Dockerfile"
       ],
-      "missing": "Arbitrary serialized selection, versioned digest catalog/resource profiles, published immutable Runtime Base/Build Kit and approved recipe protocol absent.",
-      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
-      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S01"
+      "missing": "The source now includes the full-profile module packages and a profile resolver, but there is no versioned scriptorium-build/v1 BuildCatalog resolver, digest/resource catalog, immutable Runtime Base or Build Kit, approved gateway.v0 recipe/receipt, or versioned composition manifest binding the selected image closure. scripts/profile-build.mjs accepts only core/full and uses the existing ModuleManifest resolver.",
+      "attempt": "Read detached remote main tree at 969e4791ce85055be69548eef2fe6c0e91abec4f; inspected profile generation, module-runtime exports, package manifests, Dockerfile and OCI evidence. No current producer build or conformance run was performed.",
+      "minimumUnblock": "Existing producer coordinator publishes the versioned resolver/catalog and immutable Runtime Base/Build Kit recipe, then supplies owned disposable-image evidence for Core and two distinct legal non-preset compositions with backend/browser/native closure verification."
     },
     {
       "id": "S02",
       "status": "missing",
       "gate": "BLOCKED",
-      "availableSourcePaths": ["packages/api/src/server.ts"],
-      "missing": "Hosted issuer/audience/repository/instance/epoch grant verifier and per-principal mutation authorization absent; existing static owner token cannot satisfy hosted auth.",
-      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
-      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S02"
+      "availableSourcePaths": [
+        "packages/api/src/server.ts",
+        "packages/api/src/server.test.ts"
+      ],
+      "missing": "The API accepts one shared SCRIPTORIUM_AUTH_TOKEN; /api/login creates an owner cookie session and /api/version declares cookie-owner plus bearer-read-compute-propose modes. There is no issuer/audience/JWKS AccessGrant verifier, repository/instance/epoch binding, per-principal hosted role authorization or mutation receipt.",
+      "attempt": "Read current API authentication and route dispatch at 969e4791ce85055be69548eef2fe6c0e91abec4f. The publishing module's share grants are content-sharing records, not Platform AccessGrant verification.",
+      "minimumUnblock": "Existing producer coordinator delivers hosted-grant and role enforcement plus negative issuer/repository/instance/epoch/expiry and read-only-role tests against an owned disposable runtime; static-token fallback is rejected."
     },
     {
       "id": "S03",
       "status": "missing",
       "gate": "BLOCKED",
       "availableSourcePaths": [
-        "packages/core/src/repository.ts",
-        "packages/core/src/sync.ts",
-        "docs/verification/OCI.md"
+        "packages/contracts/src/index.ts",
+        "packages/core/src/index.ts",
+        "tests/e2e/container-recovery.acceptance.mjs",
+        "docs/verification/P13-BROWSER-RECOVERY.md"
       ],
-      "missing": "Hosted numeric repository-ID assignment, scoped installation-token broker/renewal and publish actor receipt absent.",
-      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
-      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S03"
+      "missing": "CoreStore accepts a token string through githubToken or SCRIPTORIUM_GITHUB_TOKEN and uses a temporary GIT_ASKPASS helper, but there is no assignment-enforced repository binding, renewable GitCredentialProvider for installation tokens, App-scope verification or signed actor-bound publish authorization receipt. Existing GitHub browser acceptance uses a supplied token and does not prove App-token renewal.",
+      "attempt": "Read current CoreStore options/token path and browser acceptance harness at 969e4791ce85055be69548eef2fe6c0e91abec4f. No live credential-expiry or App-installation push test was run.",
+      "minimumUnblock": "Existing producer coordinator delivers numeric repository assignment enforcement, scoped installation-token brokerage and renewal, plus an owned private test-repository run proving fresh clone, mismatch rejection, actual expiry/renewal and actor-authorized push."
     },
     {
       "id": "S04",
       "status": "missing",
       "gate": "BLOCKED",
-      "availableSourcePaths": ["packages/api/src/server.ts"],
-      "missing": "Versioned status/activity/jobs/checkpoints and operation/epoch-fenced quiesce/resume absent.",
-      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
-      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S04"
+      "availableSourcePaths": [
+        "packages/api/src/server.ts",
+        "packages/core/src/index.ts"
+      ],
+      "missing": "Readiness reports process requests and pending local checkpoints and shutdown drains requests, but no versioned platform status/activity/jobs contract or operation/runtime-epoch-fenced quiesce/resume control surface is present.",
+      "attempt": "Read current API readiness and shutdown paths at 969e4791ce85055be69548eef2fe6c0e91abec4f; no /api/platform/v1 status, quiesce or resume routes were found. No new endpoints were assumed.",
+      "minimumUnblock": "Existing producer coordinator delivers authenticated versioned status/activity and quiesce/resume interfaces, then proves in-flight work, checkpoints, uncertain publication, duplicate quiesce, stale resume and healthy-empty replacement cases."
     },
     {
       "id": "S05",
       "status": "missing",
       "gate": "BLOCKED",
-      "availableSourcePaths": ["Dockerfile", "scripts/verify-oci.mjs"],
-      "missing": "Actual OCI-backed hosted composition metadata and stable-origin reconstruction/browser journal proof absent.",
-      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
-      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S05"
+      "availableSourcePaths": [
+        "Dockerfile",
+        "scripts/verify-oci.sh",
+        "packages/api/src/server.ts",
+        "docs/verification/OCI.md",
+        "docs/verification/P13-PACKAGING.md",
+        "docs/verification/P13-BROWSER-RECOVERY.md"
+      ],
+      "missing": "The source supplies a profile-image Dockerfile and generic health/readiness/profile metadata; no current published producer OCI reference/digest, hosted assignment/composition metadata or current-revision stable-origin reconstruction proof was supplied. Historical local-image evidence is for earlier source revisions only. GitHub Packages enumeration was denied for missing read:packages scope and anonymous GHCR tag listing required authentication, so no external package claim is made.",
+      "attempt": "Read current Dockerfile, runtime metadata routes and OCI evidence at 969e4791ce85055be69548eef2fe6c0e91abec4f. No producer image was built or published and no registry credentials were used.",
+      "minimumUnblock": "Existing producer coordinator supplies an immutable hosted composition image and digest plus a disposable replacement run at a stable origin; verify confirmed repository data, browser journal reconciliation, and runtime/OCI composition metadata against the same digest."
     }
   ]
 }

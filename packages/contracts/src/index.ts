@@ -12,3 +12,4 @@ export * from "./composition.js";
 export * from "./mutation-authorization.js";
 export * from "./runtime-control.js";
 export * from "./management.js";
+export * from "./runtime-identity.js";

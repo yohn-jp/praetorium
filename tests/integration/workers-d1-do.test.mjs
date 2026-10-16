@@ -462,7 +462,8 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
       event: "installation_repositories",
       action: "removed",
       installationId: testRepository.installationId,
-      repositoryIds: [testRepository.repositoryId],
+      repositoryIds: [],
+      repositorySelection: "selected",
     };
     const webhook = await postJson(
       miniflare,

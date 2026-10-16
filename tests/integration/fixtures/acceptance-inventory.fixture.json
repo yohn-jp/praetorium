@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "inventoryId": "fixture-only-not-owned",
+  "owner": {
+    "name": "Fixture owner",
+    "identity": "fixture"
+  },
+  "environment": {
+    "name": "Fixture environment",
+    "purpose": "fixture",
+    "disposable": false,
+    "production": false,
+    "expiresAt": "2099-01-01T00:00:00.000Z",
+    "cleanupProcedure": "Fixture only; no environment exists"
+  },
+  "resources": {
+    "workers-d1-do": { "state": "missing" },
+    "github-access": { "state": "missing" },
+    "buildkit-registry": { "state": "missing" },
+    "kubernetes-isolation": { "state": "missing" },
+    "browser-entry": { "state": "missing" },
+    "producer-recovery": { "state": "missing" },
+    "stable-rollout": { "state": "missing" }
+  }
+}

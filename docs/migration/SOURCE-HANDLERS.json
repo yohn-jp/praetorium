@@ -1,0 +1,517 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "yohn-jp/arcadia-platform",
+    "revision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
+    "snapshotPath": "/tmp/praetorium-campaign-source",
+    "authority": "immutable source snapshot pinned by docs/migration/PLAN.md"
+  },
+  "groups": [
+    {
+      "id": "gateway",
+      "kind": "gateway-route",
+      "coverageEntry": "G01-G27",
+      "task": "T02-T11",
+      "declaredIn": "apps/gateway/src/router.ts",
+      "handlers": [
+        {
+          "coverageEntry": "G01",
+          "task": "T10",
+          "surface": "GET /",
+          "sourcePath": "apps/gateway/src/routes/home.ts",
+          "symbol": "handleHome"
+        },
+        {
+          "coverageEntry": "G02",
+          "task": "T08",
+          "surface": "GET /health",
+          "sourcePath": "apps/gateway/src/routes/health.ts",
+          "symbol": "handleHealth"
+        },
+        {
+          "coverageEntry": "G03",
+          "task": "T08",
+          "surface": "GET /version",
+          "sourcePath": "apps/gateway/src/routes/health.ts",
+          "symbol": "handleVersion"
+        },
+        {
+          "coverageEntry": "G04",
+          "task": "T02",
+          "surface": "GET /.well-known/jwks.json",
+          "sourcePath": "apps/gateway/src/routes/jwks.ts",
+          "symbol": "handleJwks"
+        },
+        {
+          "coverageEntry": "G05",
+          "task": "T02",
+          "surface": "GET /auth/github/start",
+          "sourcePath": "apps/gateway/src/routes/oauth.ts",
+          "symbol": "handleGithubStart"
+        },
+        {
+          "coverageEntry": "G06",
+          "task": "T02",
+          "surface": "GET /auth/github/callback",
+          "sourcePath": "apps/gateway/src/routes/oauth.ts",
+          "symbol": "handleGithubCallback"
+        },
+        {
+          "coverageEntry": "G07",
+          "task": "T02",
+          "surface": "GET /api/session",
+          "sourcePath": "apps/gateway/src/routes/session.ts",
+          "symbol": "handleGetSession"
+        },
+        {
+          "coverageEntry": "G08",
+          "task": "T02",
+          "surface": "POST /auth/logout",
+          "sourcePath": "apps/gateway/src/routes/session.ts",
+          "symbol": "handleLogout"
+        },
+        {
+          "coverageEntry": "G09",
+          "task": "T02",
+          "surface": "POST /auth/logout-all",
+          "sourcePath": "apps/gateway/src/routes/session.ts",
+          "symbol": "handleLogoutAll"
+        },
+        {
+          "coverageEntry": "G10",
+          "task": "T02",
+          "surface": "POST /api/credentials",
+          "sourcePath": "apps/gateway/src/routes/credentials.ts",
+          "symbol": "handleCreateCredential"
+        },
+        {
+          "coverageEntry": "G11",
+          "task": "T02",
+          "surface": "GET /api/credentials",
+          "sourcePath": "apps/gateway/src/routes/credentials.ts",
+          "symbol": "handleListCredentials"
+        },
+        {
+          "coverageEntry": "G12",
+          "task": "T02",
+          "surface": "POST /api/credentials/:id/revoke",
+          "sourcePath": "apps/gateway/src/routes/credentials.ts",
+          "symbol": "handleRevokeCredential"
+        },
+        {
+          "coverageEntry": "G13",
+          "task": "T02",
+          "surface": "POST /api/credentials/revoke-all",
+          "sourcePath": "apps/gateway/src/routes/credentials.ts",
+          "symbol": "handleRevokeAllCredentials"
+        },
+        {
+          "coverageEntry": "G14",
+          "task": "T02",
+          "surface": "POST /api/token",
+          "sourcePath": "apps/gateway/src/routes/token-exchange.ts",
+          "symbol": "handleTokenExchange"
+        },
+        {
+          "coverageEntry": "G15",
+          "task": "T08",
+          "surface": "POST /api/instances/:id/open",
+          "sourcePath": "apps/gateway/src/routes/handoff.ts",
+          "symbol": "handleOpenInstance"
+        },
+        {
+          "coverageEntry": "G16",
+          "task": "T08",
+          "surface": "POST /internal/instance-access/handoff",
+          "sourcePath": "apps/gateway/src/routes/handoff.ts",
+          "symbol": "handleInstanceAccessHandoff"
+        },
+        {
+          "coverageEntry": "G17",
+          "task": "T08",
+          "surface": "POST /internal/instance-access/refresh",
+          "sourcePath": "apps/gateway/src/routes/handoff.ts",
+          "symbol": "handleInstanceAccessRefresh"
+        },
+        {
+          "coverageEntry": "G18",
+          "task": "T08",
+          "surface": "POST /internal/instance-access/revoke",
+          "sourcePath": "apps/gateway/src/routes/handoff.ts",
+          "symbol": "handleInstanceAccessRevoke"
+        },
+        {
+          "coverageEntry": "G19",
+          "task": "T03",
+          "surface": "GET /api/instances",
+          "sourcePath": "apps/gateway/src/routes/instances.ts",
+          "symbol": "handleListInstances"
+        },
+        {
+          "coverageEntry": "G20",
+          "task": "T03",
+          "surface": "POST /api/instances",
+          "sourcePath": "apps/gateway/src/routes/instances.ts",
+          "symbol": "handleCreateInstance"
+        },
+        {
+          "coverageEntry": "G21",
+          "task": "T03",
+          "surface": "PATCH /api/instances/:id",
+          "sourcePath": "apps/gateway/src/routes/instances.ts",
+          "symbol": "handleUpdateInstance"
+        },
+        {
+          "coverageEntry": "G22",
+          "task": "T03",
+          "surface": "DELETE /api/instances/:id",
+          "sourcePath": "apps/gateway/src/routes/instances.ts",
+          "symbol": "handleDeleteInstance"
+        },
+        {
+          "coverageEntry": "G23",
+          "task": "T11",
+          "surface": "POST /api/instances/:id/select-release",
+          "sourcePath": "apps/gateway/src/routes/instances.ts",
+          "symbol": "handleSelectRelease"
+        },
+        {
+          "coverageEntry": "G24",
+          "task": "T03",
+          "surface": "GET /api/instances/:id/operations",
+          "sourcePath": "apps/gateway/src/routes/operations.ts",
+          "symbol": "handleListOperations"
+        },
+        {
+          "coverageEntry": "G25",
+          "task": "T03",
+          "surface": "GET /api/operations/:id",
+          "sourcePath": "apps/gateway/src/routes/operations.ts",
+          "symbol": "handleGetOperation"
+        },
+        {
+          "coverageEntry": "G26",
+          "task": "T09",
+          "surface": "POST /api/operations/:id/retry",
+          "sourcePath": "apps/gateway/src/routes/operations.ts",
+          "symbol": "handleRetryOperation"
+        },
+        {
+          "coverageEntry": "G27",
+          "task": "T05",
+          "surface": "GET /api/releases",
+          "sourcePath": "apps/gateway/src/routes/releases.ts",
+          "symbol": "handleListReleases"
+        }
+      ]
+    },
+    {
+      "id": "control-plane",
+      "kind": "control-plane-route",
+      "coverageEntry": "C01-C08",
+      "task": "T02-T11",
+      "declaredIn": "apps/control-plane/src/app.ts",
+      "handlers": [
+        {
+          "coverageEntry": "C01",
+          "task": "T03",
+          "surface": "GET /internal/health",
+          "sourcePath": "apps/control-plane/src/routes/internal.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C01",
+          "task": "T03",
+          "surface": "GET /internal/version",
+          "sourcePath": "apps/control-plane/src/routes/internal.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C01",
+          "task": "T03",
+          "surface": "GET /internal/migrations",
+          "sourcePath": "apps/control-plane/src/routes/internal.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C01",
+          "task": "T03",
+          "surface": "GET /internal/diagnostics",
+          "sourcePath": "apps/control-plane/src/routes/internal.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C02",
+          "task": "T02",
+          "surface": "GET /v1/user/",
+          "sourcePath": "apps/control-plane/src/routes/users.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C02",
+          "task": "T02",
+          "surface": "POST /v1/user/resolve-github",
+          "sourcePath": "apps/control-plane/src/routes/users.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C03",
+          "task": "T03",
+          "surface": "GET /v1/audit/",
+          "sourcePath": "apps/control-plane/src/routes/audit.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C04",
+          "task": "T03",
+          "surface": "GET /v1/instances/",
+          "sourcePath": "apps/control-plane/src/routes/instances.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C04",
+          "task": "T03",
+          "surface": "POST /v1/instances/",
+          "sourcePath": "apps/control-plane/src/routes/instances.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C04",
+          "task": "T03",
+          "surface": "GET /v1/instances/:id",
+          "sourcePath": "apps/control-plane/src/routes/instances.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C04",
+          "task": "T03",
+          "surface": "GET /v1/instances/:id/access",
+          "sourcePath": "apps/control-plane/src/routes/instances.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C04",
+          "task": "T03",
+          "surface": "PATCH /v1/instances/:id",
+          "sourcePath": "apps/control-plane/src/routes/instances.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C04",
+          "task": "T03",
+          "surface": "POST /v1/instances/:id/select-release",
+          "sourcePath": "apps/control-plane/src/routes/instances.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C04",
+          "task": "T03",
+          "surface": "DELETE /v1/instances/:id",
+          "sourcePath": "apps/control-plane/src/routes/instances.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C04",
+          "task": "T03",
+          "surface": "GET /v1/instances/:id/operations",
+          "sourcePath": "apps/control-plane/src/routes/instances.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C05",
+          "task": "T03",
+          "surface": "GET /v1/operations/:id",
+          "sourcePath": "apps/control-plane/src/routes/operations.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C05",
+          "task": "T03",
+          "surface": "POST /v1/operations/:id/retry",
+          "sourcePath": "apps/control-plane/src/routes/operations.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C06",
+          "task": "T05",
+          "surface": "GET /v1/releases/",
+          "sourcePath": "apps/control-plane/src/routes/releases.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C07",
+          "task": "T11",
+          "surface": "POST /v1/admin/releases/",
+          "sourcePath": "apps/control-plane/src/routes/release-admin.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/register",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/heartbeat",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/poll",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/claim",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/lease/renew",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/progress",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/complete",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/fail",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        },
+        {
+          "coverageEntry": "C08",
+          "task": "T09",
+          "surface": "POST /v1/provisioner/abandon",
+          "sourcePath": "apps/control-plane/src/routes/provisioner.ts",
+          "symbol": "anonymous callback"
+        }
+      ]
+    },
+    {
+      "id": "instance-access",
+      "kind": "instance-access-route",
+      "coverageEntry": "A06",
+      "task": "T08",
+      "declaredIn": "apps/instance-access/src/server.ts",
+      "handlers": [
+        {
+          "coverageEntry": "A06",
+          "surface": "GET /healthz",
+          "sourcePath": "apps/instance-access/src/handler.ts",
+          "symbol": "handleInstanceAccessRequest"
+        },
+        {
+          "coverageEntry": "A06",
+          "surface": "GET /readyz",
+          "sourcePath": "apps/instance-access/src/handler.ts",
+          "symbol": "handleInstanceAccessRequest"
+        },
+        {
+          "coverageEntry": "A06",
+          "surface": "GET /_platform/status",
+          "sourcePath": "apps/instance-access/src/handler.ts",
+          "symbol": "handleInstanceAccessRequest"
+        },
+        {
+          "coverageEntry": "A06",
+          "surface": "POST /_platform/handoff",
+          "sourcePath": "apps/instance-access/src/handler.ts",
+          "symbol": "handleInstanceAccessRequest"
+        },
+        {
+          "coverageEntry": "A06",
+          "surface": "POST /_platform/refresh",
+          "sourcePath": "apps/instance-access/src/handler.ts",
+          "symbol": "handleInstanceAccessRequest"
+        },
+        {
+          "coverageEntry": "A06",
+          "surface": "POST /_platform/logout",
+          "sourcePath": "apps/instance-access/src/handler.ts",
+          "symbol": "handleInstanceAccessRequest"
+        }
+      ]
+    },
+    {
+      "id": "provisioner-health",
+      "kind": "provisioner-route",
+      "coverageEntry": "A04",
+      "task": "T09",
+      "declaredIn": "apps/provisioner/src/main.ts",
+      "handlers": [
+        {
+          "coverageEntry": "A04",
+          "surface": "GET, HEAD /healthz",
+          "sourcePath": "apps/provisioner/src/health.ts",
+          "symbol": "handleHealthRequest"
+        },
+        {
+          "coverageEntry": "A04",
+          "surface": "GET, HEAD /readyz",
+          "sourcePath": "apps/provisioner/src/health.ts",
+          "symbol": "handleHealthRequest"
+        },
+        {
+          "coverageEntry": "A04",
+          "surface": "GET, HEAD /metrics",
+          "sourcePath": "apps/provisioner/src/health.ts",
+          "symbol": "handleHealthRequest"
+        }
+      ]
+    },
+    {
+      "id": "provisioner-worker",
+      "kind": "worker-operation-surface",
+      "coverageEntry": "A04",
+      "task": "T09",
+      "declaredIn": "apps/provisioner/src/main.ts",
+      "handlers": [
+        {
+          "coverageEntry": "A04",
+          "surface": "register, heartbeat, poll, claim, lease renewal, progress, complete, fail and abandon operations",
+          "sourcePath": "apps/provisioner/src/worker.ts",
+          "relatedSourcePaths": [
+            "apps/provisioner/src/control-plane-client.ts",
+            "apps/provisioner/src/runtime-executor.ts"
+          ],
+          "symbol": "ProvisionerWorker.run"
+        }
+      ]
+    }
+  ],
+  "counts": {
+    "gatewayRoutes": 27,
+    "controlPlaneRoutes": 28,
+    "instanceAccessRoutes": 6,
+    "provisionerHealthRoutes": 3,
+    "provisionerWorkerSurfaces": 1
+  },
+  "notes": [
+    "The source revision and paths are pinned to the immutable owner-provided source snapshot; snapshotPath records the inspection location and is not a runtime dependency.",
+    "Coverage entry identifiers refer to docs/migration/COVERAGE.json; this expansion does not change that Sol-owned ledger.",
+    "Route declarations are source surfaces, not target implementation claims or acceptance proof."
+  ]
+}

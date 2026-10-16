@@ -1,0 +1,211 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { createRunnerEnvironment, REQUIRED_CATEGORIES } from "../../scripts/verify-integration.mjs";
+
+const scriptPath = path.resolve("scripts/verify-integration.mjs");
+const fixturePath = path.resolve("tests/integration/fixtures/acceptance-inventory.fixture.json");
+
+function run(arguments_) {
+  const result = spawnSync(process.execPath, [scriptPath, ...arguments_], {
+    cwd: path.resolve("."),
+    encoding: "utf8",
+    shell: false,
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  return { ...result, report: JSON.parse(result.stdout) };
+}
+
+function validShapeFixture() {
+  const ownerIdentity = "t14-fixture-operator@example.invalid";
+  return {
+    schemaVersion: 1,
+    inventoryId: "fixture-only-no-external-resources",
+    owner: { name: "T14 fixture operator", identity: ownerIdentity },
+    environment: {
+      name: "T14 disposable fixture environment",
+      purpose: "t14-disposable-test",
+      disposable: true,
+      production: false,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      cleanupProcedure: "No environment exists; fixture is used only for plan tests",
+    },
+    resources: Object.fromEntries(
+      REQUIRED_CATEGORIES.map((id) => [
+        id,
+        {
+          state: "available",
+          owner: ownerIdentity,
+          disposable: true,
+          production: false,
+          reference: `fixture-only ${id}`,
+        },
+      ]),
+    ),
+  };
+}
+
+async function withInventory(inventory, callback) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-fixture-"));
+  const inventoryPath = path.join(directory, "inventory.fixture.json");
+  try {
+    await writeFile(inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
+    return await callback(inventoryPath);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test("missing inventory is a structured non-success with all proof gates unchecked", () => {
+  const result = run(["--plan"]);
+  assert.equal(result.status, 2);
+  assert.equal(result.report.status, "BLOCKED");
+  assert.equal(result.report.effectsExecuted, false);
+  assert.deepEqual(
+    result.report.categories.map((item) => item.id),
+    REQUIRED_CATEGORIES,
+  );
+  assert.ok(result.report.categories.every((item) => item.status === "NOT_CHECKED"));
+  assert.match(result.report.errors[0], /--environment/);
+});
+
+test("fixture inventory cannot claim ownership or turn missing categories into proof", async () => {
+  const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
+  const result = run(["--plan", "--environment", fixturePath]);
+  assert.equal(result.status, 2);
+  assert.equal(result.report.inventoryId, "fixture-only-not-owned");
+  assert.equal(result.report.status, "BLOCKED");
+  assert.equal(result.report.effectsExecuted, false);
+  assert.ok(result.report.errors.length > 0);
+  assert.ok(
+    result.report.categories.every(
+      (item) => item.status === "BLOCKED" && item.proofStatus === "NOT_CHECKED",
+    ),
+  );
+  assert.equal(Object.keys(fixture.resources).length, REQUIRED_CATEGORIES.length);
+});
+
+test("plan is effect-free and reports inventory declarations as unchecked evidence", async () => {
+  await withInventory(validShapeFixture(), async (inventoryPath) => {
+    const result = run(["--plan", "--environment", inventoryPath]);
+    assert.equal(result.status, 0);
+    assert.equal(result.report.status, "NOT_CHECKED");
+    assert.equal(result.report.effectsExecuted, false);
+    assert.deepEqual(
+      result.report.intendedEffects.map((item) => item.category),
+      REQUIRED_CATEGORIES,
+    );
+    assert.ok(result.report.categories.every((item) => item.proofStatus === "NOT_CHECKED"));
+  });
+});
+
+test("missing resource declarations match the strict T12 ownership schema", async () => {
+  const inventory = validShapeFixture();
+  inventory.resources["workers-d1-do"] = {
+    state: "missing",
+    owner: inventory.owner.identity,
+    disposable: true,
+    production: false,
+    reference: null,
+  };
+  await withInventory(inventory, async (inventoryPath) => {
+    const result = run(["--plan", "--environment", inventoryPath]);
+    assert.equal(result.status, 2);
+    assert.equal(result.report.status, "BLOCKED");
+    assert.equal(result.report.effectsExecuted, false);
+    assert.deepEqual(result.report.errors, []);
+    const worker = result.report.categories.find((item) => item.id === "workers-d1-do");
+    assert.equal(worker.status, "BLOCKED");
+    assert.equal(worker.proofStatus, "NOT_CHECKED");
+  });
+
+  inventory.resources["workers-d1-do"] = { state: "missing", reference: null };
+  await withInventory(inventory, async (inventoryPath) => {
+    const result = run(["--plan", "--environment", inventoryPath]);
+    assert.equal(result.status, 2);
+    assert.equal(result.report.status, "BLOCKED");
+    assert.ok(result.report.errors.includes("workers-d1-do.owner must match owner.identity"));
+    assert.ok(result.report.errors.includes("workers-d1-do.disposable must be true"));
+    assert.ok(result.report.errors.includes("workers-d1-do.production must be explicitly false"));
+  });
+});
+
+test("inventory expiry requires an explicit date-time zone", async () => {
+  const inventory = validShapeFixture();
+  inventory.environment.expiresAt = "2099-01-01T00:00:00";
+  await withInventory(inventory, async (inventoryPath) => {
+    const result = run(["--plan", "--environment", inventoryPath]);
+    assert.equal(result.status, 2);
+    assert.equal(result.report.status, "BLOCKED");
+    assert.ok(
+      result.report.errors.includes(
+        "environment.expiresAt must be a future date-time with an explicit zone",
+      ),
+    );
+  });
+});
+
+test("unknown inventory fields are rejected before any external effect", async () => {
+  const inventory = validShapeFixture();
+  const marker = path.join(os.tmpdir(), `praetorium-t14-command-${process.pid}`);
+  inventory.resources["workers-d1-do"].command = [
+    process.execPath,
+    "-e",
+    `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "unexpected")`,
+  ];
+  await rm(marker, { force: true });
+  await withInventory(inventory, async (inventoryPath) => {
+    const result = run(["--environment", inventoryPath]);
+    assert.equal(result.status, 2);
+    assert.equal(result.report.status, "BLOCKED");
+    assert.equal(result.report.effectsExecuted, false);
+    assert.ok(result.report.errors.some((error) => error.includes("unsupported fields")));
+    await assert.rejects(readFile(marker), { code: "ENOENT" });
+  });
+});
+
+test("fixed runners do not inherit ambient credentials or machine configuration", () => {
+  const environment = createRunnerEnvironment(
+    "/owned-test/inventory.json",
+    "github-access",
+    "/temporary/isolated-home",
+    {
+      PATH: "/safe/tools",
+      SystemRoot: "C:\\Windows",
+      HOME: "/home/operator",
+      GITHUB_TOKEN: "production-looking-token",
+      KUBECONFIG: "/home/operator/.kube/config",
+      AWS_PROFILE: "default",
+      NODE_OPTIONS: "--require /tmp/untrusted-preload.cjs",
+    },
+  );
+  assert.deepEqual(environment, {
+    PATH: "/safe/tools",
+    SystemRoot: "C:\\Windows",
+    HOME: "/temporary/isolated-home",
+    USERPROFILE: "/temporary/isolated-home",
+    XDG_CONFIG_HOME: "/temporary/isolated-home/.config",
+    PRAETORIUM_T14_INVENTORY_PATH: "/owned-test/inventory.json",
+    PRAETORIUM_T14_CATEGORY: "github-access",
+  });
+});
+
+test("production declarations and incomplete category sets block the run", async () => {
+  const inventory = validShapeFixture();
+  inventory.resources["github-access"].production = true;
+  delete inventory.resources["stable-rollout"];
+  await withInventory(inventory, async (inventoryPath) => {
+    const result = run(["--plan", "--environment", inventoryPath]);
+    assert.equal(result.status, 2);
+    assert.equal(result.report.status, "BLOCKED");
+    assert.equal(result.report.effectsExecuted, false);
+    assert.ok(result.report.errors.some((error) => error.includes("github-access.production")));
+    assert.ok(result.report.errors.includes("resources.stable-rollout is required"));
+    const stable = result.report.categories.find((item) => item.id === "stable-rollout");
+    assert.equal(stable.status, "BLOCKED");
+    assert.equal(stable.proofStatus, "NOT_CHECKED");
+  });
+});

@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "task": "T14",
+  "status": "BLOCKED",
+  "proofStatus": "NOT_CHECKED",
+  "evidenceCut": {
+    "checkedAt": "2026-10-17",
+    "repository": "yohn-jp/praetorium",
+    "branch": "worker/t14",
+    "head": "6884c185e542b9a64ea2fc2591cdf989729d6180",
+    "sourceRepository": "yohn-jp/arcadia-platform",
+    "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
+    "producerRepository": "yohn-jp/scriptorium",
+    "producerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
+    "producerArtifactDigest": null
+  },
+  "environment": {
+    "inventoryId": "praetorium-t14-local",
+    "inventoryPath": "T12 worktree draft: infrastructure/test/acceptance-inventory.json",
+    "owned": false,
+    "disposable": false,
+    "production": false,
+    "declaredOwnerIdentity": "operator-supplied before provisioning",
+    "resourcesAvailable": false,
+    "reason": "T12's inventory is an unprovisioned draft with no owner identity and all seven resources missing."
+  },
+  "capabilityProbe": {
+    "node": "v24.21.0",
+    "pnpm": "11.18.0",
+    "foundFromShellPath": ["node", "pnpm"],
+    "notFoundFromShellPath": [
+      "wrangler",
+      "docker",
+      "podman",
+      "buildctl",
+      "nerdctl",
+      "kubectl",
+      "k3d",
+      "kind",
+      "chromium",
+      "chromium-browser",
+      "google-chrome"
+    ],
+    "workspaceDevTools": {
+      "wrangler": "4.118.0",
+      "miniflare": "4.20260730.0",
+      "esbuild": "0.28.1",
+      "playwright": "1.64.1"
+    },
+    "cachedChromium": {
+      "location": "Playwright cache",
+      "binaryPresent": true,
+      "versionProbeStatus": "PASS_WITH_LOCAL_LIBRARY_OVERLAY",
+      "versionProbeExitCode": 0,
+      "version": "Google Chrome for Testing 156.0.8078.4",
+      "sharedLibraryProbeStatus": "PASS",
+      "unresolvedSharedLibraryCount": 0,
+      "runtimeOverlayValuesRecorded": false
+    },
+    "browserCapabilitySmoke": {
+      "status": "PASS",
+      "runner": "@playwright/test 1.64.1",
+      "browserVersion": "Google Chrome for Testing 156.0.8078.4",
+      "loadedDocument": "data:text/html with a capability-only title",
+      "productAcceptance": false,
+      "externalNavigation": false
+    },
+    "deployableWorkerOrControlPlaneBundlePresent": false,
+    "gatewayUiSourcePresent": true,
+    "githubPluginSourcePresent": true,
+    "ghcrPluginSourcePresent": true,
+    "scriptoriumAdapterPresent": true,
+    "legacyRecoveryToolSourcePresent": true,
+    "workerBundlePresent": false,
+    "controlPlaneBundlePresent": false,
+    "localD1DoBindingConfigurationPresent": false
+  },
+  "harnessVerification": {
+    "status": "PASS",
+    "scope": "inventory validation and effect-free planning only",
+    "producerAcceptance": false,
+    "tests": {
+      "command": "node --test tests/integration/verify-integration.test.mjs",
+      "status": "PASS",
+      "passed": 8,
+      "failed": 0
+    },
+    "inventoryPlan": {
+      "command": "node scripts/verify-integration.mjs --plan --environment /tmp/praetorium-t12/infrastructure/test/acceptance-inventory.json",
+      "status": "BLOCKED",
+      "exitCode": 2,
+      "effectsExecuted": false,
+      "unresolvedOwner": true,
+      "missingCategories": [
+        "workers-d1-do",
+        "github-access",
+        "buildkit-registry",
+        "kubernetes-isolation",
+        "browser-entry",
+        "producer-recovery",
+        "stable-rollout"
+      ]
+    },
+    "fixedAcceptanceRunnerPathsPresent": false
+  },
+  "workspaceVerification": {
+    "frozenInstall": {
+      "checkedHead": "6884c185e542b9a64ea2fc2591cdf989729d6180",
+      "command": "corepack pnpm@11.18.0 install --frozen-lockfile",
+      "status": "FAIL",
+      "failure": "Lockfile is not up to date with plugins/ghcr/package.json; eight dependency specifiers are missing."
+    },
+    "check": {
+      "checkedHead": "219bd8eaa4023a2c614df2dcf801ffbba6ecc704",
+      "command": "corepack pnpm@11.18.0 check",
+      "status": "FAIL",
+      "currentEvidenceCutStatus": "NOT_RUN_AFTER_FROZEN_INSTALL_FAILURE",
+      "failure": [
+        "packages/auth/src/access-grant.ts:2 requires an import type declaration.",
+        "packages/auth/src/oauth/flow.ts:84 uses a forbidden import() type annotation."
+      ]
+    }
+  },
+  "handlerInventory": {
+    "status": "SOURCE_MAPPED",
+    "path": "docs/migration/SOURCE-HANDLERS.json",
+    "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
+    "verifiedHandlerSurfaces": 65,
+    "verifiedSourceFileReferences": 72,
+    "distinctSourceFiles": 28,
+    "counts": {
+      "gatewayRoutes": 27,
+      "controlPlaneRoutes": 28,
+      "instanceAccessRoutes": 6,
+      "provisionerHealthRoutes": 3,
+      "provisionerWorkerSurfaces": 1
+    },
+    "acceptanceProof": false
+  },
+  "categories": [
+    {
+      "id": "workers-d1-do",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "blocker": "No Worker bundle, local D1/DO bindings or owned environment inventory."
+    },
+    {
+      "id": "github-access",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "blocker": "No explicit test GitHub App, authorized test users, owned test repository or credentials."
+    },
+    {
+      "id": "buildkit-registry",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "blocker": "No local BuildKit runtime or owned disposable OCI registry with immutable producer artifacts."
+    },
+    {
+      "id": "kubernetes-isolation",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "blocker": "No owned disposable Kubernetes cluster, ingress or runtime tools."
+    },
+    {
+      "id": "browser-entry",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "blocker": "No integrated Gateway/Instance Access route or explicitly owned stable test origin at this HEAD."
+    },
+    {
+      "id": "producer-recovery",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "blocker": "S01-S05 are marked missing in PRODUCER-STATUS.json; no real producer image or recovery evidence."
+    },
+    {
+      "id": "stable-rollout",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "blocker": "No integrated rollout runtime, disposable cluster, registry artifact or canary evidence."
+    }
+  ],
+  "producerGates": [
+    { "id": "S01", "status": "BLOCKED", "artifactDigest": null },
+    { "id": "S02", "status": "BLOCKED", "artifactDigest": null },
+    { "id": "S03", "status": "BLOCKED", "artifactDigest": null },
+    { "id": "S04", "status": "BLOCKED", "artifactDigest": null },
+    { "id": "S05", "status": "BLOCKED", "artifactDigest": null }
+  ],
+  "measurements": null,
+  "notes": [
+    "The checkout contains Gateway UI source but no deployable Worker or Control Plane bundle, local D1/DO binding configuration, or infrastructure/test tree at the recorded HEAD.",
+    "The eight harness tests use fixture-only inventory data and verify preflight behavior only; they are not product acceptance.",
+    "No credentials, worker, registry, cluster, product page or producer process was used; the browser capability smoke only loaded a local data URL."
+  ]
+}

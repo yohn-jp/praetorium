@@ -1,4 +1,4 @@
-import { ArtifactAdmissionError, ArtifactAdmissionService } from "../artifacts/admission.js";
+import { ArtifactAdmissionError, type ArtifactAdmissionService } from "../artifacts/admission.js";
 import type { BuildInput } from "@praetorium/contracts";
 import { isSha256Digest, type Sha256Digest } from "../artifacts/digest.js";
 import type { VerifiedArtifact } from "../artifacts/types.js";

@@ -151,6 +151,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/domain
 
+  plugins/kubernetes: {}
+
   plugins/legacy-recovery: {}
 
   plugins/scriptorium:

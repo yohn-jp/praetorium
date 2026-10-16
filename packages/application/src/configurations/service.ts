@@ -1,5 +1,6 @@
 import {
   BuildInputSchema,
+  DigestSchema,
   RuntimeMetadataSchema,
   ResourceRequirementsSchema,
   buildKey,
@@ -15,6 +16,10 @@ import {
   type ConfigurationPlanReceipt,
   type ConfigurationPlanner,
   type ConfigurationSelection,
+  type ConfigurationStageActivationMutation,
+  type ConfigurationStageActivationReceipt,
+  type ConfigurationStageReference,
+  type ConfigurationStageReceipt,
   type ConfigurationStore,
 } from "./types.js";
 
@@ -52,8 +57,30 @@ const PreviewRequestSchema = z.strictObject({
   selection: ConfigurationSelectionSchema,
 });
 
+const StageRequestSchema = PlanRequestSchema;
+const StageActivationRequestSchema = z.strictObject({
+  stageId: z.string().min(1).max(128),
+  clusterId: z.string().min(1).max(128),
+  rolloutId: z.string().min(1).max(128),
+  releaseId: z.string().min(1).max(128),
+  owner: z.string().min(1).max(128),
+  leaseEpoch: z.number().int().positive().safe(),
+  expectedRolloutRevision: z.number().int().nonnegative().safe(),
+  expectedBuildKey: DigestSchema,
+  expectedBuildId: z.string().min(1).max(128),
+  expectedArtifactDigest: DigestSchema,
+  actorId: z.string().min(1).max(255),
+  actorKind: z.enum(["user", "system", "operator"]),
+  operationId: z.string().min(1).max(128),
+  operationIdempotencyKey: z.string().min(1).max(128),
+  requestId: z.string().min(1).max(128).nullable(),
+  now: z.number().int().nonnegative().safe(),
+});
+
 export type ConfigurationPlanRequest = z.infer<typeof PlanRequestSchema>;
 export type ConfigurationPreviewRequest = z.infer<typeof PreviewRequestSchema>;
+export type ConfigurationStageRequest = z.infer<typeof StageRequestSchema>;
+export type ConfigurationStageActivationRequest = ConfigurationStageActivationMutation;
 
 export type ConfigurationPreview = ConfigurationPlanOutput & {
   readonly buildKey: string;
@@ -62,7 +89,7 @@ export type ConfigurationPreview = ConfigurationPlanOutput & {
 };
 
 export type ConfigurationServiceOptions = {
-  readonly newId?: (kind: "build" | "revision" | "operation") => string;
+  readonly newId?: (kind: "build" | "revision" | "operation" | "stage") => string;
 };
 
 /** Plans durable repository configuration using only a trusted producer planner. */
@@ -142,6 +169,58 @@ export class ConfigurationService {
     throw new ConfigurationConflictError();
   }
 
+  /** Persists the internal stable-rollout build snapshot without changing desired state. */
+  async stage(input: ConfigurationStageRequest): Promise<ConfigurationStageReceipt> {
+    const request = StageRequestSchema.parse(input);
+    const requestHash = await digestJson({
+      repositoryId: request.repositoryId,
+      bindingEpoch: request.bindingEpoch,
+      authorizationRevision: request.authorizationRevision,
+      instanceId: request.instanceId,
+      expectedGeneration: request.expectedGeneration,
+      selection: canonicalSelection(request.selection),
+      actorId: request.actorId,
+    });
+    const idempotencyRequest = {
+      repositoryId: request.repositoryId,
+      idempotencyKey: request.idempotencyKey,
+      requestHash,
+    };
+    const prior = await this.store.findStageByIdempotency(idempotencyRequest);
+    if (prior) return { ...prior, replayed: true };
+
+    const context = await this.requireCurrentContext(request);
+    const plan = await this.resolve(request.selection);
+    const key = await buildKey(plan.buildInput);
+    const result = await this.store.stageConfiguration({
+      repositoryId: request.repositoryId,
+      instanceId: request.instanceId,
+      bindingEpoch: request.bindingEpoch,
+      authorizationRevision: request.authorizationRevision,
+      expectedGeneration: request.expectedGeneration,
+      expectedPolicy: context.instance.policy,
+      expectedRuntimeEpoch: context.instance.runtimeEpoch,
+      expectedDesiredState: context.instance.desiredState,
+      selection: canonicalSelection(request.selection),
+      buildInput: plan.buildInput,
+      buildKey: key,
+      resources: plan.resources,
+      runtimeMetadata: plan.runtimeMetadata,
+      actorId: request.actorId,
+      idempotencyKey: request.idempotencyKey,
+      requestHash,
+      requestId: request.requestId,
+      stageId: this.newId("stage"),
+      buildId: this.newId("build"),
+      now: request.now,
+    });
+    if (result) return result;
+
+    const concurrent = await this.store.findStageByIdempotency(idempotencyRequest);
+    if (concurrent) return { ...concurrent, replayed: true };
+    throw new ConfigurationConflictError();
+  }
+
   getByInstance(instanceId: string): Promise<ConfigurationContext | null> {
     if (typeof instanceId !== "string" || instanceId.length === 0 || instanceId.length > 128) {
       throw new TypeError("instance ID is invalid");
@@ -156,13 +235,61 @@ export class ConfigurationService {
     return this.store.getCurrentRevision(instanceId);
   }
 
-  async findByIdempotency(repositoryId: number, idempotencyKey: string): Promise<ConfigurationPlanReceipt | null> {
-    if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) throw new TypeError("repository ID is invalid");
-    if (typeof idempotencyKey !== "string" || idempotencyKey.length === 0 || idempotencyKey.length > 128) {
+  async findByIdempotency(
+    repositoryId: number,
+    idempotencyKey: string,
+  ): Promise<ConfigurationPlanReceipt | null> {
+    if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0)
+      throw new TypeError("repository ID is invalid");
+    if (
+      typeof idempotencyKey !== "string" ||
+      idempotencyKey.length === 0 ||
+      idempotencyKey.length > 128
+    ) {
       throw new TypeError("idempotency key is invalid");
     }
     const result = await this.store.getPlanByIdempotency({ repositoryId, idempotencyKey });
     return result ? { ...result, replayed: true } : null;
+  }
+
+  async findStageByIdempotency(
+    repositoryId: number,
+    idempotencyKey: string,
+  ): Promise<ConfigurationStageReference | null> {
+    if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0)
+      throw new TypeError("repository ID is invalid");
+    if (
+      typeof idempotencyKey !== "string" ||
+      idempotencyKey.length === 0 ||
+      idempotencyKey.length > 128
+    ) {
+      throw new TypeError("idempotency key is invalid");
+    }
+    const result = await this.store.getStageByIdempotency({ repositoryId, idempotencyKey });
+    return result
+      ? {
+          stageId: result.stage.stageId,
+          buildKey: result.stage.buildKey,
+          buildId: result.stage.buildId,
+          artifactDigest: result.build.artifactDigest,
+          status: result.stage.status,
+        }
+      : null;
+  }
+
+  async getLatestStage(instanceId: string): Promise<ConfigurationStageReceipt | null> {
+    if (typeof instanceId !== "string" || instanceId.length === 0 || instanceId.length > 128) {
+      throw new TypeError("instance ID is invalid");
+    }
+    const stage = await this.store.getLatestStage(instanceId);
+    return stage ? { ...stage, replayed: false } : null;
+  }
+
+  async activateStageUnderClusterFence(
+    input: ConfigurationStageActivationRequest,
+  ): Promise<ConfigurationStageActivationReceipt | null> {
+    const request = StageActivationRequestSchema.parse(input);
+    return this.store.activateStageUnderClusterFence(request);
   }
 
   getRevision(revisionId: string) {
@@ -173,7 +300,14 @@ export class ConfigurationService {
   }
 
   private async requireCurrentContext(
-    request: Pick<ConfigurationPlanRequest, "repositoryId" | "bindingEpoch" | "authorizationRevision" | "instanceId" | "expectedGeneration">,
+    request: Pick<
+      ConfigurationPlanRequest,
+      | "repositoryId"
+      | "bindingEpoch"
+      | "authorizationRevision"
+      | "instanceId"
+      | "expectedGeneration"
+    >,
   ): Promise<ConfigurationContext> {
     const context = await this.store.getPlanContext(request.repositoryId);
     if (!context) throw new ConfigurationNotFoundError();
@@ -201,9 +335,14 @@ export class ConfigurationService {
     }
     const runtimeMetadata = RuntimeMetadataSchema.parse(result.runtimeMetadata);
     if (runtimeMetadata.producerRevision !== buildInput.producerRevision) {
-      throw new TypeError("producer runtime metadata is not bound to the selected build producer revision");
+      throw new TypeError(
+        "producer runtime metadata is not bound to the selected build producer revision",
+      );
     }
-    if (JSON.stringify(buildInput.requestedModules) !== JSON.stringify(normalizedSelection.requestedModules)) {
+    if (
+      JSON.stringify(buildInput.requestedModules) !==
+      JSON.stringify(normalizedSelection.requestedModules)
+    ) {
       throw new TypeError("producer plan is not bound to the requested module selection");
     }
     const resolved = new Set(buildInput.resolvedModules.map(({ id }) => id));
@@ -220,6 +359,9 @@ function canonicalSelection(selection: ConfigurationSelection): ConfigurationSel
 }
 
 async function digestJson(value: unknown): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value)));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
   return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }

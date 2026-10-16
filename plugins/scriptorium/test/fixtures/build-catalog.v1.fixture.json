@@ -1,0 +1,42 @@
+{
+  "contractVersion": "scriptorium-build/v1",
+  "producerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
+  "runtimeBaseDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "buildKitDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "recipeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "lockDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "sourceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "supportedPlatforms": ["linux/amd64"],
+  "modules": [
+    {
+      "id": "nlp",
+      "version": "1.0.0",
+      "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "requires": [],
+      "conflicts": [],
+      "contractRange": "^1.0.0",
+      "exclusiveResources": { "cpuMilli": 200, "memoryMiB": 512, "ephemeralStorageMiB": 512 },
+      "sharedResourceGroupIds": ["embedding-pool"],
+      "workerLimits": { "maxConcurrency": 2 }
+    },
+    {
+      "id": "diagnostics",
+      "version": "1.0.0",
+      "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "requires": ["nlp"],
+      "conflicts": [],
+      "contractRange": "^1.0.0",
+      "exclusiveResources": { "cpuMilli": 100, "memoryMiB": 256, "ephemeralStorageMiB": 128 },
+      "sharedResourceGroupIds": ["embedding-pool"],
+      "workerLimits": { "maxConcurrency": 1 }
+    }
+  ],
+  "baseResources": { "cpuMilli": 1000, "memoryMiB": 1024, "ephemeralStorageMiB": 2048 },
+  "sharedResourceGroups": [
+    { "id": "embedding-pool", "resources": { "cpuMilli": 300, "memoryMiB": 1024, "ephemeralStorageMiB": 512 } }
+  ],
+  "resourceProfiles": [
+    { "id": "small", "cpuMilli": 1500, "memoryMiB": 2048, "ephemeralStorageMiB": 3072 },
+    { "id": "medium", "cpuMilli": 2000, "memoryMiB": 4096, "ephemeralStorageMiB": 4096 }
+  ]
+}

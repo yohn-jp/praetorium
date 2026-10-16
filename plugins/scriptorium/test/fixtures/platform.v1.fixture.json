@@ -1,0 +1,80 @@
+{
+  "metadata": {
+    "contractVersion": "scriptorium-platform/v1",
+    "producerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
+    "listener": { "port": 3000 },
+    "paths": {
+      "liveness": "/api/health",
+      "readiness": "/api/ready",
+      "metadata": "/api/platform/v1/metadata",
+      "shutdown": "/api/platform/v1/shutdown",
+      "status": "/api/platform/v1/status",
+      "quiesce": "/api/platform/v1/quiesce",
+      "resume": "/api/platform/v1/resume"
+    },
+    "shutdownTimeoutSeconds": 30
+  },
+  "status": {
+    "contractVersion": "scriptorium-platform/v1",
+    "instanceId": "ins_synthetic_fixture",
+    "repositoryId": 123456789,
+    "runtimeEpoch": 7,
+    "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "compositionManifestDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "enabledModuleIds": ["nlp", "diagnostics"],
+    "ready": true,
+    "activity": {
+      "lastMeaningfulActivityAt": "2026-10-17T00:00:00Z",
+      "activeApiRequests": 0,
+      "activeMcpRequests": 0,
+      "activeMutations": 0,
+      "activeJobs": 0,
+      "restartableJobs": 0,
+      "pendingCheckpoints": 0,
+      "uncertainPublication": false
+    },
+    "lastConfirmedRemoteRevision": "0123456789abcdef0123456789abcdef01234567",
+    "observedAt": "2026-10-17T00:00:00Z"
+  },
+  "quiesceRequest": {
+    "contractVersion": "scriptorium-platform/v1",
+    "operationId": "op_synthetic_fixture",
+    "instanceId": "ins_synthetic_fixture",
+    "runtimeEpoch": 7,
+    "reason": "fixture-check",
+    "deadline": "2026-10-17T00:01:00Z"
+  },
+  "quiesceResult": {
+    "contractVersion": "scriptorium-platform/v1",
+    "operationId": "op_synthetic_fixture",
+    "instanceId": "ins_synthetic_fixture",
+    "runtimeEpoch": 7,
+    "quiesceRevision": "qz_synthetic_revision",
+    "disposition": "safe",
+    "activeMutations": 0,
+    "activeJobs": 0,
+    "restartableJobs": 0,
+    "pendingCheckpoints": 0,
+    "uncertainPublication": false,
+    "lastConfirmedRemoteRevision": "0123456789abcdef0123456789abcdef01234567",
+    "reasonCodes": [],
+    "observedAt": "2026-10-17T00:00:00Z"
+  },
+  "assignment": {
+    "contractVersion": "scriptorium-platform/v1",
+    "instanceId": "ins_synthetic_fixture",
+    "repositoryId": 123456789,
+    "repositoryLocator": "https://github.com/example/fictional-work",
+    "defaultBranchPolicy": "revalidate-current-default",
+    "runtimeEpoch": 7,
+    "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "compositionManifestDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "enabledModuleIds": ["nlp", "diagnostics"],
+    "credentialBrokerLocator": "service://github-credential-broker",
+    "grantPolicy": {
+      "issuer": "https://gateway.example.invalid",
+      "jwksUrl": "https://gateway.example.invalid/.well-known/jwks.json",
+      "audience": "ins_synthetic_fixture"
+    }
+  }
+}

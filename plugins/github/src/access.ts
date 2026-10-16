@@ -9,6 +9,7 @@ import type {
   GitHubRepository,
   GitHubServicePolicy,
   GitHubUserTokenSource,
+  InstanceOriginResolver,
   RepositoryAction,
   RepositoryBinding,
   RepositoryBindingReader,
@@ -22,6 +23,8 @@ export interface GitHubAccessProviderConfig {
   readonly userTokens: GitHubUserTokenSource;
   readonly repositoryBindings: RepositoryBindingReader;
   readonly servicePolicy: GitHubServicePolicy;
+  /** Must derive the prevalidated stable origin from trusted instance identity/configuration. */
+  readonly instanceOriginFor: InstanceOriginResolver;
   readonly now?: () => Date;
 }
 
@@ -65,6 +68,29 @@ function roleFor(permissions: readonly RepositoryAction[]): RepositoryRole | nul
 
 function plusSeconds(date: Date, seconds: number): number {
   return date.getTime() + seconds * 1000;
+}
+
+function trustedInstanceOrigin(
+  config: GitHubAccessProviderConfig,
+  instanceId: string,
+): string | null {
+  try {
+    const origin = config.instanceOriginFor(instanceId);
+    const parsed = new URL(origin);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.origin !== origin ||
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.pathname !== "/" ||
+      parsed.search !== "" ||
+      parsed.hash !== ""
+    )
+      return null;
+    return origin;
+  } catch {
+    return null;
+  }
 }
 
 function decisionFor(
@@ -120,12 +146,15 @@ async function userRepositoryAccess(
   userId: string,
   repositoryId: number,
   now: string,
+  expectedInstallationId: number,
 ): Promise<UserRepositoryAccess> {
   const accessToken = await config.userTokens.accessTokenFor(userId, now);
   if (!accessToken) throw new GitHubApiError(401, null);
 
   const installations = await config.api.listUserInstallations(accessToken);
-  const installation = installations.find((item) => item.appId === config.appId);
+  const installation = installations.find(
+    (item) => item.appId === config.appId && item.id === expectedInstallationId,
+  );
   if (!installation || installation.suspendedAt !== null || !hasContentsRead(installation)) {
     return { status: "denied", installationId: installation?.id ?? 0, permissions: [] };
   }
@@ -216,6 +245,16 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
         decisionFor(repositoryId, installationId, [], checkedAt, false, action);
       if (!Number.isSafeInteger(repositoryId) || repositoryId < 1) return denied();
 
+      let binding: RepositoryBinding | null;
+      try {
+        binding = await config.repositoryBindings.getByRepositoryId(repositoryId);
+      } catch {
+        throw new GitHubAccessUnavailableError();
+      }
+      if (!binding || binding.status !== "active" || binding.repositoryId !== repositoryId) {
+        return denied(binding?.installationId ?? 0);
+      }
+
       let access: UserRepositoryAccess;
       try {
         access = await userRepositoryAccess(
@@ -223,6 +262,7 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
           userId,
           repositoryId,
           new Date(checkedAt).toISOString(),
+          binding.installationId,
         );
       } catch (error) {
         if (isUnavailable(error)) throw new GitHubAccessUnavailableError();
@@ -230,17 +270,9 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
       }
       if (access.status !== "allowed" || !access.repository) return denied(access.installationId);
 
-      let binding: RepositoryBinding | null;
-      try {
-        binding = await config.repositoryBindings.getByRepositoryId(repositoryId);
-      } catch {
-        throw new GitHubAccessUnavailableError();
-      }
       // Unbound repositories may be listed for onboarding; a repository access decision
       // only authorizes a live, matching binding.
       if (
-        !binding ||
-        binding.status !== "active" ||
         !bindingMatchesRepository(binding, access.repository) ||
         binding.repositoryId !== repositoryId ||
         binding.installationId !== access.installationId
@@ -275,15 +307,6 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
       )
         return { status: "denied" };
 
-      let access: UserRepositoryAccess;
-      try {
-        access = await userRepositoryAccess(config, userId, repositoryId, instant.toISOString());
-      } catch (error) {
-        if (isUnavailable(error)) return { status: "unavailable" };
-        return { status: "denied" };
-      }
-      if (access.status !== "allowed" || !access.repository) return { status: "denied" };
-
       let binding: RepositoryBinding | null;
       try {
         binding = await config.repositoryBindings.getByRepositoryId(repositoryId);
@@ -294,6 +317,27 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
         !binding ||
         binding.status !== "active" ||
         binding.repositoryId !== repositoryId ||
+        binding.instanceId !== instanceId ||
+        binding.runtimeEpoch !== runtimeEpoch
+      )
+        return { status: "denied" };
+
+      let access: UserRepositoryAccess;
+      try {
+        access = await userRepositoryAccess(
+          config,
+          userId,
+          repositoryId,
+          instant.toISOString(),
+          binding.installationId,
+        );
+      } catch (error) {
+        if (isUnavailable(error)) return { status: "unavailable" };
+        return { status: "denied" };
+      }
+      if (access.status !== "allowed" || !access.repository) return { status: "denied" };
+
+      if (
         binding.installationId !== access.installationId ||
         !bindingMatchesRepository(binding, access.repository) ||
         binding.instanceId !== instanceId ||
@@ -301,6 +345,8 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
       )
         return { status: "denied" };
 
+      const origin = trustedInstanceOrigin(config, binding.instanceId);
+      if (!origin) return { status: "denied" };
       const permissions = access.permissions;
       const lifetimeSeconds = permissions.some((permission) => permission !== "read") ? 30 : 300;
       const checkedAt = instant.getTime();
@@ -309,6 +355,7 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
         repositoryId,
         installationId: access.installationId,
         instanceId: binding.instanceId,
+        origin,
         runtimeEpoch: binding.runtimeEpoch,
         authorizationRevision: binding.authorizationRevision,
         permissions,

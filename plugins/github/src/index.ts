@@ -1,4 +1,5 @@
 import type { AccessProvider } from "@praetorium/contracts";
+import type { MutationAuthorizationReceiptVerifier } from "@praetorium/auth";
 import { createGitHubAccessApi, createGitHubRestClient } from "./api.js";
 import { createGitHubAccessProvider } from "./access.js";
 import { createGitCredentialBroker } from "./credential-broker.js";
@@ -9,6 +10,7 @@ import type {
   GitHubAccessProvider,
   GitHubServicePolicy,
   GitHubUserTokenSource,
+  InstanceOriginResolver,
   RepositoryBindingReader,
   RuntimeBindingReader,
   RuntimeIdentityAuthenticator,
@@ -35,8 +37,10 @@ export interface GitHubAppPluginConfig {
   readonly repositoryBindings: RepositoryBindingReader;
   readonly runtimeAuthenticator: RuntimeIdentityAuthenticator;
   readonly runtimeBindings: RuntimeBindingReader;
+  readonly mutationReceiptVerifier: MutationAuthorizationReceiptVerifier;
   readonly webhookDeliveries: GitHubWebhookDeliveryStore;
   readonly servicePolicy: GitHubServicePolicy;
+  readonly instanceOriginFor: InstanceOriginResolver;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => Date;
 }
@@ -60,6 +64,7 @@ export function createGitHubAppPlugin(config: GitHubAppPluginConfig): GitHubAppP
     userTokens: config.userTokens,
     repositoryBindings: config.repositoryBindings,
     servicePolicy: config.servicePolicy,
+    instanceOriginFor: config.instanceOriginFor,
     ...(config.now ? { now: config.now } : {}),
   });
   const tokenIssuer = createGitHubInstallationTokenIssuer({
@@ -81,6 +86,7 @@ export function createGitHubAppPlugin(config: GitHubAppPluginConfig): GitHubAppP
       runtimeBindings: config.runtimeBindings,
       repositoryBindings: config.repositoryBindings,
       accessProvider: access,
+      mutationReceiptVerifier: config.mutationReceiptVerifier,
       tokenIssuer,
       ...(config.now ? { now: config.now } : {}),
     }),

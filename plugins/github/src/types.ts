@@ -87,6 +87,9 @@ export interface GitHubAccessProvider extends FreshRepositoryAccessChecker {
   authorize(user: string, repositoryId: number, action: RepositoryAction): Promise<AccessDecision>;
 }
 
+/** Trusted, stable-origin derivation for the current logical instance. */
+export type InstanceOriginResolver = (instanceId: string) => string;
+
 export type AccessErrorCode = "USER_AUTHORIZATION_MISSING" | "UPSTREAM_UNAVAILABLE";
 
 export interface AccessError {
@@ -140,12 +143,22 @@ export interface ScopedGitCredential {
 }
 
 export interface GitCredentialBroker {
-  issue(input: {
-    readonly proof: RuntimeIdentityProof;
-    readonly operation: GitCredentialOperation;
-    readonly actorUserId?: string;
-    readonly now?: string;
-  }): Promise<
+  issue(
+    input:
+      | {
+          readonly proof: RuntimeIdentityProof;
+          readonly operation: "fetch";
+          readonly now?: string;
+        }
+      | {
+          readonly proof: RuntimeIdentityProof;
+          readonly operation: "publish";
+          readonly mutationReceipt: string;
+          readonly operationId: string;
+          readonly payloadDigest: string;
+          readonly now?: string;
+        },
+  ): Promise<
     | { readonly status: "issued"; readonly credential: ScopedGitCredential }
     | { readonly status: "denied" | "unavailable"; readonly reason: string }
   >;

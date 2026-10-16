@@ -1,4 +1,10 @@
-import { handleGithubCallbackWithCredentialSink } from "@praetorium/auth";
+import {
+  generateToken,
+  handleGithubCallbackWithCredentialSink,
+  startGithubLogin,
+  type LoginAttemptRecord,
+  type LoginAttemptStore,
+} from "@praetorium/auth";
 import { createInMemoryLoginAttemptStore } from "@praetorium/auth/testing";
 import { describe, expect, it } from "vitest";
 import { createGitHubAppOAuthProvider } from "../src/oauth.js";
@@ -36,31 +42,41 @@ describe("GitHub App user OAuth", () => {
         });
       },
     });
-    const authorize = new URL(
-      provider.buildAuthorizeUrl({
-        state: "state-1",
-        codeChallenge: "challenge",
-        redirectUri: "https://gateway.example.test/oauth/callback",
-        scopes: [],
-      }),
-    );
+    const attemptRecords = new Map<string, LoginAttemptRecord>();
+    const attempts: LoginAttemptStore = {
+      async save(record) {
+        attemptRecords.set(record.state, record);
+      },
+      async consume(state) {
+        const record = attemptRecords.get(state) ?? null;
+        attemptRecords.delete(state);
+        return record;
+      },
+    };
+    const browserNonce = generateToken(256);
+    const started = await startGithubLogin(provider, attempts, {
+      browserNonce,
+      redirectUri: "https://gateway.example.test/oauth/callback",
+      redirectTo: "/repositories",
+      scopes: [],
+      now: "2026-10-17T00:00:00.000Z",
+      attemptTtlSeconds: 300,
+    });
+    const authorize = new URL(started.authorizeUrl);
+    const state = authorize.searchParams.get("state");
+    if (!state) throw new Error("OAuth start omitted state");
+    const attemptRecord = attemptRecords.get(state);
+    if (!attemptRecord) throw new Error("OAuth start did not persist its attempt");
+    expect(state).toBeTruthy();
     expect(authorize.searchParams.get("scope")).toBe("offline_access");
     expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
-
-    const attempts = createInMemoryLoginAttemptStore();
-    await attempts.save({
-      state: "state-1",
-      codeVerifier: "pkce-verifier",
-      redirectTo: "/repositories",
-      createdAt: "2026-10-17T00:00:00.000Z",
-      expiresAt: "2026-10-17T00:05:00.000Z",
-    });
     let persisted: unknown;
     const result = await handleGithubCallbackWithCredentialSink(
       provider,
       attempts,
       "https://gateway.example.test/oauth/callback",
-      { state: "state-1", code: "one-time-code" },
+      { state, code: "one-time-code" },
+      browserNonce,
       "2026-10-17T00:00:00.000Z",
       {
         storeEncrypted: async (subject, tokens, issuedAt) => {
@@ -88,13 +104,75 @@ describe("GitHub App user OAuth", () => {
     const exchangeBody = JSON.parse(String(requests[0]?.init.body)) as Record<string, string>;
     expect(exchangeBody).toMatchObject({
       grant_type: "authorization_code",
-      code_verifier: "pkce-verifier",
+      code_verifier: attemptRecord.codeVerifier,
     });
+    expect(attemptRecord.browserNonceDigest).not.toBe(browserNonce);
     expect(
       String(
         requests[1]?.init.headers && new Headers(requests[1]?.init.headers).get("Authorization"),
       ),
     ).toBe("Bearer user-access-secret");
+  });
+
+  it("rejects a callback from a different browser before exchanging its code", async () => {
+    let tokenExchangeCount = 0;
+    let persisted = false;
+    const provider = createGitHubAppOAuthProvider({
+      clientId: "app-client-id",
+      clientSecret: "app-client-secret",
+      requestTimeoutMs: 1000,
+      fetchImpl: async (input) => {
+        if (String(input).includes("/login/oauth/access_token")) tokenExchangeCount += 1;
+        return json({ access_token: "must-not-be-used" });
+      },
+    });
+    const attempts = createInMemoryLoginAttemptStore();
+    const browserNonce = generateToken(256);
+    const started = await startGithubLogin(provider, attempts, {
+      browserNonce,
+      redirectUri: "https://gateway.example.test/oauth/callback",
+      redirectTo: "/repositories",
+      scopes: [],
+      now: "2026-10-17T00:00:00.000Z",
+      attemptTtlSeconds: 300,
+    });
+    const state = new URL(started.authorizeUrl).searchParams.get("state");
+    if (!state) throw new Error("OAuth start omitted state");
+    const result = await handleGithubCallbackWithCredentialSink(
+      provider,
+      attempts,
+      "https://gateway.example.test/oauth/callback",
+      { state, code: "attacker-code" },
+      generateToken(256),
+      "2026-10-17T00:00:00.000Z",
+      {
+        storeEncrypted: async () => {
+          persisted = true;
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "BROWSER_BINDING_MISMATCH" },
+    });
+    expect(tokenExchangeCount).toBe(0);
+    expect(persisted).toBe(false);
+    expect(
+      await handleGithubCallbackWithCredentialSink(
+        provider,
+        attempts,
+        "https://gateway.example.test/oauth/callback",
+        { state, code: "attacker-code" },
+        browserNonce,
+        "2026-10-17T00:00:00.000Z",
+        {
+          storeEncrypted: async () => {
+            persisted = true;
+          },
+        },
+      ),
+    ).toMatchObject({ ok: false, error: { code: "STATE_NOT_FOUND" } });
   });
 
   it("rotates user tokens using the App refresh grant without returning either secret", async () => {

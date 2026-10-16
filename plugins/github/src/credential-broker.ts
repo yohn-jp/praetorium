@@ -1,4 +1,7 @@
-import type { FreshRepositoryAccessChecker } from "@praetorium/auth";
+import type {
+  FreshRepositoryAccessChecker,
+  MutationAuthorizationReceiptVerifier,
+} from "@praetorium/auth";
 import { GitHubApiError } from "./api.js";
 import type {
   GitCredentialBroker,
@@ -9,11 +12,14 @@ import type {
 } from "./types.js";
 import type { GitHubInstallationTokenIssuer } from "./installation-token.js";
 
+export const GITHUB_PUBLISH_RECEIPT_AUDIENCE = "praetorium-git-publisher";
+
 export interface GitCredentialBrokerConfig {
   readonly runtimeAuthenticator: RuntimeIdentityAuthenticator;
   readonly runtimeBindings: RuntimeBindingReader;
   readonly repositoryBindings: RepositoryBindingReader;
   readonly accessProvider: FreshRepositoryAccessChecker;
+  readonly mutationReceiptVerifier: MutationAuthorizationReceiptVerifier;
   readonly tokenIssuer: GitHubInstallationTokenIssuer;
   readonly now?: () => Date;
 }
@@ -85,11 +91,34 @@ export function createGitCredentialBroker(config: GitCredentialBrokerConfig): Gi
 
       const permission = input.operation === "fetch" ? "read" : "write";
       if (input.operation === "publish") {
-        if (!input.actorUserId) return { status: "denied", reason: "publish_actor_required" };
+        let receiptResult;
+        try {
+          receiptResult = await config.mutationReceiptVerifier.verify(input.mutationReceipt, {
+            repositoryId: identity.repositoryId,
+            instanceId: identity.instanceId,
+            runtimeEpoch: identity.runtimeEpoch,
+            operationId: input.operationId,
+            payloadDigest: input.payloadDigest,
+            now: instant.toISOString(),
+          });
+        } catch {
+          return { status: "unavailable", reason: "mutation_receipt_verification_unavailable" };
+        }
+        if (!receiptResult.ok) {
+          const unavailable = receiptResult.error.code === "KEY_SOURCE_UNAVAILABLE";
+          return {
+            status: unavailable ? "unavailable" : "denied",
+            reason: unavailable ? "mutation_receipt_keys_unavailable" : "mutation_receipt_invalid",
+          };
+        }
+        const receipt = receiptResult.value;
+        if (receipt.authorizationRevision !== repositoryBinding.authorizationRevision) {
+          return { status: "denied", reason: "mutation_receipt_authorization_stale" };
+        }
         let decision;
         try {
           decision = await config.accessProvider.checkBoundAccess(
-            input.actorUserId,
+            receipt.sub,
             identity.repositoryId,
             identity.instanceId,
             identity.runtimeEpoch,
@@ -104,6 +133,7 @@ export function createGitCredentialBroker(config: GitCredentialBrokerConfig): Gi
           decision.instanceId !== identity.instanceId ||
           decision.runtimeEpoch !== identity.runtimeEpoch ||
           decision.installationId !== identity.installationId ||
+          decision.authorizationRevision !== receiptResult.value.authorizationRevision ||
           !decision.permissions.includes("write") ||
           decision.expiresAt <= instant.getTime()
         )

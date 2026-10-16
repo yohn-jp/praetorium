@@ -25,6 +25,7 @@ const FORM_FIELDS = new Set([
   "resourceProfileId",
   "operationId",
 ]);
+const MAX_PORTAL_FORM_BYTES = 64 * 1024;
 
 type ParsedAction =
   | { readonly kind: "preview"; readonly command: Extract<PortalCommand, { kind: "preview" }> }
@@ -33,6 +34,11 @@ type ParsedAction =
 interface ParsedForm {
   readonly values: FormData;
 }
+
+type FormReadResult =
+  | { readonly kind: "valid"; readonly form: ParsedForm }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "too-large" };
 
 function errorStatus(code: string): number {
   switch (code) {
@@ -113,20 +119,57 @@ function idempotencyKey(form: FormData): string | null {
   return value && /^[A-Za-z0-9_-]{16,256}$/.test(value) ? value : null;
 }
 
-async function readForm(request: Request): Promise<ParsedForm | null> {
+async function readForm(request: Request): Promise<FormReadResult> {
+  const rawLength = request.headers.get("Content-Length");
+  if (rawLength !== null) {
+    if (!/^(0|[1-9][0-9]*)$/.test(rawLength)) return { kind: "invalid" };
+    if (Number(rawLength) > MAX_PORTAL_FORM_BYTES) return { kind: "too-large" };
+  }
   if (
     request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !==
     "application/x-www-form-urlencoded"
   ) {
-    return null;
+    return { kind: "invalid" };
   }
-  const form = await request.formData().catch(() => null);
-  if (!form || [...form.keys()].some((key) => !FORM_FIELDS.has(key))) return null;
+  const reader = request.body?.getReader();
+  if (!reader) return { kind: "invalid" };
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_PORTAL_FORM_BYTES) {
+        await reader.cancel();
+        return { kind: "too-large" };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { kind: "invalid" };
+  }
+  if (rawLength !== null && Number(rawLength) !== size) return { kind: "invalid" };
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let body: string;
+  try {
+    body = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return { kind: "invalid" };
+  }
+  const form = new FormData();
+  for (const [key, value] of new URLSearchParams(body)) form.append(key, value);
+  if ([...form.keys()].some((key) => !FORM_FIELDS.has(key))) return { kind: "invalid" };
   for (const [key, value] of form.entries()) {
-    if (key !== "moduleIds" && typeof value !== "string") return null;
-    if (typeof value === "string" && value.length > 4096) return null;
+    if (key !== "moduleIds" && typeof value !== "string") return { kind: "invalid" };
+    if (typeof value === "string" && value.length > 4096) return { kind: "invalid" };
   }
-  return { values: form };
+  return { kind: "valid", form: { values: form } };
 }
 
 function moduleIds(form: FormData): readonly string[] | null {
@@ -297,6 +340,18 @@ export function createPortalHandler(
       return renderPortalError("Page not found.", 404);
     }
 
+    let parsedForm: ParsedForm | null = null;
+    if (isAction) {
+      const result = await readForm(request);
+      if (result.kind === "too-large") {
+        return renderPortalError("The submitted form is too large.", 413);
+      }
+      if (result.kind === "invalid") {
+        return renderPortalError("The submitted action was invalid.", 400);
+      }
+      parsedForm = result.form;
+    }
+
     let identity;
     try {
       identity = await dependencies.authenticate(request);
@@ -326,14 +381,13 @@ export function createPortalHandler(
         : renderPortalError(result.error.message, errorStatus(result.error.code));
     }
 
-    if (!(await dependencies.verifyCsrf(request, identity.session))) {
+    if (!(await dependencies.verifyCsrf(request, identity.session, parsedForm!.values))) {
       return renderPortalError(
         "The request could not be verified. Reload the page and try again.",
         403,
       );
     }
-    const parsed = await readForm(request);
-    const action = parsed ? parseAction(parsed.values) : null;
+    const action = parseAction(parsedForm!.values);
     if (!action) return renderPortalError("The submitted action was invalid.", 400);
 
     let result: PortalResult<PortalCommandResult>;

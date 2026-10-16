@@ -98,6 +98,7 @@ export async function hasValidGatewayCsrf(
   request: Request,
   context: GatewayContext,
   session?: Pick<PortalSession, "csrfToken">,
+  form?: FormData,
 ): Promise<boolean> {
   const expectedOrigin = new URL(context.config.origin).origin;
   if (
@@ -115,10 +116,10 @@ export async function hasValidGatewayCsrf(
   ) return false;
   if (!raw || !cookieToken) return false;
   let submitted = request.headers.get("X-CSRF-Token");
-  if (!submitted && request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() === "application/x-www-form-urlencoded") {
-    const form = await request.clone().formData().catch(() => null);
-    const value = form?.get("csrfToken");
-    if (typeof value === "string") submitted = value;
+  if (form) {
+    const values = form.getAll("csrfToken");
+    if (values.length !== 1 || typeof values[0] !== "string") return false;
+    submitted = values[0];
   }
   const expected = session?.csrfToken ?? await sessionCsrfToken(context, raw);
   return !!submitted && constantTimeEqual(cookieToken, expected) && constantTimeEqual(submitted, expected);

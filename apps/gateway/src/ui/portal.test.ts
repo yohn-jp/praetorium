@@ -295,6 +295,46 @@ describe("server-rendered management UI", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("rejects oversized action forms before authentication, CSRF checks, or service calls", async () => {
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      value: { kind: "operation" as const, operation },
+    }));
+    const service: PortalService = {
+      listRepositories: async () => ({ ok: true, value: repositoryList }),
+      getRepository: async () => ({ ok: true, value: dashboard }),
+      execute,
+    };
+    const dependencies = sessionDependencies(service);
+    const authenticate = vi.fn(dependencies.authenticate);
+    const verifyCsrf = vi.fn(dependencies.verifyCsrf);
+    const handler = createPortalHandler({ ...dependencies, authenticate, verifyCsrf });
+    const largeBody = `csrfToken=csrf-token-value&action=enter&padding=${"x".repeat(65_536)}`;
+    const streamed = new Request("https://gateway.example/repositories/123456789/actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: largeBody,
+    });
+    const declaredLarge = new Request("https://gateway.example/repositories/123456789/actions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": "65537",
+      },
+      body: "csrfToken=csrf-token-value&action=enter",
+    });
+
+    const streamedResponse = await handler(streamed);
+    const declaredResponse = await handler(declaredLarge);
+
+    expect(streamedResponse.status).toBe(413);
+    expect(declaredResponse.status).toBe(413);
+    expect(declaredLarge.bodyUsed).toBe(false);
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(verifyCsrf).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("routes stopped-instance entry through the service and renders its real start operation", async () => {
     const waitingDashboard: PortalRepositoryDashboard = {
       ...dashboard,

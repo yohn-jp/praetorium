@@ -836,7 +836,7 @@ export function createGatewayRouter(context: GatewayContext): Hono {
       const session: PortalSession = { actor, csrfToken: result.session.csrfToken };
       return { ok: true, session };
     },
-    verifyCsrf: (request, session) => hasValidGatewayCsrf(request, context, session),
+    verifyCsrf: (request, session, form) => hasValidGatewayCsrf(request, context, session, form),
     createToken: () => generateToken(256),
   });
 

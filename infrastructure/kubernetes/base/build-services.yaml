@@ -1,0 +1,162 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: praetorium-build-worker
+  namespace: praetorium-build
+  labels:
+    app.kubernetes.io/name: build-worker
+    app.kubernetes.io/part-of: praetorium
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: praetorium-build-worker-config
+  namespace: praetorium-build
+data:
+  BUILD_WORKER_CONTROL_PLANE_URL: "@@CONTROL_PLANE_URL@@"
+  BUILD_WORKER_BUILDKIT_ENDPOINT: "@@BUILDKIT_ENDPOINT@@"
+  BUILD_WORKER_BUILDKIT_TLS: "true"
+  BUILD_WORKER_BUILDKIT_CA_PATH: /var/run/secrets/buildkit/ca.crt
+  BUILD_WORKER_BUILDKIT_CERT_PATH: /var/run/secrets/buildkit/tls.crt
+  BUILD_WORKER_BUILDKIT_KEY_PATH: /var/run/secrets/buildkit/tls.key
+  BUILD_WORKER_REGISTRY_CONFIG_PATH: /var/run/secrets/registry/config.json
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: praetorium-build-worker
+  namespace: praetorium-build
+  labels:
+    app.kubernetes.io/name: build-worker
+    app.kubernetes.io/part-of: praetorium
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: build-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: build-worker
+        app.kubernetes.io/part-of: praetorium
+    spec:
+      serviceAccountName: praetorium-build-worker
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: "@@SECRET_APPLICATION_IMAGE_PULL@@"
+      containers:
+        - name: build-worker
+          image: "@@IMAGE_BUILD_WORKER@@"
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/main.js"]
+          envFrom:
+            - configMapRef:
+                name: praetorium-build-worker-config
+          env:
+            - name: BUILD_WORKER_CONTROL_PLANE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: "@@SECRET_BUILD_WORKER_AUTH@@"
+                  key: "@@SECRET_BUILD_WORKER_AUTH_KEY@@"
+                  optional: false
+            - name: DOCKER_CONFIG
+              value: /var/run/secrets/registry
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 2Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: buildkit-client
+              mountPath: /var/run/secrets/buildkit
+              readOnly: true
+            - name: registry-push
+              mountPath: /var/run/secrets/registry
+              readOnly: true
+      volumes:
+        - name: buildkit-client
+          secret:
+            secretName: "@@SECRET_BUILDKIT_CLIENT@@"
+            defaultMode: 0400
+            items:
+              - key: "@@SECRET_BUILDKIT_CA_KEY@@"
+                path: ca.crt
+              - key: "@@SECRET_BUILDKIT_CERT_KEY@@"
+                path: tls.crt
+              - key: "@@SECRET_BUILDKIT_PRIVATE_KEY@@"
+                path: tls.key
+        - name: registry-push
+          secret:
+            secretName: "@@SECRET_REGISTRY_PUSH@@"
+            defaultMode: 0400
+            items:
+              - key: "@@SECRET_REGISTRY_PUSH_KEY@@"
+                path: config.json
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: praetorium-build-worker
+  namespace: praetorium-build
+  labels:
+    app.kubernetes.io/name: build-worker
+    app.kubernetes.io/part-of: praetorium
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: build-worker

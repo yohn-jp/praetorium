@@ -1,0 +1,26 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: praetorium-instance-access-fallback
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/part-of: praetorium
+    app.kubernetes.io/managed-by: flux
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: HostRegexp(`^.+\.@@INSTANCE_HOSTNAME_SUFFIX@@$`) && PathPrefix(`/_platform`)
+      kind: Rule
+      priority: 1000
+      services:
+        - name: instance-access
+          port: 8080
+    - match: HostRegexp(`^.+\.@@INSTANCE_HOSTNAME_SUFFIX@@$`)
+      kind: Rule
+      priority: 1
+      services:
+        - name: instance-access
+          port: 8080
+  tls:
+    secretName: "@@TLS_SECRET_NAME@@"

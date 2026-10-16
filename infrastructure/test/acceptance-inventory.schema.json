@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Praetorium T14 owned disposable inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "inventoryId", "owner", "environment", "resources"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "inventoryId": { "type": "string", "minLength": 1 },
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "identity"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "identity": { "type": "string", "minLength": 1 }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "purpose", "disposable", "production", "expiresAt", "cleanupProcedure"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "purpose": { "const": "t14-disposable-test" },
+        "disposable": { "const": true },
+        "production": { "const": false },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "cleanupProcedure": { "type": "string", "minLength": 1 }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workers-d1-do",
+        "github-access",
+        "buildkit-registry",
+        "kubernetes-isolation",
+        "browser-entry",
+        "producer-recovery",
+        "stable-rollout"
+      ],
+      "properties": {
+        "workers-d1-do": { "$ref": "#/$defs/resource" },
+        "github-access": { "$ref": "#/$defs/resource" },
+        "buildkit-registry": { "$ref": "#/$defs/resource" },
+        "kubernetes-isolation": { "$ref": "#/$defs/resource" },
+        "browser-entry": { "$ref": "#/$defs/resource" },
+        "producer-recovery": { "$ref": "#/$defs/resource" },
+        "stable-rollout": { "$ref": "#/$defs/resource" }
+      }
+    }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "owner", "disposable", "production", "reference"],
+      "properties": {
+        "state": { "enum": ["available", "missing"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "disposable": { "const": true },
+        "production": { "const": false },
+        "reference": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "available" } } },
+          "then": { "properties": { "reference": { "type": "string", "minLength": 1 } } },
+          "else": { "properties": { "reference": { "type": "null" } } }
+        }
+      ]
+    }
+  }
+}

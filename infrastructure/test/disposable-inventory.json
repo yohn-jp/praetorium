@@ -1,0 +1,68 @@
+{
+  "apiVersion": "praetorium.io/deployment-inventory/v1",
+  "environment": "disposable-test",
+  "ownership": {
+    "provider": "kind",
+    "clusterName": "praetorium-t12-local",
+    "context": "kind-praetorium-t12-local",
+    "disposable": true,
+    "confirmation": "praetorium-t12-local"
+  },
+  "clusterId": "clu_01J9A2M4K8B7C6D5E4F3G2H1A0",
+  "cloudflare": {
+    "mode": "local",
+    "accountId": null,
+    "platformDatabaseId": "00000000-0000-0000-0000-000000000001",
+    "gatewayAuthDatabaseId": "00000000-0000-0000-0000-000000000002"
+  },
+  "domains": {
+    "gatewayOrigin": "http://gateway.praetorium.localhost:8787",
+    "controlPlaneUrl": "http://control.praetorium.localhost:8788",
+    "instanceHostnameSuffix": "instances.praetorium.localhost",
+    "tlsSecretName": "praetorium-instance-tls"
+  },
+  "buildkit": {
+    "endpoint": null,
+    "tlsSecretName": "praetorium-buildkit-client",
+    "allowedClientCidrs": []
+  },
+  "images": {
+    "provisioner": null,
+    "instanceAccess": null,
+    "buildWorker": null,
+    "prometheus": null
+  },
+  "secretRefs": {
+    "controlPlaneCredential": {
+      "name": "praetorium-provisioner-credential",
+      "key": "credential"
+    },
+    "instanceAccessServiceAuth": {
+      "name": "praetorium-instance-access-auth",
+      "key": "token"
+    },
+    "buildWorkerControlPlaneAuth": {
+      "name": "praetorium-build-worker-auth",
+      "key": "token"
+    },
+    "buildWorkerRegistryPush": {
+      "name": "praetorium-registry-push",
+      "key": "config.json"
+    },
+    "applicationImagePull": {
+      "name": "praetorium-application-image-pull",
+      "key": ".dockerconfigjson"
+    },
+    "cloudflareDnsApiToken": {
+      "name": "praetorium-dns-api-token",
+      "key": "api-token"
+    },
+    "buildkitClient": {
+      "name": "praetorium-buildkit-client",
+      "caKey": "ca.crt",
+      "certKey": "tls.crt",
+      "privateKey": "tls.key"
+    }
+  },
+  "acmeContactEmail": "operator@praetorium.localhost"
+}

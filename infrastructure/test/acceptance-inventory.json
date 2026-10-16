@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "inventoryId": "praetorium-t14-local",
+  "owner": {
+    "name": "Praetorium integration operator",
+    "identity": "operator-supplied before provisioning"
+  },
+  "environment": {
+    "name": "praetorium-t14-local",
+    "purpose": "t14-disposable-test",
+    "disposable": true,
+    "production": false,
+    "expiresAt": "2026-10-31T00:00:00+09:00",
+    "cleanupProcedure": "Remove only resources created for this inventory through their owning local tools after acceptance is complete."
+  },
+  "resources": {
+    "workers-d1-do": {
+      "state": "missing",
+      "owner": "operator-supplied before provisioning",
+      "disposable": true,
+      "production": false,
+      "reference": null
+    },
+    "github-access": {
+      "state": "missing",
+      "owner": "operator-supplied before provisioning",
+      "disposable": true,
+      "production": false,
+      "reference": null
+    },
+    "buildkit-registry": {
+      "state": "missing",
+      "owner": "operator-supplied before provisioning",
+      "disposable": true,
+      "production": false,
+      "reference": null
+    },
+    "kubernetes-isolation": {
+      "state": "missing",
+      "owner": "operator-supplied before provisioning",
+      "disposable": true,
+      "production": false,
+      "reference": null
+    },
+    "browser-entry": {
+      "state": "missing",
+      "owner": "operator-supplied before provisioning",
+      "disposable": true,
+      "production": false,
+      "reference": null
+    },
+    "producer-recovery": {
+      "state": "missing",
+      "owner": "operator-supplied before provisioning",
+      "disposable": true,
+      "production": false,
+      "reference": null
+    },
+    "stable-rollout": {
+      "state": "missing",
+      "owner": "operator-supplied before provisioning",
+      "disposable": true,
+      "production": false,
+      "reference": null
+    }
+  }
+}

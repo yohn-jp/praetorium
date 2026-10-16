@@ -1,0 +1,261 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: praetorium-provisioner
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/name: provisioner
+    app.kubernetes.io/part-of: praetorium
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: praetorium-instance-access-config
+  namespace: praetorium-system
+data:
+  INSTANCE_ACCESS_PORT: "8080"
+  INSTANCE_ACCESS_INSTANCE_HOSTNAME_SUFFIX: "@@INSTANCE_HOSTNAME_SUFFIX@@"
+  GATEWAY_ORIGIN: "@@GATEWAY_ORIGIN@@"
+  CONTROL_PLANE_URL: "@@CONTROL_PLANE_URL@@"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: praetorium-instance-access
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/name: instance-access
+    app.kubernetes.io/part-of: praetorium
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: instance-access
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: instance-access
+        app.kubernetes.io/part-of: praetorium
+    spec:
+      serviceAccountName: praetorium-instance-access
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: "@@SECRET_APPLICATION_IMAGE_PULL@@"
+      containers:
+        - name: instance-access
+          image: "@@IMAGE_INSTANCE_ACCESS@@"
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/server.js"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: praetorium-instance-access-config
+          env:
+            - name: INSTANCE_ACCESS_SERVICE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: "@@SECRET_INSTANCE_ACCESS_AUTH@@"
+                  key: "@@SECRET_INSTANCE_ACCESS_AUTH_KEY@@"
+                  optional: false
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+              ephemeral-storage: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: instance-access
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/name: instance-access
+    app.kubernetes.io/part-of: praetorium
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: instance-access
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: praetorium-provisioner-config
+  namespace: praetorium-system
+data:
+  PROVISIONER_ENVIRONMENT: "@@ENVIRONMENT@@"
+  PROVISIONER_CONTROL_PLANE_URL: "@@CONTROL_PLANE_URL@@"
+  PROVISIONER_NAMESPACE_PREFIX: praetorium-instances
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: praetorium-provisioner
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/name: provisioner
+    app.kubernetes.io/part-of: praetorium
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: provisioner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: provisioner
+        app.kubernetes.io/part-of: praetorium
+    spec:
+      serviceAccountName: praetorium-provisioner
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: "@@SECRET_APPLICATION_IMAGE_PULL@@"
+      containers:
+        - name: provisioner
+          image: "@@IMAGE_PROVISIONER@@"
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/main.js"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: praetorium-provisioner-config
+          env:
+            - name: PROVISIONER_CONTROL_PLANE_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: "@@SECRET_PROVISIONER_CREDENTIAL@@"
+                  key: "@@SECRET_PROVISIONER_CREDENTIAL_KEY@@"
+                  optional: false
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+              ephemeral-storage: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: praetorium-provisioner
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/name: provisioner
+    app.kubernetes.io/part-of: praetorium
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: provisioner
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: praetorium-instance-access
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/name: instance-access
+    app.kubernetes.io/part-of: praetorium
+automountServiceAccountToken: false

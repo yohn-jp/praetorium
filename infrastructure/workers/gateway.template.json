@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4/config-schema.json",
+  "name": "praetorium-gateway",
+  "main": "../../apps/gateway/src/worker.ts",
+  "compatibility_date": "2026-10-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "GATEWAY_AUTH_DB",
+      "database_name": "praetorium-gateway-auth",
+      "database_id": "@@GATEWAY_AUTH_DATABASE_ID@@",
+      "migrations_dir": "../../apps/gateway/migrations"
+    }
+  ],
+  "services": [
+    {
+      "binding": "CONTROL_PLANE",
+      "service": "praetorium-control-plane"
+    }
+  ],
+  "vars": {}
+}

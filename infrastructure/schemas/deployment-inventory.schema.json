@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Praetorium sanitized deployment inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "environment",
+    "ownership",
+    "clusterId",
+    "cloudflare",
+    "domains",
+    "buildkit",
+    "images",
+    "secretRefs",
+    "acmeContactEmail"
+  ],
+  "properties": {
+    "apiVersion": { "const": "praetorium.io/deployment-inventory/v1" },
+    "environment": { "enum": ["disposable-test", "deployment"] },
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "clusterName", "context", "disposable", "confirmation"],
+      "properties": {
+        "provider": { "const": "kind" },
+        "clusterName": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,51}[a-z0-9])?$" },
+        "context": { "type": "string", "minLength": 1 },
+        "disposable": { "const": true },
+        "confirmation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "clusterId": { "type": "string", "pattern": "^clu_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "cloudflare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "accountId", "platformDatabaseId", "gatewayAuthDatabaseId"],
+      "properties": {
+        "mode": { "enum": ["local", "remote-disposable"] },
+        "accountId": { "type": ["string", "null"] },
+        "platformDatabaseId": { "type": "string", "format": "uuid" },
+        "gatewayAuthDatabaseId": { "type": "string", "format": "uuid" }
+      }
+    },
+    "domains": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gatewayOrigin", "controlPlaneUrl", "instanceHostnameSuffix", "tlsSecretName"],
+      "properties": {
+        "gatewayOrigin": { "type": "string", "format": "uri" },
+        "controlPlaneUrl": { "type": "string", "format": "uri" },
+        "instanceHostnameSuffix": { "type": "string", "minLength": 1 },
+        "tlsSecretName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "buildkit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint", "tlsSecretName", "allowedClientCidrs"],
+      "properties": {
+        "endpoint": { "type": ["string", "null"], "format": "uri" },
+        "tlsSecretName": { "type": "string", "minLength": 1 },
+        "allowedClientCidrs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provisioner", "instanceAccess", "buildWorker", "prometheus"],
+      "properties": {
+        "provisioner": { "$ref": "#/$defs/digestOrMissing" },
+        "instanceAccess": { "$ref": "#/$defs/digestOrMissing" },
+        "buildWorker": { "$ref": "#/$defs/digestOrMissing" },
+        "prometheus": { "$ref": "#/$defs/digestOrMissing" }
+      }
+    },
+    "secretRefs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlPlaneCredential",
+        "instanceAccessServiceAuth",
+        "buildWorkerControlPlaneAuth",
+        "buildWorkerRegistryPush",
+        "applicationImagePull",
+        "cloudflareDnsApiToken",
+        "buildkitClient"
+      ],
+      "properties": {
+        "controlPlaneCredential": { "$ref": "#/$defs/secretRef" },
+        "instanceAccessServiceAuth": { "$ref": "#/$defs/secretRef" },
+        "buildWorkerControlPlaneAuth": { "$ref": "#/$defs/secretRef" },
+        "buildWorkerRegistryPush": { "$ref": "#/$defs/secretRef" },
+        "applicationImagePull": {
+          "allOf": [
+            { "$ref": "#/$defs/secretRef" },
+            { "properties": { "key": { "const": ".dockerconfigjson" } } }
+          ]
+        },
+        "cloudflareDnsApiToken": { "$ref": "#/$defs/secretRef" },
+        "buildkitClient": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "caKey", "certKey", "privateKey"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
+            "caKey": { "type": "string", "minLength": 1 },
+            "certKey": { "type": "string", "minLength": 1 },
+            "privateKey": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "acmeContactEmail": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "digestOrMissing": {
+      "type": ["string", "null"],
+      "pattern": "^([a-z0-9.-]+/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$"
+    },
+    "secretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "key"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
+        "key": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" }
+      }
+    }
+  }
+}

@@ -1,0 +1,120 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: praetorium-prometheus-config
+  namespace: praetorium-observability
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+    scrape_configs:
+      - job_name: praetorium-build-worker
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["praetorium-build-worker.praetorium-build.svc.cluster.local:9090"]
+      - job_name: praetorium-provisioner
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["praetorium-provisioner.praetorium-system.svc.cluster.local:8080"]
+      - job_name: praetorium-instance-access
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["instance-access.praetorium-system.svc.cluster.local:8080"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: praetorium-prometheus
+  namespace: praetorium-observability
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: praetorium
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/part-of: praetorium
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: "@@SECRET_APPLICATION_IMAGE_PULL@@"
+      containers:
+        - name: prometheus
+          image: "@@IMAGE_PROMETHEUS@@"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/tmp/prometheus
+            - --storage.tsdb.retention.time=24h
+            - --web.listen-address=0.0.0.0:9090
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+              ephemeral-storage: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp/prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: praetorium-prometheus-config
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: praetorium-prometheus
+  namespace: praetorium-observability
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: prometheus

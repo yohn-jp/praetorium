@@ -446,6 +446,145 @@
     ],
     "additionalProperties": false
   },
+  "BuilderArtifactStatementSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "praetorium.build-artifact/v1"
+      },
+      "buildKey": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "artifact": {
+        "type": "object",
+        "properties": {
+          "repository": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "platformManifestDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "linux/amd64",
+              "linux/arm64"
+            ]
+          }
+        },
+        "required": [
+          "repository",
+          "digest",
+          "platformManifestDigest",
+          "platform"
+        ],
+        "additionalProperties": false
+      },
+      "compositionManifest": {
+        "type": "object",
+        "properties": {
+          "repository": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "repository",
+          "digest"
+        ],
+        "additionalProperties": false
+      },
+      "producerRevision": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{40}$"
+      },
+      "resolvedModules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "artifactDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "id",
+            "version",
+            "artifactDigest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "contractVersion": {
+        "type": "string",
+        "const": "scriptorium-build/v1"
+      },
+      "issuedAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "buildKey",
+      "artifact",
+      "compositionManifest",
+      "producerRevision",
+      "resolvedModules",
+      "contractVersion",
+      "issuedAt"
+    ],
+    "additionalProperties": false
+  },
+  "BuilderSignatureSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "algorithm": {
+        "type": "string",
+        "const": "Ed25519"
+      },
+      "keyId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "signature": {
+        "type": "string",
+        "maxLength": 1024,
+        "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+      }
+    },
+    "required": [
+      "algorithm",
+      "keyId",
+      "signature"
+    ],
+    "additionalProperties": false
+  },
   "DigestSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "string",

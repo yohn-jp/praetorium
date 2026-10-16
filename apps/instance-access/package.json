@@ -1,0 +1,35 @@
+{
+  "name": "@praetorium/instance-access",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/handler.d.ts",
+      "import": "./dist/handler.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "lint": "eslint . --max-warnings 0",
+    "start": "node dist/server.js",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@praetorium/contracts": "workspace:*",
+    "@praetorium/domain": "workspace:*",
+    "hono": "4.12.33"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260801.1",
+    "@types/node": "24.19.0",
+    "wrangler": "4.118.0"
+  }
+}

@@ -1,0 +1,648 @@
+import {
+  createMutationAuthorizationReceiptVerifier,
+  createHandoffCode,
+  createSession,
+  keyedDigest,
+  ok,
+  type GitHubOAuthProvider,
+  type KeyRecord,
+  type UserId,
+} from "@praetorium/auth";
+import type { AccessDecision } from "@praetorium/contracts";
+import { describe, expect, it } from "vitest";
+import { createGatewayRouter } from "../src/router.js";
+import type { GatewayContext } from "../src/context.js";
+import {
+  createInMemoryAccessRefreshCredentialStore,
+  createInMemoryHandoffCodeStore,
+  createInMemoryLoginAttemptStore,
+  createInMemorySessionStore,
+} from "@praetorium/auth/testing";
+
+const NOW = "2026-10-17T03:00:00.000Z";
+const ORIGIN = "https://gateway.service.test";
+const REPOSITORY_ID = 482_901;
+const INSTANCE_ID = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const OPERATION_ID = "op_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const PAYLOAD_DIGEST = `sha256:${"a".repeat(64)}`;
+const USER_ID = "1234567" as UserId;
+
+function repositorySnapshot(configured = false, ready = true) {
+  const binding = {
+    repositoryId: REPOSITORY_ID,
+    instanceId: INSTANCE_ID,
+    installationId: 83_104,
+    owner: "service-owner",
+    name: "private-workspace",
+    authorizationRevision: 9,
+    bindingEpoch: 3,
+    suspended: false,
+  };
+  const instance = {
+    instanceId: INSTANCE_ID,
+    repositoryId: REPOSITORY_ID,
+    generation: 5,
+    runtimeEpoch: 7,
+    desiredState: (ready ? "running" : "stopped") as "running" | "stopped",
+    policy: "stable" as const,
+    observedGeneration: 5,
+    currentArtifactDigest: null,
+    desiredArtifactDigest: configured ? `sha256:${"b".repeat(64)}` : null,
+    observedState: (ready ? "ready" : "stopped") as "ready" | "stopped",
+    observedRuntimeEpoch: ready ? 7 : null,
+    observedSequence: 1,
+    desiredRevisionId: null,
+    observedRevisionId: null,
+    reservationState: "reserved" as const,
+    reservationId: "res_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    createdAt: Date.parse(NOW),
+    updatedAt: Date.parse(NOW),
+  };
+  return { binding, instance };
+}
+
+async function setup(options: {
+  write?: boolean;
+  revision?: number;
+  provider?: GitHubOAuthProvider;
+  onCredentialStore?: () => void;
+  configured?: boolean;
+  ready?: boolean;
+  credentialBroker?: NonNullable<GatewayContext["githubCredentialBroker"]>;
+} = {}) {
+  const pair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+  const kid = "gateway-test-key";
+  const keyRegistry: KeyRecord[] = [{
+    kid,
+    status: "active",
+    publicKeyJwk: { kty: "EC", crv: "P-256", x: jwk.x!, y: jwk.y! },
+    createdAt: NOW,
+    retiredAt: null,
+  }];
+  const signingKey = { kid, privateKey: pair.privateKey };
+  const sessionPepper = new TextEncoder().encode("mutation-test-session-pepper");
+  const sessionStore = createInMemorySessionStore();
+  const loginAttemptStore = createInMemoryLoginAttemptStore();
+  const created = await createSession(sessionStore, {
+    userId: USER_ID,
+    authenticationContext: "github-oauth",
+    now: NOW,
+    ttlSeconds: 3_600,
+    pepper: sessionPepper,
+    concurrentSessionLimit: 3,
+  });
+  if (!created.ok) throw new Error("test session setup failed");
+  const csrfToken = await keyedDigest(sessionPepper, `csrf:${created.value.rawSessionId}`);
+  const snapshot = repositorySnapshot(options.configured, options.ready !== false);
+  const repository = {
+    repositoryId: REPOSITORY_ID,
+    installationId: snapshot.binding.installationId,
+    owner: snapshot.binding.owner,
+    name: snapshot.binding.name,
+    private: true,
+    role: "write" as const,
+  };
+  const wakeResult = options.ready === false
+    ? {
+      ...snapshot,
+      instance: { ...snapshot.instance, desiredState: "running" as const, observedState: "starting" as const, observedGeneration: null, observedRuntimeEpoch: null },
+      operation: {
+        id: "op_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        instanceId: INSTANCE_ID,
+        generation: 5,
+        runtimeEpoch: 7,
+        kind: "start",
+        status: "pending",
+        phase: "waiting for runtime reservation",
+        attempt: 1,
+        createdAt: Date.parse(NOW),
+        updatedAt: Date.parse(NOW),
+      },
+      replayed: false,
+    }
+    : { ...snapshot, operation: null, replayed: false };
+  let accessChecks = 0;
+  let repositoryReads = 0;
+  let desiredRequests = 0;
+  let writeAllowed = options.write ?? true;
+  let authorizationRevision = options.revision ?? snapshot.binding.authorizationRevision;
+  const access = {
+    async listRepositories() { return ok(options.configured ? [repository] : []); },
+    async authorize(_userId: string, _repositoryId: number, action: "read" | "write" | "maintain"): Promise<AccessDecision> {
+      const permissions = options.configured ? ["read", "write"] as const : [];
+      return {
+        allowed: options.configured === true && (action === "read" || action === "write"),
+        permissions,
+        checkedAt: Date.parse(NOW),
+        expiresAt: Date.parse(NOW) + 25_000,
+        installationId: snapshot.binding.installationId,
+        repositoryId: REPOSITORY_ID,
+      };
+    },
+    async checkBoundAccess(_userId: string, repositoryId: number, instanceId: string, runtimeEpoch: number, now: string) {
+      accessChecks += 1;
+      if (!writeAllowed) return { status: "denied" as const };
+      return {
+        status: "allowed" as const,
+        repositoryId,
+        installationId: snapshot.binding.installationId,
+        instanceId,
+        origin: `https://ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`,
+        runtimeEpoch,
+        authorizationRevision,
+        permissions: ["read", "write"] as const,
+        checkedAt: Date.parse(now),
+        expiresAt: Date.parse(now) + 25_000,
+      };
+    },
+  };
+  const controlPlane = {
+    async getByRepositoryId(repositoryId: number) {
+      repositoryReads += 1;
+      return repositoryId === REPOSITORY_ID ? snapshot : null;
+    },
+    async getByInstanceId() { return snapshot; },
+    async resolveRepository() { return { ...snapshot, created: false }; },
+    async requestDesiredState() {
+      desiredRequests += 1;
+      return wakeResult;
+    },
+  };
+  const handoffStore = createInMemoryHandoffCodeStore();
+  const accessRefreshCredentialStore = createInMemoryAccessRefreshCredentialStore();
+  const context = {
+    config: {
+      environment: "test",
+      origin: ORIGIN,
+      sessionTtlSeconds: 3_600,
+      handoffTtlSeconds: 60,
+      accessGrantTtlSeconds: 300,
+      instanceHostnameSuffix: "instances.service.test",
+      allowedRepositoryOwner: "service-owner",
+      githubAppId: 123,
+      oauthClientId: "test-client",
+      oauthClientSecret: "test-secret",
+      controlPlaneSecret: "c".repeat(40),
+      instanceAccessSecret: "i".repeat(40),
+      sessionPepper,
+      credentialPepper: new TextEncoder().encode("mutation-test-credential-pepper"),
+      handoffPepper: new TextEncoder().encode("mutation-test-handoff-pepper"),
+      tokenVault: {} as GatewayContext["config"]["tokenVault"],
+    },
+    env: {} as GatewayContext["env"],
+    requestId: "gateway-test-request",
+    requestNow: NOW,
+    sessionStore,
+    loginAttemptStore,
+    mcpCredentialStore: {} as GatewayContext["mcpCredentialStore"],
+    handoffStore,
+    accessRefreshCredentialStore,
+    tokenExchangeRateLimiter: { consume: async () => true },
+    runtimeCredentialRateLimiter: { consume: async () => true },
+    loginRateLimiter: { consume: async () => true },
+    wakeRateLimiter: { consume: async () => true },
+    mutationReceiptRateLimiter: { consume: async () => true },
+    githubProvider: options.provider as GatewayContext["githubProvider"],
+    githubAccess: access as unknown as GatewayContext["githubAccess"],
+    githubUserTokens: {
+      accessTokenFor: async () => null,
+      storeEncrypted: async () => options.onCredentialStore?.(),
+    } as unknown as GatewayContext["githubUserTokens"],
+    controlPlane: controlPlane as unknown as GatewayContext["controlPlane"],
+    signingKey,
+    keyRegistry,
+    ...(options.credentialBroker ? { githubCredentialBroker: options.credentialBroker } : {}),
+  } satisfies GatewayContext;
+  const request = (body: unknown, overrides: { origin?: string; csrf?: string; cookie?: string } = {}) => new Request(
+    `${ORIGIN}/api/repositories/${REPOSITORY_ID}/mutation-authorizations`,
+    {
+      method: "POST",
+      headers: {
+        Origin: overrides.origin ?? ORIGIN,
+        Cookie: overrides.cookie ?? `__Host-praetorium_session=${created.value.rawSessionId}; __Host-praetorium_csrf=${csrfToken}`,
+        "X-CSRF-Token": overrides.csrf ?? csrfToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  return {
+    router: createGatewayRouter(context),
+    sessionCookie: `__Host-praetorium_session=${created.value.rawSessionId}`,
+    request,
+    handoffStore,
+    gatewaySessionDigest: created.value.digest,
+    instanceAccessSecret: "i".repeat(40),
+    publicKey: pair.publicKey,
+    get accessChecks() { return accessChecks; },
+    get repositoryReads() { return repositoryReads; },
+    get desiredRequests() { return desiredRequests; },
+    set writeAllowed(value: boolean) { writeAllowed = value; },
+    set authorizationRevision(value: number) { authorizationRevision = value; },
+  };
+}
+
+describe("Gateway mutation authorization endpoint", () => {
+  it("routes runtime Git credential issuance only through an explicitly configured broker", async () => {
+    const valid = {
+      operation: "fetch",
+      proof: {
+        serviceToken: "runtime-service-token-long-enough",
+        runtimeId: "runtime-1",
+        instanceId: INSTANCE_ID,
+        repositoryId: REPOSITORY_ID,
+        installationId: 83_104,
+        runtimeEpoch: 7,
+        leaseId: "lease-1",
+      },
+    };
+    const missingAdapter = await setup();
+    const unavailable = await missingAdapter.router.fetch(new Request(`${ORIGIN}/internal/github/credential`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(valid),
+    }));
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.text()).not.toContain("token");
+
+    let receivedOperation = "";
+    const configured = await setup({
+      credentialBroker: {
+        async issue(input) {
+          receivedOperation = input.operation;
+          return {
+            status: "issued",
+            credential: {
+              username: "x-access-token",
+              token: "one-repository-scoped-token",
+              repositoryId: REPOSITORY_ID,
+              permission: "read",
+              runtimeEpoch: 7,
+              expiresAt: "2026-10-17T03:05:00.000Z",
+            },
+          };
+        },
+      },
+    });
+    const issued = await configured.router.fetch(new Request(`${ORIGIN}/internal/github/credential`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(valid),
+    }));
+    expect(issued.status).toBe(200);
+    expect(receivedOperation).toBe("fetch");
+    expect(await issued.json()).toMatchObject({ repositoryId: REPOSITORY_ID, runtimeEpoch: 7 });
+
+    const unknownOperation = await configured.router.fetch(new Request(`${ORIGIN}/internal/github/credential`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...valid, operation: "push" }),
+    }));
+    expect(unknownOperation.status).toBe(400);
+    expect(receivedOperation).toBe("fetch");
+  });
+
+  it("rejects duplicate host-only session and CSRF cookie names", async () => {
+    const test = await setup();
+    const duplicateSession = await test.router.fetch(new Request(`${ORIGIN}/api/session`, {
+      headers: { Cookie: `${test.sessionCookie}; __Host-praetorium_session=attacker-value` },
+    }));
+    const duplicateCsrf = await test.router.fetch(test.request(
+      { operationId: OPERATION_ID, payloadDigest: PAYLOAD_DIGEST },
+      { cookie: `${test.sessionCookie}; __Host-praetorium_csrf=first; __Host-praetorium_csrf=second` },
+    ));
+    const mixedSessionAndBearer = await test.router.fetch(new Request(`${ORIGIN}/api/token`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer one-time-mcp-credential",
+        Cookie: `${test.sessionCookie}; __Host-praetorium_session=attacker-value`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        repositoryId: REPOSITORY_ID,
+        instanceId: INSTANCE_ID,
+        runtimeEpoch: 7,
+        permissions: ["read"],
+      }),
+    }));
+
+    expect(duplicateSession.status).toBe(401);
+    expect(duplicateCsrf.status).toBe(403);
+    expect(mixedSessionAndBearer.status).toBe(401);
+    expect(test.accessChecks).toBe(0);
+  });
+
+  it("rejects a host that does not match the trusted instance ID before checking access", async () => {
+    const test = await setup();
+    const response = await test.router.fetch(new Request(`${ORIGIN}/internal/instance-access/handoff`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${"i".repeat(40)}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contractVersion: "instance-access/v1",
+        audience: "instance-access",
+        instanceId: INSTANCE_ID,
+        hostname: "ins-01arz3ndektsv4rrffq69g5fav.attacker.test",
+        origin: "https://ins-01arz3ndektsv4rrffq69g5fav.attacker.test",
+        code: "single-use-handoff-code",
+        returnPath: "/",
+      }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(test.accessChecks).toBe(0);
+    expect(test.repositoryReads).toBe(0);
+  });
+
+  it("issues a short-lived signed receipt from the session and current write authority only", async () => {
+    const test = await setup();
+    const response = await test.router.fetch(test.request({ operationId: OPERATION_ID, payloadDigest: PAYLOAD_DIGEST }));
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const body = await response.json() as { receipt: string; operationId: string; payloadDigest: string; expiresAt: string };
+    expect(body.operationId).toBe(OPERATION_ID);
+    expect(body.payloadDigest).toBe(PAYLOAD_DIGEST);
+    expect(Date.parse(body.expiresAt) - Date.parse(NOW)).toBeLessThanOrEqual(25_000);
+
+    const verifier = createMutationAuthorizationReceiptVerifier({
+      issuer: ORIGIN,
+      audience: "praetorium-git-publisher",
+      resolveKey: async (kid) => kid === "gateway-test-key" ? test.publicKey : null,
+    });
+    const verified = await verifier.verify(body.receipt, {
+      repositoryId: REPOSITORY_ID,
+      instanceId: INSTANCE_ID,
+      runtimeEpoch: 7,
+      operationId: OPERATION_ID,
+      payloadDigest: PAYLOAD_DIGEST,
+      now: NOW,
+    });
+    expect(verified.ok).toBe(true);
+    if (verified.ok) {
+      expect(verified.value.sub).toBe(USER_ID);
+      expect(verified.value.authorizationRevision).toBe(9);
+      expect(verified.value.sessionRevision).toBe(0);
+      expect(verified.value.action).toBe("publish");
+    }
+    expect(test.accessChecks).toBe(1);
+    expect(test.repositoryReads).toBe(1);
+  });
+
+  it("redeems, rotates and revokes the stable-origin grant through service-authenticated routes", async () => {
+    const test = await setup();
+    const host = `ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`;
+    const origin = `https://${host}`;
+    const created = await createHandoffCode(test.handoffStore, {
+      userId: USER_ID,
+      gatewaySessionDigest: test.gatewaySessionDigest,
+      repositoryId: REPOSITORY_ID,
+      instanceId: INSTANCE_ID,
+      runtimeEpoch: 7,
+      hostname: host,
+      origin,
+      audience: "instance-access",
+      returnPath: "/",
+      requestedPermissions: ["read", "write"],
+      now: NOW,
+      ttlSeconds: 60,
+      pepper: new TextEncoder().encode("mutation-test-handoff-pepper"),
+    });
+    const serviceHeaders = {
+      Authorization: `Bearer ${test.instanceAccessSecret}`,
+      "Content-Type": "application/json",
+    };
+    const base = {
+      contractVersion: "instance-access/v1",
+      audience: "instance-access",
+      instanceId: INSTANCE_ID,
+      hostname: host,
+      origin,
+    };
+    const redeemed = await test.router.fetch(new Request(`${ORIGIN}/internal/instance-access/handoff`, {
+      method: "POST",
+      headers: serviceHeaders,
+      body: JSON.stringify({ ...base, code: created.rawCode, returnPath: "/" }),
+    }));
+    expect(redeemed.status).toBe(200);
+    expect(redeemed.headers.get("Cache-Control")).toBe("no-store");
+    const initial = await redeemed.json() as {
+      token: string;
+      expiresAt: string;
+      refreshCredential: string;
+      refreshExpiresAt: string;
+    };
+    expect(initial.token).toMatch(/^eyJ/);
+    expect(Date.parse(initial.expiresAt)).toBeGreaterThan(Date.parse(NOW));
+    expect(Date.parse(initial.refreshExpiresAt)).toBe(Date.parse(NOW) + 3_600_000);
+
+    const refresh = (refreshCredential: string) => new Request(`${ORIGIN}/internal/instance-access/refresh`, {
+      method: "POST",
+      headers: serviceHeaders,
+      body: JSON.stringify({ ...base, refreshCredential }),
+    });
+    const rotatedResponse = await test.router.fetch(refresh(initial.refreshCredential));
+    expect(rotatedResponse.status).toBe(200);
+    const rotated = await rotatedResponse.json() as typeof initial;
+    expect(rotated.refreshCredential).not.toBe(initial.refreshCredential);
+    expect((await test.router.fetch(refresh(initial.refreshCredential))).status).toBe(401);
+
+    const revoked = await test.router.fetch(new Request(`${ORIGIN}/internal/instance-access/revoke`, {
+      method: "POST",
+      headers: serviceHeaders,
+      body: JSON.stringify({ ...base, refreshCredential: rotated.refreshCredential }),
+    }));
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toEqual({ contractVersion: "instance-access/v1", revoked: true });
+    expect((await test.router.fetch(refresh(rotated.refreshCredential))).status).toBe(401);
+  });
+
+  it("rejects cross-origin, bad-CSRF, caller-actor and non-write requests before receipt issuance", async () => {
+    const test = await setup();
+    const validBody = { operationId: OPERATION_ID, payloadDigest: PAYLOAD_DIGEST };
+    const crossOrigin = await test.router.fetch(test.request(validBody, { origin: "https://attacker.service.test" }));
+    const badCsrf = await test.router.fetch(test.request(validBody, { csrf: "wrong" }));
+    const callerActor = await test.router.fetch(test.request({ ...validBody, actorId: "999999" }));
+    test.writeAllowed = false;
+    const noWrite = await test.router.fetch(test.request(validBody));
+    expect(crossOrigin.status).toBe(403);
+    expect(badCsrf.status).toBe(403);
+    expect(callerActor.status).toBe(400);
+    expect(noWrite.status).toBe(403);
+  });
+
+  it("refuses stale authorization revisions without trusting posted state", async () => {
+    const test = await setup();
+    test.authorizationRevision = 8;
+    const response = await test.router.fetch(test.request({ operationId: OPERATION_ID, payloadDigest: PAYLOAD_DIGEST }));
+    expect(response.status).toBe(403);
+  });
+
+  it("uses the configured Gateway origin and strips nested query secrets from login redirects", async () => {
+    const test = await setup();
+    const response = await test.router.fetch(new Request(
+      `https://attacker.test/repositories/${REPOSITORY_ID}?access_token=secret-value&state=private-state`,
+      { headers: { Accept: "text/html" } },
+    ));
+    const location = new URL(response.headers.get("Location")!);
+    expect(response.status).toBe(302);
+    expect(location.origin).toBe(ORIGIN);
+    expect(location.pathname).toBe("/auth/github/start");
+    expect(location.searchParams.get("redirect_to")).toBe(`/repositories/${REPOSITORY_ID}`);
+    expect(response.headers.get("Location")).not.toContain("secret-value");
+    expect(response.headers.get("Location")).not.toContain("private-state");
+  });
+
+  it("only opens a repository from a top-level document navigation", async () => {
+    const test = await setup({ configured: true });
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+      headers: {
+        Cookie: test.sessionCookie,
+        Accept: "image/png",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Dest": "image",
+      },
+    }));
+    expect(response.status).toBe(400);
+    expect(test.repositoryReads).toBe(0);
+    expect(test.accessChecks).toBe(0);
+    expect(test.desiredRequests).toBe(0);
+  });
+
+  it("routes a direct bookmark to configuration guidance without waking an unconfigured instance", async () => {
+    const test = await setup();
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+      headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
+    }));
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("Configuration required");
+    expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
+    expect(test.desiredRequests).toBe(0);
+  });
+
+  it("wakes a configured stopped instance once, shows wait state, and never redirects with a code", async () => {
+    const test = await setup({ configured: true, ready: false });
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+      headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
+    }));
+    expect(response.status).toBe(202);
+    expect(response.headers.get("Retry-After")).toBe("5");
+    const html = await response.text();
+    expect(html).toContain("waiting for runtime reservation");
+    expect(html).toContain("op_01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    expect(html).toContain('http-equiv="refresh" content="5; url=/entry/ins_01ARZ3NDEKTSV4RRFFQ69G5FAV?poll=1"');
+    expect(response.headers.get("Location")).toBeNull();
+    expect(test.desiredRequests).toBe(1);
+  });
+
+  it("stops direct-entry automatic polling after five refreshes", async () => {
+    const test = await setup({ configured: true, ready: false });
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}?poll=5`, {
+      headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await response.text()).not.toContain("http-equiv=\"refresh\"");
+    expect(test.desiredRequests).toBe(1);
+  });
+
+  it("hands a ready configured repository to its exact stable HTTPS host by body-only POST", async () => {
+    const test = await setup({ configured: true });
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+      headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
+    }));
+    const host = `https://ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`;
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Content-Security-Policy")).toContain(`form-action ${host}`);
+    expect(response.headers.get("Location")).toBeNull();
+    const html = await response.text();
+    expect(html).toContain(`action="${host}/_platform/handoff"`);
+    expect(html).toContain('name="code" value="');
+    expect(html).not.toContain("Location:");
+    expect(test.desiredRequests).toBe(1);
+  });
+
+  it("binds the OAuth callback to a short-lived host-only browser nonce and clears it on every outcome", async () => {
+    let exchanges = 0;
+    let storedCredentials = 0;
+    const provider: GitHubOAuthProvider = {
+      buildAuthorizeUrl({ state }) {
+        return `https://github.com/login/oauth/authorize?state=${encodeURIComponent(state)}`;
+      },
+      async exchangeCode() {
+        exchanges += 1;
+        return ok({ accessToken: "transient-github-access-token", refreshToken: "transient-refresh-token" });
+      },
+      async fetchProfile() {
+        return ok({ subject: "1234567", login: "service-owner", verifiedEmail: null, suspended: false });
+      },
+    };
+    const test = await setup({ provider, onCredentialStore: () => { storedCredentials += 1; } });
+    const start = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start?redirect_to=%2Frepositories%2F${REPOSITORY_ID}`));
+    expect(start.status).toBe(302);
+    expect(start.headers.get("Location")).toContain("https://github.com/login/oauth/authorize?");
+    const nonceCookie = start.headers.get("Set-Cookie") ?? "";
+    expect(nonceCookie).toContain("Secure");
+    expect(nonceCookie).toContain("HttpOnly");
+    expect(nonceCookie).toContain("SameSite=Lax");
+    expect(nonceCookie).toContain("Path=/");
+    expect(nonceCookie).toContain("Max-Age=300");
+    expect(nonceCookie).not.toContain("Domain=");
+    const nonce = /__Host-praetorium_login_nonce=([^;]+)/u.exec(nonceCookie)?.[1];
+    const state = new URL(start.headers.get("Location")!).searchParams.get("state");
+    expect(nonce).toBeTruthy();
+    expect(state).toBeTruthy();
+
+    const badNonce = nonce?.startsWith("A") ? `B${nonce.slice(1)}` : `A${nonce?.slice(1) ?? ""}`;
+    const denied = await test.router.fetch(new Request(`${ORIGIN}/auth/github/callback?state=${state}&code=code-1`, {
+      headers: { Cookie: `__Host-praetorium_login_nonce=${badNonce}` },
+    }));
+    expect(denied.status).toBe(401);
+    expect(denied.headers.getSetCookie().some((value) => value.startsWith("__Host-praetorium_login_nonce=") && value.includes("Max-Age=0"))).toBe(true);
+    expect(exchanges).toBe(0);
+    expect(storedCredentials).toBe(0);
+
+    const duplicateStart = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start`));
+    const duplicateCookie = duplicateStart.headers.get("Set-Cookie") ?? "";
+    const duplicateNonce = /__Host-praetorium_login_nonce=([^;]+)/u.exec(duplicateCookie)?.[1];
+    const duplicateState = new URL(duplicateStart.headers.get("Location")!).searchParams.get("state");
+    const duplicate = await test.router.fetch(new Request(`${ORIGIN}/auth/github/callback?state=${duplicateState}&code=code-duplicate`, {
+      headers: { Cookie: `__Host-praetorium_login_nonce=${duplicateNonce}; __Host-praetorium_login_nonce=attacker-value` },
+    }));
+    expect(duplicate.status).toBe(401);
+    expect(duplicate.headers.getSetCookie().some((value) => value.startsWith("__Host-praetorium_login_nonce=") && value.includes("Max-Age=0"))).toBe(true);
+    expect(exchanges).toBe(0);
+    expect(storedCredentials).toBe(0);
+
+    const successStart = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start?redirect_to=%2Frepositories%2F${REPOSITORY_ID}`));
+    const successCookie = successStart.headers.get("Set-Cookie") ?? "";
+    const successNonce = /__Host-praetorium_login_nonce=([^;]+)/u.exec(successCookie)?.[1];
+    const successState = new URL(successStart.headers.get("Location")!).searchParams.get("state");
+    const success = await test.router.fetch(new Request(`${ORIGIN}/auth/github/callback?state=${successState}&code=code-2`, {
+      headers: { Cookie: `__Host-praetorium_login_nonce=${successNonce}` },
+    }));
+    expect(success.status).toBe(303);
+    expect(success.headers.get("Location")).toBe(`/repositories/${REPOSITORY_ID}`);
+    const successCookies = success.headers.getSetCookie();
+    expect(successCookies.some((value) => value.startsWith("__Host-praetorium_login_nonce=") && value.includes("Max-Age=0"))).toBe(true);
+    const sessionCookie = successCookies.find((value) => value.startsWith("__Host-praetorium_session="));
+    const csrfCookie = successCookies.find((value) => value.startsWith("__Host-praetorium_csrf="));
+    expect(sessionCookie).toContain("Secure");
+    expect(sessionCookie).toContain("HttpOnly");
+    expect(sessionCookie).toContain("Path=/");
+    expect(csrfCookie).toContain("Secure");
+    expect(csrfCookie).toContain("Path=/");
+    expect(csrfCookie).not.toContain("HttpOnly");
+    expect(successCookies.join("\n")).not.toContain("Domain=");
+    expect((await success.text())).not.toContain("transient-github-access-token");
+    expect(exchanges).toBe(1);
+    expect(storedCredentials).toBe(1);
+  });
+});

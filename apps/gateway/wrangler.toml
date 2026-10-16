@@ -1,0 +1,32 @@
+name = "praetorium-gateway"
+main = "src/worker.ts"
+compatibility_date = "2026-07-30"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "USER_AUTH_STATE"
+class_name = "UserAuthStateDurableObject"
+
+[[durable_objects.bindings]]
+name = "EPHEMERAL_CODES"
+class_name = "EphemeralCodeDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["UserAuthStateDurableObject", "EphemeralCodeDurableObject"]
+
+[[kv_namespaces]]
+binding = "GATEWAY_KV"
+id = "00000000000000000000000000000000"
+preview_id = "00000000000000000000000000000000"
+
+[[services]]
+binding = "CONTROL_PLANE"
+service = "praetorium-control-plane"
+
+# Runtime secrets and environment-specific non-secret values are supplied
+# by the deployment environment. The Worker validates all required bindings
+# and values before serving routes.

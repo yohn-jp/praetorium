@@ -1,0 +1,14 @@
+name = "praetorium-instance-access"
+main = "src/worker.ts"
+compatibility_date = "2026-07-30"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[[services]]
+binding = "GATEWAY"
+service = "praetorium-gateway"
+
+# Set GATEWAY_ORIGIN, INSTANCE_ACCESS_INSTANCE_HOSTNAME_SUFFIX and the
+# INSTANCE_ACCESS_SERVICE_AUTH_TOKEN secret in the deployment environment.

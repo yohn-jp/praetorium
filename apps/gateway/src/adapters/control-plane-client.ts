@@ -1,13 +1,20 @@
 import {
   DesiredStateResponseSchema,
+  InstanceDashboardSchema,
+  PublicOperationSchema,
   RepositorySnapshotSchema,
+  ReleaseListSchema,
   ResolveRepositoryResponseSchema,
+  type InstanceDashboard,
+  type PublicOperation,
+  type ReleaseSummary,
   type RepositorySnapshot as ContractRepositorySnapshot,
 } from "@praetorium/contracts";
 
 export type RepositorySnapshot = ContractRepositorySnapshot;
 
 export type DesiredStateResult = ReturnType<typeof DesiredStateResponseSchema.parse>;
+export type ReleaseList = ReturnType<typeof ReleaseListSchema.parse>;
 
 export interface ResolveRepositoryInput {
   readonly repositoryId: number;
@@ -37,6 +44,9 @@ export interface DesiredStateInput {
 export interface ControlPlaneClient {
   getByRepositoryId(repositoryId: number): Promise<RepositorySnapshot | null>;
   getByInstanceId(instanceId: string): Promise<RepositorySnapshot | null>;
+  getDashboard(instanceId: string): Promise<InstanceDashboard>;
+  listReleases(): Promise<readonly ReleaseSummary[]>;
+  getOperation(operationId: string): Promise<PublicOperation | null>;
   resolveRepository(input: ResolveRepositoryInput): Promise<RepositorySnapshot & { readonly created: boolean }>;
   requestDesiredState(instanceId: string, input: DesiredStateInput): Promise<DesiredStateResult>;
 }
@@ -102,6 +112,25 @@ export function createControlPlaneClient(binding: Fetcher, gatewaySecret: string
     async getByInstanceId(instanceId) {
       try {
         return await snapshot(`/v1/instances/${encodeURIComponent(instanceId)}`);
+      } catch (error) {
+        if (error instanceof ControlPlaneError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    async getDashboard(instanceId) {
+      return InstanceDashboardSchema.parse(await request(
+        `/v1/instances/${encodeURIComponent(instanceId)}/dashboard`,
+      ));
+    },
+    async listReleases() {
+      const result = ReleaseListSchema.parse(await request("/v1/releases"));
+      return result.releases;
+    },
+    async getOperation(operationId) {
+      try {
+        return PublicOperationSchema.parse(await request(
+          `/v1/operations/${encodeURIComponent(operationId)}`,
+        ));
       } catch (error) {
         if (error instanceof ControlPlaneError && error.status === 404) return null;
         throw error;

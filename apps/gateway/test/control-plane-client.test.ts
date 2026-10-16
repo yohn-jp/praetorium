@@ -128,6 +128,48 @@ describe("Control Plane service client", () => {
     await expect(malformed.getByRepositoryId(41)).rejects.toThrow();
   });
 
+  it("loads only canonical management projections from the authenticated Control Plane", async () => {
+    const dashboard = {
+      snapshot,
+      current: null,
+      desired: null,
+      build: null,
+      operations: [],
+      releases: [],
+      resourceLimits: null,
+    };
+    const operation = {
+      id: "operation-1",
+      instanceId: snapshot.instance.instanceId,
+      generation: 2,
+      runtimeEpoch: 5,
+      kind: "update",
+      status: "running",
+      phase: "building",
+      attempt: 1,
+      createdAt: 1_800_000_000_000,
+      updatedAt: 1_800_000_000_001,
+    };
+    const calls: Request[] = [];
+    const controlPlane = client(async (request) => {
+      calls.push(request);
+      if (request.url.endsWith("/dashboard")) return Response.json(dashboard);
+      if (request.url.endsWith("/v1/releases")) return Response.json({ releases: [] });
+      return Response.json(operation);
+    });
+
+    await expect(controlPlane.getDashboard(snapshot.instance.instanceId)).resolves.toEqual(dashboard);
+    await expect(controlPlane.listReleases()).resolves.toEqual([]);
+    await expect(controlPlane.getOperation(operation.id)).resolves.toEqual(operation);
+
+    expect(calls.map((request) => new URL(request.url).pathname)).toEqual([
+      `/v1/instances/${snapshot.instance.instanceId}/dashboard`,
+      "/v1/releases",
+      `/v1/operations/${operation.id}`,
+    ]);
+    expect(calls.every((request) => request.headers.get("X-Control-Plane-Gateway-Auth") === "c".repeat(48))).toBe(true);
+  });
+
   it("preserves the upstream error code and status without leaking response bodies", async () => {
     const unavailable = client(async () => Response.json({ error: { code: "BINDING_CONFLICT" } }, { status: 409 }));
 

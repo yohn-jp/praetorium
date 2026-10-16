@@ -1,0 +1,130 @@
+{
+  "schema": "praetorium.local-environment/v1",
+  "scope": ["T12", "T14 generic substrate only"],
+  "status": "BLOCKED",
+  "evidenceCut": {
+    "checkedAt": "2026-10-17",
+    "branch": "worker/local-env-resume",
+    "sourceBaseHead": "f2a889ac997fd5f4bea671bb2c7f1af54fd7b93b",
+    "launcherSha256": "051f87fa5703df000101d424cab70282ec6561d1e94157845381daf2ac1c69ca",
+    "baseWorktree": "/tmp/praetorium-local-env-resume"
+  },
+  "launcher": {
+    "path": "scripts/local-disposable-environment.mjs",
+    "nodeSyntax": "PASS",
+    "plan": {
+      "status": "PASS",
+      "effectsExecuted": false
+    },
+    "freshRun": {
+      "command": "node scripts/local-disposable-environment.mjs --run",
+      "status": "BLOCKED",
+      "exitCode": 1,
+      "phase": "rootless Podman info, before registry pull",
+      "failure": "newuidmap could not write uid_map: Operation not permitted; Podman reports the helper lacks setuid or file capabilities.",
+      "temporaryRoot": "/tmp/praetorium-owned-ww4Ved",
+      "temporaryRootCleanup": "PASS; launcher removed the owned root after failure",
+      "registryImagePulled": false,
+      "buildkitStarted": false,
+      "inventoryCreated": false,
+      "digestProduced": null,
+      "liveProcesses": []
+    },
+    "historicalRootCleanup": {
+      "root": "/tmp/praetorium-owned-mMhkgz",
+      "ownerUid": 1000,
+      "ownerMarkerRestored": true,
+      "rootPrivate": true,
+      "buildkitProcessGroupId": 3345496,
+      "buildkitProcessGroupLive": false,
+      "registryEndpoint": "http://127.0.0.1:42555",
+      "registryListenerLive": false,
+      "cleanupCommand": "node scripts/local-disposable-environment.mjs --cleanup /tmp/praetorium-owned-mMhkgz",
+      "blockers": [
+        "After restart, Podman first reported that its cached boot ID differed and asked to clear only this private root's storage/podman-runroot and t directories.",
+        "After those exact private runtime directories were removed, Podman still failed because the host denied newuidmap with Operation not permitted.",
+        "An owner-validated unprivileged root removal stopped at VFS files owned by subordinate UID 100000. The root remains partial and private; its ownership marker was restored. No privileged cleanup was attempted."
+      ],
+      "reusable": false
+    }
+  },
+  "historicalSubstrateResults": {
+    "status": "HISTORICAL_GENERIC_SUBSTRATE_NOT_RERUN",
+    "sourceEvidenceCut": {
+      "branch": "worker/local-env",
+      "head": "eb5ac0b05b1d5ab018596cd45de773f794fd91a8",
+      "root": "/tmp/praetorium-owned-mMhkgz"
+    },
+    "buildkitScratchPush": {
+      "status": "PREVIOUSLY_RECORDED_VERIFIED_SUBSTRATE",
+      "recipe": "FROM scratch; COPY note.txt /note.txt",
+      "cacheMode": "no-cache",
+      "registry": "http://127.0.0.1:42555",
+      "manifestDigest": "sha256:147abf9330cb2e00b8212ab7d1b2198e6272e92df15b94b0ca7877ee7610c85b",
+      "config": {
+        "digest": "sha256:09de9c5a790c5a292532ac7dc8891513ac79b6b7dc11b941e821efbfe3251547",
+        "size": 450
+      },
+      "layers": [
+        {
+          "digest": "sha256:8b057d5b3ce36cdb04cedf71cd6c9c638d3f8c7e1e1db0c0a1f5fb415f207690",
+          "size": 131
+        }
+      ],
+      "producerAcceptance": false
+    },
+    "t05GenericOciRoundTrip": {
+      "status": "PREVIOUSLY_RECORDED_VERIFIED_SUBSTRATE",
+      "registry": "http://127.0.0.1:39567",
+      "manifestDigest": "sha256:e86e73bd4bf12b319b27847b1cd184e67f6e0722a7cdab758e74f44d4137df8d",
+      "config": {
+        "digest": "sha256:a7669961c35960d70259293704f135d2b5ca9ed49b69baf5cd32782309bb2591",
+        "size": 228
+      },
+      "layers": [
+        {
+          "digest": "sha256:f48f4ff044cc8b6c66b559500e5903dde8857c9479a61542e3240d6b66e0a569",
+          "size": 141
+        }
+      ],
+      "producerAcceptance": false
+    },
+    "limitation": "Both results are generic scratch/OCI substrate evidence from previous runs. The new run was blocked before image pull and neither historical artifact was re-fetched or re-verified at this evidence cut. No Praetorium producer composition, Scriptorium artifact, or product admission was proved."
+  },
+  "t14InventoryPlan": {
+    "command": "node scripts/verify-integration.mjs --plan --environment infrastructure/test/acceptance-inventory.json",
+    "status": "BLOCKED",
+    "exitCode": 2,
+    "effectsExecuted": false,
+    "error": "owner.identity must identify the environment owner",
+    "missingResources": [
+      "workers-d1-do",
+      "github-access",
+      "buildkit-registry",
+      "kubernetes-isolation",
+      "browser-entry",
+      "producer-recovery",
+      "stable-rollout"
+    ]
+  },
+  "workspaceVerification": {
+    "frozenInstall": {
+      "command": "corepack pnpm@11.18.0 install --frozen-lockfile",
+      "status": "PASS"
+    },
+    "check": {
+      "command": "PATH=/tmp/praetorium-bin:$PATH corepack pnpm@11.18.0 check",
+      "status": "PASS",
+      "buildAndLintPackages": 18,
+      "typecheckAndTestTasks": 29,
+      "boundaries": "PASS",
+      "contractSchemas": "PASS"
+    }
+  },
+  "nonClaims": [
+    "The fresh disposable launcher run did not start BuildKit or a registry in the current host environment.",
+    "Historical generic scratch and OCI digests are not producer-composition acceptance.",
+    "No Kubernetes image pull or cluster creation was attempted.",
+    "T14 remains blocked on all real integration resources and producer evidence."
+  ]
+}

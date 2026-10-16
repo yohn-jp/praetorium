@@ -50,8 +50,6 @@ const dashboard: PortalRepositoryDashboard = {
       cpuMilli: 1000,
       memoryMiB: 2048,
       ephemeralStorageMiB: 1024,
-      modelPoolMiB: 512,
-      workerMax: 4,
     },
   },
   desired: {
@@ -66,8 +64,6 @@ const dashboard: PortalRepositoryDashboard = {
       cpuMilli: 1000,
       memoryMiB: 2048,
       ephemeralStorageMiB: 1024,
-      modelPoolMiB: 512,
-      workerMax: 4,
     },
   },
   preview: {
@@ -82,15 +78,21 @@ const dashboard: PortalRepositoryDashboard = {
       cpuMilli: 1000,
       memoryMiB: 2048,
       ephemeralStorageMiB: 1024,
-      modelPoolMiB: 512,
-      workerMax: 4,
     },
+  },
+  build: {
+    buildId: "build_01",
+    buildKey: "sha256:build-key",
+    status: "failed",
+    stage: "building",
+    progressPercent: 73,
+    errorCode: "PRODUCER_REJECTED",
+    updatedAt: 1_800_000_000_000,
   },
   approvedReleases: [
     {
       releaseId: "rel_01",
       label: "Stable 1.2",
-      channel: "stable",
       imageDigest: "sha256:base-image",
     },
   ],
@@ -106,8 +108,6 @@ const dashboard: PortalRepositoryDashboard = {
         cpuMilli: 1000,
         memoryMiB: 2048,
         ephemeralStorageMiB: 1024,
-        modelPoolMiB: 512,
-        workerMax: 4,
       },
     },
   ],
@@ -115,7 +115,6 @@ const dashboard: PortalRepositoryDashboard = {
     cpuMilli: 4000,
     memoryMiB: 8192,
     ephemeralStorageMiB: 8192,
-    capacityState: "fresh",
   },
   operations: [operation],
   canConfigure: true,
@@ -209,6 +208,8 @@ describe("server-rendered management UI", () => {
     expect(html).toContain("sha256:current-image");
     expect(html).toContain("Requested modules: Editor (2.0.0)");
     expect(html).toContain("Required dependencies: Search (1.4.0)");
+    expect(html).toContain("Build: Failed");
+    expect(html).toContain("PRODUCER_REJECTED");
     expect(html).toContain("Ephemeral storage");
     expect(html).toContain("Operator limits");
     expect(html).toContain("even though the image digest is unchanged");
@@ -235,6 +236,26 @@ describe("server-rendered management UI", () => {
     expect(html).toContain("Build stopped before deployment.");
     expect(html).not.toContain("<script>alert");
     expect(html).not.toContain("Deployment succeeded");
+  });
+
+  it("polls the real build status while no operation has been created", async () => {
+    const html = await renderRepositoryDashboard(
+      {
+        ...dashboard,
+        operations: [],
+        build: { ...dashboard.build!, status: "running", errorCode: null },
+      },
+      {
+        csrfToken: "csrf-token-value",
+        createIdempotencyKey: () => "token_12345678901234567890",
+        scriptNonce: "nonce_nonce_nonce_01",
+      },
+    ).text();
+
+    expect(html).toContain("Build: Building");
+    expect(html).toContain('value="73"');
+    expect(html).toContain("setTimeout");
+    expect(html).toContain("No recent operations.");
   });
 
   it("keeps read-only controls hidden and relies on the service boundary to deny a crafted write", async () => {

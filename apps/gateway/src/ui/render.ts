@@ -147,9 +147,7 @@ function resources(value: PortalResources): string {
   return (
     `<dl><dt>CPU</dt><dd>${cpu(value.cpuMilli)}</dd>` +
     `<dt>Memory</dt><dd>${memory(value.memoryMiB)}</dd>` +
-    `<dt>Ephemeral storage</dt><dd>${memory(value.ephemeralStorageMiB)}</dd>` +
-    `<dt>Shared model pool</dt><dd>${memory(value.modelPoolMiB)}</dd>` +
-    `<dt>Maximum workers</dt><dd>${safeCount(value.workerMax) ? value.workerMax : "Unavailable"}</dd></dl>`
+    `<dt>Ephemeral storage</dt><dd>${memory(value.ephemeralStorageMiB)}</dd></dl>`
   );
 }
 
@@ -157,10 +155,41 @@ function limits(dashboard: PortalRepositoryDashboard): string {
   const limit = dashboard.resourceLimits;
   return (
     `<section aria-labelledby="resource-limits"><h3 id="resource-limits">Operator limits</h3>` +
-    `<p>Capacity observation: ${escapeHtml(limit.capacityState)}</p>` +
     `<dl><dt>CPU</dt><dd>${limit.cpuMilli === null ? "Unavailable" : cpu(limit.cpuMilli)}</dd>` +
     `<dt>Memory</dt><dd>${limit.memoryMiB === null ? "Unavailable" : memory(limit.memoryMiB)}</dd>` +
     `<dt>Ephemeral storage</dt><dd>${limit.ephemeralStorageMiB === null ? "Unavailable" : memory(limit.ephemeralStorageMiB)}</dd></dl></section>`
+  );
+}
+
+function buildStatusLabel(status: NonNullable<PortalRepositoryDashboard["build"]>["status"]): string {
+  switch (status) {
+    case "reserved": return "Reserved";
+    case "pending": return "Queued";
+    case "claimed": return "Claimed";
+    case "running": return "Building";
+    case "verifying": return "Verifying artifact";
+    case "succeeded": return "Complete";
+    case "failed": return "Failed";
+    case "cancelled": return "Canceled";
+  }
+}
+
+function buildStatus(build: PortalRepositoryDashboard["build"]): string {
+  if (!build) return "<p>No configuration build is associated with the desired revision.</p>";
+  const progress =
+    build.progressPercent !== null &&
+    Number.isFinite(build.progressPercent) &&
+    build.progressPercent >= 0 &&
+    build.progressPercent <= 100
+      ? `<progress max="100" value="${build.progressPercent}">${build.progressPercent}%</progress>`
+      : "";
+  const stage = build.stage ? `<p>Build stage: ${escapeHtml(build.stage)}</p>` : "";
+  const error = build.errorCode ? `<p role="alert">Build error: ${escapeHtml(build.errorCode)}</p>` : "";
+  return (
+    `<article><h3>Build: ${buildStatusLabel(build.status)}</h3>` +
+    `<p>Build <code>${escapeHtml(build.buildId)}</code></p>` +
+    `<p>Build key <code>${escapeHtml(build.buildKey)}</code></p>` +
+    `${stage}${progress}${error}</article>`
   );
 }
 
@@ -187,8 +216,8 @@ function artifactSection(
   return (
     `<section><h3>${title}</h3>` +
     `<p>Composed image: <code>${image(artifact.composedImageDigest)}</code></p>` +
-    `<p>Base release: ${escapeHtml(artifact.releaseLabel)} ` +
-    `(<code>${escapeHtml(artifact.baseImageDigest)}</code>)</p>` +
+    `<p>Base release: ${escapeHtml(artifact.releaseLabel ?? "Unavailable")} ` +
+    `(<code>${escapeHtml(artifact.baseImageDigest ?? "Unavailable")}</code>)</p>` +
     `<p>Requested modules: ${moduleNames(artifact.requestedModules, dashboard)}</p>` +
     `<p>Included modules: ${moduleNames(artifact.includedModules, dashboard)}</p>` +
     `<p>Required dependencies: ${moduleNames(required, dashboard)}</p>` +
@@ -299,8 +328,7 @@ function optionsForReleases(
     .map(
       (release) =>
         `<option value="${escapeHtml(release.releaseId)}"${release.releaseId === selectedId ? " selected" : ""}>` +
-        `${escapeHtml(release.label)} · ${escapeHtml(release.channel)} · ` +
-        `${escapeHtml(release.imageDigest)}</option>`,
+        `${escapeHtml(release.label)} · ${escapeHtml(release.imageDigest)}</option>`,
     )
     .join("");
 }
@@ -390,7 +418,7 @@ function configurationForm(
   const releaseId =
     preview?.releaseId ??
     (dashboard.releasePolicy.kind === "pinned"
-      ? dashboard.releasePolicy.releaseId
+      ? (dashboard.releasePolicy.releaseId ?? dashboard.approvedReleases[0]?.releaseId)
       : (dashboard.desired?.releaseId ?? dashboard.approvedReleases[0]?.releaseId));
   const selectedModules =
     preview?.requestedModules ??
@@ -493,8 +521,9 @@ export function renderRepositoryDashboard(
       : dashboard.operations.find(
           (operation) => operation.state === "queued" || operation.state === "running",
         );
+  const activeBuild = dashboard.build !== null && ["reserved", "pending", "claimed", "running", "verifying"].includes(dashboard.build.status);
   const polling =
-    latest && options.scriptNonce ? pollingScript(options.scriptNonce, options.pollCount ?? 0) : "";
+    (latest || activeBuild) && options.scriptNonce ? pollingScript(options.scriptNonce, options.pollCount ?? 0) : "";
   const operations = [...(options.notice ? [options.notice] : []), ...dashboard.operations]
     .map((operation) =>
       operationView(
@@ -541,7 +570,7 @@ export function renderRepositoryDashboard(
   const selectedPreview =
     `<section aria-labelledby="module-preview"><h3 id="module-preview">Module resolution</h3>` +
     `${modulePreview(preview, dashboard)}</section>`;
-  const activeOperation = latest !== undefined;
+  const activeOperation = latest !== undefined || activeBuild;
   const automaticStatus =
     activeOperation && polling === ""
       ? `<p role="status">Automatic refresh paused. Use Refresh status to check again.</p>`
@@ -556,8 +585,8 @@ export function renderRepositoryDashboard(
       `${current}${desired}</section>${limits(dashboard)}${selectedPreview}` +
       `<section aria-labelledby="operations"><h2 id="operations">Build and operation progress</h2>` +
       `${options.errorMessage ? `<p role="alert">${escapeHtml(options.errorMessage)}</p>` : ""}` +
-      `${automaticStatus}${operationContent}</section>${configure}${redeploy}`,
-    activeOperation && options.scriptNonce ? { scriptNonce: options.scriptNonce } : {},
+      `${automaticStatus}${buildStatus(dashboard.build)}${operationContent}</section>${configure}${redeploy}`,
+    (activeOperation || activeBuild) && options.scriptNonce ? { scriptNonce: options.scriptNonce } : {},
   );
 }
 

@@ -33,6 +33,57 @@ const snapshot = {
     updatedAt: 1_800_000_000_001,
   },
 } as const;
+const digest = `sha256:${"a".repeat(64)}`;
+const runtimeMetadata = {
+  contractVersion: "scriptorium-platform/v1",
+  producerRevision: "a".repeat(40),
+  listener: { port: 8080 },
+  paths: {
+    liveness: "/healthz",
+    readiness: "/readyz",
+    metadata: "/metadata",
+    shutdown: "/shutdown",
+    status: "/api/platform/v1/status",
+    quiesce: "/api/platform/v1/quiesce",
+    resume: "/api/platform/v1/resume",
+  },
+  shutdownTimeoutSeconds: 30,
+};
+const configurationSelection = {
+  releaseId: "release-1",
+  requestedModules: [],
+  resourceProfileId: "balanced",
+  policy: "stable",
+};
+const configurationRevision = {
+  revisionId: "revision-1",
+  instanceId: snapshot.instance.instanceId,
+  repositoryId: 41,
+  generation: 3,
+  buildKey: digest,
+  buildId: "build-1",
+  selection: configurationSelection,
+  resources: { cpuMilli: 1000, memoryMiB: 2048, ephemeralStorageMiB: 1024 },
+  runtimeMetadata,
+  resolvedModules: [],
+  artifactDigest: null,
+  status: "building",
+  actorId: "12345",
+  createdAt: 1_800_000_000_000,
+};
+const buildInput = {
+  contractVersion: "scriptorium-build/v1",
+  producerRevision: "a".repeat(40),
+  runtimeBaseDigest: digest,
+  buildKitDigest: digest,
+  recipeDigest: digest,
+  sourceDigest: digest,
+  lockDigest: digest,
+  requestedModules: [],
+  resolvedModules: [],
+  platform: "linux/amd64",
+  options: {},
+};
 
 function client(fetchImpl: (request: Request) => Promise<Response>) {
   const binding = {
@@ -168,6 +219,82 @@ describe("Control Plane service client", () => {
       `/v1/operations/${operation.id}`,
     ]);
     expect(calls.every((request) => request.headers.get("X-Control-Plane-Gateway-Auth") === "c".repeat(48))).toBe(true);
+  });
+
+  it("uses bounded configuration endpoints and binds plan idempotency in headers", async () => {
+    const calls: Request[] = [];
+    const configurationSnapshot = {
+      binding: {
+        repositoryId: 41,
+        instanceId: snapshot.instance.instanceId,
+        bindingEpoch: 4,
+        authorizationRevision: 3,
+        suspended: false,
+      },
+      instance: snapshot.instance,
+      revision: configurationRevision,
+    };
+    const preview = {
+      buildInput,
+      resources: configurationRevision.resources,
+      runtimeMetadata,
+      buildKey: digest,
+      requestedModules: [],
+      resolvedModules: [],
+    };
+    const plan = {
+      instance: snapshot.instance,
+      revision: configurationRevision,
+      operation: null,
+      buildId: "build-1",
+      buildKey: digest,
+      replayed: false,
+    };
+    const controlPlane = client(async (request) => {
+      calls.push(request);
+      if (request.method === "GET") return Response.json(configurationSnapshot);
+      if (request.url.endsWith("/preview")) return Response.json(preview);
+      return Response.json(plan);
+    });
+
+    await expect(controlPlane.getConfiguration(snapshot.instance.instanceId)).resolves.toEqual(configurationSnapshot);
+    await expect(controlPlane.previewConfiguration(snapshot.instance.instanceId, {
+      bindingEpoch: 4,
+      authorizationRevision: 3,
+      expectedGeneration: 2,
+      selection: configurationSelection,
+    })).resolves.toEqual(preview);
+    await expect(controlPlane.planConfiguration(snapshot.instance.instanceId, {
+      actorId: "12345",
+      bindingEpoch: 4,
+      authorizationRevision: 3,
+      expectedGeneration: 2,
+      selection: configurationSelection,
+      idempotencyKey: "plan-key-1234567890",
+      requestId: "request-3",
+    })).resolves.toEqual(plan);
+
+    expect(calls.map((request) => new URL(request.url).pathname)).toEqual([
+      `/v1/instances/${snapshot.instance.instanceId}/configuration`,
+      `/v1/instances/${snapshot.instance.instanceId}/configuration/preview`,
+      `/v1/instances/${snapshot.instance.instanceId}/configuration`,
+    ]);
+    expect(calls[1]?.headers.get("X-Control-Plane-Gateway-Auth")).toBe("c".repeat(48));
+    expect(await calls[1]?.json()).toEqual({
+      bindingEpoch: 4,
+      authorizationRevision: 3,
+      expectedGeneration: 2,
+      selection: configurationSelection,
+    });
+    expect(calls[2]?.headers.get("Idempotency-Key")).toBe("plan-key-1234567890");
+    expect(calls[2]?.headers.get("X-Request-Id")).toBe("request-3");
+    expect(await calls[2]?.json()).toEqual({
+      actorId: "12345",
+      bindingEpoch: 4,
+      authorizationRevision: 3,
+      expectedGeneration: 2,
+      selection: configurationSelection,
+    });
   });
 
   it("preserves the upstream error code and status without leaking response bodies", async () => {

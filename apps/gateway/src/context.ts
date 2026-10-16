@@ -26,6 +26,7 @@ import {
 } from "@praetorium/github";
 import { instanceHostname } from "@praetorium/contracts";
 import type { GatewayEnv } from "./env.js";
+import { runtimeEpochForAccess } from "./active-runtime.js";
 import {
   createDurableObjectHandoffCodeStore,
   createDurableObjectLoginAttemptStore,
@@ -207,7 +208,7 @@ function snapshotBinding(snapshot: Awaited<ReturnType<ControlPlaneClient["getByR
     owner: snapshot.binding.owner,
     name: snapshot.binding.name,
     instanceId: snapshot.binding.instanceId,
-    runtimeEpoch: snapshot.instance.runtimeEpoch,
+    runtimeEpoch: runtimeEpochForAccess(snapshot.instance),
     authorizationRevision: snapshot.binding.authorizationRevision,
     bindingEpoch: snapshot.binding.bindingEpoch,
     status: snapshot.binding.suspended ? "suspended" : "active",

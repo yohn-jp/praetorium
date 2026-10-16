@@ -78,8 +78,8 @@ export interface PortalRepositoryList {
 
 export interface PortalArtifact {
   readonly releaseId: string;
-  readonly releaseLabel: string;
-  readonly baseImageDigest: string;
+  readonly releaseLabel: string | null;
+  readonly baseImageDigest: string | null;
   readonly composedImageDigest: string | null;
   readonly resourceProfileId: string;
   readonly requestedModules: readonly string[];
@@ -91,8 +91,6 @@ export interface PortalResources {
   readonly cpuMilli: number;
   readonly memoryMiB: number;
   readonly ephemeralStorageMiB: number;
-  readonly modelPoolMiB: number;
-  readonly workerMax: number;
 }
 
 export interface PortalResourceLimits {
@@ -100,13 +98,11 @@ export interface PortalResourceLimits {
   readonly cpuMilli: number | null;
   readonly memoryMiB: number | null;
   readonly ephemeralStorageMiB: number | null;
-  readonly capacityState: "fresh" | "stale" | "unknown";
 }
 
 export interface PortalApprovedRelease {
   readonly releaseId: string;
   readonly label: string;
-  readonly channel: string;
   readonly imageDigest: string;
 }
 
@@ -146,15 +142,34 @@ export interface PortalOperation {
   readonly retryable: boolean;
 }
 
+export interface PortalBuildStatus {
+  readonly buildId: string;
+  readonly buildKey: string;
+  readonly status:
+    | "reserved"
+    | "pending"
+    | "claimed"
+    | "running"
+    | "verifying"
+    | "succeeded"
+    | "failed"
+    | "cancelled";
+  readonly stage: "preparing" | "building" | "publishing" | null;
+  readonly progressPercent: number | null;
+  readonly errorCode: string | null;
+  readonly updatedAt: number;
+}
+
 export interface PortalRepositoryDashboard {
   readonly repository: PortalRepositorySummary;
   readonly generation: number;
   readonly releasePolicy:
     | { readonly kind: "stable" }
-    | { readonly kind: "pinned"; readonly releaseId: string };
+    | { readonly kind: "pinned"; readonly releaseId: string | null };
   readonly current: PortalArtifact | null;
   readonly desired: PortalArtifact | null;
   readonly preview: PortalModulePreview | null;
+  readonly build: PortalBuildStatus | null;
   /** Only releases already approved by the release authority appear here. */
   readonly approvedReleases: readonly PortalApprovedRelease[];
   /** Only producer-declared and policy-allowed module artifacts appear here. */
@@ -203,6 +218,7 @@ export interface PortalHandoff {
 
 export type PortalCommandResult =
   | { readonly kind: "preview"; readonly preview: PortalModulePreview }
+  | { readonly kind: "configuration"; readonly revisionId: string; readonly buildId: string }
   | { readonly kind: "operation"; readonly operation: PortalOperation }
   | { readonly kind: "handoff"; readonly handoff: PortalHandoff };
 

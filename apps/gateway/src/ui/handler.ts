@@ -280,6 +280,7 @@ function makeDashboardResponse(
   const operationInProgress =
     options.notice?.state === "queued" ||
     options.notice?.state === "running" ||
+    (dashboard.build !== null && ["reserved", "pending", "claimed", "running", "verifying"].includes(dashboard.build.status)) ||
     dashboard.operations.some(
       (operation) => operation.state === "queued" || operation.state === "running",
     );
@@ -451,6 +452,17 @@ export function createPortalHandler(
             }),
             202,
           )
+        : renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
+    }
+
+    if (result.value.kind === "configuration") {
+      const dashboard = await loadDashboard(
+        dependencies,
+        identity.session.actor,
+        route.repositoryId,
+      );
+      return dashboard.ok
+        ? withStatus(makeDashboardResponse(dashboard.value, dependencies, identity.session), 202)
         : renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
     }
 

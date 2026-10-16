@@ -46,7 +46,7 @@ function repositorySnapshot(configured = false, ready = true) {
     desiredState: (ready ? "running" : "stopped") as "running" | "stopped",
     policy: "stable" as const,
     observedGeneration: 5,
-    currentArtifactDigest: null,
+    currentArtifactDigest: ready && configured ? `sha256:${"d".repeat(64)}` : null,
     desiredArtifactDigest: configured ? `sha256:${"b".repeat(64)}` : null,
     observedState: (ready ? "ready" : "stopped") as "ready" | "stopped",
     observedRuntimeEpoch: ready ? 7 : null,
@@ -68,6 +68,7 @@ async function setup(options: {
   onCredentialStore?: () => void;
   configured?: boolean;
   ready?: boolean;
+  pendingConfiguration?: boolean;
   credentialBroker?: NonNullable<GatewayContext["githubCredentialBroker"]>;
 } = {}) {
   const pair = await crypto.subtle.generateKey(
@@ -98,7 +99,22 @@ async function setup(options: {
   });
   if (!created.ok) throw new Error("test session setup failed");
   const csrfToken = await keyedDigest(sessionPepper, `csrf:${created.value.rawSessionId}`);
-  const snapshot = repositorySnapshot(options.configured, options.ready !== false);
+  const baseSnapshot = repositorySnapshot(options.configured, options.ready !== false);
+  const snapshot = options.pendingConfiguration
+    ? {
+        ...baseSnapshot,
+        instance: {
+          ...baseSnapshot.instance,
+          generation: baseSnapshot.instance.generation + 1,
+          runtimeEpoch: baseSnapshot.instance.runtimeEpoch + 1,
+          observedGeneration: baseSnapshot.instance.generation,
+          currentArtifactDigest: `sha256:${"c".repeat(64)}`,
+          desiredArtifactDigest: baseSnapshot.instance.desiredArtifactDigest,
+          observedState: "ready" as const,
+          observedRuntimeEpoch: baseSnapshot.instance.runtimeEpoch,
+        },
+      }
+    : baseSnapshot;
   const repository = {
     repositoryId: REPOSITORY_ID,
     installationId: snapshot.binding.installationId,
@@ -129,6 +145,7 @@ async function setup(options: {
   let accessChecks = 0;
   let repositoryReads = 0;
   let desiredRequests = 0;
+  const checkedRuntimeEpochs: number[] = [];
   let writeAllowed = options.write ?? true;
   let authorizationRevision = options.revision ?? snapshot.binding.authorizationRevision;
   const access = {
@@ -146,6 +163,7 @@ async function setup(options: {
     },
     async checkBoundAccess(_userId: string, repositoryId: number, instanceId: string, runtimeEpoch: number, now: string) {
       accessChecks += 1;
+      checkedRuntimeEpochs.push(runtimeEpoch);
       if (!writeAllowed) return { status: "denied" as const };
       return {
         status: "allowed" as const,
@@ -242,8 +260,14 @@ async function setup(options: {
     get accessChecks() { return accessChecks; },
     get repositoryReads() { return repositoryReads; },
     get desiredRequests() { return desiredRequests; },
+    get checkedRuntimeEpochs() { return checkedRuntimeEpochs; },
     set writeAllowed(value: boolean) { writeAllowed = value; },
     set authorizationRevision(value: number) { authorizationRevision = value; },
+    setObservedRuntimeState(value: "ready" | "stopping", epoch: number | null) {
+      const instance = snapshot.instance as { observedState: "ready" | "stopping"; observedRuntimeEpoch: number | null };
+      instance.observedState = value;
+      instance.observedRuntimeEpoch = epoch;
+    },
   };
 }
 
@@ -396,7 +420,7 @@ describe("Gateway mutation authorization endpoint", () => {
   });
 
   it("redeems, rotates and revokes the stable-origin grant through service-authenticated routes", async () => {
-    const test = await setup();
+    const test = await setup({ pendingConfiguration: true });
     const host = `ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`;
     const origin = `https://${host}`;
     const created = await createHandoffCode(test.handoffStore, {
@@ -461,6 +485,54 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(revoked.status).toBe(200);
     expect(await revoked.json()).toEqual({ contractVersion: "instance-access/v1", revoked: true });
     expect((await test.router.fetch(refresh(rotated.refreshCredential))).status).toBe(401);
+  });
+
+  it("stops refreshing the old runtime grant once observation leaves the current ready runtime", async () => {
+    const test = await setup({ pendingConfiguration: true });
+    const host = `ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`;
+    const origin = `https://${host}`;
+    const created = await createHandoffCode(test.handoffStore, {
+      userId: USER_ID,
+      gatewaySessionDigest: test.gatewaySessionDigest,
+      repositoryId: REPOSITORY_ID,
+      instanceId: INSTANCE_ID,
+      runtimeEpoch: 7,
+      hostname: host,
+      origin,
+      audience: "instance-access",
+      returnPath: "/",
+      requestedPermissions: ["read"],
+      now: NOW,
+      ttlSeconds: 60,
+      pepper: new TextEncoder().encode("mutation-test-handoff-pepper"),
+    });
+    const headers = {
+      Authorization: `Bearer ${"i".repeat(40)}`,
+      "Content-Type": "application/json",
+    };
+    const binding = {
+      contractVersion: "instance-access/v1",
+      audience: "instance-access",
+      instanceId: INSTANCE_ID,
+      hostname: host,
+      origin,
+    };
+    const redeemed = await test.router.fetch(new Request(`${ORIGIN}/internal/instance-access/handoff`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...binding, code: created.rawCode, returnPath: "/" }),
+    }));
+    expect(redeemed.status).toBe(200);
+    const grant = await redeemed.json() as { refreshCredential: string };
+
+    test.setObservedRuntimeState("stopping", 7);
+    const refresh = await test.router.fetch(new Request(`${ORIGIN}/internal/instance-access/refresh`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...binding, refreshCredential: grant.refreshCredential }),
+    }));
+
+    expect(refresh.status).toBe(401);
   });
 
   it("rejects cross-origin, bad-CSRF, caller-actor and non-write requests before receipt issuance", async () => {
@@ -566,7 +638,19 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(html).toContain(`action="${host}/_platform/handoff"`);
     expect(html).toContain('name="code" value="');
     expect(html).not.toContain("Location:");
-    expect(test.desiredRequests).toBe(1);
+    expect(test.desiredRequests).toBe(0);
+  });
+
+  it("keeps a ready current runtime on its observed epoch while a desired build is pending", async () => {
+    const test = await setup({ configured: true, pendingConfiguration: true });
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+      headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('name="code" value="');
+    expect(test.desiredRequests).toBe(0);
+    expect(test.checkedRuntimeEpochs).toEqual([7, 7, 7]);
   });
 
   it("binds the OAuth callback to a short-lived host-only browser nonce and clears it on every outcome", async () => {

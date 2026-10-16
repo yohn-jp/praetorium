@@ -1,6 +1,7 @@
 import { createHandoffCode } from "@praetorium/auth";
 import type { UserId } from "@praetorium/auth";
 import { instanceHostname } from "@praetorium/contracts";
+import type { InstanceDashboard } from "@praetorium/contracts";
 import type { AccessDecision } from "@praetorium/contracts";
 import type { AccessibleRepository } from "@praetorium/github";
 import { GitHubAccessUnavailableError } from "@praetorium/github";
@@ -19,6 +20,7 @@ import type {
   PortalService,
 } from "../ui/index.js";
 import type { RepositorySnapshot } from "../adapters/control-plane-client.js";
+import { hasReadyCurrentRuntime, hasReadyDesiredRuntime, runtimeEpochForAccess } from "../active-runtime.js";
 
 type ServiceError = Extract<PortalResult<never>, { readonly ok: false }>["error"];
 
@@ -43,13 +45,9 @@ function permission(role: AccessibleRepository["role"]): PortalPermission {
 function instanceState(snapshot: RepositorySnapshot | null): PortalRepositorySummary["instance"] {
   if (!snapshot) return { state: "unknown", instanceId: null, retryable: true, reason: "No repository binding exists yet." };
   const instance = snapshot.instance;
+  if (hasReadyCurrentRuntime(instance)) return { state: "ready", instanceId: instance.instanceId, retryable: false, reason: null };
   if (instance.reservationState === "blocked") return { state: "blocked", instanceId: instance.instanceId, retryable: true, reason: "Runtime capacity is not currently available." };
   if (instance.observedState === "failed") return { state: "failed", instanceId: instance.instanceId, retryable: true, reason: "The runtime reported a failure." };
-  if (
-    instance.observedState === "ready" &&
-    instance.observedGeneration === instance.generation &&
-    instance.observedRuntimeEpoch === instance.runtimeEpoch
-  ) return { state: "ready", instanceId: instance.instanceId, retryable: false, reason: null };
   if (instance.desiredState === "stopped" && instance.observedState === "stopped") {
     return { state: "stopped", instanceId: instance.instanceId, retryable: true, reason: null };
   }
@@ -59,6 +57,7 @@ function instanceState(snapshot: RepositorySnapshot | null): PortalRepositorySum
 function summary(
   repository: AccessibleRepository,
   snapshot: RepositorySnapshot | null,
+  latestOperation: PortalOperation | null = null,
 ): PortalRepositorySummary {
   return {
     repositoryId: String(repository.repositoryId),
@@ -68,11 +67,11 @@ function summary(
     instance: instanceState(snapshot),
     currentImageDigest: snapshot?.instance.currentArtifactDigest ?? null,
     desiredImageDigest: snapshot?.instance.desiredArtifactDigest ?? null,
-    operation: null,
+    operation: latestOperation,
   };
 }
 
-function operation(op: NonNullable<Awaited<ReturnType<GatewayContext["controlPlane"]["requestDesiredState"]>>["operation"]>): PortalOperation {
+function operation(op: NonNullable<InstanceDashboard["operations"][number]>): PortalOperation {
   const state = op.status === "pending" ? "queued"
     : op.status === "claimed" || op.status === "running" ? "running"
       : op.status === "succeeded" ? "succeeded"
@@ -85,7 +84,8 @@ function operation(op: NonNullable<Awaited<ReturnType<GatewayContext["controlPla
     progressPercent: null,
     message: op.phase || null,
     error: null,
-    retryable: state === "failed" || state === "blocked",
+    // The Control Plane does not expose a public retry route in this contract.
+    retryable: false,
   };
 }
 
@@ -99,6 +99,7 @@ function mapControlPlaneError(error: unknown): ServiceError {
     const code = "code" in error && typeof error.code === "string" ? error.code : "UPSTREAM_UNAVAILABLE";
     if (status === 404) return { code: "NOT_FOUND", message: "Repository instance was not found." };
     if (status === 409) return { code: "CONFLICT", message: "Repository state changed. Reload and try again." };
+    if (status === 400) return { code: "INVALID_REQUEST", message: "The selected release, modules, or resource profile are not supported." };
     if (status === 401 || status === 403) return { code: "UNAUTHORIZED", message: "Gateway authority was rejected." };
     return { code: "UPSTREAM_UNAVAILABLE", message: `Control Plane is temporarily unavailable (${code}).`, retryable: true };
   }
@@ -115,6 +116,83 @@ async function accessibleRepository(
   return result.value.find((repository) => repository.repositoryId === repositoryId) ?? null;
 }
 
+interface AuthorizedManagement {
+  readonly repository: AccessibleRepository;
+  readonly snapshot: RepositorySnapshot;
+  readonly management: InstanceDashboard;
+  readonly authorizationRevision: number;
+}
+
+async function authorizedManagement(
+  context: GatewayContext,
+  actor: PortalActor,
+  repositoryId: number,
+  action: "read" | "maintain",
+): Promise<PortalResult<AuthorizedManagement>> {
+  try {
+    const decision = await authorize(context, actor, repositoryId, action);
+    if (!decision) return { ok: false, error: accessError() };
+    const listed = await context.githubAccess.listRepositories(actor.userId);
+    if (!listed.ok) return failure("UPSTREAM_UNAVAILABLE", "GitHub repository access is temporarily unavailable.", true);
+    const repository = listed.value.find((item) => item.repositoryId === repositoryId);
+    if (!repository || repository.installationId !== decision.installationId) {
+      return { ok: false, error: accessError() };
+    }
+    const initial = await context.controlPlane.getByRepositoryId(repositoryId);
+    if (!initial) return failure("NOT_FOUND", "Repository instance was not found.");
+    if (
+      initial.binding.installationId !== repository.installationId ||
+      initial.binding.owner.toLowerCase() !== repository.owner.toLowerCase() ||
+      initial.binding.name.toLowerCase() !== repository.name.toLowerCase()
+    ) return { ok: false, error: accessError() };
+    const management = await context.controlPlane.getDashboard(initial.instance.instanceId);
+    const snapshot = management.snapshot;
+    if (
+      snapshot.binding.repositoryId !== repositoryId ||
+      snapshot.binding.installationId !== repository.installationId ||
+      snapshot.binding.owner.toLowerCase() !== repository.owner.toLowerCase() ||
+      snapshot.binding.name.toLowerCase() !== repository.name.toLowerCase() ||
+      snapshot.instance.instanceId !== initial.instance.instanceId ||
+      snapshot.binding.instanceId !== initial.instance.instanceId
+    ) return { ok: false, error: accessError() };
+    const fresh = await context.githubAccess.checkBoundAccess(
+      actor.userId,
+      repositoryId,
+      snapshot.instance.instanceId,
+      runtimeEpochForAccess(snapshot.instance),
+      context.requestNow,
+    );
+    if (fresh.status === "unavailable") {
+      return failure("UPSTREAM_UNAVAILABLE", "GitHub repository access is temporarily unavailable.", true);
+    }
+    const hasRequiredPermission = fresh.status === "allowed" && (
+      action === "read"
+        ? fresh.permissions.includes("read")
+        : fresh.permissions.includes("maintain") || fresh.permissions.includes("admin")
+    );
+    if (
+      !hasRequiredPermission ||
+      fresh.repositoryId !== repositoryId ||
+      fresh.instanceId !== snapshot.instance.instanceId ||
+      fresh.runtimeEpoch !== runtimeEpochForAccess(snapshot.instance) ||
+      fresh.installationId !== snapshot.binding.installationId ||
+      fresh.authorizationRevision !== snapshot.binding.authorizationRevision ||
+      fresh.expiresAt <= Date.parse(context.requestNow)
+    ) return { ok: false, error: accessError() };
+    return success({
+      repository,
+      snapshot,
+      management,
+      authorizationRevision: fresh.authorizationRevision,
+    });
+  } catch (error) {
+    if (error instanceof GitHubAccessUnavailableError) {
+      return failure("UPSTREAM_UNAVAILABLE", "GitHub repository access is temporarily unavailable.", true);
+    }
+    return { ok: false, error: mapControlPlaneError(error) };
+  }
+}
+
 async function authorize(
   context: GatewayContext,
   actor: PortalActor,
@@ -126,24 +204,87 @@ async function authorize(
   return decision;
 }
 
-function dashboard(repository: AccessibleRepository, snapshot: RepositorySnapshot | null): PortalRepositoryDashboard {
-  const repo = summary(repository, snapshot);
+function dashboard(
+  repository: AccessibleRepository,
+  snapshot: RepositorySnapshot | null,
+  managed: InstanceDashboard | null,
+  availableReleases: readonly InstanceDashboard["releases"][number][] = [],
+): PortalRepositoryDashboard {
+  const operations = managed?.operations.map(operation) ?? [];
+  const repo = summary(repository, snapshot, operations[0] ?? null);
   const instance = snapshot?.instance;
+  const releases: readonly InstanceDashboard["releases"][number][] = managed?.releases ?? availableReleases;
+  const releaseFor = (releaseId: string) => releases.find((release) => release.releaseId === releaseId);
+  const artifact = (revision: InstanceDashboard["current"]): PortalRepositoryDashboard["current"] => {
+    if (!revision) return null;
+    const release = releaseFor(revision.selection.releaseId);
+    return {
+      releaseId: revision.selection.releaseId,
+      releaseLabel: release?.version ?? null,
+      baseImageDigest: release?.imageDigest ?? null,
+      composedImageDigest: revision.artifactDigest,
+      resourceProfileId: revision.selection.resourceProfileId,
+      requestedModules: revision.selection.requestedModules,
+      includedModules: revision.resolvedModules.map(({ id }) => id),
+      resources: revision.resources,
+    };
+  };
+  const current = artifact(managed?.current ?? null);
+  const desired = artifact(managed?.desired ?? null);
+  const selectedReleaseId = desired?.releaseId ?? current?.releaseId ?? releases[0]?.releaseId;
+  const selectedRelease = selectedReleaseId ? releaseFor(selectedReleaseId) : undefined;
+  const approvedReleases = releases.map((release) => ({
+    releaseId: release.releaseId,
+    label: release.version,
+    imageDigest: release.imageDigest,
+  }));
+  const modules = selectedRelease?.catalog.modules.map((module) => ({
+    moduleId: module.id,
+    label: module.id,
+    version: module.version,
+    artifactDigest: module.artifactDigest,
+  })) ?? [];
+  const resourceProfiles = selectedRelease?.catalog.resourceProfiles.map((profile) => ({
+    profileId: profile.id,
+    label: profile.id,
+    resources: {
+      cpuMilli: profile.cpuMilli,
+      memoryMiB: profile.memoryMiB,
+      ephemeralStorageMiB: profile.ephemeralStorageMiB,
+    },
+  })) ?? [];
+  const build = managed?.build
+    ? {
+        buildId: managed.build.id,
+        buildKey: managed.build.buildKey,
+        status: managed.build.status,
+        stage: managed.build.progress?.stage ?? null,
+        progressPercent: managed.build.progress?.percent ?? null,
+        errorCode: managed.build.errorCode,
+        updatedAt: managed.build.updatedAt,
+      }
+    : null;
   return {
     repository: repo,
     generation: instance?.generation ?? 0,
     releasePolicy: instance?.policy === "pinned"
-      ? { kind: "pinned", releaseId: "" }
+      ? { kind: "pinned", releaseId: desired?.releaseId ?? current?.releaseId ?? null }
       : { kind: "stable" },
-    current: null,
-    desired: null,
+    current,
+    desired,
     preview: null,
-    approvedReleases: [],
-    modules: [],
-    resourceProfiles: [],
-    resourceLimits: { cpuMilli: null, memoryMiB: null, ephemeralStorageMiB: null, capacityState: "unknown" },
-    operations: [],
-    canConfigure: false,
+    build,
+    approvedReleases,
+    modules,
+    resourceProfiles,
+    resourceLimits: {
+      cpuMilli: managed?.resourceLimits?.cpuMilli ?? null,
+      memoryMiB: managed?.resourceLimits?.memoryMiB ?? null,
+      ephemeralStorageMiB: managed?.resourceLimits?.ephemeralStorageMiB ?? null,
+    },
+    operations,
+    canConfigure: !!snapshot && !snapshot.binding.suspended &&
+      (repository.role === "maintain" || repository.role === "admin"),
   };
 }
 
@@ -192,7 +333,7 @@ async function enterRepository(
       actor.userId,
       repositoryId,
       resolved.instance.instanceId,
-      resolved.instance.runtimeEpoch,
+      runtimeEpochForAccess(resolved.instance),
       context.requestNow,
     );
     if (
@@ -200,7 +341,7 @@ async function enterRepository(
       fresh.status !== "allowed" ||
       fresh.repositoryId !== repositoryId ||
       fresh.instanceId !== resolved.instance.instanceId ||
-      fresh.runtimeEpoch !== resolved.instance.runtimeEpoch ||
+      fresh.runtimeEpoch !== runtimeEpochForAccess(resolved.instance) ||
       fresh.authorizationRevision !== resolved.binding.authorizationRevision ||
       fresh.installationId !== resolved.binding.installationId ||
       fresh.expiresAt <= Date.parse(context.requestNow) ||
@@ -216,49 +357,50 @@ async function enterRepository(
       );
     }
 
-    const desired = await context.controlPlane.requestDesiredState(resolved.instance.instanceId, {
-      actorId: actor.userId,
-      expectedGeneration: resolved.instance.generation,
-      desiredState: "running",
-      idempotencyKey: `wake_${generateToken(128)}`,
-      bindingEpoch: resolved.binding.bindingEpoch,
-      authorizationRevision: fresh.authorizationRevision,
-      requestId: context.requestId,
-      now: Date.parse(context.requestNow),
-    });
-    if (
-      desired.instance.observedState !== "ready" ||
-      desired.instance.observedGeneration !== desired.instance.generation ||
-      desired.instance.observedRuntimeEpoch !== desired.instance.runtimeEpoch
-    ) {
-      if (desired.operation) return success({ kind: "operation", operation: operation(desired.operation) });
-      return failure("UNAVAILABLE", "The repository instance is starting without an active operation report.", true);
+    let ready: RepositorySnapshot = resolved;
+    if (!hasReadyCurrentRuntime(resolved.instance)) {
+      const desired = await context.controlPlane.requestDesiredState(resolved.instance.instanceId, {
+        actorId: actor.userId,
+        expectedGeneration: resolved.instance.generation,
+        desiredState: "running",
+        idempotencyKey: `wake_${generateToken(128)}`,
+        bindingEpoch: resolved.binding.bindingEpoch,
+        authorizationRevision: fresh.authorizationRevision,
+        requestId: context.requestId,
+        now: Date.parse(context.requestNow),
+      });
+      if (!hasReadyDesiredRuntime(desired.instance)) {
+        if (desired.operation) return success({ kind: "operation", operation: operation(desired.operation) });
+        return failure("UNAVAILABLE", "The repository instance is starting without an active operation report.", true);
+      }
+      ready = desired;
     }
+    const readyRuntimeEpoch = runtimeEpochForAccess(ready.instance);
     const readyAccess = await context.githubAccess.checkBoundAccess(
       actor.userId,
       repositoryId,
-      desired.instance.instanceId,
-      desired.instance.runtimeEpoch,
+      ready.instance.instanceId,
+      readyRuntimeEpoch,
       context.requestNow,
     );
     if (
       readyAccess.status !== "allowed" ||
       readyAccess.repositoryId !== repositoryId ||
-      readyAccess.instanceId !== desired.instance.instanceId ||
-      readyAccess.runtimeEpoch !== desired.instance.runtimeEpoch ||
-      readyAccess.installationId !== desired.binding.installationId ||
-      readyAccess.authorizationRevision !== desired.binding.authorizationRevision ||
+      readyAccess.instanceId !== ready.instance.instanceId ||
+      readyAccess.runtimeEpoch !== readyRuntimeEpoch ||
+      readyAccess.installationId !== ready.binding.installationId ||
+      readyAccess.authorizationRevision !== ready.binding.authorizationRevision ||
       readyAccess.expiresAt <= Date.parse(context.requestNow) ||
       !readyAccess.permissions.includes("read")
     ) return { ok: false, error: accessError() };
 
-    const origin = `https://${instanceHostname(desired.instance.instanceId, context.config.instanceHostnameSuffix)}`;
+    const origin = `https://${instanceHostname(ready.instance.instanceId, context.config.instanceHostnameSuffix)}`;
     const created = await createHandoffCode(context.handoffStore, {
       userId: actor.userId as UserId,
       gatewaySessionDigest: sessionDigestOf(actor),
       repositoryId,
-      instanceId: desired.instance.instanceId,
-      runtimeEpoch: desired.instance.runtimeEpoch,
+      instanceId: ready.instance.instanceId,
+      runtimeEpoch: readyRuntimeEpoch,
       hostname: new URL(origin).hostname,
       origin,
       audience: "instance-access",
@@ -304,8 +446,22 @@ export function createPortalService(context: GatewayContext): PortalService {
       const repository = await accessibleRepository(context, actor.userId, repositoryId);
       if (!repository || repository.installationId !== allowed.installationId) return { ok: false, error: accessError() };
       try {
-        const snapshot = await context.controlPlane.getByRepositoryId(repositoryId);
-        return success(dashboard(repository, snapshot));
+        const initial = await context.controlPlane.getByRepositoryId(repositoryId);
+        if (!initial) {
+          const releases = await context.controlPlane.listReleases();
+          return success(dashboard(repository, null, null, releases));
+        }
+        const managed = await context.controlPlane.getDashboard(initial.instance.instanceId);
+        const snapshot = managed.snapshot;
+        if (
+          snapshot.binding.repositoryId !== repositoryId ||
+          snapshot.binding.installationId !== repository.installationId ||
+          snapshot.binding.owner.toLowerCase() !== repository.owner.toLowerCase() ||
+          snapshot.binding.name.toLowerCase() !== repository.name.toLowerCase() ||
+          snapshot.instance.instanceId !== initial.instance.instanceId ||
+          snapshot.binding.instanceId !== initial.instance.instanceId
+        ) return { ok: false, error: accessError() };
+        return success(dashboard(repository, snapshot, managed));
       } catch (error) {
         return { ok: false, error: mapControlPlaneError(error) };
       }
@@ -315,20 +471,96 @@ export function createPortalService(context: GatewayContext): PortalService {
       const repositoryId = numericId(rawRepositoryId);
       if (repositoryId === null) return failure("INVALID_REQUEST", "Repository identifier is invalid.");
       if (command.kind === "enter") return enterRepository(context, actor, repositoryId);
-      let decision: AccessDecision | null;
-      try {
-        decision = await authorize(context, actor, repositoryId, command.kind === "preview" ? "read" : "maintain");
-      } catch (error) {
-        if (error instanceof GitHubAccessUnavailableError) {
-          return failure("UPSTREAM_UNAVAILABLE", "GitHub repository access is temporarily unavailable.", true);
-        }
-        return failure("UPSTREAM_UNAVAILABLE", "Repository authority is temporarily unavailable.", true);
-      }
-      if (!decision) return { ok: false, error: accessError() };
+      const authority = await authorizedManagement(
+        context,
+        actor,
+        repositoryId,
+        command.kind === "preview" ? "read" : "maintain",
+      );
+      if (!authority.ok) return authority;
+      const { snapshot, authorizationRevision } = authority.value;
       if (command.kind === "preview") {
-        return failure("UNAVAILABLE", "No approved producer catalog is available for preview.", true);
+        try {
+          const preview = await context.controlPlane.previewConfiguration(snapshot.instance.instanceId, {
+            bindingEpoch: snapshot.binding.bindingEpoch,
+            authorizationRevision,
+            expectedGeneration: snapshot.instance.generation,
+            selection: {
+              releaseId: command.releaseId,
+              requestedModules: [...command.moduleIds],
+              resourceProfileId: command.resourceProfileId,
+              policy: command.releasePolicy,
+            },
+          });
+          return success({
+            kind: "preview",
+            preview: {
+              state: "valid",
+              releasePolicy: command.releasePolicy,
+              releaseId: command.releaseId,
+              requestedModules: preview.requestedModules,
+              resourceProfileId: command.resourceProfileId,
+              includedModules: preview.resolvedModules.map(({ id }) => id),
+              unsupportedReasons: [],
+              resources: preview.resources,
+            },
+          });
+        } catch (error) {
+          return { ok: false, error: mapControlPlaneError(error) };
+        }
       }
-      return failure("UNAVAILABLE", "This Gateway has no configured build or release service.", true);
+      if (command.kind === "configure") {
+        if (command.expectedGeneration !== snapshot.instance.generation) {
+          return failure("CONFLICT", "Repository state changed. Reload and try again.");
+        }
+        try {
+          const result = await context.controlPlane.planConfiguration(snapshot.instance.instanceId, {
+            actorId: actor.userId,
+            bindingEpoch: snapshot.binding.bindingEpoch,
+            authorizationRevision,
+            expectedGeneration: command.expectedGeneration,
+            selection: {
+              releaseId: command.releaseId,
+              requestedModules: [...command.moduleIds],
+              resourceProfileId: command.resourceProfileId,
+              policy: command.releasePolicy,
+            },
+            idempotencyKey: command.idempotencyKey,
+            requestId: context.requestId,
+          });
+          return success({
+            kind: "configuration",
+            revisionId: result.revision.revisionId,
+            buildId: result.buildId,
+          });
+        } catch (error) {
+          return { ok: false, error: mapControlPlaneError(error) };
+        }
+      }
+      if (command.kind === "redeploy") {
+        if (command.expectedGeneration !== snapshot.instance.generation) {
+          return failure("CONFLICT", "Repository state changed. Reload and try again.");
+        }
+        try {
+          const result = await context.controlPlane.requestDesiredState(snapshot.instance.instanceId, {
+            actorId: actor.userId,
+            expectedGeneration: command.expectedGeneration,
+            desiredState: "running",
+            idempotencyKey: command.idempotencyKey,
+            bindingEpoch: snapshot.binding.bindingEpoch,
+            authorizationRevision,
+            forceNewRuntime: true,
+            requestId: context.requestId,
+            now: Date.parse(context.requestNow),
+          });
+          return result.operation
+            ? success({ kind: "operation", operation: operation(result.operation) })
+            : failure("UNAVAILABLE", "The redeploy request was accepted without an operation report.", true);
+        } catch (error) {
+          return { ok: false, error: mapControlPlaneError(error) };
+        }
+      }
+      return failure("UNAVAILABLE", "Operation retry is not available from the Control Plane.", true);
     },
   };
 }

@@ -40,6 +40,7 @@ import {
   SESSION_CONCURRENCY_LIMIT,
 } from "./constants.js";
 import type { GatewayContext } from "./context.js";
+import { runtimeEpochForAccess } from "./active-runtime.js";
 import { createPortalHandler } from "./ui/index.js";
 import type { PortalActor, PortalSession } from "./ui/index.js";
 import { createPortalService } from "./services/portal-service.js";
@@ -363,7 +364,7 @@ async function handleCreateMcpCredential(request: Request, context: GatewayConte
       session.session.actor.userId,
       repositoryId,
       repository.instance.instanceId,
-      repository.instance.runtimeEpoch,
+      runtimeEpochForAccess(repository.instance),
       now,
     );
     if (decision.status === "unavailable") return unavailable(request, context);
@@ -376,7 +377,7 @@ async function handleCreateMcpCredential(request: Request, context: GatewayConte
       sessionRevision: session.session.resolved.record.sessionRevision,
       repositoryId,
       instanceId: repository.instance.instanceId,
-      runtimeEpoch: repository.instance.runtimeEpoch,
+      runtimeEpoch: runtimeEpochForAccess(repository.instance),
       name,
       permissions,
       now,
@@ -432,7 +433,7 @@ async function handleMutationAuthorization(
       session.session.actor.userId,
       repositoryId,
       snapshot.instance.instanceId,
-      snapshot.instance.runtimeEpoch,
+      runtimeEpochForAccess(snapshot.instance),
       now,
     );
     if (access.status === "unavailable") return unavailable(request, context);
@@ -454,7 +455,7 @@ async function handleMutationAuthorization(
       subjectUserId: session.session.actor.userId,
       repositoryId,
       instanceId: snapshot.instance.instanceId,
-      runtimeEpoch: snapshot.instance.runtimeEpoch,
+      runtimeEpoch: runtimeEpochForAccess(snapshot.instance),
       operationId: parsed.data.operationId,
       payloadDigest: parsed.data.payloadDigest,
       authorizationRevision: access.authorizationRevision,
@@ -483,7 +484,7 @@ function decisionMatches(
   now: string,
 ): decision is Extract<BoundAccess, { status: "allowed" }> {
   return Boolean(snapshot && decision.status === "allowed" && decision.repositoryId === repositoryId &&
-    decision.instanceId === snapshot.instance.instanceId && decision.runtimeEpoch === snapshot.instance.runtimeEpoch &&
+    decision.instanceId === snapshot.instance.instanceId && decision.runtimeEpoch === runtimeEpochForAccess(snapshot.instance) &&
     decision.installationId === snapshot.binding.installationId &&
     decision.authorizationRevision === snapshot.binding.authorizationRevision &&
     decision.expiresAt > Date.parse(now) && decision.permissions.includes("read"));
@@ -548,7 +549,7 @@ async function handleTokenExchange(request: Request, context: GatewayContext, no
   }
   try {
     const snapshot = await context.controlPlane.getByInstanceId(instanceId);
-    if (!snapshot || snapshot.binding.repositoryId !== repositoryId || snapshot.instance.runtimeEpoch !== runtimeEpoch) {
+    if (!snapshot || snapshot.binding.repositoryId !== repositoryId || runtimeEpochForAccess(snapshot.instance) !== runtimeEpoch) {
       return errorResponse(request, "UNAUTHENTICATED", "credential is invalid", context.requestId);
     }
     const rateKey = await keyedDigest(context.config.credentialPepper, `exchange:${authorization.slice("Bearer ".length)}`);
@@ -655,7 +656,7 @@ async function handleInstanceAccessHandoff(request: Request, context: GatewayCon
     presentedHostname: bound.input.hostname,
     presentedRepositoryId: bound.snapshot.binding.repositoryId,
     presentedInstanceId: bound.input.instanceId,
-    presentedRuntimeEpoch: bound.snapshot.instance.runtimeEpoch,
+    presentedRuntimeEpoch: runtimeEpochForAccess(bound.snapshot.instance),
     presentedOrigin: bound.origin,
     presentedReturnPath: bound.input.returnPath,
     presentedAudience: bound.input.audience,
@@ -703,7 +704,7 @@ async function handleInstanceAccessRefresh(request: Request, context: GatewayCon
     plaintext: bound.input.refreshCredential,
     repositoryId: bound.snapshot.binding.repositoryId,
     instanceId: bound.input.instanceId,
-    runtimeEpoch: bound.snapshot.instance.runtimeEpoch,
+    runtimeEpoch: runtimeEpochForAccess(bound.snapshot.instance),
     origin: bound.origin,
     now,
   });
@@ -737,7 +738,7 @@ async function handleInstanceAccessRevoke(request: Request, context: GatewayCont
     plaintext: input.data.refreshCredential,
     repositoryId: snapshot.binding.repositoryId,
     instanceId: input.data.instanceId,
-    runtimeEpoch: snapshot.instance.runtimeEpoch,
+    runtimeEpoch: runtimeEpochForAccess(snapshot.instance),
     origin,
     now,
   });
@@ -766,12 +767,12 @@ async function handleDirectEntry(request: Request, context: GatewayContext, rawI
     session.session.actor.userId,
     repositoryId,
     snapshot.instance.instanceId,
-    snapshot.instance.runtimeEpoch,
+    runtimeEpochForAccess(snapshot.instance),
     context.requestNow,
   );
   if (fresh.status === "unavailable") return unavailable(request, context);
   if (!decisionMatches(fresh, snapshot, repositoryId, context.requestNow)) return accessDenied(request, context);
-  if (!snapshot.instance.desiredArtifactDigest) {
+  if (!snapshot.instance.currentArtifactDigest && !snapshot.instance.desiredArtifactDigest) {
     const dashboard = new URL(`/repositories/${repositoryId}`, context.config.origin).toString();
     return new Response(
       `<!doctype html><html lang="en"><meta charset="utf-8"><title>Configuration required</title><body><main><h1>Configuration required</h1><p>This repository instance has no approved artifact configured yet. Review its available setup before starting it.</p><p><a href="${escapeHtml(dashboard)}">Open repository dashboard</a></p></main></body></html>`,

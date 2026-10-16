@@ -123,6 +123,36 @@ describe("Scriptorium composition normalization", () => {
       .toThrow(/below/u);
   });
 
+  it("rejects malformed SemVer prerelease and build identifiers", () => {
+    for (const version of [
+      "latest",
+      "1.0.0-alpha..1",
+      "1.0.0-.x",
+      "1.0.0-alpha.01",
+      "01.0.0",
+      "1.0.0+build..1",
+    ]) {
+      const catalog = {
+        ...catalogFixture,
+        modules: catalogFixture.modules.map((module) => module.id === "nlp"
+          ? { ...module, version }
+          : module),
+      };
+      expect(() => normalizeComposition(catalog, request, dependencyResolver), version)
+        .toThrow(/semantic version/u);
+    }
+
+    const validSemver = {
+      ...catalogFixture,
+      modules: catalogFixture.modules.map((module) => module.id === "nlp"
+        ? { ...module, version: "1.2.3-alpha.0+build.5" }
+        : module),
+    };
+    const normalized = normalizeComposition(validSemver, request, dependencyResolver);
+    expect(normalized.buildInput.resolvedModules.find(({ id }) => id === "nlp")?.version)
+      .toBe("1.2.3-alpha.0+build.5");
+  });
+
   it("rejects cycles, unknown references, and conflicting selected modules", () => {
     const cyclic = {
       ...catalogFixture,

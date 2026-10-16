@@ -9,6 +9,8 @@ import {
 } from "@praetorium/contracts";
 
 const ModuleIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u);
+const SemanticVersionPattern =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/u;
 const CompositionRequestSchema = z.strictObject({
   requestedModules: z.array(ModuleIdSchema).max(256),
   targetPlatform: z.string().min(1).max(64),
@@ -161,7 +163,7 @@ function validateCatalogGraph(catalog: BuildCatalog): Map<string, BuildCatalog["
   const modules = new Map(catalog.modules.map((module) => [module.id, module]));
   const resourceGroups = new Set(catalog.sharedResourceGroups.map(({ id }) => id));
   for (const module of catalog.modules) {
-    if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/u.test(module.version)) {
+    if (!SemanticVersionPattern.test(module.version)) {
       throw new CompositionError("INVALID_MODULE_VERSION", "A catalog module has an invalid semantic version");
     }
     for (const id of [...module.requires, ...module.conflicts]) {

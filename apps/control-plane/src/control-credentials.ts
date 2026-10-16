@@ -20,6 +20,16 @@ export const IssueControlCredentialInputSchema = z.strictObject({
   payloadDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
   ttlSeconds: z.number().int().min(1).max(60).optional(),
 });
+export const IssueObservationCredentialInputSchema = z.strictObject({
+  operationId: z.string().min(1).max(128),
+  workerId: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+  clusterId: z.string().min(1).max(128),
+  instanceId: z.string().min(1).max(128),
+  repositoryId: z.number().int().positive().safe(),
+  expectedGeneration: z.number().int().nonnegative(),
+  runtimeEpoch: z.number().int().positive(),
+});
+const EMPTY_BODY_SHA256 = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 const ALLOWED_PRIVATE_JWK_MEMBERS = new Set([
   "kty",
@@ -41,6 +51,8 @@ export interface ControlPlaneSigningKey {
 export interface ControlCredentialIssuerConfig {
   readonly operations: Pick<OperationService, "getById">;
   readonly instances: Pick<InstanceService, "getByInstanceId">;
+  /** Must check all pending, claimed and running operations for this instance. */
+  readonly hasActiveOperation?: (instanceId: string) => Promise<boolean>;
   readonly issuerOrigin: string;
   readonly signingKey: ControlPlaneSigningKey;
   readonly now?: () => number;
@@ -57,6 +69,16 @@ export interface IssueControlCredentialInput {
   readonly action: "status" | "quiesce" | "resume";
   readonly payloadDigest: string;
   readonly ttlSeconds?: number;
+}
+
+export interface IssueObservationCredentialInput {
+  readonly operationId: string;
+  readonly workerId: string;
+  readonly clusterId: string;
+  readonly instanceId: string;
+  readonly repositoryId: number;
+  readonly expectedGeneration: number;
+  readonly runtimeEpoch: number;
 }
 
 export interface IssuedControlCredential {
@@ -78,6 +100,7 @@ export interface ControlJwksDocument {
 
 export interface ControlCredentialIssuer {
   issue(input: IssueControlCredentialInput): Promise<IssuedControlCredential>;
+  issueObservation(input: IssueObservationCredentialInput): Promise<IssuedControlCredential>;
   jwks(): Promise<ControlJwksDocument>;
 }
 
@@ -189,6 +212,53 @@ export function createControlCredentialIssuer(
           payloadDigest: input.payloadDigest,
           now: new Date(nowMs).toISOString(),
           ttlSeconds,
+        },
+      );
+      return {
+        token: issued.token,
+        expiresAt: new Date(issued.descriptor.exp * 1000).toISOString(),
+      };
+    },
+    async issueObservation(untrustedInput) {
+      const input = IssueObservationCredentialInputSchema.parse(untrustedInput);
+      const nowMs = now();
+      if (!Number.isSafeInteger(nowMs) || nowMs < 0)
+        throw new TypeError("runtime control issuance clock is invalid");
+      if (!config.hasActiveOperation) throw denied();
+
+      const snapshot = await config.instances.getByInstanceId(input.instanceId);
+      if (
+        !snapshot ||
+        snapshot.instance.instanceId !== input.instanceId ||
+        snapshot.instance.repositoryId !== input.repositoryId ||
+        snapshot.binding.instanceId !== input.instanceId ||
+        snapshot.binding.repositoryId !== input.repositoryId ||
+        snapshot.binding.suspended ||
+        snapshot.instance.generation !== input.expectedGeneration ||
+        snapshot.instance.observedGeneration !== input.expectedGeneration ||
+        snapshot.instance.runtimeEpoch !== input.runtimeEpoch ||
+        snapshot.instance.observedRuntimeEpoch !== input.runtimeEpoch ||
+        snapshot.instance.observedState !== "ready" ||
+        snapshot.instance.desiredState !== "running" ||
+        snapshot.instance.clusterId !== input.clusterId ||
+        (await config.hasActiveOperation(input.instanceId))
+      )
+        throw denied();
+
+      const issued = await issueRuntimeControlCredential(
+        { kid, privateKey: (await loadKeySetup()).privateKey },
+        {
+          issuer,
+          audience: AUDIENCE,
+          subject: "praetorium-control-plane",
+          instanceId: input.instanceId,
+          repositoryId: input.repositoryId,
+          runtimeEpoch: input.runtimeEpoch,
+          operationId: input.operationId,
+          action: "status",
+          payloadDigest: EMPTY_BODY_SHA256,
+          now: new Date(nowMs).toISOString(),
+          ttlSeconds: 30,
         },
       );
       return {

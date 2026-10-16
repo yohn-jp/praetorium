@@ -4,6 +4,7 @@ import {
   createControlCredentialIssuer,
   type ControlCredentialIssuerConfig,
   type IssueControlCredentialInput,
+  type IssueObservationCredentialInput,
 } from "./control-credentials.js";
 
 const NOW = Date.parse("2026-10-17T00:00:10.000Z");
@@ -107,6 +108,21 @@ function validInput(
   };
 }
 
+function validObservationInput(
+  overrides: Partial<IssueObservationCredentialInput> = {},
+): IssueObservationCredentialInput {
+  return {
+    operationId: "op_observation_01",
+    workerId: WORKER_ID,
+    clusterId: "cluster-a",
+    instanceId: INSTANCE_ID,
+    repositoryId: REPOSITORY_ID,
+    expectedGeneration: 8,
+    runtimeEpoch: 5,
+    ...overrides,
+  };
+}
+
 async function createSigningKey() {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
     "sign",
@@ -124,6 +140,7 @@ async function harness(
     readonly operation?: Partial<OperationRecord>;
     readonly binding?: Partial<RepositorySnapshot["binding"]>;
     readonly instance?: Partial<RepositorySnapshot["instance"]>;
+    readonly activeOperation?: boolean;
   } = {},
 ) {
   const signingKey = await createSigningKey();
@@ -137,6 +154,7 @@ async function harness(
     instances: {
       getByInstanceId: async (id) => (id === snapshot.instance.instanceId ? snapshot : null),
     },
+    hasActiveOperation: async () => options.activeOperation ?? false,
     issuerOrigin: ISSUER,
     signingKey: { kid: "operator-2026-01", privateKeyJwk: signingKey.privateKeyJwk },
     now: () => options.now ?? NOW,
@@ -210,6 +228,94 @@ describe("Control Plane runtime-control credential issuer", () => {
     await expect(h.issuer.issue(validInput({ runtimeEpoch: 3 }))).rejects.toMatchObject({
       code: "CONTROL_CREDENTIAL_FENCED",
     });
+  });
+
+  it("issues a 30-second signed status-only credential for a current observed runtime", async () => {
+    const h = await harness({ instance: { observedRuntimeEpoch: 5 } });
+    const issued = await h.issuer.issueObservation(validObservationInput());
+    const jwks = await h.issuer.jwks();
+    const [header, payload, signature] = issued.token.split(".") as [string, string, string];
+    const publicKey = await crypto.subtle.importKey(
+      "jwk",
+      jwks.keys[0]!,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    const claims = JSON.parse(new TextDecoder().decode(decodeBase64Url(payload))) as Record<
+      string,
+      unknown
+    >;
+
+    expect(
+      await crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" },
+        publicKey,
+        asArrayBuffer(decodeBase64Url(signature)),
+        new TextEncoder().encode(`${header}.${payload}`),
+      ),
+    ).toBe(true);
+    expect(claims).toMatchObject({
+      iss: ISSUER,
+      sub: "praetorium-control-plane",
+      aud: "praetorium-runtime-control",
+      instanceId: INSTANCE_ID,
+      repositoryId: REPOSITORY_ID,
+      runtimeEpoch: 5,
+      operationId: "op_observation_01",
+      action: "status",
+      payloadDigest: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      exp: Math.floor(NOW / 1000) + 30,
+    });
+    expect(claims).not.toHaveProperty("leaseToken");
+    expect(claims).not.toHaveProperty("leaseEpoch");
+    expect(issued.expiresAt).toBe(new Date((Math.floor(NOW / 1000) + 30) * 1000).toISOString());
+  });
+
+  it("fails closed on stale observation state, suspended bindings, active operations, or missing guard", async () => {
+    const h = await harness({ instance: { observedRuntimeEpoch: 5 } });
+    const staleCases: Array<{
+      readonly instance?: Partial<RepositorySnapshot["instance"]>;
+      readonly binding?: Partial<RepositorySnapshot["binding"]>;
+      readonly input?: Partial<IssueObservationCredentialInput>;
+      readonly activeOperation?: boolean;
+    }> = [
+      { input: { expectedGeneration: 7 } },
+      { input: { runtimeEpoch: 4 } },
+      { input: { clusterId: "cluster-b" } },
+      { instance: { observedGeneration: 7 } },
+      { instance: { observedRuntimeEpoch: 4 } },
+      { instance: { observedState: "stopping" } },
+      { instance: { desiredState: "stopped" } },
+      { instance: { clusterId: "cluster-b" } },
+      { binding: { suspended: true } },
+      { activeOperation: true },
+    ];
+
+    for (const stale of staleCases) {
+      const snapshot = repositorySnapshot({
+        ...(stale.instance ? { instance: { observedRuntimeEpoch: 5, ...stale.instance } } : {}),
+        ...(stale.binding ? { binding: stale.binding } : {}),
+      });
+      const issuer = createControlCredentialIssuer({
+        ...h.config,
+        instances: {
+          getByInstanceId: async (id) => (id === INSTANCE_ID ? snapshot : null),
+        },
+        hasActiveOperation: async () => stale.activeOperation ?? false,
+      });
+      await expect(
+        issuer.issueObservation(validObservationInput(stale.input)),
+      ).rejects.toMatchObject({
+        code: "CONTROL_CREDENTIAL_FENCED",
+      });
+    }
+
+    const configWithoutGuard = { ...h.config };
+    delete configWithoutGuard.hasActiveOperation;
+    await expect(
+      createControlCredentialIssuer(configWithoutGuard).issueObservation(validObservationInput()),
+    ).rejects.toMatchObject({ code: "CONTROL_CREDENTIAL_FENCED" });
   });
 
   it("rejects stale or mismatched operation fence, repository, instance, and generation", async () => {

@@ -14,6 +14,7 @@
     "buildkit",
     "buildWorker",
     "buildPolicy",
+    "releasePolicy",
     "images",
     "secretRefs",
     "acmeContactEmail"
@@ -168,6 +169,61 @@
           "type": "array",
           "maxItems": 32,
           "items": { "$ref": "#/$defs/builderKey" }
+        }
+      }
+    },
+    "releasePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workerId", "operatorActorId", "signerIdentityAllowlist", "canary"],
+      "properties": {
+        "workerId": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+        },
+        "operatorActorId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+        "signerIdentityAllowlist": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["subjectAlternativeName"],
+            "properties": {
+              "subjectAlternativeName": { "type": "string", "minLength": 1, "maxLength": 1024 },
+              "issuer": { "type": "string", "minLength": 1, "maxLength": 1024 }
+            }
+          }
+        },
+        "canary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "owner",
+            "disposable",
+            "production",
+            "repositoryId",
+            "instanceId",
+            "bindingEpoch",
+            "authorizationRevision",
+            "requestedModules",
+            "resourceProfileId"
+          ],
+          "properties": {
+            "owner": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+            "disposable": { "const": true },
+            "production": { "const": false },
+            "repositoryId": { "type": ["integer", "null"], "minimum": 1 },
+            "instanceId": { "type": ["string", "null"], "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$" },
+            "bindingEpoch": { "type": ["integer", "null"], "minimum": 0 },
+            "authorizationRevision": { "type": ["integer", "null"], "minimum": 0 },
+            "requestedModules": {
+              "type": ["array", "null"],
+              "maxItems": 128,
+              "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+            },
+            "resourceProfileId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 }
+          }
         }
       }
     },

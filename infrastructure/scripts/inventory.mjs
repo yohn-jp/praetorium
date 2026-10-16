@@ -22,6 +22,7 @@ const inventoryKeys = [
   "buildkit",
   "buildWorker",
   "buildPolicy",
+  "releasePolicy",
   "images",
   "secretRefs",
   "acmeContactEmail",
@@ -29,6 +30,7 @@ const inventoryKeys = [
 
 const imageKeys = ["provisioner", "instanceAccess", "buildWorker", "prometheus"];
 const builderKeyKeys = ["keyId", "publicKeyBase64", "revoked", "validFrom", "validUntil"];
+const signerIdentityKeys = ["subjectAlternativeName", "issuer"];
 const secretKeys = [
   "controlPlaneCredential",
   "instanceAccessServiceAuth",
@@ -522,6 +524,177 @@ export function validateInventory(value) {
       !keyIds.has(value.buildWorker.signingKeyId)
     ) {
       errors.push("buildWorker.signingKeyId must have a matching Control Plane builder key");
+    }
+  }
+
+  exactKeys(
+    value.releasePolicy,
+    ["workerId", "operatorActorId", "signerIdentityAllowlist", "canary"],
+    "releasePolicy",
+    errors,
+  );
+  exactKeys(
+    value.releasePolicy?.canary,
+    [
+      "owner",
+      "disposable",
+      "production",
+      "repositoryId",
+      "instanceId",
+      "bindingEpoch",
+      "authorizationRevision",
+      "requestedModules",
+      "resourceProfileId",
+    ],
+    "releasePolicy.canary",
+    errors,
+  );
+  if (value.releasePolicy?.canary?.disposable !== true) {
+    errors.push("releasePolicy.canary.disposable must be true for the owned disposable canary");
+  }
+  if (value.releasePolicy?.canary?.production !== false) {
+    errors.push("releasePolicy.canary.production must be false");
+  }
+  const canaryFields = [
+    "owner",
+    "repositoryId",
+    "instanceId",
+    "bindingEpoch",
+    "authorizationRevision",
+    "requestedModules",
+    "resourceProfileId",
+  ];
+  const canaryConfigured = canaryFields.some(
+    (field) => value.releasePolicy?.canary?.[field] !== null,
+  );
+  const releaseConfigured =
+    value.releasePolicy?.workerId !== null ||
+    value.releasePolicy?.operatorActorId !== null ||
+    (Array.isArray(value.releasePolicy?.signerIdentityAllowlist) &&
+      value.releasePolicy.signerIdentityAllowlist.length > 0) ||
+    canaryConfigured;
+  if (!Array.isArray(value.releasePolicy?.signerIdentityAllowlist)) {
+    errors.push("releasePolicy.signerIdentityAllowlist must be an array");
+  }
+  if (releaseConfigured) {
+    if (value.releasePolicy?.workerId === null) {
+      blockers.push("T11 release worker ID has not been supplied");
+    } else {
+      requiredString(value.releasePolicy?.workerId, "releasePolicy.workerId", errors);
+      if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(value.releasePolicy?.workerId ?? "")) {
+        errors.push(
+          "releasePolicy.workerId must match the Control Plane release policy identifier",
+        );
+      }
+    }
+    if (value.releasePolicy?.operatorActorId === null) {
+      blockers.push("T11 release operator actor ID has not been supplied");
+    } else {
+      requiredString(value.releasePolicy?.operatorActorId, "releasePolicy.operatorActorId", errors);
+      if (
+        typeof value.releasePolicy?.operatorActorId === "string" &&
+        value.releasePolicy.operatorActorId.length > 128
+      ) {
+        errors.push("releasePolicy.operatorActorId must be at most 128 characters");
+      }
+    }
+    if (
+      Array.isArray(value.releasePolicy?.signerIdentityAllowlist) &&
+      value.releasePolicy.signerIdentityAllowlist.length === 0
+    ) {
+      blockers.push("T11 trusted Sigstore signer identity allowlist has not been supplied");
+    } else if (Array.isArray(value.releasePolicy?.signerIdentityAllowlist)) {
+      if (value.releasePolicy.signerIdentityAllowlist.length > 32) {
+        errors.push("releasePolicy.signerIdentityAllowlist may contain at most 32 identities");
+      }
+      for (const [index, identity] of value.releasePolicy.signerIdentityAllowlist.entries()) {
+        const name = `releasePolicy.signerIdentityAllowlist[${index}]`;
+        if (identity && typeof identity === "object" && !Array.isArray(identity)) {
+          exactKeys(
+            identity,
+            Object.hasOwn(identity, "issuer") ? signerIdentityKeys : ["subjectAlternativeName"],
+            name,
+            errors,
+          );
+        } else {
+          errors.push(`${name} must be a strict signer identity object`);
+          continue;
+        }
+        requiredString(identity.subjectAlternativeName, `${name}.subjectAlternativeName`, errors);
+        if (
+          typeof identity.subjectAlternativeName === "string" &&
+          identity.subjectAlternativeName.length > 1024
+        ) {
+          errors.push(`${name}.subjectAlternativeName must be at most 1024 characters`);
+        }
+        if (Object.hasOwn(identity, "issuer")) {
+          requiredString(identity.issuer, `${name}.issuer`, errors);
+          if (typeof identity.issuer === "string" && identity.issuer.length > 1024) {
+            errors.push(`${name}.issuer must be at most 1024 characters`);
+          }
+        }
+      }
+    }
+
+    const canary = value.releasePolicy?.canary;
+    for (const [field, message] of [
+      ["owner", "T11 disposable canary owner has not been supplied"],
+      ["repositoryId", "T11 canary repository ID has not been supplied"],
+      ["instanceId", "T11 canary instance ID has not been supplied"],
+      ["bindingEpoch", "T11 canary binding epoch has not been supplied"],
+      ["authorizationRevision", "T11 canary authorization revision has not been supplied"],
+      ["requestedModules", "T11 canary module selection has not been supplied"],
+      ["resourceProfileId", "T11 canary resource profile ID has not been supplied"],
+    ]) {
+      if (canary?.[field] === null) blockers.push(message);
+    }
+    if (canary?.owner !== null) {
+      requiredString(canary?.owner, "releasePolicy.canary.owner", errors);
+      if (typeof canary?.owner === "string" && canary.owner.length > 128) {
+        errors.push("releasePolicy.canary.owner must be at most 128 characters");
+      }
+    }
+    if (
+      canary?.repositoryId !== null &&
+      (!Number.isSafeInteger(canary?.repositoryId) || canary.repositoryId < 1)
+    ) {
+      errors.push("releasePolicy.canary.repositoryId must be a positive safe integer or null");
+    }
+    if (
+      canary?.instanceId !== null &&
+      (typeof canary?.instanceId !== "string" ||
+        !/^ins_[0-9A-HJKMNP-TV-Z]{26}$/.test(canary.instanceId))
+    ) {
+      errors.push("releasePolicy.canary.instanceId must be a canonical instance ID or null");
+    }
+    for (const field of ["bindingEpoch", "authorizationRevision"]) {
+      const revision = canary?.[field];
+      if (revision !== null && (!Number.isSafeInteger(revision) || revision < 0)) {
+        errors.push(`releasePolicy.canary.${field} must be a nonnegative safe integer or null`);
+      }
+    }
+    if (canary?.requestedModules !== null) {
+      if (!Array.isArray(canary?.requestedModules)) {
+        errors.push("releasePolicy.canary.requestedModules must be an array or null");
+      } else {
+        if (canary.requestedModules.length > 128) {
+          errors.push("releasePolicy.canary.requestedModules may contain at most 128 modules");
+        }
+        for (const [index, module] of canary.requestedModules.entries()) {
+          requiredString(module, `releasePolicy.canary.requestedModules[${index}]`, errors);
+          if (typeof module === "string" && module.length > 128) {
+            errors.push(
+              `releasePolicy.canary.requestedModules[${index}] must be at most 128 characters`,
+            );
+          }
+        }
+      }
+    }
+    if (canary?.resourceProfileId !== null) {
+      requiredString(canary?.resourceProfileId, "releasePolicy.canary.resourceProfileId", errors);
+      if (typeof canary?.resourceProfileId === "string" && canary.resourceProfileId.length > 128) {
+        errors.push("releasePolicy.canary.resourceProfileId must be at most 128 characters");
+      }
     }
   }
 

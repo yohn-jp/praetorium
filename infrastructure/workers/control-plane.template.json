@@ -5,6 +5,7 @@
   "compatibility_date": "2026-07-30",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
+  "triggers": { "crons": ["*/5 * * * *"] },
   "observability": { "enabled": true },
   "d1_databases": [
     {
@@ -34,6 +35,7 @@
     "CONTROL_PLANE_ORIGIN": "@@CONTROL_PLANE_ORIGIN@@",
     "GATEWAY_ORIGIN": "@@GATEWAY_ORIGIN@@",
     "INSTANCE_HOST_SUFFIX": "@@INSTANCE_HOST_SUFFIX@@",
+    "RELEASE_POLICY_JSON": "@@RELEASE_POLICY_JSON@@",
     "RUNTIME_REGISTRY_HOST": "@@RUNTIME_REGISTRY_HOST@@"
   }
 }

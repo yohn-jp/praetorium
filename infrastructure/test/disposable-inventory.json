@@ -53,6 +53,22 @@
     },
     "builderKeys": []
   },
+  "releasePolicy": {
+    "workerId": null,
+    "operatorActorId": null,
+    "signerIdentityAllowlist": [],
+    "canary": {
+      "owner": null,
+      "disposable": true,
+      "production": false,
+      "repositoryId": null,
+      "instanceId": null,
+      "bindingEpoch": null,
+      "authorizationRevision": null,
+      "requestedModules": null,
+      "resourceProfileId": null
+    }
+  },
   "images": {
     "provisioner": null,
     "instanceAccess": null,

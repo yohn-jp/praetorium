@@ -90,6 +90,32 @@ function buildPolicy(inventory) {
   };
 }
 
+function releasePolicy(inventory) {
+  const release = inventory.releasePolicy;
+  const canary = release.canary;
+  if (
+    release.workerId === null ||
+    release.operatorActorId === null ||
+    release.signerIdentityAllowlist.length === 0 ||
+    canary.owner === null ||
+    canary.repositoryId === null ||
+    canary.instanceId === null ||
+    canary.bindingEpoch === null ||
+    canary.authorizationRevision === null ||
+    canary.requestedModules === null ||
+    canary.resourceProfileId === null
+  ) {
+    return null;
+  }
+  return {
+    workerId: release.workerId,
+    clusterId: inventory.clusterId,
+    operatorActorId: release.operatorActorId,
+    signerIdentityAllowlist: release.signerIdentityAllowlist,
+    canary,
+  };
+}
+
 function setStringVariable(variables, key, value) {
   if (value !== null && value !== undefined) variables[key] = String(value);
 }
@@ -109,6 +135,8 @@ function render(template, inventory, worker) {
     setStringVariable(variables, "BUILD_WORKER_ID", `${inventory.clusterId}-build-worker`);
     const policy = buildPolicy(inventory);
     if (policy) variables.BUILD_POLICY_JSON = JSON.stringify(policy);
+    const releases = releasePolicy(inventory);
+    if (releases) variables.RELEASE_POLICY_JSON = JSON.stringify(releases);
     config.vars = variables;
   } else {
     config.vars = {
@@ -118,6 +146,7 @@ function render(template, inventory, worker) {
       ...Object.fromEntries(
         Object.entries({
           GATEWAY_ORIGIN: inventory.domains.gatewayOrigin,
+          CONTROL_PLANE_ORIGIN: inventory.domains.controlPlaneUrl,
           GATEWAY_INSTANCE_HOSTNAME_SUFFIX: inventory.domains.instanceHostnameSuffix,
           GATEWAY_ALLOWED_REPOSITORY_OWNER: inventory.gateway.allowedRepositoryOwner,
           GITHUB_APP_ID: inventory.gateway.githubAppId,
@@ -180,6 +209,12 @@ function inspectTemplates() {
     problems.push("Worker templates must use the pinned 2026-07-30 compatibility date");
   }
   if (
+    controlPlane.triggers?.crons?.length !== 1 ||
+    controlPlane.triggers.crons[0] !== "*/5 * * * *"
+  ) {
+    problems.push("Control Plane template must run the T11 scheduled handler every five minutes");
+  }
+  if (
     controlPlane.d1_databases?.length !== 1 ||
     controlPlane.d1_databases[0]?.binding !== "CONTROL_PLANE_DB" ||
     controlPlane.d1_databases[0]?.database_name !== "praetorium-platform" ||
@@ -211,6 +246,7 @@ function inspectTemplates() {
     "CONTROL_PLANE_ORIGIN",
     "GATEWAY_ORIGIN",
     "INSTANCE_HOST_SUFFIX",
+    "RELEASE_POLICY_JSON",
     "RUNTIME_REGISTRY_HOST",
   ].sort();
   if (
@@ -244,6 +280,7 @@ function inspectTemplates() {
   }
   const expectedGatewayVariables = [
     "GATEWAY_ORIGIN",
+    "CONTROL_PLANE_ORIGIN",
     "GATEWAY_SESSION_TTL_SECONDS",
     "GATEWAY_HANDOFF_TTL_SECONDS",
     "GATEWAY_ACCESS_GRANT_TTL_SECONDS",
@@ -323,6 +360,7 @@ try {
   const workerVariables = {
     gateway: [
       "GATEWAY_ORIGIN",
+      "CONTROL_PLANE_ORIGIN",
       "GATEWAY_SESSION_TTL_SECONDS",
       "GATEWAY_HANDOFF_TTL_SECONDS",
       "GATEWAY_ACCESS_GRANT_TTL_SECONDS",
@@ -338,13 +376,16 @@ try {
       "CONTROL_PLANE_ORIGIN",
       "GATEWAY_ORIGIN",
       "INSTANCE_HOST_SUFFIX",
+      "RELEASE_POLICY_JSON",
       "RUNTIME_REGISTRY_HOST",
     ],
   };
   const workerSecrets = {
-    controlPlane: ["CONTROL_PLANE_GATEWAY_AUTH"],
+    controlPlane: ["CONTROL_PLANE_GATEWAY_AUTH", "RUNTIME_IDENTITY_SIGNING_KEY"],
     gateway: [
       "GITHUB_OAUTH_CLIENT_SECRET",
+      "GATEWAY_GITHUB_WEBHOOK_SECRET",
+      "GITHUB_APP_PRIVATE_KEY",
       "CONTROL_PLANE_GATEWAY_AUTH",
       "INSTANCE_ACCESS_SERVICE_AUTH_TOKEN",
       "GATEWAY_SESSION_DIGEST_PEPPER",
@@ -372,8 +413,13 @@ try {
           optionalControlPlaneSecrets: [
             "REGISTRY_PULL_CREDENTIAL (separate JSON username/password credential for Control Plane OCI reads)",
             "BUILD_WORKER_AUTH_TOKEN (enables build routes only with BUILD_POLICY_JSON; same token as the Build Worker mounted file)",
-            "RUNTIME_CONTROL_SIGNING_KEY (strict private P-256 JWK for runtime-control credentials; distinct from Gateway signing key)",
+            "RUNTIME_CONTROL_SIGNING_KEY (private P-256 JWK for runtime-control credentials)",
+            "RELEASE_OPERATOR_TOKEN (separate 32-4096 non-space printable ASCII operator token; distinct from CONTROL_PLANE_GATEWAY_AUTH, BUILD_WORKER_AUTH_TOKEN, and PROVISIONER_AUTH_TOKEN)",
             "PROVISIONER_AUTH_TOKEN (enables Control Plane operation routes only after the real producer transports are ready)",
+          ],
+          optionalControlPlaneVariables: [
+            "BUILD_POLICY_JSON (generated only when the complete build policy is supplied)",
+            "RELEASE_POLICY_JSON (generated only when the complete operator-selected disposable canary policy is supplied)",
           ],
           controlPlaneBuildPolicy: {
             sourceVariable: "BUILD_POLICY_JSON",
@@ -408,6 +454,19 @@ try {
             readiness:
               "disabled: producer S03 runtime assignment ABI and S02 grant-probe transport are unavailable; Provisioner /readyz remains 503 and it claims no operations",
           },
+          releasePolicy: {
+            configured: releasePolicy(inventory) !== null,
+            source:
+              "public values from inventory.releasePolicy and inventory.clusterId; no secret values",
+          },
+          releaseGates: {
+            scheduledCron: "*/5 * * * *",
+            admission: "BLOCKED: S01 immutable producer metadata attestation ABI is unavailable",
+            canaryEvidence:
+              "BLOCKED: authenticated S02/S05 UI, API, MCP, and persistence conformance observations are unavailable",
+            promotion:
+              "BLOCKED: release admission and promotion require S01 metadata plus S02/S05 canary evidence",
+          },
           migrationDirectory: "apps/control-plane/migrations",
           migrations: requiredMigrations,
           discoveredMigrations: paths.migrationFiles,
@@ -420,6 +479,7 @@ try {
           inventoryBlockers: inventoryResult.blockers,
           templateProblems,
           blockers: [...workerBlockers, ...missing],
+          secretValuesInspected: false,
           sideEffects: [],
         },
         null,
@@ -441,7 +501,27 @@ try {
           discoveredMigrations: paths.migrationFiles,
           templateProblems,
           expectedMigrations: requiredMigrations,
+          workerVariables,
+          requiredWorkerSecrets: workerSecrets,
+          optionalControlPlaneSecrets: [
+            "REGISTRY_PULL_CREDENTIAL",
+            "BUILD_WORKER_AUTH_TOKEN",
+            "RUNTIME_CONTROL_SIGNING_KEY",
+            "RELEASE_OPERATOR_TOKEN",
+            "PROVISIONER_AUTH_TOKEN",
+          ],
+          optionalControlPlaneVariables: ["BUILD_POLICY_JSON", "RELEASE_POLICY_JSON"],
+          releasePolicyConfigured: releasePolicy(inventory) !== null,
+          releaseGates: {
+            scheduledCron: "*/5 * * * *",
+            admission: "BLOCKED: S01 immutable producer metadata attestation ABI is unavailable",
+            canaryEvidence:
+              "BLOCKED: authenticated S02/S05 UI, API, MCP, and persistence conformance observations are unavailable",
+            promotion:
+              "BLOCKED: release admission and promotion require S01 metadata plus S02/S05 canary evidence",
+          },
           wranglerAvailable: wrangler,
+          secretValuesInspected: false,
           blocked,
           remoteCalls: false,
         },

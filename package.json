@@ -1,0 +1,32 @@
+{
+  "name": "@praetorium/platform",
+  "private": true,
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=24.21.0 <25",
+    "pnpm": ">=11.18.0 <12"
+  },
+  "scripts": {
+    "build": "turbo build",
+    "check": "pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run check:boundaries && pnpm run check:contracts-schema-drift",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:contracts-schema-drift": "node packages/contracts/scripts/schemas.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.32.0",
+    "@types/node": "24.19.0",
+    "eslint": "9.32.0",
+    "globals": "16.3.0",
+    "prettier": "3.6.2",
+    "turbo": "2.5.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.38.0",
+    "vitest": "3.2.4",
+    "zod": "4.4.3"
+  }
+}

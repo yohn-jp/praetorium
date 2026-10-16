@@ -1,0 +1,64 @@
+{
+  "checkedAt": "2026-10-17",
+  "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
+  "producerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
+  "previousProducerRevision": "5ee8f0f0f0b9ee63b4920f2a73f3d76baa2cef1a",
+  "artifactDigest": null,
+  "producerModified": false,
+  "capabilities": [
+    {
+      "id": "S01",
+      "status": "missing",
+      "gate": "BLOCKED",
+      "availableSourcePaths": [
+        "scripts/profile-build.mjs",
+        "Dockerfile",
+        "profiles/core.json",
+        "profiles/full.json"
+      ],
+      "missing": "Arbitrary serialized selection, versioned digest catalog/resource profiles, published immutable Runtime Base/Build Kit and approved recipe protocol absent.",
+      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
+      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S01"
+    },
+    {
+      "id": "S02",
+      "status": "missing",
+      "gate": "BLOCKED",
+      "availableSourcePaths": ["packages/api/src/server.ts"],
+      "missing": "Hosted issuer/audience/repository/instance/epoch grant verifier and per-principal mutation authorization absent; existing static owner token cannot satisfy hosted auth.",
+      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
+      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S02"
+    },
+    {
+      "id": "S03",
+      "status": "missing",
+      "gate": "BLOCKED",
+      "availableSourcePaths": [
+        "packages/core/src/repository.ts",
+        "packages/core/src/sync.ts",
+        "docs/verification/OCI.md"
+      ],
+      "missing": "Hosted numeric repository-ID assignment, scoped installation-token broker/renewal and publish actor receipt absent.",
+      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
+      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S03"
+    },
+    {
+      "id": "S04",
+      "status": "missing",
+      "gate": "BLOCKED",
+      "availableSourcePaths": ["packages/api/src/server.ts"],
+      "missing": "Versioned status/activity/jobs/checkpoints and operation/epoch-fenced quiesce/resume absent.",
+      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
+      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S04"
+    },
+    {
+      "id": "S05",
+      "status": "missing",
+      "gate": "BLOCKED",
+      "availableSourcePaths": ["Dockerfile", "scripts/verify-oci.mjs"],
+      "missing": "Actual OCI-backed hosted composition metadata and stable-origin reconstruction/browser journal proof absent.",
+      "attempt": "Read exact producer Git tree at recorded SHA; no producer mutation or static-token fallback.",
+      "minimumUnblock": "Existing producer coordinator delivers contract implementation and owned disposable image/conformance evidence for S05"
+    }
+  ]
+}

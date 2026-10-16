@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.turbo/
+coverage/
+.wrangler/
+.codegraph/
+.env
+.env.*
+!.env.example
+*.pem
+*.key

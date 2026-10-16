@@ -1,0 +1,17 @@
+{
+  "checkedAt": "2026-10-17",
+  "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
+  "planningRevision": "f81f13c942af243e8612d68bbdb6462167554966",
+  "node": "24.21.0",
+  "pnpm": "11.18.0",
+  "freshChecks": [
+    "frozen install",
+    "root build/lint/typecheck/test/provider boundary",
+    "5 tests passed"
+  ],
+  "limitations": [
+    "Foundation only; no runtime/producer certification",
+    "Host pnpm is 12.10.1; use PATH with isolated 11.18.0 executable for nested scripts"
+  ],
+  "sourcePolicy": "Only bounded owner-directed tooling and observability imported; no workflows/history/private inventory."
+}

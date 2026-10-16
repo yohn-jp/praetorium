@@ -45,6 +45,14 @@ export async function startGithubLogin(
   if (!BROWSER_NONCE_PATTERN.test(input.browserNonce)) {
     throw new TypeError("browser-bound login nonce must contain 256 bits of URL-safe randomness");
   }
+  if (
+    !Number.isFinite(new Date(input.now).getTime()) ||
+    !Number.isSafeInteger(input.attemptTtlSeconds) ||
+    input.attemptTtlSeconds < 1 ||
+    input.attemptTtlSeconds > 600
+  ) {
+    throw new TypeError("login attempts must use a valid time and lifetime of at most 600 seconds");
+  }
   const state = generateState();
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await deriveCodeChallengeS256(codeVerifier);
@@ -106,6 +114,45 @@ export interface GitHubUserCredentialSink {
   ): Promise<void>;
 }
 
+type ConsumedAttemptResult =
+  | { readonly ok: true; readonly attempt: LoginAttemptRecord }
+  | { readonly ok: false; readonly error: GithubCallbackError };
+
+async function consumeBrowserBoundAttempt(
+  attemptStore: LoginAttemptStore,
+  state: string,
+  presentedBrowserNonce: string | null,
+  now: string,
+): Promise<ConsumedAttemptResult> {
+  const attempt = await attemptStore.consume(state);
+  if (!attempt) {
+    return {
+      ok: false,
+      error: {
+        code: "STATE_NOT_FOUND",
+        message: "login attempt was not found, already used, or unknown",
+      },
+    };
+  }
+  if (isLoginAttemptExpired(attempt, now)) {
+    return { ok: false, error: { code: "STATE_EXPIRED", message: "login attempt expired" } };
+  }
+  if (
+    !presentedBrowserNonce ||
+    !BROWSER_NONCE_PATTERN.test(presentedBrowserNonce) ||
+    !constantTimeEqual(attempt.browserNonceDigest, await browserNonceDigest(presentedBrowserNonce))
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: "BROWSER_BINDING_MISMATCH",
+        message: "login callback is not bound to this browser",
+      },
+    };
+  }
+  return { ok: true, attempt };
+}
+
 /**
  * Resolves a GitHub callback to exactly one identity, or a typed failure.
  * The state is consumed atomically before it is even checked for expiry, so
@@ -122,6 +169,15 @@ export async function handleGithubCallback(
   now: string,
 ): Promise<Result<ResolvedGithubLogin, GithubCallbackError>> {
   if (query.error) {
+    if (!query.state)
+      return err({ code: "MISSING_PARAMETERS", message: "callback is missing state" });
+    const consumed = await consumeBrowserBoundAttempt(
+      attemptStore,
+      query.state,
+      presentedBrowserNonce,
+      now,
+    );
+    if (!consumed.ok) return err(consumed.error);
     return err({ code: "PROVIDER_DENIED", message: "GitHub denied the authorization request" });
   }
 
@@ -129,28 +185,14 @@ export async function handleGithubCallback(
     return err({ code: "MISSING_PARAMETERS", message: "callback is missing state or code" });
   }
 
-  const attempt = await attemptStore.consume(query.state);
-  if (!attempt) {
-    return err({
-      code: "STATE_NOT_FOUND",
-      message: "login attempt was not found, already used, or unknown",
-    });
-  }
-
-  if (isLoginAttemptExpired(attempt, now)) {
-    return err({ code: "STATE_EXPIRED", message: "login attempt expired" });
-  }
-
-  if (
-    !presentedBrowserNonce ||
-    !BROWSER_NONCE_PATTERN.test(presentedBrowserNonce) ||
-    !constantTimeEqual(attempt.browserNonceDigest, await browserNonceDigest(presentedBrowserNonce))
-  ) {
-    return err({
-      code: "BROWSER_BINDING_MISMATCH",
-      message: "login callback is not bound to this browser",
-    });
-  }
+  const consumed = await consumeBrowserBoundAttempt(
+    attemptStore,
+    query.state,
+    presentedBrowserNonce,
+    now,
+  );
+  if (!consumed.ok) return err(consumed.error);
+  const { attempt } = consumed;
 
   const tokenResult = await provider.exchangeCode({
     code: query.code,
@@ -188,33 +230,29 @@ export async function handleGithubCallbackWithCredentialSink(
   credentialSink: GitHubUserCredentialSink,
 ): Promise<Result<ResolvedGithubLogin, GithubCallbackError>> {
   if (query.error) {
+    if (!query.state)
+      return err({ code: "MISSING_PARAMETERS", message: "callback is missing state" });
+    const consumed = await consumeBrowserBoundAttempt(
+      attemptStore,
+      query.state,
+      presentedBrowserNonce,
+      now,
+    );
+    if (!consumed.ok) return err(consumed.error);
     return err({ code: "PROVIDER_DENIED", message: "GitHub denied the authorization request" });
   }
   if (!query.state || !query.code) {
     return err({ code: "MISSING_PARAMETERS", message: "callback is missing state or code" });
   }
 
-  const attempt = await attemptStore.consume(query.state);
-  if (!attempt) {
-    return err({
-      code: "STATE_NOT_FOUND",
-      message: "login attempt was not found, already used, or unknown",
-    });
-  }
-  if (isLoginAttemptExpired(attempt, now)) {
-    return err({ code: "STATE_EXPIRED", message: "login attempt expired" });
-  }
-
-  if (
-    !presentedBrowserNonce ||
-    !BROWSER_NONCE_PATTERN.test(presentedBrowserNonce) ||
-    !constantTimeEqual(attempt.browserNonceDigest, await browserNonceDigest(presentedBrowserNonce))
-  ) {
-    return err({
-      code: "BROWSER_BINDING_MISMATCH",
-      message: "login callback is not bound to this browser",
-    });
-  }
+  const consumed = await consumeBrowserBoundAttempt(
+    attemptStore,
+    query.state,
+    presentedBrowserNonce,
+    now,
+  );
+  if (!consumed.ok) return err(consumed.error);
+  const { attempt } = consumed;
 
   const tokenResult = await provider.exchangeCode({
     code: query.code,

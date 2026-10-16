@@ -175,6 +175,50 @@ describe("GitHub App user OAuth", () => {
     ).toMatchObject({ ok: false, error: { code: "STATE_NOT_FOUND" } });
   });
 
+  it("consumes provider-denial callbacks only when bound to their initiating browser", async () => {
+    const provider = createGitHubAppOAuthProvider({
+      clientId: "app-client-id",
+      clientSecret: "app-client-secret",
+      requestTimeoutMs: 1000,
+      fetchImpl: async () => json({}),
+    });
+    const attempts = createInMemoryLoginAttemptStore();
+    const browserNonce = generateToken(256);
+    const started = await startGithubLogin(provider, attempts, {
+      browserNonce,
+      redirectUri: "https://gateway.example.test/oauth/callback",
+      redirectTo: "/repositories",
+      scopes: [],
+      now: "2026-10-17T00:00:00.000Z",
+      attemptTtlSeconds: 300,
+    });
+    const state = new URL(started.authorizeUrl).searchParams.get("state");
+    if (!state) throw new Error("OAuth start omitted state");
+
+    expect(
+      await handleGithubCallbackWithCredentialSink(
+        provider,
+        attempts,
+        "https://gateway.example.test/oauth/callback",
+        { state, error: "access_denied" },
+        generateToken(256),
+        "2026-10-17T00:00:00.000Z",
+        { storeEncrypted: async () => undefined },
+      ),
+    ).toMatchObject({ ok: false, error: { code: "BROWSER_BINDING_MISMATCH" } });
+    expect(
+      await handleGithubCallbackWithCredentialSink(
+        provider,
+        attempts,
+        "https://gateway.example.test/oauth/callback",
+        { state, error: "access_denied" },
+        browserNonce,
+        "2026-10-17T00:00:00.000Z",
+        { storeEncrypted: async () => undefined },
+      ),
+    ).toMatchObject({ ok: false, error: { code: "STATE_NOT_FOUND" } });
+  });
+
   it("rotates user tokens using the App refresh grant without returning either secret", async () => {
     let body: Record<string, string> | null = null;
     const provider = createGitHubAppOAuthProvider({

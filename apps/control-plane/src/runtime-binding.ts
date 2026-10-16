@@ -239,6 +239,32 @@ export function createRuntimeBindingMetadataReader(
                AND r.status IN ('reserved', 'allocated')
                AND r.cluster_id IS NOT NULL
                AND NOT EXISTS (
+                 SELECT 1 FROM operations retirement_operation
+                 JOIN operation_checkpoints retirement_checkpoint
+                   ON retirement_checkpoint.operation_id = retirement_operation.operation_id
+                 WHERE retirement_operation.instance_id = i.instance_id
+                   AND retirement_operation.repository_id = i.repository_id
+                   AND retirement_checkpoint.phase IN ('quiescing-old', 'old-quiesced', 'stopping-old')
+                   AND json_extract(retirement_checkpoint.checkpoint_json, '$.lifecycle.quiesceRequest.instanceId') = i.instance_id
+                   AND json_extract(retirement_checkpoint.checkpoint_json, '$.lifecycle.quiesceRequest.runtimeEpoch') = i.observed_runtime_epoch
+                   AND NOT EXISTS (
+                     SELECT 1 FROM operation_checkpoints confirmed_resume
+                     WHERE confirmed_resume.operation_id = retirement_checkpoint.operation_id
+                       AND confirmed_resume.sequence > retirement_checkpoint.sequence
+                       AND confirmed_resume.phase = 'accepted'
+                       AND json_type(confirmed_resume.checkpoint_json, '$.lifecycle.quiesceRequest') = 'null'
+                       AND json_type(confirmed_resume.checkpoint_json, '$.lifecycle.quiesceReceipt') = 'null'
+                       AND NOT EXISTS (
+                         SELECT 1 FROM operation_checkpoints retried_retirement
+                         WHERE retried_retirement.operation_id = confirmed_resume.operation_id
+                           AND retried_retirement.sequence > confirmed_resume.sequence
+                           AND retried_retirement.phase IN ('quiescing-old', 'old-quiesced', 'stopping-old')
+                           AND json_extract(retried_retirement.checkpoint_json, '$.lifecycle.quiesceRequest.instanceId') = i.instance_id
+                           AND json_extract(retried_retirement.checkpoint_json, '$.lifecycle.quiesceRequest.runtimeEpoch') = i.observed_runtime_epoch
+                       )
+                   )
+               )
+               AND NOT EXISTS (
                  SELECT 1 FROM operations retired
                  JOIN operation_checkpoints retired_latest
                    ON retired_latest.operation_id = retired.operation_id

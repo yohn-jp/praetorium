@@ -228,6 +228,114 @@ function createDatabase(options?: Parameters<typeof seedInstance>[1]): SQLiteD1 
   return db;
 }
 
+interface RetirementCheckpoint {
+  readonly phase: string;
+  readonly quiesceRequest: Readonly<Record<string, unknown>> | null;
+  readonly quiesceReceipt: Readonly<Record<string, unknown>> | null;
+}
+
+function seedRetirement(
+  db: SQLiteD1,
+  checkpoints: readonly RetirementCheckpoint[],
+  options: {
+    readonly kind?: "stop" | "redeploy";
+    readonly status?: "running" | "failed" | "blocked";
+    readonly leaseExpiresAt?: number;
+    readonly newerDesiredGeneration?: boolean;
+    readonly operationId?: string;
+    readonly generation?: number;
+    readonly runtimeEpoch?: number;
+  } = {},
+): void {
+  if (options.newerDesiredGeneration) {
+    db.database
+      .prepare("UPDATE logical_instances SET generation = 9, runtime_epoch = 6 WHERE instance_id = ?")
+      .run("ins_repo-7001");
+  }
+
+  const operationId = options.operationId ?? "op-retirement-5";
+  const latest = checkpoints.at(-1);
+  if (!latest) throw new TypeError("retirement fixture requires a checkpoint");
+  const latestCheckpoint = JSON.stringify({
+    schemaVersion: 1,
+    lifecycle: {
+      instanceId: "ins_repo-7001",
+      repositoryId: 7001,
+      phase: latest.phase,
+      quiesceRequest: latest.quiesceRequest,
+      quiesceReceipt: latest.quiesceReceipt,
+    },
+  });
+  db.database
+    .prepare(
+      `INSERT INTO operations (
+         operation_id, instance_id, repository_id, generation, runtime_epoch, kind,
+         status, phase, attempt, lease_epoch, worker_id, lease_token, lease_expires_at,
+         report_sequence, checkpoint_sequence, checkpoint_json, cluster_id, reservation_id,
+         idempotency_scope, idempotency_key, request_hash, actor_id,
+         authorization_revision, created_at, updated_at
+       ) VALUES (?, 'ins_repo-7001', 7001, ?, ?, ?, ?, ?, 1, 1, 'provisioner-1',
+         'retirement-lease', ?, 1, ?, ?, 'cluster-1', NULL, 'repo:7001',
+         ?, 'retirement-hash', 'user-1', 3, ?, ?)`,
+    )
+    .run(
+      operationId,
+      options.generation ?? 8,
+      options.runtimeEpoch ?? 5,
+      options.kind ?? "redeploy",
+      options.status ?? "running",
+      latest.phase,
+      options.leaseExpiresAt ?? NOW + 30_000,
+      checkpoints.length,
+      latestCheckpoint,
+      operationId,
+      NOW - 700,
+      NOW - 100,
+    );
+
+  const insertCheckpoint = db.database.prepare(
+    `INSERT INTO operation_checkpoints (
+       operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at
+     ) VALUES (?, ?, ?, ?, ?, 'provisioner-1', ?)`,
+  );
+  checkpoints.forEach((checkpoint, index) => {
+    insertCheckpoint.run(
+      operationId,
+      index + 1,
+      checkpoint.phase,
+      options.runtimeEpoch ?? 5,
+      JSON.stringify({
+        schemaVersion: 1,
+        lifecycle: {
+          instanceId: "ins_repo-7001",
+          repositoryId: 7001,
+          phase: checkpoint.phase,
+          quiesceRequest: checkpoint.quiesceRequest,
+          quiesceReceipt: checkpoint.quiesceReceipt,
+        },
+      }),
+      NOW - 500 + index,
+    );
+  });
+}
+
+const QUIESCE_REQUEST = {
+  operationId: "op-retirement-5",
+  instanceId: "ins_repo-7001",
+  runtimeEpoch: 4,
+  reason: "redeploy",
+  contractVersion: "scriptorium-platform/v1",
+  deadline: new Date(NOW + 10_000).toISOString(),
+} as const;
+
+function retirementCheckpoint(
+  phase: string,
+  quiesceRequest: Readonly<Record<string, unknown>> | null = QUIESCE_REQUEST,
+  quiesceReceipt: Readonly<Record<string, unknown>> | null = null,
+): RetirementCheckpoint {
+  return { phase, quiesceRequest, quiesceReceipt };
+}
+
 afterEach(() => {
   while (liveDatabases.length > 0) liveDatabases.pop()?.close();
 });
@@ -246,6 +354,76 @@ describe("Control Plane runtime binding metadata", () => {
       leaseId: "res_current-4",
       clusterId: "cluster-1",
       active: true,
+      authority: "observed-writer",
+    });
+  });
+
+  it("withdraws observed-writer authority at quiesce despite lease expiry and a newer desired generation and operation", async () => {
+    const db = createDatabase({ targetReservationId: "" });
+    seedRetirement(db, [retirementCheckpoint("quiescing-old")], {
+      leaseExpiresAt: NOW - 1,
+      newerDesiredGeneration: true,
+    });
+    seedRetirement(db, [retirementCheckpoint("accepted", null, null)], {
+      operationId: "op-newer-6",
+      generation: 9,
+      runtimeEpoch: 6,
+    });
+
+    await expect(
+      createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001),
+    ).resolves.toBeNull();
+  });
+
+  it.each(["old-quiesced", "stopping-old"])(
+    "keeps the observed writer withdrawn in the %s retirement phase",
+    async (phase) => {
+      const db = createDatabase({ targetReservationId: "" });
+      seedRetirement(db, [retirementCheckpoint(phase)]);
+
+      await expect(
+        createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001),
+      ).resolves.toBeNull();
+    },
+  );
+
+  it("keeps a stopping operation fenced when its lease expires or its terminal checkpoint omits the request", async () => {
+    const expiredLeaseDb = createDatabase({ targetReservationId: "" });
+    seedRetirement(expiredLeaseDb, [retirementCheckpoint("stopping-old")], {
+      kind: "stop",
+      leaseExpiresAt: NOW - 1,
+    });
+    await expect(
+      createRuntimeBindingMetadataReader({ db: expiredLeaseDb, now: () => NOW }).getCurrent(7001),
+    ).resolves.toBeNull();
+
+    const terminalDb = createDatabase({ targetReservationId: "" });
+    seedRetirement(
+      terminalDb,
+      [
+        retirementCheckpoint("quiescing-old"),
+        retirementCheckpoint("failed", null, null),
+      ],
+      { status: "failed", leaseExpiresAt: NOW - 1 },
+    );
+    await expect(
+      createRuntimeBindingMetadataReader({ db: terminalDb, now: () => NOW }).getCurrent(7001),
+    ).resolves.toBeNull();
+  });
+
+  it("restores the old writer only after Lifecycle's explicit confirmed-resume checkpoint", async () => {
+    const db = createDatabase({ targetReservationId: "" });
+    seedRetirement(db, [
+      retirementCheckpoint("quiescing-old"),
+      retirementCheckpoint("accepted", null, null),
+      retirementCheckpoint("blocked", null, null),
+    ], { status: "blocked" });
+
+    await expect(
+      createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001),
+    ).resolves.toMatchObject({
+      runtimeEpoch: 4,
+      leaseId: "res_current-4",
       authority: "observed-writer",
     });
   });

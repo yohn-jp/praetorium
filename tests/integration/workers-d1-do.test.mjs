@@ -10,6 +10,7 @@ import { Miniflare } from "miniflare";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const workerEntryPath = path.join(repositoryRoot, "apps/control-plane/src/worker.ts");
+const workerConfigPath = path.join(repositoryRoot, "apps/control-plane/wrangler.toml");
 const migrationDirectory = path.join(repositoryRoot, "apps/control-plane/migrations");
 const gatewayAuthHeader = "X-Control-Plane-Gateway-Auth";
 const testRepository = {
@@ -42,13 +43,13 @@ async function assertOwnedDisposableInventory() {
   assert.ok(typeof resource?.reference === "string" && resource.reference.length > 0);
 }
 
-function makeMiniflare(script, persistenceRoot, secrets) {
+function makeMiniflare(script, persistenceRoot, secrets, compatibilityDate, compatibilityFlags) {
   return new Miniflare({
     name: "praetorium-control-plane-t14",
     script,
     modules: true,
-    compatibilityDate: "2026-10-17",
-    compatibilityFlags: ["nodejs_compat"],
+    compatibilityDate,
+    compatibilityFlags,
     bindings: {
       CONTROL_PLANE_GATEWAY_AUTH: secrets.gateway,
       PROVISIONER_AUTH_TOKEN: secrets.provisioner,
@@ -129,6 +130,27 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     workerInfo?.isFile(),
     "apps/control-plane/src/worker.ts must exist; the acceptance runner does not substitute an app fixture",
   );
+  const workerConfig = await readFile(workerConfigPath, "utf8");
+  const compatibilityDateMatch = workerConfig.match(
+    /^compatibility_date\s*=\s*"(\d{4}-\d{2}-\d{2})"\s*$/m,
+  );
+  assert.ok(
+    compatibilityDateMatch,
+    "apps/control-plane/wrangler.toml must declare the production Worker compatibility date",
+  );
+  const compatibilityFlagsMatch = workerConfig.match(
+    /^compatibility_flags\s*=\s*(\[[^\]]*\])\s*$/m,
+  );
+  assert.ok(
+    compatibilityFlagsMatch,
+    "apps/control-plane/wrangler.toml must declare the production Worker compatibility flags",
+  );
+  const compatibilityFlags = JSON.parse(compatibilityFlagsMatch[1]);
+  assert.ok(Array.isArray(compatibilityFlags));
+  assert.ok(
+    compatibilityFlags.includes("nodejs_compat"),
+    "Control Plane Worker must enable nodejs_compat",
+  );
 
   const migrationNames = (await readdir(migrationDirectory))
     .filter((name) => name.endsWith(".sql"))
@@ -159,7 +181,13 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
   let miniflare;
 
   try {
-    miniflare = makeMiniflare(script, persistenceRoot, secrets);
+    miniflare = makeMiniflare(
+      script,
+      persistenceRoot,
+      secrets,
+      compatibilityDateMatch[1],
+      compatibilityFlags,
+    );
     await miniflare.ready;
     const env = await miniflare.getBindings();
     assert.ok(env.CONTROL_PLANE_DB, "production Worker D1 binding is present");
@@ -169,7 +197,20 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     for (const migrationName of migrationNames) {
       const migration = await readFile(path.join(migrationDirectory, migrationName), "utf8");
       assert.ok(migration.trim().length > 0, `${migrationName} must not be empty`);
-      await database.exec(migration);
+      const executableSql = migration
+        .split(/\r?\n/)
+        .filter((line) => !line.trimStart().startsWith("--"))
+        .join("\n")
+        .trim();
+      assert.ok(executableSql.length > 0, `${migrationName} must contain executable SQL`);
+      const statements = executableSql
+        .split(";")
+        .map((statement) => statement.trim())
+        .filter((statement) => statement.length > 0);
+      assert.ok(statements.length > 0, `${migrationName} must contain SQL statements`);
+      for (const statement of statements) {
+        await database.prepare(statement).run();
+      }
     }
     const migratedTables = await database
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -262,7 +303,13 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     );
 
     await miniflare.dispose();
-    miniflare = makeMiniflare(script, persistenceRoot, secrets);
+    miniflare = makeMiniflare(
+      script,
+      persistenceRoot,
+      secrets,
+      compatibilityDateMatch[1],
+      compatibilityFlags,
+    );
     await miniflare.ready;
     await assertRepositoryBinding(miniflare, secrets.gateway, instanceId);
 

@@ -11,3 +11,4 @@ export * from "./instance-hostname.js";
 export * from "./composition.js";
 export * from "./mutation-authorization.js";
 export * from "./runtime-control.js";
+export * from "./management.js";

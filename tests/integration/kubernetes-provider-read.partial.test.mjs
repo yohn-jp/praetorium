@@ -38,6 +38,17 @@ class KubernetesApiStatusError extends Error {
   }
 }
 
+class UnreapedProcessGroupError extends Error {
+  constructor(cause) {
+    super("external command process group did not exit after SIGKILL", { cause });
+    this.name = "UnreapedProcessGroupError";
+  }
+}
+
+const DEFINITIVE_CREATE_REJECTION_STATUSES = new Set([
+  400, 401, 403, 404, 405, 409, 410, 413, 415, 422,
+]);
+
 function assertExactFile(filePath, expectedMode) {
   return lstat(filePath).then((details) => {
     assert.equal(
@@ -145,6 +156,20 @@ async function runBounded(command, args, { input, timeoutMs = PROCESS_TIMEOUT_MS
         } catch {}
       }
     };
+    const waitForProcessGroupExit = async () => {
+      if (!child.pid) return;
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(-child.pid, 0);
+        } catch (error) {
+          if (error instanceof Error && error.code === "ESRCH") return;
+          if (error instanceof Error && error.code !== "EPERM") throw error;
+        }
+        await delay(25);
+      }
+      throw new UnreapedProcessGroupError();
+    };
     const stop = (reason) => {
       if (stopReason !== undefined) return;
       stopReason = reason;
@@ -164,8 +189,19 @@ async function runBounded(command, args, { input, timeoutMs = PROCESS_TIMEOUT_MS
     child.stdout.on("data", (chunk) => collect(stdout, chunk));
     child.stderr.on("data", (chunk) => collect(stderr, chunk));
     child.on("error", () => stop("external command could not start"));
-    child.on("close", (code, signal) => {
+    child.on("close", async (code, signal) => {
       if (stopReason !== undefined) {
+        signalProcessGroup("SIGKILL");
+        try {
+          await waitForProcessGroupExit();
+        } catch (error) {
+          finish(
+            error instanceof UnreapedProcessGroupError
+              ? error
+              : new UnreapedProcessGroupError(error),
+          );
+          return;
+        }
         finish(new Error(stopReason));
         return;
       }
@@ -413,8 +449,7 @@ async function createFromSource(client, kubectl, kubeconfig, yaml, kind, name, r
   } catch (error) {
     if (
       error instanceof KubernetesApiStatusError &&
-      error.statusCode >= 400 &&
-      error.statusCode < 500
+      DEFINITIVE_CREATE_REJECTION_STATUSES.has(error.statusCode)
     ) {
       throw error;
     }
@@ -810,6 +845,37 @@ test(
   },
 );
 
+test(
+  "bounded timeout kills a TERM-ignoring descendant after its leader closes",
+  { timeout: 10_000 },
+  async () => {
+    const directory = await mkdtemp(path.join(EXPECTED_ROOT, "t/provider-read-leader-exit-"));
+    const markerPath = path.join(directory, "late-child-write");
+    const childScript = [
+      'import { writeFileSync } from "node:fs";',
+      'process.on("SIGTERM", () => {});',
+      `setTimeout(() => writeFileSync(${JSON.stringify(markerPath)}, "late"), 2_600);`,
+    ].join(" ");
+    const parentScript = [
+      'import { spawn } from "node:child_process";',
+      `spawn(process.execPath, ["--input-type=module", "--eval", ${JSON.stringify(childScript)}], { stdio: "ignore" });`,
+      "await new Promise(() => {});",
+    ].join(" ");
+    try {
+      await assert.rejects(
+        runBounded(process.execPath, ["--input-type=module", "--eval", parentScript], {
+          timeoutMs: 300,
+        }),
+        /bounded external command timed out/u,
+      );
+      await delay(2_800);
+      await assert.rejects(readFile(markerPath), { code: "ENOENT" });
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  },
+);
+
 const armed = Boolean(
   process.env[ROOT_ENV] &&
     process.env[CLUSTER_CONFIRM_ENV] &&
@@ -859,7 +925,7 @@ test(
     const archive = await verifyImageArchive();
     const created = [];
     let imageLoadCompleted = false;
-    let uncertainCreateOutcome = false;
+    let preserveResources = false;
     let acceptanceProof;
     try {
       const namespaceYaml = await canonicalDoc(
@@ -1037,8 +1103,7 @@ test(
       } catch (error) {
         if (
           error instanceof KubernetesApiStatusError &&
-          error.statusCode >= 400 &&
-          error.statusCode < 500
+          DEFINITIVE_CREATE_REJECTION_STATUSES.has(error.statusCode)
         ) {
           throw error;
         }
@@ -1123,13 +1188,18 @@ test(
         created.push(error.resource);
         throw new Error(`${error.message}; automatic cleanup will use its ownership label and UID`);
       }
-      if (error instanceof UncertainCreateOutcomeError) uncertainCreateOutcome = true;
+      if (
+        error instanceof UncertainCreateOutcomeError ||
+        error instanceof UnreapedProcessGroupError
+      ) {
+        preserveResources = true;
+      }
       throw error;
     } finally {
-      if (uncertainCreateOutcome) {
+      if (preserveResources) {
         client.agent.destroy();
         throw new Error(
-          "uncertain create outcome; automatic cleanup was withheld for reconciliation",
+          "uncertain API or process outcome; automatic cleanup was withheld for reconciliation",
         );
       }
       let cleanupFailure;

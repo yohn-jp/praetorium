@@ -81,12 +81,16 @@ reconciliation. If a lookup finds the exact random run label, the runner
 captures that object's UID, aborts acceptance, and uses the UID/label-guarded
 cleanup. A definitive client-side rejection does not create an ownership
 record, so cleanup proceeds only for earlier resources whose UIDs were
-captured. Delete uncertainty stops cleanup at that resource and preserves the
-remaining ledger. Bounded external commands terminate their process group,
-escalate from TERM to KILL if needed, and wait for process closure before
-cleanup proceeds; a local regression covers a TERM-ignoring descendant. The
-image import remains in the disposable cluster cache; the test removes only
-the UID-owned API resources it created.
+captured. Only HTTP 400, 401, 403, 404, 405, 409, 410, 413, 415, and 422 are
+treated as definitive; 408, 429, server errors, and transport failures follow
+the uncertain path. Delete uncertainty stops cleanup at that resource and
+preserves the remaining ledger. Bounded external commands terminate their
+process group, escalate from TERM to KILL if needed, and wait for the whole
+group to exit before cleanup proceeds. If it remains after the bounded wait,
+the runner withholds API cleanup for reconciliation. Local regressions cover
+both a TERM-ignoring descendant that keeps pipes open and one whose leader
+closes first. The image import remains in the disposable cluster cache; the
+test removes only the UID-owned API resources it created.
 
 ## Run procedure
 

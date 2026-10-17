@@ -54,7 +54,7 @@ def concrete(value, label):
 def private_ipv4(value, label):
     address = ipaddress.ip_address(concrete(value, label))
     require(isinstance(address, ipaddress.IPv4Address) and
-            address.is_private and not address.is_loopback and not address.is_link_local,
+                        any(address in ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")),
             label + " must be a private IPv4 host address")
     return str(address)
 
@@ -64,8 +64,8 @@ def cidrs(values, label):
     for value in values:
         subnet = ipaddress.ip_network(concrete(value, label), strict=True)
         require(isinstance(subnet, ipaddress.IPv4Network) and
-                not subnet.is_multicast and not subnet.is_reserved,
-                label + " must contain routable IPv4 CIDRs")
+                                not subnet.is_multicast and not subnet.is_reserved and subnet.prefixlen >= 16,
+                label + " must contain explicit IPv4 CIDRs of /16 or narrower")
     require(len(values) == len(set(values)), label + " contains duplicates")
     return values
 
@@ -73,7 +73,9 @@ def cidrs(values, label):
 def owned_file(filename, label, secret=False):
     require(isinstance(filename, str) and filename.startswith("/"), label + " must be absolute")
     path = Path(filename)
-    require(".." not in path.parts and not path.is_symlink() and path.is_file(), label + " must be a regular file")
+    require(re.fullmatch(r"/[A-Za-z0-9._/-]+", filename) and
+            ".." not in path.parts and not path.is_symlink() and path.is_file(),
+            label + " must be a safe regular file path")
     if secret:
         require(path.stat().st_uid == 0 and (path.stat().st_mode & 0o077) == 0,
                 label + " must be root-owned with no group/other permission")
@@ -107,6 +109,9 @@ def host_preflight(role):
     require(not ROLE_MARKER.exists(), "existing Praetorium Ubuntu role; refusing to reconfigure")
     require(not (Path("/etc/NIXOS").exists()), "NixOS must use the existing bootstrap")
     require(shutil.which("systemctl") is not None, "systemd required")
+    require(not (Path("/etc/praetorium/buildkitd.toml").exists() if role == "runtime" else
+                 Path("/usr/local/bin/k3s").exists()),
+            "opposite role partial installation detected")
     other = ("praetorium-buildkit" if role == "runtime" else "k3s")
     require(output("systemctl", "show", "-p", "LoadState", "--value", other + ".service") == "not-found",
             "opposite role service exists: " + other)

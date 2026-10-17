@@ -30,6 +30,9 @@ spec:
     - expression: >-
         object.spec.?volumes.orValue([]).all(volume, !has(volume.hostPath))
       message: Host paths and host sockets are not allowed in tenant pods.
+    # Kubernetes v1.35 models Quantity as oneOf(string, number), so CEL omits
+    # ResourceRequirements' additionalProperties. Keep raw access scoped to this
+    # resource map and require every configured resource key below.
     - expression: >-
         object.spec.containers.all(container,
         has(container.securityContext) &&
@@ -42,14 +45,14 @@ spec:
           has(container.securityContext.capabilities) &&
           container.securityContext.capabilities.drop.exists(capability, capability == "ALL") &&
           container.image.matches("^.+@sha256:[a-f0-9]{64}$") &&
-          has(container.resources.requests) &&
-          "cpu" in container.resources.requests &&
-          "memory" in container.resources.requests &&
-          "ephemeral-storage" in container.resources.requests &&
-          has(container.resources.limits) &&
-          "cpu" in container.resources.limits &&
-          "memory" in container.resources.limits &&
-          "ephemeral-storage" in container.resources.limits
+          "requests" in dyn(container.resources) &&
+          "cpu" in dyn(container.resources)["requests"] &&
+          "memory" in dyn(container.resources)["requests"] &&
+          "ephemeral-storage" in dyn(container.resources)["requests"] &&
+          "limits" in dyn(container.resources) &&
+          "cpu" in dyn(container.resources)["limits"] &&
+          "memory" in dyn(container.resources)["limits"] &&
+          "ephemeral-storage" in dyn(container.resources)["limits"]
         )
       message: Tenant containers require immutable images, bounded resources, and a restricted security context.
     - expression: >-
@@ -64,14 +67,14 @@ spec:
           has(container.securityContext.capabilities) &&
           container.securityContext.capabilities.drop.exists(capability, capability == "ALL") &&
           container.image.matches("^.+@sha256:[a-f0-9]{64}$") &&
-          has(container.resources.requests) &&
-          "cpu" in container.resources.requests &&
-          "memory" in container.resources.requests &&
-          "ephemeral-storage" in container.resources.requests &&
-          has(container.resources.limits) &&
-          "cpu" in container.resources.limits &&
-          "memory" in container.resources.limits &&
-          "ephemeral-storage" in container.resources.limits
+          "requests" in dyn(container.resources) &&
+          "cpu" in dyn(container.resources)["requests"] &&
+          "memory" in dyn(container.resources)["requests"] &&
+          "ephemeral-storage" in dyn(container.resources)["requests"] &&
+          "limits" in dyn(container.resources) &&
+          "cpu" in dyn(container.resources)["limits"] &&
+          "memory" in dyn(container.resources)["limits"] &&
+          "ephemeral-storage" in dyn(container.resources)["limits"]
         )
       message: Tenant init containers must meet the same image, resource, and security requirements.
     - expression: >-

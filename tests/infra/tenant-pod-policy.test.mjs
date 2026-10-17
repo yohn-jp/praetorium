@@ -46,14 +46,32 @@ test("tenant Pod policy matches the labels and security properties the runtime e
     "volume.hostPath",
     "allowPrivilegeEscalation == false",
     "readOnlyRootFilesystem == true",
-    "capability == \"ALL\"",
-    "container.image.matches(\"^.+@sha256:[a-f0-9]{64}$\")",
-    '"ephemeral-storage" in container.resources.requests',
-    '"ephemeral-storage" in container.resources.limits',
+    'capability == "ALL"',
+    'container.image.matches("^.+@sha256:[a-f0-9]{64}$")',
     "port.hostPort",
   ]) {
     assert.ok(policy.includes(expression), `policy is missing ${expression}`);
   }
+
+  for (const resourceField of ["requests", "limits"]) {
+    const membership = `"${resourceField}" in dyn(container.resources)`;
+    assert.equal(
+      policy.split(membership).length - 1,
+      2,
+      `both regular and init containers must require ${resourceField}`,
+    );
+    for (const resourceName of ["cpu", "memory", "ephemeral-storage"]) {
+      const required = `"${resourceName}" in dyn(container.resources)["${resourceField}"]`;
+      assert.equal(
+        policy.split(required).length - 1,
+        2,
+        `both regular and init containers must require ${resourceName} ${resourceField}`,
+      );
+    }
+  }
+
+  assert.doesNotMatch(policy, /container\.resources\.(?:requests|limits)/);
+  assert.doesNotMatch(policy, /\bdyn\s*\(\s*container\s*\)/);
 
   assert.doesNotMatch(policy, /pod-security\.kubernetes\.io/);
   assert.doesNotMatch(policy, /PersistentVolumeClaim|Restic/i);

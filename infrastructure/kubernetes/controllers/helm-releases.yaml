@@ -36,8 +36,9 @@ spec:
         allowCrossNamespace: false
         allowExternalNameServices: false
         allowEmptyServices: false
-        namespaces:
-          - praetorium-system
+        namespaces: []
+    rbac:
+      namespaced: false
     ports:
       web:
         exposedPort: 80

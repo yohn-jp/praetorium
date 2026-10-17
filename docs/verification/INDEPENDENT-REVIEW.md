@@ -53,7 +53,28 @@ Their cached-tool infra run passed 53/53, distinct from root's 47/47 invocation.
 The route reviewer found that all-namespace Traefik watch exposed a priority tie
 between live tenant routes and the stopped fallback. The composed `b3fbe6d`
 renderer, provider pre/post-write matcher, wired VAP and watch configuration now
-agree on reserved1000 > runtime10 > fallback1. The independent reviewer reran
+agree on reserved 1000 > runtime 10 > fallback 1. The independent reviewer reran
 infra8/8 and Kubernetes34/34 on this exact clean main and found the defect closed.
 These are source/local-tool checks, not live Helm, API/defaulting or traffic proof.
 See [the source-cut record](PLATFORM-SECURITY-DELTA.md). Full T15 remains partial.
+
+## Kubernetes acceptance runner review
+
+At exact clean worker `a52ee5ef11f441e43d8b540a16cc000f98be356d`, the separate
+acceptance reviewer closed the metadata-positive-control, live health-target
+ownership, pending cleanup and namespace-generation findings. Sol independently
+found the namespace helper had interpolated a config object; the correction now
+uses the exported production naming API and compares results to the actual
+renderer. Health follows the real Deployment→ReplicaSet→Pod UID chain and exact
+ServiceAccount. The owned metadata fixture requires unique exact marker and
+image/object identity, with an early positive route test and same-node tenant
+control. Controller RBAC is honestly resource/namespace scoped; generated names,
+run labels and UID/resourceVersion checks constrain runner cleanup. Product
+ServiceAccount privileges remain separate.
+
+The reviewer reran frozen install, full check and 4/4 local tests. Sol integrated
+only the runner/docs commits through `0fcf16a` and reran required install/check,
+local 4/4, and the fixed owned Worker harness. Worker/D1/DO passed; six environment
+gates remained BLOCKED/NOT_CHECKED. Unconfigured Kubernetes acceptance exits1
+before transport construction. Neither reviewer nor Sol executed live Kubernetes
+acceptance; implementation review does not close that gate.

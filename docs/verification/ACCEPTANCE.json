@@ -42,9 +42,7 @@
       "disposable": true,
       "production": false,
       "expiresAt": "2026-10-17T00:52:16.149799Z",
-      "availableResources": [
-        "workers-d1-do"
-      ],
+      "availableResources": ["workers-d1-do"],
       "missingResources": [
         "github-access",
         "buildkit-registry",
@@ -233,8 +231,12 @@
     {
       "category": "kubernetes-isolation",
       "path": "tests/integration/kubernetes-isolation.test.mjs",
-      "implemented": false,
-      "status": "BLOCKED"
+      "implemented": true,
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "implementationHead": "0fcf16a",
+      "evidenceDocument": "docs/verification/KUBERNETES-ISOLATION.md",
+      "reason": "Independent implementation review and 4/4 local tests passed; explicit owned disposable environment inputs absent, so actual cluster acceptance was not executed."
     },
     {
       "category": "browser-entry",
@@ -556,5 +558,22 @@
     "independentReview": "Apply/Kind sequencing at ee33c38, composed route and API-defaulting reviews at b3fbe6d found no remaining defects in scoped paths",
     "liveClusterChecked": false,
     "productionApplied": false
+  },
+  "latestKubernetesRunnerDelta": {
+    "head": "0fcf16ae9444f72f66224bbe76b982a680087c88",
+    "reviewedWorkerHead": "a52ee5ef11f441e43d8b540a16cc000f98be356d",
+    "documentation": "docs/verification/KUBERNETES-ISOLATION.md",
+    "focusedLocalTestsPassed": 4,
+    "frozenInstall": "passed",
+    "requiredCheck": "passed; 29/29 cached test-stage tasks",
+    "unconfiguredAcceptance": "exit 1 before inventory/transport; NOT_CHECKED, not a pass",
+    "fixedHarnessReport": "/tmp/praetorium-0fcf16a-acceptance.json",
+    "reportGeneratedAt": "2026-10-17T01:44:35.591Z",
+    "aggregateExitCode": 2,
+    "aggregateErrors": [],
+    "workers-d1-do": "VERIFIED local owned Miniflare",
+    "otherCategories": "six BLOCKED/NOT_CHECKED",
+    "remainingMissingFixedRunners": 5,
+    "liveClusterChecked": false
   }
 }

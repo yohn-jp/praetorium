@@ -5,7 +5,7 @@
     "repository": "yohn-jp/praetorium",
     "targetWorktree": "/home/sophia/src/praetorium",
     "targetBranch": "main",
-    "targetHead": "787ede595401e4c3b9b06fca505837fcc4b6bc80",
+    "targetHead": "0fcf16ae9444f72f66224bbe76b982a680087c88",
     "ledgerWorktree": "/home/sophia/src/praetorium",
     "ledgerBranch": "main",
     "ledgerBaseHead": "787ede595401e4c3b9b06fca505837fcc4b6bc80",
@@ -33,11 +33,13 @@
       "node --test infrastructure/test/deploy-workers.test.mjs (pass, 6/6 at production source cut 27142b0)",
       "node scripts/deploy-workers.mjs plan --inventory infrastructure/test/disposable-inventory.json (exit 2; effect-free, migrations 0001-0004, templateProblems=[], remoteCalls=false; /tmp/praetorium-coverage-current-worker-plan.json)",
       "node scripts/deploy-workers.mjs preflight --inventory infrastructure/test/disposable-inventory.json (exit 2; effect-free, discovered migrations 0001-0004, templateProblems=[], remoteCalls=false, secretValuesInspected=false; /tmp/praetorium-coverage-current-worker-preflight.json)",
-      "Verified absent at the current source cut: tests/integration/github-access.test.mjs, tests/integration/buildkit-registry.test.mjs, tests/integration/kubernetes-isolation.test.mjs, tests/e2e/browser-entry.test.mjs, tests/integration/producer-recovery.test.mjs, tests/integration/stable-rollout.test.mjs.",
+      "Historical 4a94433 check found absent: tests/integration/github-access.test.mjs, tests/integration/buildkit-registry.test.mjs, tests/integration/kubernetes-isolation.test.mjs, tests/e2e/browser-entry.test.mjs, tests/integration/producer-recovery.test.mjs, tests/integration/stable-rollout.test.mjs.",
       "Fresh root required frozen install and full check passed at b3fbe6d; test stage 29/29 cached tasks, boundaries/schema checks passed. Logs /tmp/praetorium-b3fbe6d-{install,check}.log. Docs-only delta through 787ede5.",
       "Fresh root infra 47/47 passed without skips with cached Kustomize at b3fbe6d; no cluster calls. /tmp/praetorium-defaulted-infra.log.",
       "Fixed T14 actual owned local Worker/D1/DO VERIFIED at b3fbe6d; aggregate exit 2, errors=[], six categories BLOCKED/NOT_CHECKED. /tmp/praetorium-b3fbe6d-acceptance.json.",
-      "Fresh actual local D1/Restic restore 1/1 at b3fbe6d, 11217.63271ms test / 11285.769401ms process; synthetic metadata only. /tmp/praetorium-b3fbe6d-restore.log."
+      "Fresh actual local D1/Restic restore 1/1 at b3fbe6d, 11217.63271ms test / 11285.769401ms process; synthetic metadata only. /tmp/praetorium-b3fbe6d-restore.log.",
+      "Fresh required frozen install/check passed at 0fcf16a, 29/29 cached test tasks; actual fixed Worker/D1/DO VERIFIED, six categories BLOCKED/NOT_CHECKED and errors=[] at 2026-10-17T01:44:35.591Z. Logs /tmp/praetorium-0fcf16a-{install,check}.log and /tmp/praetorium-0fcf16a-acceptance.json.",
+      "Kubernetes runner identity/admission/health/config local tests pass4/4 at 0fcf16a. Full file exits1 at missing PRAETORIUM_T14_INVENTORY_PATH before transport construction; no real cluster acceptance. Five other fixed runners remain absent."
     ],
     "frozenInstallRunForThisLedger": true,
     "rootCheckRunForThisLedger": true,
@@ -257,7 +259,7 @@
       ],
       "blockers": [
         "No explicitly owned disposable Kubernetes cluster; no real scheduling, isolation, ingress, writer-absence or partition acceptance.",
-        "At production cut b3fbe6d, principal/PSA and static RBAC plus namespace/RoleBinding/resource/Pod/network/route guards are composed in the canonical base and staged apply. Kubernetes package34/34 and rootinfra47/47 pass; these are local proof, not cluster enforcement.",
+        "At production cut b3fbe6d, principal/PSA and static RBAC plus namespace/RoleBinding/resource/Pod/network/route guards are composed in the canonical base and staged apply. Kubernetes package 34/34 and root infra 47/47 pass; these are local proof, not cluster enforcement.",
         "Indefinite not-ready/unreachable tolerations prevent the default automatic node-eviction path but are not host fencing. Operator force deletion/node removal can erase API evidence before a process terminates; no force-delete was performed."
       ],
       "recordedCheckDocs": [
@@ -433,12 +435,15 @@
         "scripts/verify-integration.mjs",
         "tests/integration/workers-d1-do.test.mjs",
         "tests/integration/verify-integration.test.mjs",
-        "/tmp/praetorium-27142b0-acceptance.json"
+        "/tmp/praetorium-27142b0-acceptance.json",
+        "tests/integration/kubernetes-isolation.test.mjs",
+        "docs/verification/KUBERNETES-ISOLATION.md",
+        "/tmp/praetorium-0fcf16a-acceptance.json"
       ],
       "blockers": [
         "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout; the fixed harness returned exit 2 with errors=[].",
         "Current producer S01-S05 are missing at revision 539375c925754c6ec6f5c445051a32b7293a0724; artifactDigest is null and no current-main immutable artifact is available.",
-        "The six blocked fixed categories also lack their executable runner files; supplying resources alone does not complete acceptance. A separate partial M04 Worker test at 37f187c verifies a synthetic local revocation barrier but is not a T14 category pass or real writer/provider acceptance.",
+        "Kubernetes isolation runner is implemented and independently reviewed at 0fcf16a, but owned cluster/controller+provider credentials, immutable probe image, ingress/public marker and owned metadata canary are missing. The other five blocked categories lack fixed executable runners. The partial M04 probe remains synthetic, not real provider acceptance.",
         "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; S01 receipt/catalog ABI must arrive first, then the inspector/smoke path must be implemented and wired. T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain alongside the blocked producer/environment gates."
       ],
       "recordedCheckDocs": [
@@ -447,7 +452,7 @@
         "docs/migration/PRODUCER-STATUS.json",
         "tests/integration/verify-integration.test.mjs"
       ],
-      "recordStatus": "At exact production source cut 27142b0ab28e6c7323af3e2c11ed6121bf830574, the fixed acceptance runner VERIFIED workers-d1-do only and returned BLOCKED (exit 2) with six categories BLOCKED/NOT_CHECKED and errors=[]. The actual local Worker run covers all four migrations, repository/webhook/persistence behavior, audit pagination and scheduled advisory retention; the separate credential Worker probe is synthetic and does not promote the aggregate T14 gate."
+      "recordStatus": "At 0fcf16a required frozen install/check passed and the fixed harness VERIFIED actual owned local Worker/D1/DO only; aggregate exit 2, six BLOCKED/NOT_CHECKED and errors=[]. The newly implemented Kubernetes runner has 4/4 local validator tests and independent review; full acceptance refuses absent inventory before API construction. Five other fixed runners remain missing. No cluster was contacted."
     },
     "T15": {
       "implementation": "partial",
@@ -495,7 +500,7 @@
       "id": "S01-S05",
       "capability": "producer catalog, hosted access, Git credentials, quiesce and immutable composition evidence",
       "state": "blocked",
-      "evidence": "docs/migration/PRODUCER-STATUS.json at539375c925754c6ec6f5c445051a32b7293a0724 marks each hosted producer gate missing/BLOCKED and accepted artifactDigest null; stronger local Core evidence remains component-only."
+      "evidence": "docs/migration/PRODUCER-STATUS.json at 539375c925754c6ec6f5c445051a32b7293a0724 marks each hosted producer gate missing/BLOCKED and accepted artifactDigest null; stronger local Core evidence remains component-only."
     },
     {
       "id": "T09-runtime",
@@ -507,7 +512,7 @@
       "id": "T14-environments-and-runners",
       "capability": "remaining six real integration categories",
       "state": "blocked",
-      "evidence": "The owned local inventory supports only workers-d1-do. GitHub, BuildKit/registry, Kubernetes, browser-entry, producer-recovery and stable-rollout are blocked; their fixed executable runner files are also absent."
+      "evidence": "At 0fcf16a required frozen install/check passed and the fixed harness VERIFIED actual owned local Worker/D1/DO only; aggregate exit 2, six BLOCKED/NOT_CHECKED and errors=[]. The newly implemented Kubernetes runner has 4/4 local validator tests and independent review; full acceptance refuses absent inventory before API construction. Five other fixed runners remain missing. No cluster was contacted."
     },
     {
       "id": "T15-review",
@@ -716,6 +721,17 @@
     "actualClusterChecked": false,
     "workerD1Do": "VERIFIED local owned disposable only; aggregate T14 BLOCKED",
     "localRestoreTestsPassed": 1,
+    "productionApplied": false
+  },
+  "latestKubernetesRunnerDelta": {
+    "head": "0fcf16ae9444f72f66224bbe76b982a680087c88",
+    "workerReviewedHead": "a52ee5ef11f441e43d8b540a16cc000f98be356d",
+    "runner": "tests/integration/kubernetes-isolation.test.mjs",
+    "documentation": "docs/verification/KUBERNETES-ISOLATION.md",
+    "localFocusedTestsPassed": 4,
+    "fullUnconfiguredFileExitCode": 1,
+    "actualClusterAcceptance": "NOT_CHECKED; required owned input absent",
+    "remainingMissingFixedRunners": 5,
     "productionApplied": false
   }
 }

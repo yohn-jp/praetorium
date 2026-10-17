@@ -14,7 +14,7 @@ The fixed command `node scripts/verify-integration.mjs --environment /tmp/praeto
 | producer-recovery    | BLOCKED / NOT_CHECKED | S01–S05 hosted contracts and immutable producer artifact remain unavailable; artifact digest is null.                                                                                    |
 | stable-rollout       | BLOCKED / NOT_CHECKED | No two compatible producer artifacts, real canary/health window or stable/pinned rollout evidence.                                                                                       |
 
-The six blocked categories also lack their fixed executable runner files. Supplying resources alone does not complete them: the real runners must be implemented against the delivered producer ABI and owned environment, then executed. The harness reports these categories as blocked before attempting execution. No missing runner is counted as passing or skipped proof.
+At the historical cut above, six blocked categories lacked their fixed executable runners. At `0fcf16a`, the Kubernetes runner is implemented/reviewed but lacks its owned environment; five other fixed runners remain absent. Supplying resources alone does not complete them: the real runners must be implemented against the delivered producer ABI and owned environment, then executed. The harness reports these categories as blocked before attempting execution. No missing runner is counted as passing or skipped proof.
 
 The Worker run verifies concurrent repository resolution to one instance, durable restart/idempotency, public-operation redaction, service authorization, public-only runtime JWKS, webhook invalidation/deduplication/conflict handling, and actual audit pagination. It constructs the actual release admission services with local keys and rejects a malformed manifest; it does not fabricate an admitted producer release. It also invokes the real scheduled entry with explicit cache-retention policy, confirms a durable advisory audit event, and keeps missing T11 release bindings visibly unavailable. No cache row or OCI manifest is deleted.
 
@@ -40,3 +40,15 @@ cut supplements the historical broader report above. No actual cluster admission
 Traefik/CNI enforcement or producer conformance was run. Exact logs, measurements,
 independent review and limitations: [PLATFORM-SECURITY-DELTA.md](PLATFORM-SECURITY-DELTA.md).
 Current producer audit: [539375c](PRODUCER-539375c.md), accepted artifactDigest null.
+
+## Kubernetes runner implementation
+
+Main `0fcf16a` integrates the real provider-backed Kubernetes category runner and
+strict separate controller/provider credentials, exact owned metadata canary,
+health Deployment/ReplicaSet/Pod ownership chain, packet controls and conditional
+cleanup. Independent review found no remaining blocking defects; root local tests
+passed 4/4 and required frozen install/check passed. Full-file invocation with no
+inventory exits1 before transport construction. This is NOT_CHECKED acceptance,
+not a cluster pass. The fresh fixed harness at this cut VERIFIED only actual local
+Worker/D1/DO, returning exit 2 with six blocked categories and errors `[]`.
+See [the required owned inputs](KUBERNETES-ISOLATION.md).

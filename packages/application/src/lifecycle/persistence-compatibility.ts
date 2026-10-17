@@ -32,6 +32,17 @@ export function isPersistenceRollbackCompatible(
 ): boolean {
   const prior = previous.persistence;
   const next = target.persistence;
+  const emptyRemote =
+    evidence.observedRemoteCommit === null &&
+    evidence.quiesceRemoteCommit === null &&
+    Array.isArray(evidence.formats) &&
+    evidence.formats.length === 0;
+  const matchingCommit =
+    typeof evidence.observedRemoteCommit === "string" &&
+    /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(evidence.observedRemoteCommit) &&
+    typeof evidence.quiesceRemoteCommit === "string" &&
+    /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(evidence.quiesceRemoteCommit) &&
+    evidence.observedRemoteCommit === evidence.quiesceRemoteCommit;
   if (!declarationValid(prior) || !declarationValid(next)) return false;
   if (
     evidence.contractVersion !== "praetorium-rollback-compatibility/v1" ||
@@ -50,15 +61,15 @@ export function isPersistenceRollbackCompatible(
     typeof evidence.observedAt !== "string" ||
     !Number.isFinite(Date.parse(evidence.observedAt)) ||
     Date.parse(evidence.providerObservedAt) > Date.parse(evidence.observedAt) ||
+    typeof evidence.remoteObservedAt !== "string" ||
+    !Number.isFinite(Date.parse(evidence.remoteObservedAt)) ||
+    Date.parse(evidence.remoteObservedAt) > Date.parse(evidence.observedAt) ||
+    Date.parse(evidence.observedAt) - Date.parse(evidence.remoteObservedAt) > 15_000 ||
     !Array.isArray(evidence.formats) ||
     evidence.formats.length > 256 ||
+    (!emptyRemote && !matchingCommit) ||
     typeof evidence.quiesceRevision !== "string" ||
-    evidence.quiesceRevision.length === 0 ||
-    typeof evidence.observedRemoteCommit !== "string" ||
-    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(evidence.observedRemoteCommit) ||
-    typeof evidence.quiesceRemoteCommit !== "string" ||
-    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(evidence.quiesceRemoteCommit) ||
-    evidence.observedRemoteCommit !== evidence.quiesceRemoteCommit
+    evidence.quiesceRevision.length === 0
   )
     return false;
 

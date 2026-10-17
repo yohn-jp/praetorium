@@ -28,21 +28,34 @@ const CursorSchema = z.strictObject({
   occurredAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   eventId: z.string().min(1).max(512),
 });
-const RollbackEvidenceSchema = z.strictObject({
-  contractVersion: z.literal("praetorium-rollback-compatibility/v1"),
-  instanceId: PathId,
-  repositoryId: z.number().int().positive().safe(),
-  runtimeEpoch: z.number().int().positive().safe(),
-  imageDigest: DigestSchema,
-  compositionManifestDigest: DigestSchema,
-  providerObservationId: z.string().min(1).max(512),
-  providerObservedAt: z.iso.datetime(),
-  observedAt: z.iso.datetime(),
-  observedRemoteCommit: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u),
-  quiesceRevision: z.string().min(1).max(512),
-  quiesceRemoteCommit: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u),
-  formats: PersistenceObservationSchema.shape.formats,
-});
+const RollbackEvidenceSchema = z
+  .strictObject({
+    contractVersion: z.literal("praetorium-rollback-compatibility/v1"),
+    instanceId: PathId,
+    repositoryId: z.number().int().positive().safe(),
+    runtimeEpoch: z.number().int().positive().safe(),
+    imageDigest: DigestSchema,
+    compositionManifestDigest: DigestSchema,
+    providerObservationId: z.string().min(1).max(512),
+    providerObservedAt: z.iso.datetime(),
+    remoteObservedAt: z.iso.datetime().optional(),
+    observedAt: z.iso.datetime(),
+    observedRemoteCommit: z
+      .string()
+      .regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u)
+      .nullable(),
+    quiesceRevision: z.string().min(1).max(512),
+    quiesceRemoteCommit: z
+      .string()
+      .regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u)
+      .nullable(),
+    formats: PersistenceObservationSchema.shape.formats,
+  })
+  .refine(
+    (value) =>
+      value.observedRemoteCommit === value.quiesceRemoteCommit &&
+      (value.observedRemoteCommit !== null || value.formats.length === 0),
+  );
 const DeclarationEvidenceSchema = z.object({
   imageDigest: DigestSchema,
   compositionManifestDigest: DigestSchema,

@@ -44,6 +44,7 @@ export interface RuntimePersistenceDeclaration {
 }
 
 export interface RuntimePersistenceObservation {
+  readonly remoteObservedAt?: string | null;
   readonly state: "verified" | "unknown";
   readonly observedRemoteCommit: string | null;
   readonly formats: readonly {
@@ -272,9 +273,10 @@ export interface RollbackCompatibilityEvidence {
   readonly providerObservationId: string;
   readonly providerObservedAt: string;
   readonly observedAt: string;
-  readonly observedRemoteCommit: string;
+  readonly observedRemoteCommit: string | null;
+  readonly remoteObservedAt?: string;
   readonly quiesceRevision: string;
-  readonly quiesceRemoteCommit: string;
+  readonly quiesceRemoteCommit: string | null;
   readonly formats: readonly {
     readonly formatId: string;
     readonly version: number;

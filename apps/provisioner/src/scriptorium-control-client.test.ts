@@ -171,6 +171,23 @@ describe("ScriptoriumControlHttpClient", () => {
     });
   });
 
+  it("preserves the producer remote observation time and rejects invalid persistence timestamps", async () => {
+    const persistence = {
+      state: "verified",
+      remoteObservedAt: "2026-10-17T10:00:59.000Z",
+      observedRemoteCommit: "a".repeat(40),
+      formats: [],
+    };
+    const control = client({
+      fetch: async () => Response.json({ ...(responseStatus() as object), persistence }),
+    });
+    await expect(control.status(assignment())).resolves.toMatchObject({ persistence });
+    persistence.remoteObservedAt = "invalid";
+    await expect(control.status(assignment())).rejects.toThrow(
+      "runtime persistence observation is invalid",
+    );
+  });
+
   it("uses a live provider-resolved endpoint and hashes the empty status body", async () => {
     let requestUrl = "";
     let requestInit: RequestInit | undefined;

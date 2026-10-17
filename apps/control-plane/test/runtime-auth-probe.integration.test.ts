@@ -383,7 +383,7 @@ describe("Control Plane to Gateway runtime auth probe", () => {
     expect(noUserAuthority.authorizedActors).toEqual([]);
   });
 
-  it("accepts only a checkpointed, compatible rollback assignment after the failed target writer is retired", async () => {
+  it.each(["b".repeat(40), null])("accepts a checkpointed compatible rollback after retirement with remote %s", async (remoteCommit) => {
     const priorIndex = `sha256:${"5".repeat(64)}`;
     const priorPlatform = `sha256:${"6".repeat(64)}`;
     const priorComposition = `sha256:${"7".repeat(64)}`;
@@ -424,7 +424,7 @@ describe("Control Plane to Gateway runtime auth probe", () => {
       restartableJobs: 0,
       pendingCheckpoints: 0,
       uncertainPublication: false,
-      lastConfirmedRemoteRevision: "b".repeat(40),
+      lastConfirmedRemoteRevision: remoteCommit,
       reasonCodes: [],
       observedAt: new Date(NOW_MS - 3_000).toISOString(),
     };
@@ -437,11 +437,12 @@ describe("Control Plane to Gateway runtime auth probe", () => {
       compositionManifestDigest: failedComposition,
       providerObservationId: "producer-scan-99",
       providerObservedAt: new Date(NOW_MS - 2_000).toISOString(),
+      remoteObservedAt: new Date(NOW_MS - 3_000).toISOString(),
       observedAt: new Date(NOW_MS - 1_000).toISOString(),
-      observedRemoteCommit: "b".repeat(40),
+      observedRemoteCommit: remoteCommit,
       quiesceRevision: "quiesce-rev-12",
-      quiesceRemoteCommit: "b".repeat(40),
-      formats: [{ formatId: "scriptorium.document", version: 2 }],
+      quiesceRemoteCommit: remoteCommit,
+      formats: remoteCommit === null ? [] : [{ formatId: "scriptorium.document", version: 2 }],
     };
     const previousDeployment = {
       revisionId: "revision-prior",

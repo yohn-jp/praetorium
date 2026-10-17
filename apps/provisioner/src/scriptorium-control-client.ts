@@ -1,3 +1,4 @@
+import { PersistenceObservationSchema } from "@praetorium/contracts";
 import { createHash } from "node:crypto";
 import {
   parseRuntimeInstanceId,
@@ -132,10 +133,7 @@ export interface RuntimeAuthAcceptanceProbe {
     operationId: string,
     signal?: AbortSignal,
   ): ReturnType<LifecycleAuthProbeProvider["verify"]>;
-  forLease(
-    claim: ClaimedProvisionerOperation,
-    workerId?: string,
-  ): LifecycleAuthProbeProvider;
+  forLease(claim: ClaimedProvisionerOperation, workerId?: string): LifecycleAuthProbeProvider;
 }
 
 export interface ScriptoriumControlClientOptions {
@@ -194,30 +192,10 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[], mess
 }
 
 function parsePersistenceObservation(input: unknown): RuntimePersistenceObservation {
-  const value = object(input, "runtime persistence observation is invalid");
-  exactKeys(value, ["state", "observedRemoteCommit", "formats"], "runtime persistence shape invalid");
-  if (value.state !== "verified" && value.state !== "unknown")
-    throw new TypeError("runtime persistence state is invalid");
-  if (!Array.isArray(value.formats) || value.formats.length > 256)
-    throw new TypeError("runtime persistence formats are invalid");
-  const seen = new Set<string>();
-  const formats = value.formats.map((entry) => {
-    const format = object(entry, "runtime persistence format is invalid");
-    exactKeys(format, ["formatId", "version"], "runtime persistence format shape invalid");
-    const formatId = text(format.formatId, "runtime persistence format ID is invalid", 128);
-    const version = integer(format.version, "runtime persistence format version is invalid");
-    if (!/^[a-z][a-z0-9.-]{0,127}$/u.test(formatId) || version < 1)
-      throw new TypeError("runtime persistence format is invalid");
-    const pair = `${formatId}\u0000${version}`;
-    if (seen.has(pair)) throw new TypeError("duplicate runtime persistence format");
-    seen.add(pair);
-    return { formatId, version };
-  });
-  return {
-    state: value.state,
-    observedRemoteCommit: revision(value.observedRemoteCommit, "runtime persistence commit is invalid"),
-    formats,
-  };
+  const parsed = PersistenceObservationSchema.safeParse(input);
+  if (!parsed.success) throw new TypeError("runtime persistence observation is invalid");
+  const { remoteObservedAt, ...observation } = parsed.data;
+  return { ...observation, ...(remoteObservedAt === undefined ? {} : { remoteObservedAt }) };
 }
 
 function parseStatus(input: unknown): ProducerStatus {

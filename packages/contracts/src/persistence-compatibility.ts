@@ -52,6 +52,7 @@ export type PersistenceCompatibility = z.infer<typeof PersistenceCompatibilitySc
 export const PersistenceObservationSchema = z
   .strictObject({
     state: z.enum(["verified", "unknown"]),
+    remoteObservedAt: z.iso.datetime().nullable().optional(),
     observedRemoteCommit: z
       .string()
       .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u)

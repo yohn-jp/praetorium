@@ -417,6 +417,7 @@ function rollbackCompatibilityEvidenceMatches(input: {
   const receiptObservedAt = Date.parse(String(receipt["observedAt"]));
   const providerObservedAt = Date.parse(String(evidence["providerObservedAt"]));
   const observedAt = Date.parse(String(evidence["observedAt"]));
+  const remoteObservedAt = Date.parse(String(evidence["remoteObservedAt"]));
   const absenceObservedAt = Date.parse(String(absenceProof["censusObservedAt"]));
   const confirmedCommit = receipt["lastConfirmedRemoteRevision"];
   if (
@@ -442,11 +443,15 @@ function rollbackCompatibilityEvidenceMatches(input: {
     typeof receipt["quiesceRevision"] !== "string" ||
     receipt["quiesceRevision"].length < 1 ||
     receipt["quiesceRevision"].length > 512 ||
-    typeof confirmedCommit !== "string" ||
-    !REMOTE_REVISION.test(confirmedCommit) ||
+    !((typeof confirmedCommit === "string" && REMOTE_REVISION.test(confirmedCommit)) ||
+      (confirmedCommit === null && Array.isArray(evidence["formats"]) && evidence["formats"].length === 0)) ||
     evidence["quiesceRevision"] !== receipt["quiesceRevision"] ||
     evidence["quiesceRemoteCommit"] !== confirmedCommit ||
     evidence["observedRemoteCommit"] !== confirmedCommit ||
+    !Number.isFinite(remoteObservedAt) ||
+    remoteObservedAt > receiptObservedAt ||
+    remoteObservedAt > observedAt ||
+    observedAt - remoteObservedAt > 15_000 ||
     !Number.isFinite(providerObservedAt) ||
     !Number.isFinite(observedAt) ||
     providerObservedAt < receiptObservedAt ||

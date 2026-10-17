@@ -787,6 +787,7 @@ async function getOperationEvidence(inputs, operationId) {
         "compositionManifestDigest",
         "providerObservationId",
         "providerObservedAt",
+        "remoteObservedAt",
         "observedAt",
         "observedRemoteCommit",
         "quiesceRevision",
@@ -2353,14 +2354,27 @@ async function performCompatibleRollback(
   assert.equal(declarations.target.imageDigest, rollback.imageDigest);
   assert.equal(declarations.target.compositionManifestDigest, rollback.compositionManifestDigest);
   assert.equal(declarations.previous.imageDigest, originalDigest);
-  assert.equal(rollback.quiesceRevision, originalRevisionId);
   assert.match(rollback.observedRemoteCommit, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
+  assert.equal(
+    rollback.quiesceRevision,
+    rollback.observedRemoteCommit,
+    "Scriptorium quiesce receipt revision must be the confirmed remote Git commit",
+  );
   assert.equal(rollback.observedRemoteCommit, rollback.quiesceRemoteCommit);
   assert.ok(Number.isFinite(Date.parse(rollback.providerObservedAt)));
-  assert.ok(Number.isFinite(Date.parse(rollback.observedAt)));
+  const remoteObservedAt = Date.parse(rollback.remoteObservedAt);
+  const producerObservedAt = Date.parse(rollback.observedAt);
+  const providerObservedAt = Date.parse(rollback.providerObservedAt);
+  assert.ok(Number.isFinite(remoteObservedAt));
+  assert.ok(Number.isFinite(producerObservedAt));
+  assert.ok(Number.isFinite(providerObservedAt));
   assert.ok(
-    Date.parse(rollback.providerObservedAt) <= Date.parse(rollback.observedAt),
-    "writer census must be no newer than the Scriptorium persistence snapshot",
+    remoteObservedAt <= producerObservedAt && providerObservedAt <= producerObservedAt,
+    "remote and provider observations must precede the post-quiesce producer status",
+  );
+  assert.ok(
+    producerObservedAt - remoteObservedAt <= 15_000,
+    "confirmed remote observation must be at most 15 seconds old at the producer status scan",
   );
 
   const readinessAssignment = readiness.assignment;

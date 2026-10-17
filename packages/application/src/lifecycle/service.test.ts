@@ -127,9 +127,11 @@ function operation(overrides: Partial<LifecycleOperation> = {}): LifecycleOperat
 
 class MemoryJournal implements LifecycleJournal {
   value: LifecycleOperation;
+  readonly timeline: string[];
 
-  constructor(initial: LifecycleOperation) {
+  constructor(initial: LifecycleOperation, timeline: string[]) {
     this.value = initial;
+    this.timeline = timeline;
   }
 
   async load(operationId: string): Promise<LifecycleOperation | null> {
@@ -143,6 +145,8 @@ class MemoryJournal implements LifecycleJournal {
   ): Promise<LifecycleOperation | null> {
     if (operationId !== this.value.id || expectedVersion !== this.value.version) return null;
     this.value = { ...this.value, ...patch, version: this.value.version + 1 };
+    if (patch.phase === "quiescing-old")
+      this.timeline.push(`fence:${patch.quiesceRequest?.runtimeEpoch ?? "unknown"}`);
     return this.value;
   }
 
@@ -163,8 +167,10 @@ interface HarnessOptions {
   readonly readiness?: (assignment: RuntimeAssignment) => RuntimeReadiness;
   readonly initialWriters?: readonly RuntimeAssignment[];
   readonly compatibleRollback?: boolean;
+  readonly emptyRemote?: boolean;
   readonly now?: () => number;
   readonly producerObservedAt?: string | (() => string);
+  readonly remoteObservedAt?: string | (() => string);
   readonly authObservedAt?: string;
   readonly readinessTimeoutMs?: number;
   readonly quiesceTimeoutMs?: number;
@@ -172,7 +178,8 @@ interface HarnessOptions {
 }
 
 function harness(options: HarnessOptions = {}) {
-  const journal = new MemoryJournal(options.operation ?? operation());
+  const timeline: string[] = [];
+  const journal = new MemoryJournal(options.operation ?? operation(), timeline);
   const writers: RuntimeAssignment[] =
     options.initialWriters === undefined
       ? journal.value.current === null
@@ -189,9 +196,14 @@ function harness(options: HarnessOptions = {}) {
       readonly evidence: LifecycleReadinessEvidence;
     }[],
     authProbeCalls: 0,
+    producerStatuses: [] as {
+      readonly runtimeEpoch: number;
+      readonly remoteObservedAt: string | null;
+    }[],
     deactivations: 0,
     released: [] as string[],
   };
+  const remoteObservedAtByEpoch = new Map<number, string>();
   let crashedAfterStart = false;
   let crashedAfterActivation = false;
   const census = (): WriterCensus => ({
@@ -205,41 +217,53 @@ function harness(options: HarnessOptions = {}) {
       identities: [`pod-${item.runtimeEpoch}`],
     })),
   });
-  const producerStatus = (value: RuntimeAssignment): ProducerStatus => ({
-    contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
-    instanceId: value.instanceId,
-    repositoryId: value.repositoryId,
-    runtimeEpoch: value.runtimeEpoch,
-    imageDigest: value.deployment.imageDigest,
-    compositionManifestDigest: value.deployment.compositionManifestDigest,
-    enabledModuleIds: value.deployment.enabledModuleIds,
-    ready: true,
-    activity: {
-      lastMeaningfulActivityAt: "2026-10-17T00:00:00.000Z",
-      activeApiRequests: 0,
-      activeMcpRequests: 0,
-      activeMutations: 0,
-      activeJobs: 0,
-      restartableJobs: 0,
-      pendingCheckpoints: 0,
-      uncertainPublication: false,
-    },
-    lastConfirmedRemoteRevision: "a".repeat(40),
-    persistence: {
-      state: "verified",
-      observedRemoteCommit: "a".repeat(40),
-      formats: [
-        { formatId: "scriptorium.git-operations", version: 1 },
-        { formatId: "scriptorium.git-publications", version: 1 },
-        { formatId: "scriptorium.git-proposal-binding", version: 2 },
-        { formatId: "scriptorium.git-proposal-complete", version: 2 },
-      ],
-    },
-    observedAt:
-      typeof options.producerObservedAt === "function"
-        ? options.producerObservedAt()
-        : (options.producerObservedAt ?? new Date(options.now?.() ?? Date.now()).toISOString()),
-  });
+  const producerStatus = (value: RuntimeAssignment): ProducerStatus => {
+    const remoteObservedAt =
+      remoteObservedAtByEpoch.get(value.runtimeEpoch) ??
+      (typeof options.remoteObservedAt === "function"
+        ? options.remoteObservedAt()
+        : (options.remoteObservedAt ?? new Date(options.now?.() ?? Date.now()).toISOString()));
+    remoteObservedAtByEpoch.set(value.runtimeEpoch, remoteObservedAt);
+    const remoteCommit = options.emptyRemote ? null : "a".repeat(40);
+    return {
+      contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+      instanceId: value.instanceId,
+      repositoryId: value.repositoryId,
+      runtimeEpoch: value.runtimeEpoch,
+      imageDigest: value.deployment.imageDigest,
+      compositionManifestDigest: value.deployment.compositionManifestDigest,
+      enabledModuleIds: value.deployment.enabledModuleIds,
+      ready: true,
+      activity: {
+        lastMeaningfulActivityAt: "2026-10-17T00:00:00.000Z",
+        activeApiRequests: 0,
+        activeMcpRequests: 0,
+        activeMutations: 0,
+        activeJobs: 0,
+        restartableJobs: 0,
+        pendingCheckpoints: 0,
+        uncertainPublication: false,
+      },
+      lastConfirmedRemoteRevision: remoteCommit,
+      persistence: {
+        remoteObservedAt,
+        state: "verified",
+        observedRemoteCommit: remoteCommit,
+        formats: options.emptyRemote
+          ? []
+          : [
+              { formatId: "scriptorium.git-operations", version: 1 },
+              { formatId: "scriptorium.git-publications", version: 1 },
+              { formatId: "scriptorium.git-proposal-binding", version: 2 },
+              { formatId: "scriptorium.git-proposal-complete", version: 2 },
+            ],
+      },
+      observedAt:
+        typeof options.producerObservedAt === "function"
+          ? options.producerObservedAt()
+          : (options.producerObservedAt ?? new Date(options.now?.() ?? Date.now()).toISOString()),
+    };
+  };
   const runtime: LifecycleRuntimeProvider = {
     async censusWriters() {
       return census();
@@ -288,7 +312,7 @@ function harness(options: HarnessOptions = {}) {
     restartableJobs: 0,
     pendingCheckpoints: 0,
     uncertainPublication: false,
-    lastConfirmedRemoteRevision: "a".repeat(40),
+    lastConfirmedRemoteRevision: options.emptyRemote ? null : "a".repeat(40),
     reasonCodes: [],
     observedAt: new Date(options.now?.() ?? Date.now()).toISOString(),
   });
@@ -337,9 +361,16 @@ function harness(options: HarnessOptions = {}) {
     },
     producer: {
       async status(value) {
-        return producerStatus(value);
+        const status = producerStatus(value);
+        counters.producerStatuses.push({
+          runtimeEpoch: value.runtimeEpoch,
+          remoteObservedAt: status.persistence?.remoteObservedAt ?? null,
+        });
+        timeline.push(`status:${value.runtimeEpoch}`);
+        return status;
       },
       async quiesce(request) {
+        timeline.push(`quiesce:${request.runtimeEpoch}`);
         counters.quiesces.push({
           operationId: request.operationId,
           runtimeEpoch: request.runtimeEpoch,
@@ -381,6 +412,7 @@ function harness(options: HarnessOptions = {}) {
     journal,
     writers,
     counters,
+    timeline,
     context: {
       signal: new AbortController().signal,
       async assertLease() {},
@@ -667,6 +699,133 @@ describe("LifecycleService", () => {
     expect(h.counters.activations[0]?.evidence.actualImageDigest).toBe(platformDigest);
     expect(h.counters.activations[0]?.evidence.providerObservationId).toBe("runtime-observation-5");
     expect(h.counters.activations[0]?.evidence.validGrantProbeId).toBe("grant-auth-5");
+    expect(h.timeline.indexOf("status:4")).toBeLessThan(h.timeline.indexOf("fence:4"));
+  });
+
+  it("allows an untouched repository with a verified empty remote to stop or redeploy", async () => {
+    for (const kind of ["stop", "redeploy"] as const) {
+      const h = harness({
+        emptyRemote: true,
+        operation: operation({
+          kind,
+          reason: kind === "stop" ? "user" : "redeploy",
+          runtimeEpoch: 5,
+        }),
+      });
+
+      const result = await h.service.execute("op-01", h.context);
+
+      expect(result.status).toBe("complete");
+      expect(h.timeline.indexOf("status:4")).toBeLessThan(h.timeline.indexOf("fence:4"));
+      expect(h.counters.quiesces).toEqual([{ operationId: "op-01", runtimeEpoch: 4 }]);
+      expect(h.counters.stops).toEqual([4]);
+      expect(h.counters.starts).toEqual(kind === "stop" ? [] : [5]);
+      expect(h.writers.map(({ runtimeEpoch }) => runtimeEpoch)).toEqual(kind === "stop" ? [] : [5]);
+    }
+  });
+
+  it("keeps the writer active when its preflight remote confirmation is stale", async () => {
+    const now = Date.now();
+    const h = harness({
+      now: () => now,
+      remoteObservedAt: new Date(now - 15_001).toISOString(),
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result).toMatchObject({
+      status: "unknown",
+      code: "producer_remote_preflight_unverified",
+    });
+    expect(h.timeline).toContain("status:4");
+    expect(h.timeline).not.toContain("fence:4");
+    expect(h.counters.quiesces).toHaveLength(0);
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([4]);
+  });
+
+  it("still lets quiesce reject work that appears after a successful preflight", async () => {
+    const h = harness({
+      quiesceTimeoutMs: 10_000,
+      quiesce(request) {
+        return {
+          ...{
+            contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+            operationId: request.operationId,
+            instanceId: request.instanceId,
+            runtimeEpoch: request.runtimeEpoch,
+            quiesceRevision: `q-${request.operationId}-${request.runtimeEpoch}`,
+            disposition: "blocked" as const,
+            activeMutations: 1,
+            activeJobs: 0,
+            restartableJobs: 0,
+            pendingCheckpoints: 0,
+            uncertainPublication: false,
+            lastConfirmedRemoteRevision: "a".repeat(40),
+            reasonCodes: ["ACTIVE_MUTATION"],
+            observedAt: new Date().toISOString(),
+          },
+        };
+      },
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result).toMatchObject({ status: "blocked", code: "producer_quiesce_blocked" });
+    expect(h.timeline.indexOf("status:4")).toBeLessThan(h.timeline.indexOf("fence:4"));
+    expect(h.counters.quiesces).toHaveLength(1);
+    expect(h.counters.resumes).toContain("op-01");
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([4]);
+  });
+
+  it("resumes an already fenced writer without attempting a fresh network status", async () => {
+    const now = Date.now();
+    const request: QuiesceRequest = {
+      operationId: "op-01",
+      instanceId: "ins_01",
+      runtimeEpoch: 4,
+      reason: "redeploy",
+      contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+      deadline: new Date(now + 60_000).toISOString(),
+    };
+    const h = harness({
+      now: () => now,
+      operation: operation({
+        phase: "unknown",
+        target: deployment(),
+        targetEpoch: 5,
+        targetReservationId: "reservation-target",
+        quiesceRequest: request,
+      }),
+      quiesce(value) {
+        return {
+          contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+          operationId: value.operationId,
+          instanceId: value.instanceId,
+          runtimeEpoch: value.runtimeEpoch,
+          quiesceRevision: `q-${value.operationId}-${value.runtimeEpoch}`,
+          disposition: "unknown" as const,
+          activeMutations: 0,
+          activeJobs: 0,
+          restartableJobs: 0,
+          pendingCheckpoints: 0,
+          uncertainPublication: true,
+          lastConfirmedRemoteRevision: "a".repeat(40),
+          reasonCodes: ["REMOTE_CONFIRMATION_UNAVAILABLE"],
+          observedAt: new Date(now).toISOString(),
+        };
+      },
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result).toMatchObject({ status: "unknown", code: "producer_quiesce_unknown" });
+    expect(h.counters.producerStatuses).toHaveLength(0);
+    expect(h.counters.quiesces).toHaveLength(1);
+    expect(h.counters.resumes).toEqual(["op-01"]);
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([4]);
   });
 
   it("does not activate a target whose actual image digest differs from its admitted digest", async () => {
@@ -705,7 +864,7 @@ describe("LifecycleService", () => {
     let authTicks = 0;
     const staleAuth = harness({
       now: () => now + authTicks++ * 10,
-      producerObservedAt: () => new Date(now + authTicks++).toISOString(),
+      producerObservedAt: () => new Date(now + authTicks * 10).toISOString(),
       authObservedAt: new Date(now - 60_000).toISOString(),
       readinessTimeoutMs: 1_000,
       quiesceTimeoutMs: 10_000,
@@ -810,7 +969,120 @@ describe("LifecycleService", () => {
       observedRemoteCommit: "a".repeat(40),
       quiesceRemoteCommit: "a".repeat(40),
     });
+    expect(h.journal.value.rollbackCompatibilityEvidence?.remoteObservedAt).toBe(
+      h.counters.producerStatuses.find(({ runtimeEpoch }) => runtimeEpoch === 5)?.remoteObservedAt,
+    );
     expect(h.journal.value.rollbackCompatible).toBe(true);
+  });
+
+  it("proves rollback compatibility for a verified empty remote", async () => {
+    const h = harness({
+      emptyRemote: true,
+      operation: operation({
+        kind: "update",
+        reason: "update",
+        runtimeEpoch: 5,
+        targetRevisionId: "rev-b",
+      }),
+      build: {
+        async resolveOrBuild() {
+          return { status: "admitted", deployment: deployment("rev-b", digestB) };
+        },
+        async isRollbackCompatible(previous, target, evidence) {
+          return isPersistenceRollbackCompatible(previous, target, evidence);
+        },
+      },
+      readinessTimeoutMs: 2,
+      quiesceTimeoutMs: 10_000,
+      readiness: (value) => ({
+        status: value.deployment.revisionId === "rev-b" ? "not-ready" : "ready",
+        assignment: value,
+        providerObservationId: `observation-${value.runtimeEpoch}`,
+        actualImageDigest:
+          value.deployment.revisionId === "rev-b" ? null : value.deployment.platformManifestDigest,
+        imageIdentityVerified: value.deployment.revisionId !== "rev-b",
+        producer: null,
+      }),
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result.status).toBe("failed");
+    expect(h.journal.value.rollbackCompatibilityEvidence).toMatchObject({
+      observedRemoteCommit: null,
+      quiesceRemoteCommit: null,
+      formats: [],
+    });
+    expect(h.journal.value.rollbackCompatibilityEvidence?.remoteObservedAt).toBe(
+      h.counters.producerStatuses.find(({ runtimeEpoch }) => runtimeEpoch === 5)?.remoteObservedAt,
+    );
+    expect(h.journal.value.rollbackCompatible).toBe(true);
+    expect(h.counters.stops).toEqual([4, 5]);
+    expect(h.counters.starts).toEqual([5, 6]);
+    expect(h.writers.map(({ runtimeEpoch }) => runtimeEpoch)).toEqual([6]);
+  });
+
+  it("does not retire a failed target when its cached remote confirmation ages during quiesce", async () => {
+    let clock = Date.parse("2026-10-17T00:00:00.000Z");
+    const quiesce = (request: QuiesceRequest): QuiesceReceipt => {
+      if (request.reason === "rollback") clock += 15_001;
+      return {
+        contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+        operationId: request.operationId,
+        instanceId: request.instanceId,
+        runtimeEpoch: request.runtimeEpoch,
+        quiesceRevision: `q-${request.operationId}-${request.runtimeEpoch}`,
+        disposition: "safe",
+        activeMutations: 0,
+        activeJobs: 0,
+        restartableJobs: 0,
+        pendingCheckpoints: 0,
+        uncertainPublication: false,
+        lastConfirmedRemoteRevision: "a".repeat(40),
+        reasonCodes: [],
+        observedAt: new Date(clock).toISOString(),
+      };
+    };
+    const h = harness({
+      operation: operation({
+        kind: "update",
+        reason: "update",
+        runtimeEpoch: 5,
+        targetRevisionId: "rev-b",
+      }),
+      build: {
+        async resolveOrBuild() {
+          return { status: "admitted", deployment: deployment("rev-b", digestB) };
+        },
+        async isRollbackCompatible(previous, target, evidence) {
+          return isPersistenceRollbackCompatible(previous, target, evidence);
+        },
+      },
+      now: () => clock++,
+      quiesce,
+      readinessTimeoutMs: 40,
+      quiesceTimeoutMs: 60_000,
+      readiness: (value) => ({
+        status: value.deployment.revisionId === "rev-b" ? "not-ready" : "ready",
+        assignment: value,
+        providerObservationId: `observation-${value.runtimeEpoch}`,
+        actualImageDigest:
+          value.deployment.revisionId === "rev-b" ? null : value.deployment.platformManifestDigest,
+        imageIdentityVerified: value.deployment.revisionId !== "rev-b",
+        producer: null,
+      }),
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result).toMatchObject({
+      status: "unknown",
+      code: "rollback_persistence_evidence_unproven",
+    });
+    expect(h.journal.value.rollbackCompatibilityEvidence).toBeNull();
+    expect(h.counters.stops).toEqual([4]);
+    expect(h.counters.starts).toEqual([5]);
+    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([5]);
   });
 
   it("resumes failed-target retirement when a worker exits after rollback quiesce", async () => {
@@ -926,6 +1198,7 @@ describe("persistence rollback compatibility", () => {
       providerObservationId: "pods-rv-17",
       providerObservedAt: "2026-10-17T00:00:01.000Z",
       observedAt: "2026-10-17T00:00:02.000Z",
+      remoteObservedAt: "2026-10-17T00:00:01.500Z",
       observedRemoteCommit: "a".repeat(40),
       quiesceRevision: "q-op-01-5",
       quiesceRemoteCommit: "a".repeat(40),
@@ -945,6 +1218,30 @@ describe("persistence rollback compatibility", () => {
     const target = deployment("rev-b", digestB);
 
     expect(isPersistenceRollbackCompatible(previous, target, evidence(target))).toBe(true);
+  });
+
+  it("accepts paired null revisions only for a verified empty remote with no formats", () => {
+    const previous = deployment("rev-a", digestA);
+    const target = deployment("rev-b", digestB);
+    const emptyEvidence = evidence(target, {
+      observedRemoteCommit: null,
+      quiesceRemoteCommit: null,
+      formats: [],
+    });
+
+    expect(isPersistenceRollbackCompatible(previous, target, emptyEvidence)).toBe(true);
+    expect(
+      isPersistenceRollbackCompatible(previous, target, {
+        ...emptyEvidence,
+        formats: [{ formatId: "scriptorium.git-operations", version: 1 }],
+      }),
+    ).toBe(false);
+    expect(
+      isPersistenceRollbackCompatible(previous, target, {
+        ...emptyEvidence,
+        quiesceRemoteCommit: "a".repeat(40),
+      }),
+    ).toBe(false);
   });
 
   it("rejects persisted versions the previous image cannot read", () => {
@@ -978,6 +1275,29 @@ describe("persistence rollback compatibility", () => {
 
     expect(
       isPersistenceRollbackCompatible(previous, incompatibleTarget, evidence(incompatibleTarget)),
+    ).toBe(false);
+  });
+
+  it("requires a fresh remote confirmation timestamp", () => {
+    const previous = deployment("rev-a", digestA);
+    const target = deployment("rev-b", digestB);
+    const missingTimestamp = { ...evidence(target) };
+    delete (missingTimestamp as { remoteObservedAt?: string }).remoteObservedAt;
+
+    expect(isPersistenceRollbackCompatible(previous, target, missingTimestamp)).toBe(false);
+    expect(
+      isPersistenceRollbackCompatible(
+        previous,
+        target,
+        evidence(target, { remoteObservedAt: "2026-10-16T23:59:46.999Z" }),
+      ),
+    ).toBe(false);
+    expect(
+      isPersistenceRollbackCompatible(
+        previous,
+        target,
+        evidence(target, { remoteObservedAt: "2026-10-17T00:00:02.001Z" }),
+      ),
     ).toBe(false);
   });
 

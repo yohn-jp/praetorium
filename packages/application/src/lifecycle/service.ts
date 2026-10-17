@@ -20,6 +20,7 @@ import {
 const DEFAULT_QUIESCE_TIMEOUT_MS = 30_000;
 const DEFAULT_READINESS_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_READINESS_EVIDENCE_MAX_AGE_MS = 30_000;
+const REMOTE_OBSERVATION_MAX_AGE_MS = 15_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const CLEANUP_TIMEOUT_MS = 3_000;
 
@@ -59,6 +60,37 @@ function validRemoteRevision(value: string | null): boolean {
   return value === null || /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value);
 }
 
+function hasFreshRemoteObservation(
+  assignment: RuntimeAssignment,
+  status: ProducerStatus,
+  now: number,
+): boolean {
+  const persistence = status.persistence;
+  const observedAt = Date.parse(status.observedAt);
+  const remoteObservedAt = Date.parse(persistence?.remoteObservedAt ?? "");
+  const commit = persistence?.observedRemoteCommit ?? null;
+  return (
+    status.contractVersion === SCRIPTORIUM_PLATFORM_CONTRACT_VERSION &&
+    status.instanceId === assignment.instanceId &&
+    status.repositoryId === assignment.repositoryId &&
+    status.runtimeEpoch === assignment.runtimeEpoch &&
+    status.imageDigest === assignment.deployment.imageDigest &&
+    status.compositionManifestDigest === assignment.deployment.compositionManifestDigest &&
+    sameStrings(status.enabledModuleIds, assignment.deployment.enabledModuleIds) &&
+    validIsoTimestamp(status.observedAt) &&
+    observedAt <= now &&
+    now - observedAt <= REMOTE_OBSERVATION_MAX_AGE_MS &&
+    persistence?.state === "verified" &&
+    validRemoteRevision(commit) &&
+    status.lastConfirmedRemoteRevision === commit &&
+    typeof persistence.remoteObservedAt === "string" &&
+    validIsoTimestamp(persistence.remoteObservedAt) &&
+    remoteObservedAt <= observedAt &&
+    remoteObservedAt <= now &&
+    now - remoteObservedAt <= REMOTE_OBSERVATION_MAX_AGE_MS
+  );
+}
+
 function rollbackEvidenceFromStatus(
   assignment: RuntimeAssignment,
   receipt: QuiesceReceipt,
@@ -68,13 +100,13 @@ function rollbackEvidenceFromStatus(
 ): RollbackCompatibilityEvidence | null {
   const persistence = status.persistence;
   const observedAt = Date.parse(status.observedAt);
+  const remoteObservedAt = Date.parse(persistence?.remoteObservedAt ?? "");
   const providerObservedAt = Date.parse(census.observedAt);
   const quiescedAt = Date.parse(receipt.observedAt);
   const commit = persistence?.observedRemoteCommit ?? null;
   if (
     persistence === undefined ||
     persistence.state !== "verified" ||
-    commit === null ||
     !validRemoteRevision(commit) ||
     status.lastConfirmedRemoteRevision !== commit ||
     receipt.lastConfirmedRemoteRevision !== commit ||
@@ -92,6 +124,13 @@ function rollbackEvidenceFromStatus(
     census.providerObservationId.length === 0 ||
     !censusIsComplete(census) ||
     !Number.isFinite(observedAt) ||
+    typeof persistence.remoteObservedAt !== "string" ||
+    !validIsoTimestamp(persistence.remoteObservedAt) ||
+    !Number.isFinite(remoteObservedAt) ||
+    remoteObservedAt > quiescedAt ||
+    remoteObservedAt > observedAt ||
+    remoteObservedAt > now ||
+    now - remoteObservedAt > REMOTE_OBSERVATION_MAX_AGE_MS ||
     !Number.isFinite(providerObservedAt) ||
     !Number.isFinite(quiescedAt) ||
     providerObservedAt < quiescedAt ||
@@ -102,6 +141,7 @@ function rollbackEvidenceFromStatus(
     observedAt > now ||
     now - observedAt > DEFAULT_READINESS_EVIDENCE_MAX_AGE_MS ||
     !Array.isArray(persistence.formats) ||
+    (commit === null && persistence.formats.length !== 0) ||
     persistence.formats.length > 256
   )
     return null;
@@ -129,6 +169,7 @@ function rollbackEvidenceFromStatus(
     providerObservationId: census.providerObservationId,
     providerObservedAt: census.observedAt,
     observedAt: status.observedAt,
+    remoteObservedAt: persistence.remoteObservedAt,
     observedRemoteCommit: commit,
     quiesceRevision: receipt.quiesceRevision,
     quiesceRemoteCommit: commit,
@@ -153,6 +194,9 @@ function rollbackEvidenceMatches(
     evidence.compositionManifestDigest === assignment.deployment.compositionManifestDigest &&
     typeof evidence.providerObservationId === "string" &&
     evidence.providerObservationId.length > 0 &&
+    validRemoteRevision(evidence.observedRemoteCommit) &&
+    Array.isArray(evidence.formats) &&
+    (evidence.observedRemoteCommit !== null || evidence.formats.length === 0) &&
     Number.isFinite(Date.parse(evidence.providerObservedAt)) &&
     Date.parse(evidence.providerObservedAt) >= Date.parse(receipt.observedAt) &&
     Date.parse(evidence.providerObservedAt) <= Date.parse(evidence.observedAt) &&
@@ -161,6 +205,10 @@ function rollbackEvidenceMatches(
     evidence.observedRemoteCommit === receipt.lastConfirmedRemoteRevision &&
     Number.isFinite(Date.parse(evidence.observedAt)) &&
     Date.parse(evidence.observedAt) >= Date.parse(receipt.observedAt) &&
+    typeof evidence.remoteObservedAt === "string" &&
+    validIsoTimestamp(evidence.remoteObservedAt) &&
+    Date.parse(evidence.remoteObservedAt) <= Date.parse(receipt.observedAt) &&
+    Date.parse(evidence.remoteObservedAt) <= Date.parse(evidence.observedAt) &&
     receipt.disposition === "safe"
   );
 }
@@ -1121,6 +1169,43 @@ export class LifecycleService {
       };
     }
 
+    const persistedRequest = operation.quiesceRequest;
+    const persistedFenceMatches =
+      persistedRequest !== null &&
+      persistedRequest.operationId === operationId &&
+      persistedRequest.instanceId === assignment.instanceId &&
+      persistedRequest.runtimeEpoch === assignment.runtimeEpoch;
+    if (!persistedFenceMatches) {
+      let status: ProducerStatus;
+      await context.assertLease();
+      try {
+        status = await this.dependencies.producer.status(assignment, context.signal);
+      } catch {
+        return {
+          status: "blocked",
+          result: await this.saveOutcome(
+            operation,
+            checkpoint,
+            "unknown",
+            "producer_remote_preflight_unavailable",
+            "fresh producer remote confirmation was unavailable before retiring the writer",
+          ),
+        };
+      }
+      if (!hasFreshRemoteObservation(assignment, status, this.now())) {
+        return {
+          status: "blocked",
+          result: await this.saveOutcome(
+            operation,
+            checkpoint,
+            "unknown",
+            "producer_remote_preflight_unverified",
+            "fresh, assignment-bound remote confirmation was not available before retiring the writer",
+          ),
+        };
+      }
+    }
+
     const proposedRequest: QuiesceRequest = {
       operationId,
       instanceId: assignment.instanceId,
@@ -1129,15 +1214,7 @@ export class LifecycleService {
       contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
       deadline: new Date(this.now() + this.quiesceTimeoutMs).toISOString(),
     };
-    const persistedRequest = operation.quiesceRequest;
-    const request =
-      persistedRequest !== null &&
-      persistedRequest.operationId === proposedRequest.operationId &&
-      persistedRequest.instanceId === proposedRequest.instanceId &&
-      persistedRequest.runtimeEpoch === proposedRequest.runtimeEpoch &&
-      persistedRequest.reason === proposedRequest.reason
-        ? persistedRequest
-        : proposedRequest;
+    const request = persistedFenceMatches ? persistedRequest : proposedRequest;
     let receipt: QuiesceReceipt;
     const storedReceipt = operation.quiesceReceipt;
     const persistedSafeReceipt =

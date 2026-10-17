@@ -1,12 +1,15 @@
-# Example ONLY: adapt management CIDRs, SSH identity and storage before use.
-# Save outside the repository as /root/praetorium-runtime-host.nix.
+# Copy outside Git to /root/praetorium-runtime.nix, then fill the required values.
+# Deliberately incomplete: evaluation must fail until private management access is set.
 { ... }: {
   networking.hostName = "praetorium-runtime";
+  services.qemuGuest.enable = true;
   praetorium.runtimeHost = {
     enable = true;
-    managementCidrs = [ "10.0.0.0/24" ];
+    clusterId = null; # match inventory.clusterId; e.g. clu_<26 Crockford chars>
+    managementCidrs = [ ]; # VPN administrator and internal cluster management networks
     ssh.operatorUser = "operator";
-    ssh.authorizedKeys = [ "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY" ];
-    publicIngress.enable = false;
+    ssh.authorizedKeys = [ ]; # public keys, never private keys
+    publicIngress.enable = false; # route via an approved private tunnel
+    kubernetesApi.tlsSans = [ ];
   };
 }

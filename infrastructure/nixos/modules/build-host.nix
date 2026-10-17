@@ -19,7 +19,7 @@ let
   inputsReady =
     cfg.storage.device != null && noPlaceholder cfg.storage.device &&
     cfg.storage.quotaBytes != null &&
-    lib.all (file: file != null && builtins.match "/run/secrets/[A-Za-z0-9._/-]+" file != null && !(lib.hasInfix "/../" file) && noPlaceholder file) resourceFiles &&
+    lib.all (file: file != null && builtins.match "/(run/secrets|var/lib/praetorium/credentials)/[A-Za-z0-9._/-]+" file != null && !(lib.hasInfix "/../" file) && noPlaceholder file) resourceFiles &&
     cfg.limits.cpuQuota != null &&
     cfg.limits.memoryMax != null &&
     cfg.limits.tasksMax != null &&
@@ -118,8 +118,8 @@ in
         message = "BuildKit state must use its dedicated filesystem mountpoint";
       }
       {
-        assertion = lib.all (file: file != null && builtins.match "/run/secrets/[A-Za-z0-9._/-]+" file != null && !(lib.hasInfix "/../" file) && noPlaceholder file) resourceFiles;
-        message = "BuildKit server certificate, private key, and client CA must be runtime secret references";
+        assertion = lib.all (file: file != null && builtins.match "/(run/secrets|var/lib/praetorium/credentials)/[A-Za-z0-9._/-]+" file != null && !(lib.hasInfix "/../" file) && noPlaceholder file) resourceFiles;
+        message = "BuildKit server certificate, private key and client CA must be protected /run/secrets or /var/lib/praetorium/credentials references";
       }
       {
         assertion = cfg.limits.cpuQuota != null && cfg.limits.memoryMax != null && cfg.limits.tasksMax != null;

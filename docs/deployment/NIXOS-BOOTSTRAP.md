@@ -1,14 +1,18 @@
 # Existing NixOS guest bootstrap
 
-This bootstrap runs **inside** an already installed NixOS VM. It does not provision Proxmox, install Linux, format BuildKit disks, provision Cloudflare, deploy application workloads or generate secrets. It consumes the existing role modules under `infrastructure/nixos/modules/` and requires an operator-supplied host module with all mandatory parameters.
+Praetorium runs on two **existing** NixOS VMs in Proxmox, not by modifying the Proxmox host. See [first OS installation](NIXOS-INSTALL.md) for the one-time NixOS ISO/installer steps. The pinned role modules are under `infrastructure/nixos/modules/`.
+
+From the same immutable Praetorium Git checkout on the Runtime VM, copy/fill `infrastructure/nixos/examples/runtime-host.nix` outside Git. Set the inventory's opaque `clusterId`, trusted admin CIDRs and SSH public key. Execute:
 
 ```sh
-sudo bash scripts/bootstrap-linux.sh runtime /root/praetorium-runtime-host.nix --check
-sudo bash scripts/bootstrap-linux.sh runtime /root/praetorium-runtime-host.nix --apply
+sudo bash scripts/bootstrap-linux.sh runtime /root/praetorium-runtime.nix --check
+sudo bash scripts/bootstrap-linux.sh runtime /root/praetorium-runtime.nix --apply
 ```
 
-For the separate BuildKit VM, use `build` and a host module enabling `praetorium.buildHost`. The existing BuildKit module **requires** an already-provisioned XFS device, client and egress CIDRs, proxy, TLS credential paths and fixed resource limits. It intentionally does not format storage or mint mTLS credentials.
+On the Build VM, use `build /root/praetorium-build.nix` instead. Supply existing XFS storage, a protected mTLS certificate/key/CA root under `/run/secrets` or `/var/lib/praetorium/credentials`, source/egress CIDRs and bounded CPU/memory/tasks before switching. No disk is formatted and no TLS key is generated automatically.
 
-The operator module is a NixOS module, not a complete flake. The bootstrap creates a temporary flake that imports the pinned Praetorium NixOS role and the operator module. The script refuses non-NixOS hosts and only performs a switch with explicit `--apply`. Because the temporary flake has a separate lock resolution, verify the evaluated package revisions before production use; the role module source is the checked-out repository.
+The bootstrap preserves the installed `/etc/nixos/configuration.nix` and `hardware-configuration.nix`; it will only create/refresh a marked Praetorium-managed `/etc/nixos/flake.nix` and refuses to overwrite an unrelated flake or a different pre-existing role file. `--check` updates this local host flake/lock and builds without changing the activated OS. `--apply` switches the system only after a successful build. The package graph follows Praetorium's version-pinned NixOS module flake.
 
-This is **host bootstrap only**, not one-command end-to-end Praetorium deployment. Runtime secrets, Flux workload application and full Hosted acceptance remain separate. Avoid putting private key contents directly in Nix expressions; refer to runtime-only paths instead.
+The Runtime role enables K3s, kubectl, Kustomize, Flux CLI, Git and Node 24. It marks the K3s node with the same opaque cluster ID that the deployment inventory must supply. After both hosts are bootstrapped, [deploy the four platform services and controllers](REPRODUCIBLE-DEPLOYMENT.md) in the same declarative inventory flow.
+
+Do not place private keys in Nix expressions. Private credential files are independently managed on the guest, with the BuildKit systemd service referring to file paths rather than copying credentials into the Nix store.

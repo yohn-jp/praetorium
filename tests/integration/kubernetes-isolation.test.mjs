@@ -55,15 +55,18 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function exactKeys(value, expected, field, errors) {
+function exactKeys(value, expected, field, errors, optional = []) {
   if (!isRecord(value)) {
     errors.push(`${field} must be an object`);
     return;
   }
   const actual = Object.keys(value).sort();
   const wanted = [...expected].sort();
-  if (actual.join("\0") !== wanted.join("\0")) {
-    errors.push(`${field} must contain exactly: ${wanted.join(", ")}`);
+  const allowed = new Set([...wanted, ...optional]);
+  if (actual.some((key) => !allowed.has(key)) || wanted.some((key) => !actual.includes(key))) {
+    errors.push(
+      `${field} must contain exactly: ${wanted.join(", ")}${optional.length ? `; optional: ${optional.join(", ")}` : ""}`,
+    );
   }
 }
 
@@ -73,6 +76,21 @@ function nonEmpty(value) {
 
 function safeAbsolutePath(value) {
   return typeof value === "string" && path.isAbsolute(value) && !value.includes("\0");
+}
+
+function isOwnedFreshClusterName(value) {
+  return (
+    typeof value === "string" &&
+    value.length <= 63 &&
+    /^praetorium-owned-kube-fresh-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(value)
+  );
+}
+
+function isAcceptedClusterName(value) {
+  return (
+    typeof value === "string" &&
+    (/^praetorium-t14-[a-z0-9-]{1,23}[a-z0-9]$/u.test(value) || isOwnedFreshClusterName(value))
+  );
 }
 
 function safeResourceQuantities(value, field, errors) {
@@ -146,19 +164,32 @@ function validateConfig(config, inventory, now = Date.now()) {
     ],
     "config.cluster",
     errors,
+    ["ownerMarkerPath"],
   );
   if (!/^clu_[0-9A-HJKMNP-TV-Z]{26}$/u.test(config?.cluster?.id ?? "")) {
     errors.push("config.cluster.id must be an opaque Kubernetes cluster identifier");
   }
   if (config?.cluster?.provider !== "kind") errors.push("config.cluster.provider must be kind");
-  if (!/^praetorium-t14-[a-z0-9-]{1,23}[a-z0-9]$/u.test(config?.cluster?.name ?? "")) {
-    errors.push("config.cluster.name must identify an explicitly disposable T14 Kind cluster");
+  if (!isAcceptedClusterName(config?.cluster?.name)) {
+    errors.push(
+      "config.cluster.name must identify an explicitly disposable T14 Kind cluster or the owner-marked praetorium-owned-kube-fresh cluster",
+    );
   }
   if (config?.cluster?.context !== `kind-${config?.cluster?.name}`) {
     errors.push("config.cluster.context must be the exact Kind context for the cluster name");
   }
   if (config?.cluster?.confirmation !== config?.cluster?.name) {
     errors.push("config.cluster.confirmation must repeat the explicit disposable cluster name");
+  }
+  if (
+    (isOwnedFreshClusterName(config?.cluster?.name) &&
+      !safeAbsolutePath(config?.cluster?.ownerMarkerPath)) ||
+    (config?.cluster?.ownerMarkerPath !== undefined &&
+      !safeAbsolutePath(config.cluster.ownerMarkerPath))
+  ) {
+    errors.push(
+      "config.cluster.ownerMarkerPath must name the private owner marker for an existing owned Kind cluster",
+    );
   }
   if (
     isIP(config?.cluster?.apiHost ?? "") === 0 ||
@@ -496,6 +527,48 @@ function assertValidConfig(config, inventory) {
   assert.deepEqual(errors, [], `T14 private config is invalid: ${errors.join("; ")}`);
 }
 
+function validateClusterOwnerMarker(marker, config, now = Date.now()) {
+  const errors = [];
+  if (!isRecord(marker)) return ["owned Kind cluster marker must be an object"];
+  if (marker.schema !== "praetorium.local-kind-owner/v1") {
+    errors.push("owned Kind cluster marker schema is unsupported");
+  }
+  if (!nonEmpty(marker.owner)) errors.push("owned Kind cluster marker owner is required");
+  if (
+    !Number.isSafeInteger(marker.uid) ||
+    (typeof process.getuid === "function" && marker.uid !== process.getuid())
+  ) {
+    errors.push("owned Kind cluster marker UID must match the current operator");
+  }
+  if (!nonEmpty(marker.purpose)) errors.push("owned Kind cluster marker purpose is required");
+  const createdAt = Date.parse(marker.createdAt ?? "");
+  if (!Number.isFinite(createdAt) || createdAt > now) {
+    errors.push("owned Kind cluster marker creation time is invalid");
+  }
+  if (marker.disposable !== true) errors.push("owned Kind cluster marker must be disposable");
+  if (marker.production !== false) errors.push("owned Kind cluster marker must be nonproduction");
+  const expiresAt = Date.parse(marker.expiresAt ?? "");
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+    errors.push("owned Kind cluster marker is expired or has no explicit expiry");
+  }
+  if (marker.clusterName !== config?.cluster?.name) {
+    errors.push("owned Kind cluster marker name must match config.cluster.name");
+  }
+  if (marker.clusterId !== config?.cluster?.id) {
+    errors.push("owned Kind cluster marker cluster ID must match config.cluster.id");
+  }
+  if (marker.context !== config?.cluster?.context) {
+    errors.push("owned Kind cluster marker context must match config.cluster.context");
+  }
+  if (marker.apiHost !== config?.cluster?.apiHost) {
+    errors.push("owned Kind cluster marker API host must match config.cluster.apiHost");
+  }
+  if (marker.apiPort !== config?.cluster?.apiPort) {
+    errors.push("owned Kind cluster marker API port must match config.cluster.apiPort");
+  }
+  return [...new Set(errors)];
+}
+
 async function readJsonFile(file, { privateFile = false, maximumBytes = MAX_FILE_BYTES } = {}) {
   const absolute = path.resolve(file);
   const linkInfo = await lstat(absolute);
@@ -606,8 +679,20 @@ async function loadOwnedInputs() {
   const resource = inventory.resources[CATEGORY];
   const config = await readJsonFile(resource.reference, { privateFile: true });
   assertValidConfig(config, inventory);
+  let clusterOwnerMarker;
+  if (config.cluster.ownerMarkerPath !== undefined) {
+    clusterOwnerMarker = await readJsonFile(config.cluster.ownerMarkerPath, { privateFile: true });
+    assert.deepEqual(
+      validateClusterOwnerMarker(clusterOwnerMarker, config),
+      [],
+      "existing Kind cluster owner marker does not match the selected disposable cluster",
+    );
+  }
+  if (isOwnedFreshClusterName(config.cluster.name)) {
+    assert.ok(clusterOwnerMarker, "existing owned Kind cluster requires its owner marker");
+  }
   const credentialFiles = await validateCredentialFiles(config);
-  return { inventory, config, credentialFiles };
+  return { inventory, config, credentialFiles, clusterOwnerMarker };
 }
 
 function crockfordId() {
@@ -893,7 +978,24 @@ function abortSignal(timeoutMs) {
   return AbortSignal.timeout(timeoutMs);
 }
 
-function effectGuard(run, inventory, config) {
+function assertClusterNodeOwnership(nodes, clusterId) {
+  assert.ok(nodes.length > 0, "owned Kind cluster has no live nodes");
+  for (const node of nodes) {
+    const labels = metadataOf(node).labels ?? {};
+    assert.equal(
+      labels["praetorium.io/cluster-id"],
+      clusterId,
+      "live Kind node cluster ID does not match the owned inventory",
+    );
+    assert.equal(
+      labels["praetorium.io/disposable"],
+      "true",
+      "live Kind node is not marked disposable",
+    );
+  }
+}
+
+function effectGuard(run, inventory, config, clusterOwnerMarker) {
   let count = 0;
   const guard = () => {
     assert.equal(
@@ -916,7 +1018,14 @@ function effectGuard(run, inventory, config) {
       "owned T14 inventory expired during execution",
     );
     assert.ok(run.length === 20 && /^[a-f0-9]+$/u.test(run), "runner ownership token is invalid");
-    assert.ok(config.cluster.name.startsWith("praetorium-t14-"), "runner cluster identity changed");
+    assert.ok(isAcceptedClusterName(config.cluster.name), "runner cluster identity changed");
+    if (isOwnedFreshClusterName(config.cluster.name)) {
+      assert.deepEqual(
+        validateClusterOwnerMarker(clusterOwnerMarker, config),
+        [],
+        "existing owned Kind cluster identity changed during execution",
+      );
+    }
     count += 1;
   };
   Object.defineProperty(guard, "count", { get: () => count });
@@ -1325,6 +1434,7 @@ async function verifyMetadataFixture(config, controllerApi, controllerTransport)
 }
 
 async function preflightCluster(config, controllerApi, controllerTransport, provider) {
+  assertClusterNodeOwnership(await listAll(controllerApi, "Node", ""), config.cluster.id);
   const kubeSystem = await controllerApi.getNamespace("kube-system");
   assert.equal(
     namespaceOf(kubeSystem),
@@ -2647,7 +2757,7 @@ async function createUnboundWriter({ api, config, spec, run, inventoryId, tracke
   return entry;
 }
 
-async function runAcceptance({ inventory, config, credentialFiles }) {
+async function runAcceptance({ inventory, config, credentialFiles, clusterOwnerMarker }) {
   const run = runId();
   const helperNamespace = config.cluster.instanceAccessNamespace;
   const idA = crockfordId();
@@ -2688,7 +2798,7 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     specs.map((spec) => runtimeNamespace(config, spec.instanceId)),
     config.timeouts.requestMs,
   );
-  const guard = effectGuard(run, inventory, config);
+  const guard = effectGuard(run, inventory, config, clusterOwnerMarker);
   const providerApi = guardKubernetesApi(new KubernetesApiClient(providerTransport), guard);
   const controllerApi = guardKubernetesApi(new KubernetesApiClient(controllerTransport), guard);
   const reservations = new TestControllerReservations(config.cluster.id, specs);
@@ -3497,6 +3607,130 @@ test("T14 Kubernetes private config validator rejects unowned, unsafe, or incomp
     [],
   );
   assert.deepEqual(validateConfig(valid, inventory, now), []);
+  const ownedClusterName = "praetorium-owned-kube-fresh-20261017";
+  const ownedCluster = {
+    ...valid,
+    cluster: {
+      ...valid.cluster,
+      name: ownedClusterName,
+      context: `kind-${ownedClusterName}`,
+      confirmation: ownedClusterName,
+      ownerMarkerPath: "/tmp/t14-private/kind-owner.json",
+    },
+  };
+  assert.deepEqual(
+    validateConfig(ownedCluster, inventory, now),
+    [],
+    "the existing owner-marked fresh Kind cluster must satisfy the fixed runner's exact context contract",
+  );
+  assert.ok(
+    validateConfig(
+      {
+        ...ownedCluster,
+        cluster: Object.fromEntries(
+          Object.entries(ownedCluster.cluster).filter(([key]) => key !== "ownerMarkerPath"),
+        ),
+      },
+      inventory,
+      now,
+    ).some((error) => error.includes("ownerMarkerPath")),
+    "an existing owned-cluster name must carry its owner marker path",
+  );
+  assert.ok(
+    validateConfig(
+      {
+        ...ownedCluster,
+        cluster: { ...ownedCluster.cluster, context: "kind-another-cluster" },
+      },
+      inventory,
+      now,
+    ).some((error) => error.includes("exact Kind context")),
+    "the existing cluster prefix must not bypass exact Kind context validation",
+  );
+  assert.ok(
+    validateConfig(
+      {
+        ...ownedCluster,
+        cluster: {
+          ...ownedCluster.cluster,
+          name: "praetorium-owned-kube-other-20261017",
+          context: "kind-praetorium-owned-kube-other-20261017",
+          confirmation: "praetorium-owned-kube-other-20261017",
+        },
+      },
+      inventory,
+      now,
+    ).some((error) => error.includes("explicitly disposable T14 Kind cluster")),
+    "only the specifically owner-marked fresh cluster family is permitted",
+  );
+  const clusterOwnerMarker = {
+    schema: "praetorium.local-kind-owner/v1",
+    owner: "test operator",
+    uid: typeof process.getuid === "function" ? process.getuid() : 1000,
+    purpose: "fresh canonical disposable Kind verification",
+    createdAt: "2026-09-30T00:00:00Z",
+    clusterName: ownedClusterName,
+    clusterId: ownedCluster.cluster.id,
+    context: ownedCluster.cluster.context,
+    apiHost: ownedCluster.cluster.apiHost,
+    apiPort: ownedCluster.cluster.apiPort,
+    disposable: true,
+    production: false,
+    expiresAt: "2026-10-03T00:00:00Z",
+  };
+  assert.deepEqual(validateClusterOwnerMarker(clusterOwnerMarker, ownedCluster, now), []);
+  assert.ok(
+    validateClusterOwnerMarker(
+      { ...clusterOwnerMarker, clusterId: "clu_00000000000000000000000002" },
+      ownedCluster,
+      now,
+    ).some((error) => error.includes("cluster ID must match")),
+    "the owner marker must bind the exact cluster ID as well as its name",
+  );
+  assert.ok(
+    validateClusterOwnerMarker(
+      { ...clusterOwnerMarker, context: "kind-another-cluster" },
+      ownedCluster,
+      now,
+    ).some((error) => error.includes("context must match")),
+  );
+  assert.ok(
+    validateClusterOwnerMarker({ ...clusterOwnerMarker, production: true }, ownedCluster, now).some(
+      (error) => error.includes("must be nonproduction"),
+    ),
+  );
+  assert.doesNotThrow(() =>
+    assertClusterNodeOwnership(
+      [
+        {
+          metadata: {
+            labels: {
+              "praetorium.io/cluster-id": ownedCluster.cluster.id,
+              "praetorium.io/disposable": "true",
+            },
+          },
+        },
+      ],
+      ownedCluster.cluster.id,
+    ),
+  );
+  assert.throws(
+    () =>
+      assertClusterNodeOwnership(
+        [
+          {
+            metadata: {
+              labels: {
+                "praetorium.io/cluster-id": "clu_00000000000000000000000002",
+                "praetorium.io/disposable": "true",
+              },
+            },
+          },
+        ],
+        ownedCluster.cluster.id,
+      ),
+    /cluster ID does not match/u,
+  );
   const renderedSpec = runtimeSpec(valid, `ins_${"0".repeat(26)}`, valid.network.hostnameSuffix);
   const renderedService = makeRenderer(valid)
     .renderRunning(renderedSpec)

@@ -127,9 +127,11 @@ test("public HTTPS egress retains reserved and metadata IP exclusions", async ()
     "240.0.0.0/4",
     "::/128",
     "::1/128",
+    "::/96",
     "::ffff:0:0/96",
     "2001:db8::/32",
     "fc00::/7",
+    "fec0::/10",
     "fe80::/10",
     "ff00::/8",
   ];

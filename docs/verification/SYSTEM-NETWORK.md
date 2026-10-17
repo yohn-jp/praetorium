@@ -49,12 +49,13 @@ into complete egress rule list items:
   URL is private or uses a non-standard port.
 
 Public HTTPS egress is limited to TCP 443 and excludes the reserved ranges in
-the source policy, plus `168.63.129.16/32` from the target runtime policy's
-metadata protection. The explicit API and private-origin rules must not
-re-allow `169.254.0.0/16` or `168.63.129.16/32`; the strict inventory validator
-owns those endpoint checks. NetworkPolicy matches IPs and ports, not DNS names,
-so an operator-provided CIDR is only a network locator and does not assert that
-DNS resolves the configured origin to that CIDR.
+the source policy. It also excludes IPv4-compatible `::/96` and deprecated
+IPv6 site-local `fec0::/10`, plus `168.63.129.16/32` from the target runtime
+policy's metadata protection. The explicit API and private-origin rules must
+not re-allow `169.254.0.0/16` or `168.63.129.16/32`; the strict inventory
+validator owns those endpoint checks. NetworkPolicy matches IPs and ports, not
+DNS names, so an operator-provided CIDR is only a network locator and does not
+assert that DNS resolves the configured origin to that CIDR.
 
 No CNI is selected by the current disposable Kind config. The renderer and
 offline tests verify policy shape and its correspondence to the actual

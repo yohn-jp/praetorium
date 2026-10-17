@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { chmod, mkdir, mkdtemp, open, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -11,6 +21,8 @@ import { fileURLToPath } from "node:url";
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MAX_CONFIG_BYTES = 64 * 1024;
+const MAX_RECOVERY_FILE_BYTES = 16 * 1024;
+const RECOVERY_FILE_PREFIX = "praetorium-t14-github-recovery-";
 const REQUEST_TIMEOUT_MS = 12_000;
 const GIT_TIMEOUT_MS = 20_000;
 
@@ -706,19 +718,44 @@ async function gitRefExists(cwd, remote, ref, env, gate) {
   return (await gitRefHash(cwd, remote, ref, env, gate)) !== null;
 }
 
-async function deleteOwnedRef(cwd, remote, ref, expectedHash, env) {
+async function deleteOwnedRef(
+  cwd,
+  remote,
+  ref,
+  expectedHash,
+  env,
+  {
+    runGit = git,
+    readRef = () => gitRefHash(cwd, remote, ref, env),
+    afterVerifiedAbsent = async () => {},
+  } = {},
+) {
   if (!ref || !expectedHash) return;
-  const currentHash = await gitRefHash(cwd, remote, ref, env);
-  if (currentHash === null) return;
+  const currentHash = await readRef();
+  if (currentHash === null) {
+    await afterVerifiedAbsent();
+    return;
+  }
   assert.equal(currentHash, expectedHash, "owned Git ref changed before cleanup");
-  await git(
+  await runGit(
     cwd,
     ["push", "--quiet", `--force-with-lease=${ref}:${expectedHash}`, remote, ":" + ref],
     env,
   );
+  assert.equal(await readRef(), null, "owned Git ref remained after cleanup");
+  await afterVerifiedAbsent();
 }
 
-async function attemptOwnedRefPush(cwd, remote, ref, expectedHash, env, gate, runGit = executeGit) {
+async function attemptOwnedRefPush(
+  cwd,
+  remote,
+  ref,
+  expectedHash,
+  env,
+  gate,
+  runGit = executeGit,
+  beforePush = async () => {},
+) {
   let headResult;
   try {
     headResult = await runGit(cwd, ["rev-parse", "HEAD"], env);
@@ -728,6 +765,7 @@ async function attemptOwnedRefPush(cwd, remote, ref, expectedHash, env, gate, ru
   const localHead = headResult.stdout.trim();
   assert.equal(localHead, expectedHash, "push source differs from its recorded cleanup hash");
   return gate(async () => {
+    await beforePush();
     try {
       // The empty expected value makes branch creation atomic and refuses a ref that
       // another actor created after the preflight existence check.
@@ -755,6 +793,98 @@ function refRecoveryRecord(repository, ref, expectedCommit, observedCommit) {
     expectedCommit,
     ...(observedCommit ? { observedCommit } : {}),
   };
+}
+
+async function createDurableRefRecovery(config, repository, ref, expectedCommit) {
+  const allowedRepositories = [config.github.repository, config.github.unrelatedRepository];
+  const ownerName = `${repository.owner}/${repository.name}`;
+  const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  const allowedRef = new RegExp(
+    `^refs/heads/praetorium-t14(?:-(?:read-deny|scope-deny))?/${uuidPattern}$`,
+  );
+  if (
+    !allowedRepositories.some(
+      (allowed) => allowed.id === repository.id && `${allowed.owner}/${allowed.name}` === ownerName,
+    ) ||
+    !allowedRef.test(ref) ||
+    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(expectedCommit) ||
+    typeof process.getuid !== "function" ||
+    !Number.isInteger(fsConstants.O_NOFOLLOW)
+  ) {
+    throw new Error("owned Git recovery record is outside the fixed owner scope");
+  }
+  const pending = {
+    recordVersion: 1,
+    category: "github-access",
+    status: "PENDING",
+    records: [
+      {
+        repositoryId: repository.id,
+        repository: ownerName,
+        ref,
+        expectedCommit,
+      },
+    ],
+  };
+  const pendingLine = `${JSON.stringify(pending)}\n`;
+  const recoveryDirectory = path.dirname(config.inventoryPath);
+  const recoveryPath = path.join(
+    recoveryDirectory,
+    `${RECOVERY_FILE_PREFIX}${crypto.randomUUID()}.ndjson`,
+  );
+  let handle;
+  try {
+    handle = await open(
+      recoveryPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    await handle.writeFile(pendingLine, "utf8");
+    await handle.sync();
+    const directory = await open(recoveryDirectory, fsConstants.O_RDONLY);
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+    return { path: recoveryPath, pending, pendingLine };
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function markDurableRefRecoveryCleaned(artifact) {
+  let handle;
+  try {
+    handle = await open(
+      artifact.path,
+      fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_NOFOLLOW,
+    );
+    const before = await handle.stat();
+    if (
+      !before.isFile() ||
+      before.uid !== process.getuid() ||
+      (before.mode & 0o077) !== 0 ||
+      before.nlink !== 1 ||
+      before.size !== Buffer.byteLength(artifact.pendingLine) ||
+      before.size > MAX_RECOVERY_FILE_BYTES
+    )
+      throw new Error("owned Git recovery artifact changed before cleanup proof");
+    const bytes = await handle.readFile();
+    const afterRead = await handle.stat();
+    if (
+      bytes.toString("utf8") !== artifact.pendingLine ||
+      afterRead.dev !== before.dev ||
+      afterRead.ino !== before.ino ||
+      afterRead.size !== before.size ||
+      afterRead.uid !== process.getuid()
+    )
+      throw new Error("owned Git recovery artifact changed before cleanup proof");
+    await handle.writeFile(`${JSON.stringify({ ...artifact.pending, status: "CLEANED" })}\n`);
+    await handle.sync();
+  } finally {
+    await handle?.close();
+  }
 }
 
 async function observedRefAfterPush({
@@ -787,6 +917,112 @@ async function observedRefAfterPush({
   }
   return observedCommit;
 }
+
+test("partial Git writes leave durable recovery evidence before push and verify cleanup", async (t) => {
+  if (typeof process.getuid !== "function" || !Number.isInteger(fsConstants.O_NOFOLLOW)) {
+    return t.skip("durable owner recovery requires POSIX UID and O_NOFOLLOW support");
+  }
+  const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-partial-recovery-test-"));
+  const repository = { id: 70002, owner: "owned-org", name: "t14-access" };
+  const config = {
+    inventoryPath: path.join(directory, "inventory.json"),
+    github: { repository, unrelatedRepository: { id: 70003, owner: "owned-org", name: "sibling" } },
+  };
+  const expectedCommit = "c".repeat(40);
+  const ref = "refs/heads/praetorium-t14/12345678-1234-1234-1234-123456789abc";
+  let artifact;
+  try {
+    const push = await attemptOwnedRefPush(
+      "/unused/local-repository",
+      "https://github.com/owned-org/t14-access.git",
+      ref,
+      expectedCommit,
+      {},
+      async (effect) => effect(),
+      async (_cwd, args) => {
+        if (args[0] === "rev-parse") return { stdout: `${expectedCommit}\n` };
+        assert.equal(args[0], "push");
+        const lines = (await readFile(artifact.path, "utf8")).trim().split("\n");
+        assert.equal(JSON.parse(lines[0]).status, "PENDING");
+        throw Object.assign(new Error("simulated uncertain receive-pack"), {
+          code: "ETIMEDOUT",
+          killed: true,
+          signal: null,
+          stderr: "fatal: operation timed out",
+        });
+      },
+      async () => {
+        artifact = await createDurableRefRecovery(config, repository, ref, expectedCommit);
+      },
+    );
+    assert.equal(push.outcome, "uncertain");
+    const info = await stat(artifact.path);
+    assert.equal(info.uid, process.getuid());
+    assert.equal(info.mode & 0o777, 0o600);
+    let reads = [expectedCommit, null];
+    await deleteOwnedRef(
+      "/unused/local-repository",
+      "https://github.com/owned-org/t14-access.git",
+      ref,
+      expectedCommit,
+      {},
+      {
+        readRef: async () => reads.shift(),
+        runGit: async (_cwd, args) => {
+          assert.deepEqual(args, [
+            "push",
+            "--quiet",
+            `--force-with-lease=${ref}:${expectedCommit}`,
+            "https://github.com/owned-org/t14-access.git",
+            `:${ref}`,
+          ]);
+        },
+        afterVerifiedAbsent: () => markDurableRefRecoveryCleaned(artifact),
+      },
+    );
+    const records = (await readFile(artifact.path, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      records.map((record) => record.status),
+      ["PENDING", "CLEANED"],
+    );
+    const remainingRef = "refs/heads/praetorium-t14/12345678-1234-1234-1234-123456789abd";
+    const remainingArtifact = await createDurableRefRecovery(
+      config,
+      repository,
+      remainingRef,
+      expectedCommit,
+    );
+    let cleanupProofWritten = false;
+    reads = [expectedCommit, expectedCommit];
+    await assert.rejects(
+      deleteOwnedRef(
+        "/unused/local-repository",
+        "https://github.com/owned-org/t14-access.git",
+        remainingRef,
+        expectedCommit,
+        {},
+        {
+          readRef: async () => reads.shift(),
+          runGit: async () => {},
+          afterVerifiedAbsent: async () => {
+            cleanupProofWritten = true;
+          },
+        },
+      ),
+      /owned Git ref remained after cleanup/u,
+    );
+    assert.equal(cleanupProofWritten, false);
+    assert.equal(
+      JSON.parse((await readFile(remainingArtifact.path, "utf8")).trim()).status,
+      "PENDING",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("uncertain Git push remains a recovery failure when the later ref snapshot is absent", async () => {
   const expectedCommit = "a".repeat(40);
@@ -1208,6 +1444,9 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
   let unrelatedRef;
   let primaryCommit;
   let unrelatedCommit;
+  let primaryRecovery;
+  let readOnlyRecovery;
+  let unrelatedRecovery;
   let primaryCreated = false;
   let readOnlyCreated = false;
   let unrelatedCreated = false;
@@ -1319,6 +1558,15 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
       primaryCommit,
       writerEnv,
       gate,
+      executeGit,
+      async () => {
+        primaryRecovery = await createDurableRefRecovery(
+          config,
+          config.github.repository,
+          primaryRef,
+          primaryCommit,
+        );
+      },
     );
     primaryCreated = primaryPush.created;
     if (primaryPush.outcome === "uncertain") {
@@ -1350,6 +1598,15 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
       primaryCommit,
       readEnv,
       gate,
+      executeGit,
+      async () => {
+        readOnlyRecovery = await createDurableRefRecovery(
+          config,
+          config.github.repository,
+          readOnlyRef,
+          primaryCommit,
+        );
+      },
     );
     readOnlyCreated = readOnlyPush.created;
     const readOnlyObserved = await observedRefAfterPush({
@@ -1373,6 +1630,7 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
       null,
       `read-scoped token created a branch despite the failed push response: ${readOnlyRef}`,
     );
+    await markDurableRefRecoveryCleaned(readOnlyRecovery);
 
     await git(siblingRepo, ["init", "--quiet", "--initial-branch=main"], baseGitEnv);
     await git(siblingRepo, ["config", "user.name", "Praetorium T14 disposable probe"], baseGitEnv);
@@ -1395,6 +1653,15 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
       unrelatedCommit,
       writerEnv,
       gate,
+      executeGit,
+      async () => {
+        unrelatedRecovery = await createDurableRefRecovery(
+          config,
+          config.github.unrelatedRepository,
+          unrelatedRef,
+          unrelatedCommit,
+        );
+      },
     );
     unrelatedCreated = scopedPush.created;
     const unrelatedObserved = await observedRefAfterPush({
@@ -1418,6 +1685,7 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
       null,
       `scoped-token denial left a sibling branch behind: ${unrelatedRef}`,
     );
+    await markDurableRefRecoveryCleaned(unrelatedRecovery);
   } catch (error) {
     probeError = error;
   } finally {
@@ -1439,6 +1707,7 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
             primaryRef,
             primaryCommit,
             writerEnv,
+            { afterVerifiedAbsent: () => markDurableRefRecoveryCleaned(primaryRecovery) },
           ),
         );
       if (readOnlyCreated)
@@ -1449,6 +1718,7 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
             readOnlyRef,
             primaryCommit,
             writerEnv,
+            { afterVerifiedAbsent: () => markDurableRefRecoveryCleaned(readOnlyRecovery) },
           ),
         );
       if (unrelatedCreated)
@@ -1459,6 +1729,7 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
             unrelatedRef,
             unrelatedCommit,
             userEnv,
+            { afterVerifiedAbsent: () => markDurableRefRecoveryCleaned(unrelatedRecovery) },
           ),
         );
     }

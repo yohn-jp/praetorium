@@ -35,7 +35,9 @@ export async function notifyWorkAvailable(
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(WorkNotificationSchema.parse({ version: 1, kind })),
-      redirect: "error",
+      // Workers fetch rejects the nonstandard "error" redirect mode. "manual"
+      // prevents credential forwarding while allowing the HTTPS request itself.
+      redirect: "manual",
       signal: AbortSignal.timeout(3_000),
     });
     await response.body?.cancel();

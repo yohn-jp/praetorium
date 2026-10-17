@@ -13,9 +13,21 @@ describe("work availability delivery", () => {
     expect(fetcher).toHaveBeenCalledOnce();
     const [url, request] = fetcher.mock.calls[0]!;
     expect(String(url)).toBe(env.BUILD_WORK_NOTIFICATION_URL);
-    expect(request?.redirect).toBe("error");
+    expect(request?.redirect).toBe("manual");
     expect(JSON.parse(request?.body as string)).toEqual({ version: 1, kind: "build" });
     expect(request?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("does not follow a redirect and treats it as a dropped hint", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(null, { status: 307, headers: { Location: "https://other.test/" } }),
+      );
+
+    expect(await notifyWorkAvailable(env, "build", fetcher)).toBe("failed");
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0]?.[1]?.redirect).toBe("manual");
   });
 
   it("keeps dropped notifications separate from durable execution and never retries", async () => {

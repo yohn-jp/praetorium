@@ -168,6 +168,56 @@ describe("GHCR OCI registry adapter", () => {
     expect(image.reachableLayerBytes).toBe(fixture.layerSize);
   });
 
+  it("uses manual redirect handling for every registry request", async () => {
+    const fixture = await imageFixture();
+    const redirects: Array<RequestRedirect | undefined> = [];
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      allowedRepositories: [repository],
+      fetch: imageFetch(fixture, { record: (_url, init) => redirects.push(init?.redirect) }),
+    });
+
+    await client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" });
+
+    expect(redirects).toEqual(["manual", "manual", "manual", "manual", "manual"]);
+  });
+
+  it("rejects a credentialed token-service redirect without following its target", async () => {
+    const redirectTarget = "https://redirect-attacker.example/collect";
+    const requests: Array<{ url: URL; redirect: RequestRedirect | undefined; authorization: string | null }> = [];
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({
+        url: new URL(input instanceof Request ? input.url : String(input)),
+        redirect: init?.redirect,
+        authorization: new Headers(init?.headers).get("authorization"),
+      });
+      return new Response("untrusted redirect body", {
+        status: 302,
+        headers: { location: redirectTarget },
+      });
+    }) as typeof fetch;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      registryUrl: "http://127.0.0.1:5000",
+      allowInsecureLoopback: true,
+      allowedRepositories: [repository],
+      pullCredential: { username: "runtime-reader", password: "read-secret" },
+      fetch: fetcher,
+    });
+
+    const error = await client.discoverTag(repository, "stable").catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ reason: "unavailable" });
+    expect(error).toBeInstanceOf(RegistryError);
+    expect((error as Error).message).not.toContain(redirectTarget);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      url: expect.objectContaining({ pathname: "/token" }),
+      redirect: "manual",
+      authorization: `Basic ${btoa("runtime-reader:read-secret")}`,
+    });
+  });
+
   it("rejects child bytes that do not match the index descriptor digest", async () => {
     const fixture = await imageFixture();
     const alteredChild = encoder.encode(JSON.stringify({

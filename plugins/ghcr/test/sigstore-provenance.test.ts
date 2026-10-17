@@ -67,6 +67,34 @@ describe("source Sigstore provenance verification", () => {
     });
   });
 
+  it("rejects provenance redirects without following or disclosing their target", async () => {
+    const redirectTarget = "https://redirect-attacker.example/collect";
+    let calls = 0;
+    let redirectMode: RequestRedirect | undefined;
+    const verifier = new SigstoreProvenanceVerifier({
+      signerIdentityAllowlist: [{ subjectAlternativeName: identity }],
+      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        calls += 1;
+        redirectMode = init?.redirect;
+        return new Response("untrusted redirect body", {
+          status: 307,
+          headers: { location: redirectTarget },
+        });
+      }) as typeof fetch,
+    });
+
+    const result = await verifier.verify({
+      imageDigest: digest,
+      signatureRef: "https://example.com/bundle",
+      provenanceRef: null,
+    });
+
+    expect(redirectMode).toBe("manual");
+    expect(calls).toBe(1);
+    expect(result).toEqual({ verified: false, evidence: ["provenance bundle request returned 307"] });
+    expect(JSON.stringify(result)).not.toContain(redirectTarget);
+  });
+
   it("bounds a chunked provenance response without trusting Content-Length", async () => {
     const verifier = new SigstoreProvenanceVerifier({
       signerIdentityAllowlist: [{ subjectAlternativeName: identity }],

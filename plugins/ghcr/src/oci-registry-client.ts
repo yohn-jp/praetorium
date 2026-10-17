@@ -544,7 +544,7 @@ export class GhcrRegistryClient {
     const headers = new Headers();
     if (credential) headers.set("authorization", encodeBasicCredential(credential));
 
-    return this.withRegistryRequest(tokenUrl, { headers, redirect: "error" }, signal, "token exchange", async (response, requestSignal) => {
+    return this.withRegistryRequest(tokenUrl, { headers, redirect: "manual" }, signal, "token exchange", async (response, requestSignal) => {
       if (response.status === 401 || response.status === 403) {
         throw new RegistryError("unauthorized", "registry rejected the configured credential");
       }
@@ -576,7 +576,7 @@ export class GhcrRegistryClient {
     const url = new URL(`/v2/${repository}/manifests/${encodeURIComponent(reference)}`, this.baseUrl);
     const headers = new Headers({ accept: MANIFEST_ACCEPT });
     if (token) headers.set("authorization", `Bearer ${token}`);
-    return this.withRegistryRequest(url, { headers, redirect: "error" }, signal, "manifest", async (response, requestSignal) => {
+    return this.withRegistryRequest(url, { headers, redirect: "manual" }, signal, "manifest", async (response, requestSignal) => {
       if (response.status === 404) throw new RegistryError("not_found", "registry manifest was not found");
       if (response.status === 401 || response.status === 403) throw new RegistryError("unauthorized", "registry manifest access was denied");
       if (response.status === 429) throw new RegistryError("rate_limited", "registry rate limit exceeded");
@@ -616,7 +616,7 @@ export class GhcrRegistryClient {
     const url = new URL(`/v2/${repository}/blobs/${encodeURIComponent(digest)}`, this.baseUrl);
     const headers = new Headers();
     if (token) headers.set("authorization", `Bearer ${token}`);
-    return this.withRegistryRequest(url, { headers, redirect: "error" }, signal, "blob", async (response, requestSignal) => {
+    return this.withRegistryRequest(url, { headers, redirect: "manual" }, signal, "blob", async (response, requestSignal) => {
       if (response.status === 404) throw new RegistryError("not_found", "registry blob was not found");
       if (response.status === 401 || response.status === 403) throw new RegistryError("unauthorized", "registry blob access was denied");
       if (response.status === 429) throw new RegistryError("rate_limited", "registry rate limit exceeded");
@@ -655,7 +655,7 @@ export class GhcrRegistryClient {
     const url = new URL(`/v2/${repository}/blobs/${encodeURIComponent(descriptor.digest)}`, this.baseUrl);
     const headers = new Headers({ "accept-encoding": "identity" });
     if (token) headers.set("authorization", `Bearer ${token}`);
-    await this.withRegistryRequest(url, { headers, redirect: "error" }, signal, "layer", async (response, requestSignal) => {
+    await this.withRegistryRequest(url, { headers, redirect: "manual" }, signal, "layer", async (response, requestSignal) => {
       if (response.status === 404) throw new RegistryError("not_found", "an image layer is missing from the registry");
       if (response.status === 401 || response.status === 403) throw new RegistryError("unauthorized", "registry layer access was denied");
       if (response.status === 429) throw new RegistryError("rate_limited", "registry rate limit exceeded");

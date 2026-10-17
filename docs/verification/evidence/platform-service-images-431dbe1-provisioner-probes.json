@@ -1,0 +1,13 @@
+{
+  "uid": 10001,
+  "gid": 10001,
+  "probes": [
+    { "path": "/healthz", "status": 200, "body": "{\"status\":\"ok\"}" },
+    { "path": "/readyz", "status": 503, "body": "{\"status\":\"not_ready\"}" },
+    {
+      "path": "/metrics",
+      "status": 200,
+      "body": "# HELP praetorium_provisioner_ready Whether the provisioner can reach the operation service.\n# TYPE praetorium_provisioner_ready gauge\npraetorium_provisioner_ready 0\n# HELP praetorium_provisioner_operations_in_flight Current operation count.\n# TYPE praetorium_provisioner_operations_in_flight gauge\npraetorium_provisioner_operations_in_flight 0\n# HELP praetorium_provisioner_events_total Provisioner event count.\n# TYPE praetorium_provisioner_events_total counter\npraetorium_provisioner_events_total{event=\"runtime_capability_gate_closed\"} 1\n"
+    }
+  ]
+}

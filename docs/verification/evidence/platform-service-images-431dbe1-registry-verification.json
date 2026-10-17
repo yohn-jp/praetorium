@@ -1,0 +1,32 @@
+[
+  {
+    "repository": "praetorium/platform-provisioner",
+    "manifest": "sha256:00739c31e414da9494015e859b8ef1b0f2289ceef631274a1f953ef70c3e2e64",
+    "config": "sha256:d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d",
+    "layersVerified": 7,
+    "platform": "linux/amd64",
+    "user": "node"
+  },
+  {
+    "repository": "praetorium/platform-instance-access",
+    "manifest": "sha256:daf3f8ff4a04d34e1894790cecd7bc330c7d771d90c9e641b1edc7e0c990de72",
+    "config": "sha256:c42a2c7b44d56f7e73fe6c1a325fcd3a1ba9b504bca4af3c35e7c82954456469",
+    "layersVerified": 7,
+    "platform": "linux/amd64",
+    "user": "node"
+  },
+  {
+    "repository": "praetorium/platform-build-worker",
+    "manifest": "sha256:32d276e664d149a6452bf8ddfb09419972f33dc0f120e742609d77b75c58c09f",
+    "config": "sha256:7519315752c4345b52b1ef9a52ddec506d827b24f86f6877e06fd3c697499008",
+    "layersVerified": 9,
+    "platform": "linux/amd64",
+    "user": "node"
+  },
+  {
+    "ociManifest": "sha256:8c682438aa40641e7765360bf1ac871c679d8f29dc2c958cafa9d4c15f2496fb",
+    "configSemanticEquality": true,
+    "layersVerified": 9,
+    "archiveSHA": "aeeaaa5bdb99e7d1d96a7aec597b07ccacf25fdf935cc5d947570f399814135d"
+  }
+]

@@ -1,0 +1,235 @@
+{
+  "source": "Praetorium clean main 431dbe1c7c86251894efea3de2cf0ec94499ca10",
+  "registry": "127.0.0.1:38841 owned anonymous loopback",
+  "images": [
+    {
+      "repository": "platform-provisioner",
+      "digest": "sha256:00739c31e414da9494015e859b8ef1b0f2289ceef631274a1f953ef70c3e2e64",
+      "manifestSize": 1681,
+      "configDigest": "sha256:d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d",
+      "layerDigests": [
+        "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+        "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+        "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+        "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+        "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+        "sha256:28e430ac4e243984880b235a6a14b9f1f7262fe56b5caa1bf78ed79533eb8e9c",
+        "sha256:525eb286daa1b762f178054de748c381587751d1846270a785076c4591714325"
+      ],
+      "blobs": [
+        {
+          "digest": "sha256:d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d",
+          "size": 7641,
+          "verified": true
+        },
+        {
+          "digest": "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+          "size": 28249323,
+          "verified": true
+        },
+        {
+          "digest": "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+          "size": 3314,
+          "verified": true
+        },
+        {
+          "digest": "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+          "size": 51041014,
+          "verified": true
+        },
+        {
+          "digest": "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+          "size": 1713055,
+          "verified": true
+        },
+        {
+          "digest": "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+          "size": 446,
+          "verified": true
+        },
+        {
+          "digest": "sha256:28e430ac4e243984880b235a6a14b9f1f7262fe56b5caa1bf78ed79533eb8e9c",
+          "size": 93,
+          "verified": true
+        },
+        {
+          "digest": "sha256:525eb286daa1b762f178054de748c381587751d1846270a785076c4591714325",
+          "size": 1112415,
+          "verified": true
+        }
+      ],
+      "platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "image": {
+        "user": "node",
+        "workingDir": "/app",
+        "cmd": ["node", "dist/main.js"],
+        "env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "NODE_VERSION=24.22.0",
+          "YARN_VERSION=1.22.22",
+          "NODE_ENV=production"
+        ]
+      }
+    },
+    {
+      "repository": "platform-instance-access",
+      "digest": "sha256:daf3f8ff4a04d34e1894790cecd7bc330c7d771d90c9e641b1edc7e0c990de72",
+      "manifestSize": 1681,
+      "configDigest": "sha256:c42a2c7b44d56f7e73fe6c1a325fcd3a1ba9b504bca4af3c35e7c82954456469",
+      "layerDigests": [
+        "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+        "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+        "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+        "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+        "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+        "sha256:28e430ac4e243984880b235a6a14b9f1f7262fe56b5caa1bf78ed79533eb8e9c",
+        "sha256:028e04a389cea123549f52fed79bfe16ad07e4ebe4131dc7879de45bc5503c7a"
+      ],
+      "blobs": [
+        {
+          "digest": "sha256:c42a2c7b44d56f7e73fe6c1a325fcd3a1ba9b504bca4af3c35e7c82954456469",
+          "size": 7641,
+          "verified": true
+        },
+        {
+          "digest": "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+          "size": 28249323,
+          "verified": true
+        },
+        {
+          "digest": "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+          "size": 3314,
+          "verified": true
+        },
+        {
+          "digest": "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+          "size": 51041014,
+          "verified": true
+        },
+        {
+          "digest": "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+          "size": 1713055,
+          "verified": true
+        },
+        {
+          "digest": "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+          "size": 446,
+          "verified": true
+        },
+        {
+          "digest": "sha256:28e430ac4e243984880b235a6a14b9f1f7262fe56b5caa1bf78ed79533eb8e9c",
+          "size": 93,
+          "verified": true
+        },
+        {
+          "digest": "sha256:028e04a389cea123549f52fed79bfe16ad07e4ebe4131dc7879de45bc5503c7a",
+          "size": 1059527,
+          "verified": true
+        }
+      ],
+      "platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "image": {
+        "user": "node",
+        "workingDir": "/app",
+        "cmd": ["node", "dist/main.js"],
+        "env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "NODE_VERSION=24.22.0",
+          "YARN_VERSION=1.22.22",
+          "NODE_ENV=production"
+        ]
+      }
+    },
+    {
+      "repository": "platform-build-worker",
+      "digest": "sha256:32d276e664d149a6452bf8ddfb09419972f33dc0f120e742609d77b75c58c09f",
+      "manifestSize": 2073,
+      "configDigest": "sha256:7519315752c4345b52b1ef9a52ddec506d827b24f86f6877e06fd3c697499008",
+      "layerDigests": [
+        "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+        "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+        "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+        "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+        "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+        "sha256:28e430ac4e243984880b235a6a14b9f1f7262fe56b5caa1bf78ed79533eb8e9c",
+        "sha256:3863773ec8aa63ecb233e79fe975cac05c49af57e1db612b4c274ba6792c13c8",
+        "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+        "sha256:2983e980f6791290d42170872e8e6f90e47a615e2ed964f76c13b3edbcfc247f"
+      ],
+      "blobs": [
+        {
+          "digest": "sha256:7519315752c4345b52b1ef9a52ddec506d827b24f86f6877e06fd3c697499008",
+          "size": 9534,
+          "verified": true
+        },
+        {
+          "digest": "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+          "size": 28249323,
+          "verified": true
+        },
+        {
+          "digest": "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+          "size": 3314,
+          "verified": true
+        },
+        {
+          "digest": "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+          "size": 51041014,
+          "verified": true
+        },
+        {
+          "digest": "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+          "size": 1713055,
+          "verified": true
+        },
+        {
+          "digest": "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+          "size": 446,
+          "verified": true
+        },
+        {
+          "digest": "sha256:28e430ac4e243984880b235a6a14b9f1f7262fe56b5caa1bf78ed79533eb8e9c",
+          "size": 93,
+          "verified": true
+        },
+        {
+          "digest": "sha256:3863773ec8aa63ecb233e79fe975cac05c49af57e1db612b4c274ba6792c13c8",
+          "size": 16859103,
+          "verified": true
+        },
+        {
+          "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+          "size": 32,
+          "verified": true
+        },
+        {
+          "digest": "sha256:2983e980f6791290d42170872e8e6f90e47a615e2ed964f76c13b3edbcfc247f",
+          "size": 1182100,
+          "verified": true
+        }
+      ],
+      "platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "image": {
+        "user": "node",
+        "workingDir": "/app",
+        "cmd": ["node", "dist/main.js"],
+        "env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "NODE_VERSION=24.22.0",
+          "YARN_VERSION=1.22.22",
+          "NODE_ENV=production",
+          "PRAETORIUM_BUILDKIT_BUILDCTL_PATH=/usr/local/bin/buildctl"
+        ]
+      }
+    }
+  ]
+}

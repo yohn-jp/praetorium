@@ -1,0 +1,1 @@
+{"uid":10001,"gid":10001,"buildctlExecutable":true,"buildctlVersion":"buildctl github.com/moby/buildkit v0.30.0 dd2170e156c9633da1b2d1a58a6188e3f7d36fa4","buildkitPackage":"imported","readOnlyRootfs":true,"network":"none"}

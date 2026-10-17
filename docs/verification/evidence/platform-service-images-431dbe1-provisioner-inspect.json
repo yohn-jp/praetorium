@@ -1,0 +1,31 @@
+{
+  "Id": "8d731113c32b3611b1a2d7138177dcc4ae445c334a3e837527deb35535b8e965",
+  "Image": "d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d",
+  "ImageName": "127.0.0.1:38841/praetorium/platform-provisioner@sha256:00739c31e414da9494015e859b8ef1b0f2289ceef631274a1f953ef70c3e2e64",
+  "State": "running",
+  "User": "10001:10001",
+  "NetworkMode": "none",
+  "ReadonlyRootfs": true,
+  "CapDrop": [
+    "CAP_CHOWN",
+    "CAP_DAC_OVERRIDE",
+    "CAP_FOWNER",
+    "CAP_FSETID",
+    "CAP_KILL",
+    "CAP_NET_BIND_SERVICE",
+    "CAP_SETFCAP",
+    "CAP_SETGID",
+    "CAP_SETPCAP",
+    "CAP_SETUID",
+    "CAP_SYS_CHROOT"
+  ],
+  "SecurityOpt": ["no-new-privileges"],
+  "Args": ["dist/main.js"],
+  "Mounts": [
+    {
+      "Destination": "/var/run/secrets/control-plane",
+      "Options": ["nosuid", "nodev", "rbind"],
+      "Type": "volume"
+    }
+  ]
+}

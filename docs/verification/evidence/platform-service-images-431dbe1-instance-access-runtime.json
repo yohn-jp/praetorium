@@ -1,0 +1,8 @@
+{
+  "uid": 10001,
+  "gid": 10001,
+  "checks": [
+    { "name": "healthz", "status": 200, "body": "{\"status\":\"ok\"}" },
+    { "name": "readyz", "status": 200, "body": "{\"status\":\"ready\"}" }
+  ]
+}

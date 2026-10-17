@@ -1335,7 +1335,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     return (
       entry?.kind === "Rule" &&
       entry?.match === `Host(\`${spec.hostname}\`)` &&
-      entry.priority === 1 &&
+      entry.priority === 10 &&
       services.length === 1 &&
       service?.name === runtimeResourceName(spec.instanceId) &&
       Object.keys(service).length === 2 &&

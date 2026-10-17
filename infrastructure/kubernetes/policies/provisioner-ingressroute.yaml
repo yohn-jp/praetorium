@@ -46,7 +46,7 @@ spec:
         object.spec.routes[0].size() == 4 &&
         object.spec.routes[0].kind == "Rule" &&
         object.spec.routes[0].match == "Host(`ins-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + ".@@INSTANCE_HOSTNAME_SUFFIX@@`)" &&
-        object.spec.routes[0].priority == 1 &&
+        object.spec.routes[0].priority == 10 &&
         object.spec.routes[0].services.size() == 1 &&
         object.spec.routes[0].services[0].size() == 2 &&
         object.spec.routes[0].services[0].name == "arcadia-ins-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&

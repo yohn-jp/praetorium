@@ -332,7 +332,7 @@ function endpoint(
         {
           kind: "Rule",
           match: `Host(\`${validateHostname(spec.hostname)}\`)`,
-          priority: 1,
+          priority: 10,
           services: [{ name, port: app.httpPort }],
         },
       ],

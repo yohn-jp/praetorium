@@ -1075,7 +1075,9 @@ describe("Kubernetes runtime provider", () => {
       () => undefined,
     );
     expect(activated.endpoint).toBe(`https://${HOST}`);
-    expect(api.objects.has(key("IngressRoute", NAMESPACE, DEPLOYMENT))).toBe(true);
+    const endpoint = record(api.objects.get(key("IngressRoute", NAMESPACE, DEPLOYMENT)));
+    const route = (record(endpoint.spec).routes as unknown[])[0];
+    expect(record(route).priority).toBe(10);
 
     await expect(
       runtime.activateEndpoint(
@@ -1149,6 +1151,14 @@ describe("Kubernetes runtime provider", () => {
         ...route,
         services: [{ ...record((route.services as unknown[])[0]), port: 9999 }],
       }),
+    ],
+    [
+      "static fallback priority tie",
+      (route: Record<string, unknown>) => ({ ...route, priority: 1 }),
+    ],
+    [
+      "reserved platform priority",
+      (route: Record<string, unknown>) => ({ ...route, priority: 1000 }),
     ],
   ])("rejects and removes an endpoint with %s", async (_description, mutateRoute) => {
     const time = 500_000;

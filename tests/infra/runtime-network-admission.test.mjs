@@ -239,6 +239,12 @@ const networkPolicyScenarios = [
 
 const routeScenarios = [
   scenario("actual-renderer-output", true, structuredClone(ingressRoute)),
+  rejected("ties-static-fallback-priority", ingressRoute, (object) => {
+    object.spec.routes[0].priority = 1;
+  }),
+  rejected("claims-reserved-platform-priority", ingressRoute, (object) => {
+    object.spec.routes[0].priority = 1000;
+  }),
   (() => {
     const object = structuredClone(ingressRoute);
     object.spec.routes[0].services[0].port = 1;
@@ -333,6 +339,7 @@ test("target admission covers the actual renderer's tenant policy and endpoint s
   assert.deepEqual(ingressRoute.spec.routes[0].services, [
     { name: ingressRoute.metadata.name, port: listenerPort },
   ]);
+  assert.equal(ingressRoute.spec.routes[0].priority, 10);
   assert.deepEqual(Object.keys(ingressRoute.spec.routes[0].services[0]).sort(), ["name", "port"]);
   assert.equal(
     ingressRoute.spec.routes[0].match,

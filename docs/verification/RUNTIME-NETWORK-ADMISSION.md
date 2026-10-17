@@ -32,11 +32,13 @@ unspecified and multicast ranges, IPv4 multicast/reserved (`224.0.0.0/4`,
 
 The IngressRoute accepts one `websecure` host derived from the stable
 `ins-<instance-id>` hostname and one service with the exact local runtime
-service name. The service object may contain only its name and listener port,
-so a namespace override, middleware, alternate route, or Traefik TLS secret
-override is rejected. The static platform fallback still owns `/_platform`
-and stopped-instance routing; this policy does not add a second dynamic route
-or a cross-namespace Instance Access service.
+service name. Its priority is exactly 10: this is above the static stopped
+instance catch-all at priority 1 and below the reserved `/_platform` route at
+priority 1000. The service object may contain only its name and listener
+port, so a namespace override, middleware, alternate route, or Traefik TLS
+secret override is rejected. The static platform fallback still owns
+`/_platform` and stopped-instance routing; this policy does not add a second
+dynamic route or a cross-namespace Instance Access service.
 
 Both manifests use the deployment renderer's existing `@@CLUSTER_ID@@` and
 `@@INSTANCE_HOSTNAME_SUFFIX@@` substitutions. The normal infrastructure

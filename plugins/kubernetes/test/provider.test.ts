@@ -46,6 +46,7 @@ const RESTRICTED_POD_SECURITY_LABELS = {
   "pod-security.kubernetes.io/audit": "restricted",
   "pod-security.kubernetes.io/warn": "restricted",
 } as const;
+const POD_SECURITY_MODES = ["enforce", "audit", "warn"] as const;
 const RESOURCE: RuntimeResourceQuantities = {
   cpuMilli: 500,
   memoryMiB: 512,
@@ -69,6 +70,30 @@ function identity(epoch = 1, generation = 1): InstanceIdentity {
     runtimeEpoch: epoch,
     generation,
     clusterId: CLUSTER_ID,
+  };
+}
+
+function ownedTenantNamespace(extraLabels: Readonly<Record<string, string>> = {}) {
+  return {
+    apiVersion: "v1",
+    kind: "Namespace",
+    metadata: {
+      name: NAMESPACE,
+      uid: "owned-namespace",
+      resourceVersion: "5",
+      labels: {
+        ...managedLabels({
+          instanceId: INSTANCE_ID,
+          repositoryId: REPOSITORY_ID,
+          runtimeEpoch: 1,
+          generation: 1,
+          releaseId: RELEASE_ID,
+        }),
+        "arcadia.io/runtime-cluster-id": CLUSTER_ID,
+        ...RESTRICTED_POD_SECURITY_LABELS,
+        ...extraLabels,
+      },
+    },
   };
 }
 
@@ -855,6 +880,53 @@ describe("Kubernetes runtime provider", () => {
             new AbortController().signal,
             () => undefined,
           ),
+        ).rejects.toMatchObject({ code: "conflict" });
+        expect(api.writes).toEqual([]);
+        expect(api.namespaces.get(NAMESPACE)).toEqual(originalNamespace);
+      }
+    }
+  });
+
+  it("accepts absent or latest PSA version labels for each mode in inspect and ensureRunning", async () => {
+    for (const mode of POD_SECURITY_MODES) {
+      for (const version of [undefined, "latest"] as const) {
+        const api = new FakeKubernetesApi();
+        api.addNode();
+        const versionLabels =
+          version === undefined ? {} : { [`pod-security.kubernetes.io/${mode}-version`]: version };
+        const namespace = ownedTenantNamespace(versionLabels);
+        const originalNamespace = structuredClone(namespace);
+        api.namespaces.set(NAMESPACE, namespace);
+        const runtime = provider(api, targetReservations(), () => 100_000);
+
+        await expect(runtime.inspect(identity())).resolves.toMatchObject({ state: "absent" });
+        const result = await runtime.ensureRunning(
+          spec(),
+          new AbortController().signal,
+          () => undefined,
+        );
+        expect(result.status).toBe("pending");
+        expect(api.writes).not.toContain("create:Namespace");
+        expect(api.namespaces.get(NAMESPACE)).toEqual(originalNamespace);
+      }
+    }
+  });
+
+  it("rejects pinned or unknown PSA versions for every mode before writes", async () => {
+    for (const mode of POD_SECURITY_MODES) {
+      for (const version of ["v1.33", "future"] as const) {
+        const api = new FakeKubernetesApi();
+        api.addNode();
+        const namespace = ownedTenantNamespace({
+          [`pod-security.kubernetes.io/${mode}-version`]: version,
+        });
+        const originalNamespace = structuredClone(namespace);
+        api.namespaces.set(NAMESPACE, namespace);
+        const runtime = provider(api, targetReservations(), () => 100_000);
+
+        await expect(runtime.inspect(identity())).rejects.toMatchObject({ code: "conflict" });
+        await expect(
+          runtime.ensureRunning(spec(), new AbortController().signal, () => undefined),
         ).rejects.toMatchObject({ code: "conflict" });
         expect(api.writes).toEqual([]);
         expect(api.namespaces.get(NAMESPACE)).toEqual(originalNamespace);

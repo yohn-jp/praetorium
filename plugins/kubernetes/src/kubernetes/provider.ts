@@ -278,12 +278,20 @@ const RESTRICTED_POD_SECURITY_LABELS = {
   "pod-security.kubernetes.io/audit": "restricted",
   "pod-security.kubernetes.io/warn": "restricted",
 } as const;
+const POD_SECURITY_MODES = ["enforce", "audit", "warn"] as const;
 
 function namespaceLabels(identity: InstanceIdentity): Readonly<Record<string, string>> {
   return {
     ...namespaceOwnershipLabels(identity),
     ...RESTRICTED_POD_SECURITY_LABELS,
   };
+}
+
+function podSecurityVersionsAreCurrent(labels: Readonly<Record<string, string>>): boolean {
+  return POD_SECURITY_MODES.every((mode) => {
+    const version = labels[`pod-security.kubernetes.io/${mode}-version`];
+    return version === undefined || version === "latest";
+  });
 }
 
 function assertNamespaceOwned(
@@ -295,6 +303,7 @@ function assertNamespaceOwned(
   const expected = namespaceLabels(identity);
   if (
     metadata.name !== namespaceName ||
+    !podSecurityVersionsAreCurrent(metadata.labels) ||
     Object.entries(expected).some(([key, val]) => metadata.labels[key] !== val)
   ) {
     throw new RuntimeProviderError(

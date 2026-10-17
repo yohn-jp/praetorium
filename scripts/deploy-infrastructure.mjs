@@ -27,6 +27,7 @@ function usage() {
   process.stderr.write(`Usage:
   node scripts/deploy-infrastructure.mjs plan --inventory <file>
   node scripts/deploy-infrastructure.mjs preflight --inventory <file>
+  node scripts/deploy-infrastructure.mjs render --inventory <file>
   node scripts/deploy-infrastructure.mjs create --inventory <file> --confirm <cluster-name>
   node scripts/deploy-infrastructure.mjs apply --inventory <file> --confirm <cluster-name>
 `);
@@ -34,8 +35,8 @@ function usage() {
 
 function parseArgs(argv) {
   const [action, ...rest] = argv;
-  if (!["plan", "preflight", "create", "apply"].includes(action)) {
-    throw new Error("action must be plan, preflight, create, or apply");
+  if (!["plan", "preflight", "render", "create", "apply"].includes(action)) {
+    throw new Error("action must be plan, preflight, render, create, or apply");
   }
   const args = { action, inventoryPath: null, confirmation: null };
   for (let index = 0; index < rest.length; index += 1) {
@@ -296,6 +297,26 @@ function renderTree(source, destination, values) {
   }
 }
 
+function renderStaticBundle(inventory) {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "praetorium-t12-kustomize-"));
+  try {
+    const rendered = path.join(temporary, "kubernetes");
+    renderTree(path.join(repoRoot, "infrastructure/kubernetes"), rendered, renderValues(inventory));
+    const bundle = buildKustomize(path.join(rendered, "overlays/disposable"));
+    if (
+      /@@[A-Z0-9_]+@@/.test(bundle) ||
+      /^\s*(?:name|namespace):\s*["']?praetorium-instances(?:-|\s|["']|$)/m.test(bundle)
+    ) {
+      throw new Error(
+        "static Kustomize bundle contains placeholders or dynamic instance namespaces",
+      );
+    }
+    return bundle;
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
 function requireClusterOwnership(inventory, kubeconfig) {
   const name = inventory.ownership.clusterName;
   const context = inventory.ownership.context;
@@ -478,7 +499,7 @@ function report({
 try {
   const args = parseArgs(process.argv.slice(2));
   const inventoryResult = checkInventory(args.inventoryPath, {
-    requireReady: args.action === "apply",
+    requireReady: ["apply", "render"].includes(args.action),
   });
   const { inventory } = inventoryResult;
 
@@ -519,6 +540,10 @@ try {
       process.stderr.write(`BLOCKED: local Kustomize render failed: ${kustomize.error}\n`);
       process.exitCode = 2;
     }
+  } else if (args.action === "render") {
+    if (!available("kustomize") && !available("kubectl"))
+      throw new Error("render requires Kustomize or kubectl kustomize");
+    process.stdout.write(renderStaticBundle(inventory));
   } else if (args.action === "create") {
     if (!available("kind") || !available("kubectl"))
       throw new Error("create requires installed kind and kubectl");
@@ -589,55 +614,36 @@ try {
       "--raw",
       "/apis/traefik.io/v1alpha1",
     ]);
-    const temporary = mkdtempSync(path.join(os.tmpdir(), "praetorium-t12-kustomize-"));
-    try {
-      const rendered = path.join(temporary, "kubernetes");
-      renderTree(
-        path.join(repoRoot, "infrastructure/kubernetes"),
-        rendered,
-        renderValues(inventory),
-      );
-      const bundle = buildKustomize(path.join(rendered, "overlays/disposable"));
-      if (
-        /@@[A-Z0-9_]+@@/.test(bundle) ||
-        /namespace:\s*praetorium-instances(?:\s|$)/m.test(bundle)
-      ) {
-        throw new Error(
-          "static Kustomize bundle contains placeholders or dynamic instance namespaces",
-        );
-      }
-      run("kubectl", ["--kubeconfig", kubeconfig, "--context", context, "apply", "-f", "-"], {
-        input: bundle,
-      });
-      for (const [namespace, name] of [
-        ["praetorium-system", "praetorium-instance-access"],
-        ["praetorium-system", "praetorium-provisioner"],
-        ["praetorium-build", "praetorium-build-worker"],
-        ["praetorium-observability", "praetorium-prometheus"],
-      ]) {
-        run("kubectl", [
-          "--kubeconfig",
-          kubeconfig,
-          "--context",
-          context,
-          "-n",
-          namespace,
-          "rollout",
-          "status",
-          `deployment/${name}`,
-          "--timeout=180s",
-        ]);
-      }
-      report({
-        action: args.action,
-        inventoryResult,
-        dependencies: { kind: true, kubectl: true, kustomize: true },
-        clusterVerified: true,
-        sideEffects: [`applied static shared resources to ${context}`],
-      });
-    } finally {
-      rmSync(temporary, { recursive: true, force: true });
+    const bundle = renderStaticBundle(inventory);
+    run("kubectl", ["--kubeconfig", kubeconfig, "--context", context, "apply", "-f", "-"], {
+      input: bundle,
+    });
+    for (const [namespace, name] of [
+      ["praetorium-system", "praetorium-instance-access"],
+      ["praetorium-system", "praetorium-provisioner"],
+      ["praetorium-build", "praetorium-build-worker"],
+      ["praetorium-observability", "praetorium-prometheus"],
+    ]) {
+      run("kubectl", [
+        "--kubeconfig",
+        kubeconfig,
+        "--context",
+        context,
+        "-n",
+        namespace,
+        "rollout",
+        "status",
+        `deployment/${name}`,
+        "--timeout=180s",
+      ]);
     }
+    report({
+      action: args.action,
+      inventoryResult,
+      dependencies: { kind: true, kubectl: true, kustomize: true },
+      clusterVerified: true,
+      sideEffects: [`applied static shared resources to ${context}`],
+    });
   }
 } catch (error) {
   usage();

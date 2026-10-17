@@ -4,9 +4,9 @@ This policy pair limits the dynamic Kubernetes writes made by the provisioner
 service account. `provisioner-boundary.yaml` covers per-instance Namespace
 creation and ownership-preserving updates. `provisioner-rolebinding.yaml`
 covers every RoleBinding request from the provisioner, including bootstrap
-creation in arbitrary namespaces. They intentionally are not wired into a
-Kustomize overlay here; the root integrator owns composition after the paired
-RBAC review.
+creation in arbitrary namespaces. The static base includes these policies and
+the paired RBAC graph through the policies Kustomization. The generic resource
+ownership boundaries below cover the provider-emitted runtime objects.
 
 The protected principal is
 `system:serviceaccount:praetorium-system:praetorium-provisioner`, matching the
@@ -15,7 +15,7 @@ namespace as `praetorium-instances-` plus the lower-case 26-character suffix of
 an `ins_` instance ID. The Namespace must carry the provider-emitted Arcadia
 platform, managed-by, instance, ownership-version, and runtime-cluster labels,
 plus a positive safe-integer repository ID. `@@CLUSTER_ID@@` uses the existing
-inventory render substitution. A paired runtime identity change is adding the
+inventory render substitution. The paired runtime provider emits the
 three Namespace Pod Security labels (`enforce`, `audit`, and `warn`) with the
 value `restricted`; the policy requires them on create/update and preserves
 them on update, matching the provider's namespace renderer and existing
@@ -83,8 +83,7 @@ requests and `namespaceObject` in validation expressions. The policy therefore
 requires a Kubernetes API server at v1.30 or newer. The current deployment
 inventory does not record a Kubernetes server version, and no target or
 disposable API server was available in this worktree. The version prerequisite
-must be checked during deployment preflight before these policies are wired or
-applied. See the Kubernetes project's [GA announcement for v1.30](https://kubernetes.io/blog/2024/04/24/validating-admission-policy-ga/)
+must be checked during deployment preflight before these policies are applied. See the Kubernetes project's [GA announcement for v1.30](https://kubernetes.io/blog/2024/04/24/validating-admission-policy-ga/)
 and its [Validating Admission Policy reference](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/).
 
 `tests/infra/kubernetes-admission.test.mjs` parses the YAML documents and checks

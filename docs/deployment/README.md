@@ -25,8 +25,11 @@ Run all commands from the repository root. `plan` and `preflight` do not mutate 
 ```sh
 node scripts/deploy-infrastructure.mjs plan --inventory infrastructure/test/disposable-inventory.json
 node scripts/deploy-infrastructure.mjs preflight --inventory infrastructure/test/disposable-inventory.json
+node scripts/deploy-infrastructure.mjs render --inventory /absolute/path/to/complete-owned-inventory.json
 node scripts/deploy-infrastructure.mjs create --inventory infrastructure/test/disposable-inventory.json --confirm praetorium-t12-local
 ```
+
+`render` writes the complete static YAML bundle using the same assembly function as `apply`, checks all placeholders and dynamic-namespace exclusions, and makes no cluster call or secret read. It requires a complete inventory; synthetic render tests do not establish that its image locators exist or satisfy producer acceptance.
 
 `create` creates only the Kind cluster named by that inventory and labels its control-plane node with the inventory cluster ID and `praetorium.io/disposable=true`. It uses a separate owner-only kubeconfig under `/tmp/praetorium-t12-<uid>/<cluster-name>.yaml`, refuses to overwrite an existing inventory kubeconfig, and never reads or writes the operator's configured kubeconfig or current context. The subsequent `apply` uses that explicit file plus the derived context and rechecks every node's ownership labels before contacting the API server.
 

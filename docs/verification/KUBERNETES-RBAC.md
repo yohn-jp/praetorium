@@ -12,7 +12,7 @@ Kubernetes RBAC cannot express a namespace-name prefix, a name pattern, or a res
 
 Before applying this policy to a live cluster, deploy and verify an admission policy that allows namespace creation only for validated generated instance namespaces with the expected ownership labels, and allows the dynamic RoleBinding only in those namespaces with the exact name, tenant ClusterRole reference, sole Provisioner ServiceAccount subject, and expected ownership labels. It must reject attempts to create or alter other bindings or subjects. Confirm that the cluster's admission implementation covers create and update/patch paths. This repository change does not add or certify that admission policy and does not make RBAC alone enforce namespace ownership.
 
-The policy is not wired into a Kustomize entry point in this change; root owns that integration. Do not apply it until that wiring, the admission boundary, and the principal alignment have been reviewed together.
+The static base includes the policies directory, composing these roles with the namespace, RoleBinding and runtime-resource admission boundaries and the aligned Provisioner principal. Local manifest and generic CEL review are recorded separately; target-server admission and live authorization remain unverified.
 
 ## Verification
 

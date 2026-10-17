@@ -56,6 +56,15 @@ function safeAbsolutePath(value) {
   return typeof value === "string" && path.isAbsolute(value) && !value.includes("\0");
 }
 
+function canonicalSha256(value, field) {
+  assert.match(
+    value,
+    /^(?:sha256:)?[a-f0-9]{64}$/u,
+    `${field} must be a SHA-256 image ID with an optional sha256: prefix`,
+  );
+  return value.startsWith("sha256:") ? value : `sha256:${value}`;
+}
+
 function validateInventory(inventory, now = Date.now()) {
   exactKeys(
     inventory,
@@ -132,7 +141,7 @@ function validateInventory(inventory, now = Date.now()) {
   );
   assert.match(inventory.cluster.nodeContainerId, /^[a-f0-9]{64}$/u);
   assert.match(inventory.cluster.nodeImageRef, /^kindest\/node:v1\.35\.0@sha256:[a-f0-9]{64}$/u);
-  assert.match(inventory.cluster.nodeImageId, /^sha256:[a-f0-9]{64}$/u);
+  canonicalSha256(inventory.cluster.nodeImageId, "inventory.cluster.nodeImageId");
 
   exactKeys(
     inventory.tools,
@@ -649,6 +658,15 @@ function namespacesFor(runId, instance) {
 }
 
 const inventoryPath = process.env[INVENTORY_ENV];
+test("Kind image IDs compare by digest with or without the sha256 prefix", () => {
+  const digest = "17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139";
+  assert.equal(canonicalSha256(digest, "Podman image ID"), `sha256:${digest}`);
+  assert.equal(canonicalSha256(`sha256:${digest}`, "inventory image ID"), `sha256:${digest}`);
+  assert.throws(() => canonicalSha256("sha256:not-a-digest", "invalid image ID"), {
+    name: "AssertionError",
+  });
+});
+
 test(
   "T07: real packets follow the compiled renderer NetworkPolicy in an owned disposable Kind cluster",
   { skip: !inventoryPath && `${INVENTORY_ENV} is not set`, timeout: 12 * 60_000 },
@@ -725,6 +743,7 @@ test(
         nodeContainerId: inventory.cluster.nodeContainerId,
         nodeImageRef: inventory.cluster.nodeImageRef,
         nodeImageId: inventory.cluster.nodeImageId,
+        nodeImageIdObservedRaw: null,
       },
       image: {
         ref: inventory.image.ref,
@@ -877,9 +896,10 @@ test(
         inventory.cluster.nodeContainerId,
         "Kind node container identity differs from the owned inventory",
       );
+      report.cluster.nodeImageIdObservedRaw = nodeContainer?.Image ?? null;
       assert.equal(
-        nodeContainer?.Image,
-        inventory.cluster.nodeImageId,
+        canonicalSha256(nodeContainer?.Image, "Podman Kind node image ID"),
+        canonicalSha256(inventory.cluster.nodeImageId, "inventory Kind node image ID"),
         "Kind node container image identity differs from the owned inventory",
       );
       assert.equal(
@@ -888,7 +908,13 @@ test(
         "owned Kind node container is not running",
       );
       const nodeImageOutput = jsonOutput(
-        await podman(["image", "inspect", "--format", "{{json .}}", inventory.cluster.nodeImageId]),
+        await podman([
+          "image",
+          "inspect",
+          "--format",
+          "{{json .}}",
+          canonicalSha256(inventory.cluster.nodeImageId, "inventory Kind node image ID"),
+        ]),
         "Podman Kind node image inspection",
       );
       const nodeImage = Array.isArray(nodeImageOutput) ? nodeImageOutput[0] : nodeImageOutput;

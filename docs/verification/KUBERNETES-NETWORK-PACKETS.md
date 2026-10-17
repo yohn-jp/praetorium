@@ -29,6 +29,14 @@ new Pods against that observed runtime ID instead of assuming a CRI imageID is
 the manifest digest. Its kubeconfig and image-evidence files must be
 owner-private. The test never reads or prints kubeconfig contents.
 
+For rootless Podman clusters, `tools.podmanPath` must name the owner's private
+executable adapter that invokes the same Podman wrapper and pinned binary used
+to create the Kind cluster. Kind's node container and cached image live in that
+private Podman store; the host's default Podman context may not contain them.
+Podman can report the node container's `.Image` as bare 64-character hex while
+the inventory uses `sha256:<hex>`. The runner validates and compares both
+forms by canonical digest, and records the raw `.Image` value it observed.
+
 Inventory schema (values below are illustrative only and are not runnable):
 
 ```json

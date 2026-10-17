@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { execFile, spawnSync } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import { chmod, mkdir, mkdtemp, open, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -23,6 +24,92 @@ function hasOnlyKeys(value, keys) {
 
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
+}
+
+function effectiveExpiry(configExpiresAt, inventoryExpiresAt) {
+  return Math.min(configExpiresAt, inventoryExpiresAt);
+}
+
+function createLifetimeGate(expiresAtMs, now = Date.now) {
+  return async (effect) => {
+    const nowMs = now();
+    if (
+      !Number.isSafeInteger(expiresAtMs) ||
+      !Number.isSafeInteger(nowMs) ||
+      nowMs >= expiresAtMs
+    ) {
+      throw new Error("owned test environment has expired");
+    }
+    return effect();
+  };
+}
+
+function guardedRestClient(rest, gate) {
+  return {
+    async request(...args) {
+      return gate(() => rest.request(...args));
+    },
+  };
+}
+
+async function readOwnedFile(filePath, { privateFile, maxBytes }) {
+  if (
+    typeof process.getuid !== "function" ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 1 ||
+    !Number.isInteger(fsConstants.O_NOFOLLOW) ||
+    !Number.isInteger(fsConstants.O_NONBLOCK)
+  ) {
+    return { blocked: "owner files cannot be safely verified on this platform" };
+  }
+
+  let handle;
+  try {
+    handle = await open(
+      filePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    );
+    const before = await handle.stat();
+    const uid = process.getuid();
+    if (
+      !before.isFile() ||
+      before.uid !== uid ||
+      (privateFile ? (before.mode & 0o077) !== 0 : (before.mode & 0o022) !== 0) ||
+      before.size > maxBytes
+    ) {
+      return { blocked: "owner file permissions, ownership, or size are invalid" };
+    }
+
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      const buffer = Buffer.allocUnsafe(Math.min(8192, maxBytes - size + 1));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) break;
+      size += bytesRead;
+      if (size > maxBytes) return { blocked: "owner file exceeds the size limit" };
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+
+    const after = await handle.stat();
+    if (
+      after.size !== size ||
+      before.size !== after.size ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      after.uid !== uid ||
+      (privateFile ? (after.mode & 0o077) !== 0 : (after.mode & 0o022) !== 0)
+    ) {
+      return { blocked: "owner file changed while it was read" };
+    }
+    return { bytes: Buffer.concat(chunks, size) };
+  } catch {
+    return { blocked: "owner file is unavailable or is not a regular file" };
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 function hasAsciiControlCharacters(value) {
@@ -156,38 +243,44 @@ async function loadOwnerConfig() {
   if (!configPath) return { blocked: "PRAETORIUM_T14_GITHUB_ACCESS_CONFIG is not set" };
   if (!path.isAbsolute(configPath)) return { blocked: "the owner config path must be absolute" };
 
-  let details;
-  try {
-    details = await lstat(configPath);
-  } catch {
-    return { blocked: "the owner config file is unavailable" };
-  }
-  if (!details.isFile() || (details.mode & 0o077) !== 0) {
+  const configFile = await readOwnedFile(configPath, {
+    privateFile: true,
+    maxBytes: MAX_CONFIG_BYTES,
+  });
+  if (!configFile.bytes) {
     return {
-      blocked: "the owner config must be a private regular file with mode 0600 or stricter",
+      blocked:
+        "the owner config must be a private, current-owner regular file with mode 0600 or stricter",
     };
   }
 
   let config;
   try {
-    const raw = await readFile(configPath);
-    if (raw.byteLength > MAX_CONFIG_BYTES) return { blocked: "the owner config is too large" };
-    config = JSON.parse(raw.toString("utf8"));
+    config = JSON.parse(configFile.bytes.toString("utf8"));
   } catch {
     return { blocked: "the owner config is unreadable or invalid JSON" };
   }
   if (!validateConfig(config))
     return { blocked: "the owner config does not match the supported schema" };
 
+  const inventoryFile = await readOwnedFile(config.inventoryPath, {
+    privateFile: false,
+    maxBytes: MAX_CONFIG_BYTES,
+  });
+  if (!inventoryFile.bytes) {
+    return {
+      blocked:
+        "the owned inventory must be a current-owner regular file without group or other write permission",
+    };
+  }
   let inventory;
   try {
-    const raw = await readFile(config.inventoryPath);
-    if (raw.byteLength > MAX_CONFIG_BYTES) return { blocked: "the owned inventory is too large" };
-    inventory = JSON.parse(raw.toString("utf8"));
+    inventory = JSON.parse(inventoryFile.bytes.toString("utf8"));
   } catch {
     return { blocked: "the owned inventory is unreadable or invalid JSON" };
   }
   const resource = inventory?.resources?.["github-access"];
+  const configExpires = Date.parse(config.environment.expiresAt);
   const inventoryExpires = Date.parse(inventory?.environment?.expiresAt ?? "");
   if (
     inventory?.schemaVersion !== 1 ||
@@ -195,9 +288,9 @@ async function loadOwnerConfig() {
     inventory?.environment?.purpose !== "t14-disposable-test" ||
     inventory?.environment?.disposable !== true ||
     inventory?.environment?.production !== false ||
+    typeof inventory?.environment?.expiresAt !== "string" ||
     !Number.isFinite(inventoryExpires) ||
     inventoryExpires <= Date.now() ||
-    Date.parse(config.environment.expiresAt) > inventoryExpires ||
     resource?.state !== "available" ||
     resource?.owner !== config.ownerIdentity ||
     resource?.disposable !== true ||
@@ -208,8 +301,136 @@ async function loadOwnerConfig() {
       blocked: "the inventory does not declare this live GitHub resource as owned and disposable",
     };
   }
-  return { config, inventory };
+  return { config, effectiveExpiresAt: effectiveExpiry(configExpires, inventoryExpires) };
 }
+
+test("owned environment expiry gates new effects at the effective deadline", async () => {
+  const configExpiresAt = 2_005_000;
+  const inventoryExpiresAt = 2_000_000;
+  const expiresAt = effectiveExpiry(configExpiresAt, inventoryExpiresAt);
+  let nowMs = expiresAt - 1;
+  let effects = 0;
+  const gate = createLifetimeGate(expiresAt, () => nowMs);
+
+  assert.equal(
+    await gate(async () => {
+      effects += 1;
+      return "allowed before expiry";
+    }),
+    "allowed before expiry",
+  );
+  nowMs = expiresAt;
+  await assert.rejects(
+    gate(async () => {
+      effects += 1;
+    }),
+    /owned test environment has expired/u,
+  );
+  assert.equal(effects, 1, "expired lifetime gate invoked an outbound effect");
+});
+
+test("owner attestation reads reject symlinks, writable inventory, and oversized files", async (t) => {
+  if (
+    typeof process.getuid !== "function" ||
+    !Number.isInteger(fsConstants.O_NOFOLLOW) ||
+    !Number.isInteger(fsConstants.O_NONBLOCK)
+  ) {
+    return t.skip("secure owner-file verification requires POSIX UID and O_NOFOLLOW support");
+  }
+
+  const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-owner-file-test-"));
+  try {
+    const ownerFile = path.join(directory, "owner.json");
+    await writeFile(ownerFile, '{"owned":true}', { mode: 0o600 });
+    await chmod(ownerFile, 0o600);
+    const validOwnerFile = await readOwnedFile(ownerFile, {
+      privateFile: true,
+      maxBytes: MAX_CONFIG_BYTES,
+    });
+    assert.equal(validOwnerFile.bytes?.toString("utf8"), '{"owned":true}');
+
+    const alias = path.join(directory, "owner-link.json");
+    await symlink(ownerFile, alias);
+    assert.ok(
+      (await readOwnedFile(alias, { privateFile: true, maxBytes: MAX_CONFIG_BYTES })).blocked,
+      "owner config symlink was accepted",
+    );
+    assert.ok(
+      (await readOwnedFile(alias, { privateFile: false, maxBytes: MAX_CONFIG_BYTES })).blocked,
+      "owner inventory symlink was accepted",
+    );
+
+    const writableInventory = path.join(directory, "inventory.json");
+    await writeFile(writableInventory, '{"owned":true}', { mode: 0o666 });
+    await chmod(writableInventory, 0o666);
+    assert.ok(
+      (
+        await readOwnedFile(writableInventory, {
+          privateFile: false,
+          maxBytes: MAX_CONFIG_BYTES,
+        })
+      ).blocked,
+      "group or other writable inventory was accepted",
+    );
+
+    assert.ok(
+      (
+        await readOwnedFile(ownerFile, {
+          privateFile: true,
+          maxBytes: 4,
+        })
+      ).blocked,
+      "oversized owner config was accepted",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test(
+  "FIFO owner config is rejected without blocking the runner",
+  { skip: process.env.PRAETORIUM_T14_FIFO_CHILD === "1" },
+  async (t) => {
+    if (
+      typeof process.getuid !== "function" ||
+      !Number.isInteger(fsConstants.O_NOFOLLOW) ||
+      !Number.isInteger(fsConstants.O_NONBLOCK)
+    ) {
+      return t.skip("FIFO open safety requires POSIX nonblocking file support");
+    }
+
+    const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-owner-fifo-test-"));
+    const fifoPath = path.join(directory, "owner-config.fifo");
+    try {
+      try {
+        await execFileAsync("mkfifo", [fifoPath], {
+          timeout: 2_000,
+          maxBuffer: 16 * 1024,
+          env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        });
+      } catch {
+        return t.skip("mkfifo utility is unavailable");
+      }
+
+      const child = spawnSync(process.execPath, ["--test", fileURLToPath(import.meta.url)], {
+        cwd: repositoryRoot,
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          PRAETORIUM_T14_GITHUB_ACCESS_CONFIG: fifoPath,
+          PRAETORIUM_T14_FIFO_CHILD: "1",
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+      assert.equal(child.error, undefined, "FIFO owner config reader blocked the child process");
+      assert.equal(child.status, 0, child.stderr || child.stdout);
+      assert.match(child.stdout, /BLOCKED: the owner config must be a private/u);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 async function readJson(response, message) {
   assert.equal(response.redirected, false, `${message}: redirects are not accepted`);
@@ -223,28 +444,29 @@ async function readJson(response, message) {
   return value;
 }
 
-async function gatewayRequest(config, user, route, init = {}) {
+async function gatewayRequest(config, user, route, gate, init = {}) {
   const url = new URL(route, config.gateway.origin);
   assert.equal(url.origin, config.gateway.origin, "Gateway request origin changed unexpectedly");
-  return fetch(url, {
-    ...init,
-    redirect: "error",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    headers: {
-      Cookie: user.sessionCookie,
-      ...(init.headers ?? {}),
-    },
-  });
+  return gate(() =>
+    fetch(url, {
+      ...init,
+      redirect: "error",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        Cookie: user.sessionCookie,
+        ...(init.headers ?? {}),
+      },
+    }),
+  );
 }
 
-async function controlPlaneSnapshot(config, repositoryId) {
-  const response = await fetch(
-    new URL(`/v1/repositories/${repositoryId}`, config.controlPlane.origin),
-    {
+async function controlPlaneSnapshot(config, repositoryId, gate) {
+  const response = await gate(() =>
+    fetch(new URL(`/v1/repositories/${repositoryId}`, config.controlPlane.origin), {
       headers: { "X-Control-Plane-Gateway-Auth": config.controlPlane.gatewayAuth },
       redirect: "error",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    },
+    }),
   );
   if (response.status === 404) return null;
   assert.equal(response.status, 200, "Control Plane binding lookup failed");
@@ -324,10 +546,10 @@ function tokenSource(users) {
   };
 }
 
-function repositoryBindingReader(config) {
+function repositoryBindingReader(config, gate) {
   return {
     async getByRepositoryId(repositoryId) {
-      const snapshot = await controlPlaneSnapshot(config, repositoryId);
+      const snapshot = await controlPlaneSnapshot(config, repositoryId, gate);
       if (!snapshot) return null;
       const binding = parseBinding(snapshot);
       return {
@@ -367,15 +589,21 @@ function gatewayActionHeaders(config, user, extra = {}) {
   };
 }
 
-async function enterRepository(config, user, repositoryId) {
+async function enterRepository(config, user, repositoryId, gate) {
   const form = new URLSearchParams({ action: "enter", csrfToken: user.csrfToken });
-  const response = await gatewayRequest(config, user, `/repositories/${repositoryId}/actions`, {
-    method: "POST",
-    headers: gatewayActionHeaders(config, user, {
-      "Content-Type": "application/x-www-form-urlencoded",
-    }),
-    body: form,
-  });
+  const response = await gatewayRequest(
+    config,
+    user,
+    `/repositories/${repositoryId}/actions`,
+    gate,
+    {
+      method: "POST",
+      headers: gatewayActionHeaders(config, user, {
+        "Content-Type": "application/x-www-form-urlencoded",
+      }),
+      body: form,
+    },
+  );
   // This existing test instance has no approved artifact. The production Gateway must
   // resolve/check it and stop before requesting a runtime start or handoff.
   assert.equal(
@@ -391,15 +619,21 @@ async function enterRepository(config, user, repositoryId) {
   );
 }
 
-async function requestMutationAuthorization(config, user, repositoryId) {
-  return gatewayRequest(config, user, `/api/repositories/${repositoryId}/mutation-authorizations`, {
-    method: "POST",
-    headers: gatewayActionHeaders(config, user, { "Content-Type": "application/json" }),
-    body: JSON.stringify({
-      operationId: `t14_${crypto.randomUUID()}`,
-      payloadDigest: "sha256:" + "a".repeat(64),
-    }),
-  });
+async function requestMutationAuthorization(config, user, repositoryId, gate) {
+  return gatewayRequest(
+    config,
+    user,
+    `/api/repositories/${repositoryId}/mutation-authorizations`,
+    gate,
+    {
+      method: "POST",
+      headers: gatewayActionHeaders(config, user, { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        operationId: `t14_${crypto.randomUUID()}`,
+        payloadDigest: "sha256:" + "a".repeat(64),
+      }),
+    },
+  );
 }
 
 function gitBaseEnvironment(home, globalConfig) {
@@ -437,8 +671,9 @@ async function git(cwd, args, env) {
   }
 }
 
-async function gitRefHash(cwd, remote, ref, env) {
-  const result = await git(cwd, ["ls-remote", remote, ref], env);
+async function gitRefHash(cwd, remote, ref, env, gate) {
+  const read = () => git(cwd, ["ls-remote", remote, ref], env);
+  const result = gate ? await gate(read) : await read();
   const line = result.stdout.trim();
   if (!line) return null;
   const [hash, returnedRef] = line.split(/\s+/u);
@@ -447,8 +682,8 @@ async function gitRefHash(cwd, remote, ref, env) {
   return hash;
 }
 
-async function gitRefExists(cwd, remote, ref, env) {
-  return (await gitRefHash(cwd, remote, ref, env)) !== null;
+async function gitRefExists(cwd, remote, ref, env, gate) {
+  return (await gitRefHash(cwd, remote, ref, env, gate)) !== null;
 }
 
 async function deleteOwnedRef(cwd, remote, ref, expectedHash, env) {
@@ -463,26 +698,67 @@ async function deleteOwnedRef(cwd, remote, ref, expectedHash, env) {
   );
 }
 
-async function attemptOwnedRefPush(cwd, remote, ref, expectedHash, env) {
-  try {
-    const localHead = (await git(cwd, ["rev-parse", "HEAD"], env)).stdout.trim();
-    assert.equal(localHead, expectedHash, "push source differs from its recorded cleanup hash");
-    // The empty expected value makes branch creation atomic and refuses a ref that
-    // another actor created after the preflight existence check.
-    await git(cwd, ["push", "--quiet", `--force-with-lease=${ref}:`, remote, `HEAD:${ref}`], env);
-    return { ok: true, created: true };
-  } catch {
-    // A failed push may have an uncertain remote outcome. Never infer ownership
-    // from a matching hash and never delete a ref unless this process got success.
-    return { ok: false, created: false };
-  }
+async function attemptOwnedRefPush(cwd, remote, ref, expectedHash, env, gate) {
+  const localHead = (await git(cwd, ["rev-parse", "HEAD"], env)).stdout.trim();
+  assert.equal(localHead, expectedHash, "push source differs from its recorded cleanup hash");
+  return gate(async () => {
+    try {
+      // The empty expected value makes branch creation atomic and refuses a ref that
+      // another actor created after the preflight existence check.
+      await git(cwd, ["push", "--quiet", `--force-with-lease=${ref}:`, remote, `HEAD:${ref}`], env);
+      return { ok: true, created: true, uncertain: false };
+    } catch {
+      // A failed push may have an uncertain remote outcome. Never infer ownership
+      // from a matching hash and never delete a ref unless this process got success.
+      return { ok: false, created: false, uncertain: true };
+    }
+  });
 }
 
-async function issueGitHubScopedTokens(config, client, now) {
+function refRecoveryRecord(repository, ref, expectedCommit, observedCommit) {
+  return {
+    repositoryId: repository.id,
+    repository: `${repository.owner}/${repository.name}`,
+    ref,
+    expectedCommit,
+    ...(observedCommit ? { observedCommit } : {}),
+  };
+}
+
+async function observedRefAfterPush({
+  cwd,
+  remote,
+  ref,
+  env,
+  gate,
+  push,
+  repository,
+  expectedCommit,
+  recoveryRecords,
+}) {
+  const record = refRecoveryRecord(repository, ref, expectedCommit);
+  let observedCommit;
+  try {
+    observedCommit = await gitRefHash(cwd, remote, ref, env, gate);
+  } catch {
+    if (push.uncertain) recoveryRecords.push(record);
+    throw new Error("could not inspect the run-specific Git ref after push");
+  }
+  if (push.uncertain && observedCommit !== null) {
+    recoveryRecords.push({ ...record, observedCommit });
+  }
+  return observedCommit;
+}
+
+async function issueGitHubScopedTokens(config, client, now, gate) {
+  const issuanceRest = guardedRestClient(
+    client.createGitHubRestClient({ requestTimeoutMs: REQUEST_TIMEOUT_MS }),
+    gate,
+  );
   const issuer = client.createGitHubInstallationTokenIssuer({
     appId: config.github.appId,
     privateKeyPem: config.github.privateKeyPem,
-    client: client.createGitHubRestClient({ requestTimeoutMs: REQUEST_TIMEOUT_MS }),
+    client: issuanceRest,
   });
   const revoker = client.createGitHubInstallationTokenRevoker({
     client: client.createGitHubRestClient({ requestTimeoutMs: REQUEST_TIMEOUT_MS }),
@@ -490,10 +766,14 @@ async function issueGitHubScopedTokens(config, client, now) {
   const issued = [];
   try {
     issued.push(
-      await issuer.issue(config.github.installationId, config.github.repository.id, "read", now),
+      await gate(() =>
+        issuer.issue(config.github.installationId, config.github.repository.id, "read", now),
+      ),
     );
     issued.push(
-      await issuer.issue(config.github.installationId, config.github.repository.id, "write", now),
+      await gate(() =>
+        issuer.issue(config.github.installationId, config.github.repository.id, "write", now),
+      ),
     );
     return { issuer, revoker, issued };
   } catch {
@@ -514,7 +794,8 @@ async function issueGitHubScopedTokens(config, client, now) {
   }
 }
 
-async function runOwnedProbe(config) {
+async function runOwnedProbe(config, effectiveExpiresAt) {
+  const gate = createLifetimeGate(effectiveExpiresAt);
   const githubPackage = path.join(repositoryRoot, "plugins/github/dist/index.js");
   const packageStat = await stat(githubPackage).catch(() => null);
   assert.ok(
@@ -532,7 +813,10 @@ async function runOwnedProbe(config) {
   );
   assert.ok(typeof appJwt === "string" && appJwt.split(".").length === 3);
 
-  const rest = github.createGitHubRestClient({ requestTimeoutMs: REQUEST_TIMEOUT_MS });
+  const rest = guardedRestClient(
+    github.createGitHubRestClient({ requestTimeoutMs: REQUEST_TIMEOUT_MS }),
+    gate,
+  );
   const api = github.createGitHubAccessApi(rest);
   const [writerLive, readerLive] = await Promise.all([
     checkLiveUser(api, rest, config, "writer", config.gateway.writer),
@@ -564,7 +848,7 @@ async function runOwnedProbe(config) {
     "the writer must have push permission on the sibling scope-test repository",
   );
 
-  const existing = await controlPlaneSnapshot(config, config.github.repository.id);
+  const existing = await controlPlaneSnapshot(config, config.github.repository.id, gate);
   assert.ok(existing, "the owned disposable test repository must already have a CP binding");
   const binding = parseBinding(existing);
   assert.equal(binding.repositoryId, config.github.repository.id);
@@ -587,7 +871,7 @@ async function runOwnedProbe(config) {
     "the existing stopped test instance must have a positive runtime epoch for Gateway mutation authorization",
   );
   assert.equal(
-    await controlPlaneSnapshot(config, config.github.unrelatedRepository.id),
+    await controlPlaneSnapshot(config, config.github.unrelatedRepository.id, gate),
     null,
     "the sibling scope-test repository must not have a Praetorium instance binding",
   );
@@ -600,7 +884,7 @@ async function runOwnedProbe(config) {
     appId: config.github.appId,
     api,
     userTokens: tokenSource(users),
-    repositoryBindings: repositoryBindingReader(config),
+    repositoryBindings: repositoryBindingReader(config, gate),
     servicePolicy: servicePolicy(config),
     instanceOriginFor: (instanceId) => `https://${instanceId}.t14.invalid`,
     now: () => new Date(),
@@ -652,7 +936,7 @@ async function runOwnedProbe(config) {
     writer: config.gateway.writer,
     reader: config.gateway.reader,
   })) {
-    const sessionResponse = await gatewayRequest(config, user, "/api/session");
+    const sessionResponse = await gatewayRequest(config, user, "/api/session", gate);
     assert.equal(sessionResponse.status, 200, `${name} Gateway session was rejected`);
     const session = await readJson(sessionResponse, `${name} Gateway session response was invalid`);
     assert.equal(
@@ -662,8 +946,8 @@ async function runOwnedProbe(config) {
     );
   }
 
-  await enterRepository(config, config.gateway.writer, config.github.repository.id);
-  const afterWriter = await controlPlaneSnapshot(config, config.github.repository.id);
+  await enterRepository(config, config.gateway.writer, config.github.repository.id, gate);
+  const afterWriter = await controlPlaneSnapshot(config, config.github.repository.id, gate);
   assert.ok(afterWriter, "Gateway entry did not preserve the test repository binding");
   const writerBinding = parseBinding(afterWriter);
   assert.equal(
@@ -672,8 +956,8 @@ async function runOwnedProbe(config) {
     "writer entry resolved a different numeric-repository instance",
   );
 
-  await enterRepository(config, config.gateway.reader, config.github.repository.id);
-  const afterReader = await controlPlaneSnapshot(config, config.github.repository.id);
+  await enterRepository(config, config.gateway.reader, config.github.repository.id, gate);
+  const afterReader = await controlPlaneSnapshot(config, config.github.repository.id, gate);
   assert.ok(afterReader, "reader Gateway entry did not preserve the test repository binding");
   const readerBinding = parseBinding(afterReader);
   assert.equal(
@@ -691,6 +975,7 @@ async function runOwnedProbe(config) {
     config,
     config.gateway.reader,
     config.github.repository.id,
+    gate,
   );
   assert.equal(
     readOnlyMutation.status,
@@ -701,6 +986,7 @@ async function runOwnedProbe(config) {
     config,
     config.gateway.writer,
     config.github.repository.id,
+    gate,
   );
   assert.equal(
     writerMutation.status,
@@ -713,6 +999,7 @@ async function runOwnedProbe(config) {
     config,
     config.gateway.writer,
     config.github.unrelatedRepository.id,
+    gate,
   );
   assert.ok(
     [403, 404].includes(unrelatedMutation.status),
@@ -720,7 +1007,7 @@ async function runOwnedProbe(config) {
   );
   await unrelatedMutation.arrayBuffer();
 
-  const tokenSet = await issueGitHubScopedTokens(config, github, new Date().toISOString());
+  const tokenSet = await issueGitHubScopedTokens(config, github, new Date().toISOString(), gate);
   const [readToken, writeToken] = tokenSet.issued;
   let tempRoot;
   let primaryRef;
@@ -736,6 +1023,7 @@ async function runOwnedProbe(config) {
   let baseGitEnv;
   let cleanupFailed = false;
   let probeError;
+  const uncertainRefs = [];
 
   try {
     assert.equal(readToken.repositoryId, config.github.repository.id);
@@ -816,17 +1104,17 @@ async function runOwnedProbe(config) {
     primaryCommit = (await git(writerRepo, ["rev-parse", "HEAD"], baseGitEnv)).stdout.trim();
     await git(writerRepo, ["remote", "add", "origin", targetRemote], baseGitEnv);
     assert.equal(
-      await gitRefExists(writerRepo, "origin", primaryRef, writerEnv),
+      await gitRefExists(writerRepo, "origin", primaryRef, writerEnv, gate),
       false,
       "generated target branch already exists; refusing to overwrite it",
     );
     assert.equal(
-      await gitRefExists(writerRepo, "origin", readOnlyRef, writerEnv),
+      await gitRefExists(writerRepo, "origin", readOnlyRef, writerEnv, gate),
       false,
       "generated read-denial branch already exists; refusing to overwrite it",
     );
     assert.equal(
-      await gitRefExists(siblingRepo, unrelatedRemote, unrelatedRef, userEnv),
+      await gitRefExists(siblingRepo, unrelatedRemote, unrelatedRef, userEnv, gate),
       false,
       "generated sibling branch already exists; refusing to overwrite it",
     );
@@ -837,8 +1125,12 @@ async function runOwnedProbe(config) {
       primaryRef,
       primaryCommit,
       writerEnv,
+      gate,
     );
     primaryCreated = primaryPush.created;
+    if (primaryPush.uncertain) {
+      uncertainRefs.push(refRecoveryRecord(config.github.repository, primaryRef, primaryCommit));
+    }
     assert.equal(
       primaryPush.ok,
       true,
@@ -846,7 +1138,9 @@ async function runOwnedProbe(config) {
     );
     await git(readRepo, ["init", "--quiet", "--initial-branch=main"], baseGitEnv);
     await git(readRepo, ["remote", "add", "origin", targetRemote], baseGitEnv);
-    await git(readRepo, ["fetch", "--quiet", "--no-tags", "origin", primaryRef], readEnv);
+    await gate(() =>
+      git(readRepo, ["fetch", "--quiet", "--no-tags", "origin", primaryRef], readEnv),
+    );
     const fetchedCommit = (
       await git(readRepo, ["rev-parse", "FETCH_HEAD"], baseGitEnv)
     ).stdout.trim();
@@ -862,16 +1156,28 @@ async function runOwnedProbe(config) {
       readOnlyRef,
       primaryCommit,
       readEnv,
+      gate,
     );
     readOnlyCreated = readOnlyPush.created;
+    const readOnlyObserved = await observedRefAfterPush({
+      cwd: writerRepo,
+      remote: targetRemote,
+      ref: readOnlyRef,
+      env: writerEnv,
+      gate,
+      push: readOnlyPush,
+      repository: config.github.repository,
+      expectedCommit: primaryCommit,
+      recoveryRecords: uncertainRefs,
+    });
     assert.equal(
       readOnlyPush.ok,
       false,
       `read-scoped token unexpectedly pushed a branch; inspect only ${readOnlyRef} manually if the Git result was uncertain`,
     );
     assert.equal(
-      await gitRefExists(writerRepo, targetRemote, readOnlyRef, writerEnv),
-      false,
+      readOnlyObserved,
+      null,
       `read-scoped token created a branch despite the failed push response: ${readOnlyRef}`,
     );
 
@@ -895,16 +1201,28 @@ async function runOwnedProbe(config) {
       unrelatedRef,
       unrelatedCommit,
       writerEnv,
+      gate,
     );
     unrelatedCreated = scopedPush.created;
+    const unrelatedObserved = await observedRefAfterPush({
+      cwd: siblingRepo,
+      remote: unrelatedRemote,
+      ref: unrelatedRef,
+      env: userEnv,
+      gate,
+      push: scopedPush,
+      repository: config.github.unrelatedRepository,
+      expectedCommit: unrelatedCommit,
+      recoveryRecords: uncertainRefs,
+    });
     assert.equal(
       scopedPush.ok,
       false,
       `repository-scoped installation token unexpectedly pushed to its sibling repository; inspect only ${unrelatedRef} manually if the Git result was uncertain`,
     );
     assert.equal(
-      await gitRefExists(siblingRepo, unrelatedRemote, unrelatedRef, userEnv),
-      false,
+      unrelatedObserved,
+      null,
       `scoped-token denial left a sibling branch behind: ${unrelatedRef}`,
     );
   } catch (error) {
@@ -956,6 +1274,11 @@ async function runOwnedProbe(config) {
       await cleanup(() => tokenSet.revoker.revoke(token));
     }
   }
+  if (uncertainRefs.length > 0) {
+    throw new Error(
+      `Git push outcome is uncertain; automatic deletion was withheld. Preserve these sanitized repository/ref/commit records for owner recovery: ${JSON.stringify(uncertainRefs)}${cleanupFailed ? "; cleanup of other confirmed owned resources also failed" : ""}`,
+    );
+  }
   if (cleanupFailed) {
     const generatedRefs = [primaryRef, readOnlyRef, unrelatedRef].filter(Boolean);
     throw new Error(
@@ -979,7 +1302,7 @@ if (ownerInputs.blocked) {
       timeout: 180_000,
     },
     async () => {
-      await runOwnedProbe(ownerInputs.config);
+      await runOwnedProbe(ownerInputs.config, ownerInputs.effectiveExpiresAt);
     },
   );
 }

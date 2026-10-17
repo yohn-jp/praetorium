@@ -37,9 +37,13 @@ can be exercised together with this real App/user/repository flow.
 ## Owner inputs and effects
 
 The runner reads only `PRAETORIUM_T14_GITHUB_ACCESS_CONFIG`; it does not inspect
-ambient `GH_TOKEN`, `GITHUB_TOKEN`, or other credentials. The config file must
-be an absolute path to a regular file with mode `0600` or stricter. Its strict
-JSON schema is:
+ambient `GH_TOKEN`, `GITHUB_TOKEN`, or other credentials. The config and
+inventory must be regular files owned by the current user, opened without
+following symlinks, and bounded to 64 KiB. The config must have mode `0600` or
+stricter; the inventory must not be group or other writable. The earlier of
+their expiry timestamps bounds every new outbound API or Git operation. Once
+expired, the probe stops issuing requests; cleanup of confirmed owned refs and
+revocation of issued tokens remains allowed. The config's strict JSON schema is:
 
 ```json
 {
@@ -97,11 +101,14 @@ environment cleanup procedure handles its lifetime.
 
 The runner reads the CP binding and GitHub permissions before any remote write.
 It then exercises Gateway entry and issues/revokes short-lived credentials.
-Git writes use a unique run-specific branch and the runner only deletes branches
-it successfully created. Cleanup verifies the branch still points to the exact
-commit created by this run and uses Git's exact-hash lease when deleting it. If
-cleanup fails, the test reports generated ref names for owner inspection; it
-never deletes pre-existing or concurrently changed refs.
+Git writes use a unique run-specific branch and an atomic empty-ref lease; the
+runner only deletes branches for which its push command reported success.
+Cleanup verifies the branch still points to the exact commit created by this
+run and uses Git's exact-hash lease when deleting it. An ambiguous push result
+does not authorize deletion. The failure report preserves sanitized repository
+IDs/names, refs, and expected commit hashes for owner recovery after local temp
+metadata is removed. Cleanup failures also report the generated ref names; the
+runner never deletes pre-existing or concurrently changed refs.
 
 Run only after building the workspace and preparing the private config:
 

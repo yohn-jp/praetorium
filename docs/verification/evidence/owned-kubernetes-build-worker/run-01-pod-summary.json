@@ -1,0 +1,35 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "praetorium-build-worker-probe-20261017",
+    "namespace": "praetorium-build",
+    "uid": "41317fd8-697f-46b5-9c6b-769072550d37",
+    "ownerRun": "bw-20261017-1000-001",
+    "creationTimestamp": "2026-10-17T04:06:55Z"
+  },
+  "requestHash": "b597ad104a0738955784d7e4ac899c12243c2b33eb540bc8449d9594d35c00b7",
+  "phase": "Failed",
+  "initContainers": [
+    {
+      "name": "direct-projected-reader-check",
+      "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+      "exitCode": 0,
+      "reason": "Completed"
+    },
+    {
+      "name": "prepare-runtime-secrets",
+      "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+      "exitCode": 0,
+      "reason": "Completed"
+    }
+  ],
+  "containers": [
+    {
+      "name": "build-worker",
+      "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+      "exitCode": 1,
+      "reason": "Error"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "note": "The registry auth file used only a fake structurally valid test credential for local BuildKit config validation. No network request was made. Credential bytes intentionally omitted.",
+  "path": "prep/registry/config.json",
+  "mode": "600",
+  "parentMode": "700"
+}

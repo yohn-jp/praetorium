@@ -1,0 +1,121 @@
+{
+  "capturedAt": "2026-10-17T04:15:41.731Z",
+  "current": {
+    "namespace": {
+      "kind": "Namespace",
+      "namespace": null,
+      "name": "praetorium-build",
+      "uid": "a689e92e-3c26-4b14-9c3f-554a9433d56f",
+      "resourceVersion": "4082",
+      "ownerRun": "bw-20261017-1000-001"
+    },
+    "pod": {
+      "kind": "Pod",
+      "namespace": "praetorium-build",
+      "name": "praetorium-build-worker-probe-20261017",
+      "uid": "d74def6a-0e01-44a4-b609-59d9fa3278f8",
+      "resourceVersion": "4784",
+      "ownerRun": "bw-20261017-1000-001"
+    },
+    "serviceAccount": {
+      "kind": "ServiceAccount",
+      "namespace": "praetorium-build",
+      "name": "praetorium-build-worker",
+      "uid": "d2065dfc-877e-4963-a631-ebbb59887375",
+      "resourceVersion": "4102",
+      "ownerRun": "bw-20261017-1000-001"
+    },
+    "configMap": {
+      "kind": "ConfigMap",
+      "namespace": "praetorium-build",
+      "name": "praetorium-build-worker-config",
+      "uid": "fee77f84-8deb-467f-8264-c100aa767bdd",
+      "resourceVersion": "4103",
+      "ownerRun": "bw-20261017-1000-001"
+    },
+    "secrets": [
+      {
+        "kind": "Secret",
+        "namespace": "praetorium-build",
+        "name": "praetorium-bw-probe-buildkit-20261017",
+        "uid": "2b945bcb-7817-4092-ad95-dbecc0dd8eb0",
+        "resourceVersion": "4104",
+        "ownerRun": "bw-20261017-1000-001"
+      },
+      {
+        "kind": "Secret",
+        "namespace": "praetorium-build",
+        "name": "praetorium-bw-probe-registry-push-20261017",
+        "uid": "8b876858-83f9-452b-8b5f-020e155a67a4",
+        "resourceVersion": "4723",
+        "ownerRun": "bw-20261017-1000-001"
+      },
+      {
+        "kind": "Secret",
+        "namespace": "praetorium-build",
+        "name": "praetorium-bw-probe-registry-pull-20261017",
+        "uid": "72da7438-1870-46eb-a786-301dbebe0380",
+        "resourceVersion": "4106",
+        "ownerRun": "bw-20261017-1000-001"
+      },
+      {
+        "kind": "Secret",
+        "namespace": "praetorium-build",
+        "name": "praetorium-bw-probe-control-plane-20261017",
+        "uid": "927c2897-e4ac-4fb4-9b4d-10b97e01ddcf",
+        "resourceVersion": "4107",
+        "ownerRun": "bw-20261017-1000-001"
+      },
+      {
+        "kind": "Secret",
+        "namespace": "praetorium-build",
+        "name": "praetorium-bw-probe-signing-20261017",
+        "uid": "bdc1a19c-d05b-43cc-afd4-847b35ad4242",
+        "resourceVersion": "4108",
+        "ownerRun": "bw-20261017-1000-001"
+      },
+      {
+        "kind": "Secret",
+        "namespace": "praetorium-build",
+        "name": "praetorium-bw-probe-image-pull-20261017",
+        "uid": "91c7e6a0-3f5a-41ef-92a7-160f3ccde7c5",
+        "resourceVersion": "4109",
+        "ownerRun": "bw-20261017-1000-001"
+      }
+    ]
+  },
+  "comparisonToRun2": {
+    "configMapUidUnchanged": true,
+    "configMapResourceVersionUnchanged": true,
+    "serviceAccountUidUnchanged": true,
+    "serviceAccountResourceVersionUnchanged": true,
+    "secretUidsUnchanged": [
+      {
+        "name": "praetorium-bw-probe-buildkit-20261017",
+        "uidUnchanged": true
+      },
+      {
+        "name": "praetorium-bw-probe-registry-push-20261017",
+        "uidUnchanged": true
+      },
+      {
+        "name": "praetorium-bw-probe-registry-pull-20261017",
+        "uidUnchanged": true
+      },
+      {
+        "name": "praetorium-bw-probe-control-plane-20261017",
+        "uidUnchanged": true
+      },
+      {
+        "name": "praetorium-bw-probe-signing-20261017",
+        "uidUnchanged": true
+      },
+      {
+        "name": "praetorium-bw-probe-image-pull-20261017",
+        "uidUnchanged": true
+      }
+    ],
+    "secretResourceVersionsFromRun2": "not captured; cannot compare",
+    "registryPushSecretChangedBetweenRuns": "owner-verified same object UID; updated only its dummy auth-shaped data before run3, resourceVersion is current only"
+  }
+}

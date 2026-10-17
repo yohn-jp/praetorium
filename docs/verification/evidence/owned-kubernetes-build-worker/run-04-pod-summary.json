@@ -1,0 +1,55 @@
+{
+  "namespace": "praetorium-build",
+  "name": "praetorium-build-worker-probe-20261017",
+  "uid": "d73943fd-c716-410e-982d-bb7baf6b6d84",
+  "ownerRun": "bw-20261017-1000-001",
+  "phase": "Succeeded",
+  "nodeName": "praetorium-owned-kube-fresh-20261017-control-plane",
+  "containers": [
+    {
+      "name": "direct-projected-reader-check",
+      "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+      "exitCode": 0,
+      "reason": "Completed",
+      "user": {
+        "linux": {
+          "gid": 10001,
+          "supplementalGroups": [
+            10001
+          ],
+          "uid": 10001
+        }
+      }
+    },
+    {
+      "name": "prepare-runtime-secrets",
+      "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+      "exitCode": 0,
+      "reason": "Completed",
+      "user": {
+        "linux": {
+          "gid": 10001,
+          "supplementalGroups": [
+            10001
+          ],
+          "uid": 10001
+        }
+      }
+    },
+    {
+      "name": "build-worker",
+      "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+      "exitCode": 0,
+      "reason": "Completed",
+      "user": {
+        "linux": {
+          "gid": 10001,
+          "supplementalGroups": [
+            10001
+          ],
+          "uid": 10001
+        }
+      }
+    }
+  ]
+}

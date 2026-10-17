@@ -1,0 +1,235 @@
+{
+  "run": "bw-20261017-1000-001",
+  "cluster": "praetorium-owned-kube-fresh-20261017",
+  "method": "per-object Kubernetes DeleteOptions.preconditions.uid after live UID+owner-label check",
+  "preflight": [
+    {
+      "kind": "Pod",
+      "namespace": "praetorium-build",
+      "name": "praetorium-build-worker-probe-20261017",
+      "uid": "d73943fd-c716-410e-982d-bb7baf6b6d84",
+      "resourceVersion": "5050",
+      "ownerRun": "bw-20261017-1000-001"
+    },
+    {
+      "kind": "Secret",
+      "namespace": "praetorium-build",
+      "name": "praetorium-bw-probe-buildkit-20261017",
+      "uid": "2b945bcb-7817-4092-ad95-dbecc0dd8eb0",
+      "resourceVersion": "4104",
+      "ownerRun": "bw-20261017-1000-001",
+      "dataKeys": [
+        "ca.crt",
+        "tls.crt",
+        "tls.key"
+      ]
+    },
+    {
+      "kind": "Secret",
+      "namespace": "praetorium-build",
+      "name": "praetorium-bw-probe-registry-push-20261017",
+      "uid": "8b876858-83f9-452b-8b5f-020e155a67a4",
+      "resourceVersion": "4723",
+      "ownerRun": "bw-20261017-1000-001",
+      "dataKeys": [
+        "config.json"
+      ]
+    },
+    {
+      "kind": "Secret",
+      "namespace": "praetorium-build",
+      "name": "praetorium-bw-probe-registry-pull-20261017",
+      "uid": "72da7438-1870-46eb-a786-301dbebe0380",
+      "resourceVersion": "4106",
+      "ownerRun": "bw-20261017-1000-001",
+      "dataKeys": [
+        "credential.json"
+      ]
+    },
+    {
+      "kind": "Secret",
+      "namespace": "praetorium-build",
+      "name": "praetorium-bw-probe-control-plane-20261017",
+      "uid": "927c2897-e4ac-4fb4-9b4d-10b97e01ddcf",
+      "resourceVersion": "4107",
+      "ownerRun": "bw-20261017-1000-001",
+      "dataKeys": [
+        "token"
+      ]
+    },
+    {
+      "kind": "Secret",
+      "namespace": "praetorium-build",
+      "name": "praetorium-bw-probe-signing-20261017",
+      "uid": "bdc1a19c-d05b-43cc-afd4-847b35ad4242",
+      "resourceVersion": "4108",
+      "ownerRun": "bw-20261017-1000-001",
+      "dataKeys": [
+        "private-key.pem"
+      ]
+    },
+    {
+      "kind": "Secret",
+      "namespace": "praetorium-build",
+      "name": "praetorium-bw-probe-image-pull-20261017",
+      "uid": "91c7e6a0-3f5a-41ef-92a7-160f3ccde7c5",
+      "resourceVersion": "4109",
+      "ownerRun": "bw-20261017-1000-001",
+      "dataKeys": [
+        ".dockerconfigjson"
+      ]
+    },
+    {
+      "kind": "ConfigMap",
+      "namespace": "praetorium-build",
+      "name": "praetorium-build-worker-config",
+      "uid": "fee77f84-8deb-467f-8264-c100aa767bdd",
+      "resourceVersion": "4103",
+      "ownerRun": "bw-20261017-1000-001"
+    },
+    {
+      "kind": "ServiceAccount",
+      "namespace": "praetorium-build",
+      "name": "praetorium-build-worker",
+      "uid": "d2065dfc-877e-4963-a631-ebbb59887375",
+      "resourceVersion": "4102",
+      "ownerRun": "bw-20261017-1000-001"
+    },
+    {
+      "kind": "Namespace",
+      "namespace": null,
+      "name": "praetorium-build",
+      "uid": "a689e92e-3c26-4b14-9c3f-554a9433d56f",
+      "resourceVersion": "4082",
+      "ownerRun": "bw-20261017-1000-001"
+    }
+  ],
+  "deleted": [
+    {
+      "kind": "Pod",
+      "name": "praetorium-build-worker-probe-20261017",
+      "namespace": "praetorium-build",
+      "uid": "d73943fd-c716-410e-982d-bb7baf6b6d84",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Pod",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "Secret",
+      "name": "praetorium-bw-probe-buildkit-20261017",
+      "namespace": "praetorium-build",
+      "uid": "2b945bcb-7817-4092-ad95-dbecc0dd8eb0",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Status",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "Secret",
+      "name": "praetorium-bw-probe-registry-push-20261017",
+      "namespace": "praetorium-build",
+      "uid": "8b876858-83f9-452b-8b5f-020e155a67a4",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Status",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "Secret",
+      "name": "praetorium-bw-probe-registry-pull-20261017",
+      "namespace": "praetorium-build",
+      "uid": "72da7438-1870-46eb-a786-301dbebe0380",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Status",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "Secret",
+      "name": "praetorium-bw-probe-control-plane-20261017",
+      "namespace": "praetorium-build",
+      "uid": "927c2897-e4ac-4fb4-9b4d-10b97e01ddcf",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Status",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "Secret",
+      "name": "praetorium-bw-probe-signing-20261017",
+      "namespace": "praetorium-build",
+      "uid": "bdc1a19c-d05b-43cc-afd4-847b35ad4242",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Status",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "Secret",
+      "name": "praetorium-bw-probe-image-pull-20261017",
+      "namespace": "praetorium-build",
+      "uid": "91c7e6a0-3f5a-41ef-92a7-160f3ccde7c5",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Status",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "ConfigMap",
+      "name": "praetorium-build-worker-config",
+      "namespace": "praetorium-build",
+      "uid": "fee77f84-8deb-467f-8264-c100aa767bdd",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Status",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "ServiceAccount",
+      "name": "praetorium-build-worker",
+      "namespace": "praetorium-build",
+      "uid": "d2065dfc-877e-4963-a631-ebbb59887375",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "ServiceAccount",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    },
+    {
+      "kind": "Namespace",
+      "name": "praetorium-build",
+      "namespace": null,
+      "uid": "a689e92e-3c26-4b14-9c3f-554a9433d56f",
+      "ownerRun": "bw-20261017-1000-001",
+      "httpStatus": 200,
+      "responseKind": "Namespace",
+      "responseReason": null,
+      "responseCode": null,
+      "verifiedAbsent": true
+    }
+  ],
+  "namespaceVerifiedAbsent": true,
+  "secretValuesOmitted": true,
+  "automaticNamespaceResourcesRemovedByNamespaceDeletion": [
+    "default ServiceAccount",
+    "kube-root-ca.crt ConfigMap"
+  ]
+}

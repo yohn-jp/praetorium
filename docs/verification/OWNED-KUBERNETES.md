@@ -3,7 +3,8 @@
 This is a bounded Kubernetes verification record for the T12/T14 work across
 two explicitly owned disposable Kind clusters. It covers product cluster
 creation and ownership, a two-policy admission guard subset, and server-side
-dry-run Pod and NetworkPolicy requests. It does not certify the integrated
+dry-run Pod and NetworkPolicy requests, plus one short-lived Build Worker
+secret-init/constructor component probe. It does not certify the integrated
 platform, producer, runtime networking, or a deployment. No production
 Cloudflare, D1, DNS, K3s, NixOS, GitHub App, registry, or Scriptorium access
 was used.
@@ -20,6 +21,20 @@ node image was pinned as
 `kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f`.
 Every Kubernetes command used the cluster's private explicit kubeconfig and
 context. Its kubeconfig contents are not included here.
+
+The second cluster used for the fresh policy and Build Worker probes was
+`praetorium-owned-kube-fresh-20261017`, context
+`kind-praetorium-owned-kube-fresh-20261017`, cluster ID
+`clu_01M53XVA9C0V0QKDWDSV50WGPD`. Its node was
+`praetorium-owned-kube-fresh-20261017-control-plane`, UID
+`ab2091e1-c844-4201-9859-2a43d97056e1`, Ready and marked
+`praetorium.io/disposable=true`; it also reported Kubernetes v1.35.0. The
+pinned Kind node image was the same v1.35.0 digest above. Read-only Podman
+inspection of the exact Kind node returned container ID
+`81354689170d5502b180ab5b85b3103b2b9ffb8b394e0a1870fd8e816cfe9ba1`, image ID
+`17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139`, and
+RepoDigests `docker.io/kindest/node@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f` and
+`docker.io/kindest/node@sha256:b7f5e1f621afb1156eb0f27f26c804e5265c07d8e9c55516d25d66400043629b`. Only the container ID, image ID, and RepoDigests were inspected; container environment and mounts were not read.
 
 The original tenant Pod policy behavior probe used source checkpoint
 `137bc1799663a06c03c0d8e260d401b7cdb8f359`. The Pod policy YAML still has
@@ -309,8 +324,116 @@ The IPv6 change was integrated after this live probe at main commit
 policy file hashes at that commit are byte-identical to worker `522af7c`. The
 probe used the worker checkout and did not rerun the integrated product
 render/guard path, so that path still needs an integration recheck. The
-secret-mount metadata probe is complete. The explicitly owned cluster is
-retained for the separately bounded Build Worker private-copy/init-component
-check; its completion is not implied here. Kind's default networking does not
-certify NetworkPolicy packet enforcement, so CNI enforcement remains
-**NOT_CHECKED**; no producer artifact or integrated T14 flow was used.
+Build Worker secret-mount and runtime-init component checks are complete as
+described below. The owned cluster remains available for a separately bounded
+T07 packet-flow check; no result from that check is implied here. Kind's
+networking does not certify NetworkPolicy packet enforcement, so CNI
+enforcement remains **NOT_CHECKED**; no producer artifact or integrated T14
+flow was used.
+
+## Build Worker projected-secret preparation and constructor check
+
+The filesystem metadata probe above was followed by a bounded component check
+using the actual Build Worker image produced from Praetorium commit
+`431dbe1c7c86251894efea3de2cf0ec94499ca10`. The verified registry image
+manifest digest was
+`sha256:32d276e664d149a6452bf8ddfb09419972f33dc0f120e742609d77b75c58c09f` and
+its config digest was
+`sha256:7519315752c4345b52b1ef9a52ddec506d827b24f86f6877e06fd3c697499008`.
+The image was loaded into the owned Kind node from a Podman-converted OCI
+archive (archive SHA-256
+`aeeaaa5bdb99e7d1d96a7aec597b07ccacf25fdf935cc5d947570f399814135d`, archive
+manifest digest `sha256:8c682438aa40641e7765360bf1ac871c679d8f29dc2c958cafa9d4c15f2496fb`).
+OCI conversion repacked layers, so its manifest digest differs from the
+BuildKit registry manifest; parsed image configuration and rootfs diff IDs
+were checked for semantic equality. Kubernetes reported image ID
+`sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64` for
+all three containers. The local probe tag used `imagePullPolicy: Never`; no
+pull was performed. The source image was built with a private component-test
+input setting the buildctl path to `/usr/local/bin/buildctl`; that is a test
+image input, not proof that the repository test inventory contains this path.
+At the evidence base HEAD `f7fdb88e8653ec30b737901920586d71e9b4cbd4`, the
+relevant `apps/build-worker`, `packages`, `plugins/buildkit`, Build Worker
+Dockerfile, and Kubernetes Build Worker manifest had no diff from source
+commit `431dbe1`.
+The committed image inspection summary is
+[`build-worker-image-summary.json`](evidence/owned-kubernetes-build-worker/build-worker-image-summary.json).
+
+The Pod shape came from the canonical `build-services.yaml` Build Worker
+deployment template, with a test-only init check and a main command that only
+constructed the worker. The `0440` Secret projection mode was represented as
+Kubernetes numeric mode 288. The Pod used UID/GID/fsGroup 10001, restricted
+security settings, read-only root filesystem, the actual runtime-secret
+preparation init command, and the same two `emptyDir` roles as the product
+template. Unique ephemeral Secrets contained only benign test-shaped
+credentials and a test signing key. They were not GitHub App, Scriptorium,
+production registry, or production BuildKit credentials.
+
+The first run's init containers both exited 0, but the main test command failed
+with a JavaScript syntax error from the probe harness. The second run used the
+corrected harness and the same Pod request later used by the fourth run; its
+main command returned the generic `private runtime metadata or constructor
+validation failed`. That failure was not localized. The fake test registry-push
+configuration was subsequently changed to a structurally valid GHCR auth
+shape; no real credential was introduced. The request SHA-256 for runs two and
+four is
+`53db7221de13a59a324f31a0fbfe23519dcfa6e42b0ceace12dfc970cd546a04`. Run
+three used a diagnostic command and request SHA-256
+`c5634c56803ddb7d3c84795495ef1d43754cd305881bc6cff7e9f6981a54945e`; each
+stage reported success. The fourth run repeated the original run-two command
+and Pod specification, without separate validator warm-ups, against the
+shape-valid fake test auth input and succeeded. No run-two Secret
+resource-version snapshot exists, so the evidence does not claim all Secret
+data was unchanged between the two runs.
+
+In the successful runs, the direct-projection check confirmed that the actual
+strict readers rejected the raw projected Build Service token, registry-pull
+credential, and signing-key files. The actual `prepare-runtime-secrets` init
+container then exited 0. The main command verified seven private directories
+owned by UID/GID 10001 with mode `0700`, seven private files owned by the same
+UID/GID with mode `0600` and link count 1, and an executable buildctl path. It
+called the real `createBuildWorker(process.env)` constructor and reported
+successful initialization. The command did not call `runOnce`, start a queue
+loop, perform a build, or issue a service/network request. The logs contain
+only pass/fail stages and filesystem metadata, not secret payloads.
+
+| Attempt | Pod UID                                | Main result                                                              | Evidence                                                                                                                                                                                                                                                 |
+| ------- | -------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1       | `41317fd8-697f-46b5-9c6b-769072550d37` | Harness syntax error; both init containers exited 0                      | Request SHA `b597ad104a0738955784d7e4ac899c12243c2b33eb540bc8449d9594d35c00b7`; main-log SHA `cb0bafba45f1a84fa5ecb6c560208c7269088476840a861f434d76ce8fff9f29`; safe Pod summary SHA `78ffea038bdfd24cae5825b4424504b03d0b1195ea74573bb98484f584200103` |
+| 2       | `2b27685a-28b2-412b-8bf4-97a645208df3` | Generic metadata/constructor failure; unresolved                         | Main-log SHA `9171eb556ac4d819ecfd52eb92c99b78675c23099f2e334e60c8047ac0ac7e7b`; safe Pod summary SHA `ff8de84d9bb0e137f925ff4af5c2ea13bb21615244d52df3b73632853e512f19`                                                                                 |
+| 3       | `d74def6a-0e01-44a4-b609-59d9fa3278f8` | Diagnostic checks and constructor passed                                 | Main-log SHA `cb2686cf787807eb041061e7c39e95390335fb384fe713f10c2ed258164825fe`                                                                                                                                                                          |
+| 4       | `d73943fd-c716-410e-982d-bb7baf6b6d84` | Init, metadata checks, buildctl executable check, and constructor passed | Main-log SHA `b777300ff00ce001142b0d273cc2c401721b1473292e02872080e7bdd32ebf50`                                                                                                                                                                          |
+
+All four Pods used the image config ID above. In run four, the Pod summary
+reported exit code 0 for the direct-reader check, runtime-secret preparation,
+and Build Worker main container. The ConfigMap and ServiceAccount UIDs and
+resource versions remained unchanged across the captured run-three/run-four
+snapshots; all six Secret UIDs remained stable. The registry-push Secret's
+test data was changed before run three, and its current resource version was
+recorded. The run-four summary and resource metadata are preserved in
+[`run-04-pod-summary.json`](evidence/owned-kubernetes-build-worker/run-04-pod-summary.json)
+and
+[`run-04-resource-metadata.json`](evidence/owned-kubernetes-build-worker/run-04-resource-metadata.json).
+The corresponding safe run-one and run-two Pod summaries are
+[`run-01-pod-summary.json`](evidence/owned-kubernetes-build-worker/run-01-pod-summary.json)
+and
+[`run-02-pod-summary.json`](evidence/owned-kubernetes-build-worker/run-02-pod-summary.json).
+
+Cleanup used live owner-marker and UID checks followed by per-object delete
+requests with UID preconditions. The Pod, six test Secrets, ConfigMap,
+ServiceAccount, and unique namespace each returned HTTP 200 and were verified
+absent. The report explicitly omits Secret values; after copying the sanitized
+evidence, the local test credential and test-key files were unlinked. The
+cleanup report is
+[`cleanup-report.json`](evidence/owned-kubernetes-build-worker/cleanup-report.json),
+SHA-256 `e57f4d91142af73080807da912286038ed46f285e4fa14b93541c669827d1e6f`.
+The evidence directory contains the request, status summary, metadata-only
+logs, and cleanup record; it contains no kubeconfig, secret data, or private
+key. Its per-file SHA-256 manifest is
+[`SHA256SUMS`](evidence/owned-kubernetes-build-worker/SHA256SUMS).
+
+This proves the actual runtime-secret init path and constructor-only component
+can run under the tested restricted Pod shape with synthetic credentials. It
+does not prove a real producer artifact handshake, BuildKit job, GHCR push,
+queue processing, full staged infrastructure apply, CNI packet enforcement,
+or the end-to-end T14 flow. Production infrastructure was not applied.

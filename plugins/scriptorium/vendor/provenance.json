@@ -1,12 +1,12 @@
 {
   "schemaVersion": "scriptorium-build-catalog-resolver-provenance/v1",
-  "producerRevision": "a03ba9b5e3bb79cc5756885d582bca0266fb85e9",
+  "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
   "sourceTreeClean": true,
   "bundlePath": "build-catalog.mjs",
-  "bundleDigest": "sha256:229aabfee2ecc5c72a06a4482938d934d3f4735b85078a52e6dd8d8c87036c6b",
+  "bundleDigest": "sha256:2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18",
   "declarationPath": "build-catalog.d.mts",
   "declarationDigest": "sha256:4c5c02dcf633dea98e3a984b5e0a296aabb884bedab2b80d33258a5dae06f6b0",
-  "trustedModuleDigest": "sha256:dd41e1590c8343e234c9618f48032118f18f120393a1174bb942fc04adabe2e5",
+  "trustedModuleDigest": "sha256:7a223ada68d3f08819ea330da85faa1efa0c89c59af35d850dd16200a516f3c2",
   "trustedModules": [
     {
       "id": "story",
@@ -52,7 +52,7 @@
   "sourceDigests": [
     {
       "path": "packages/module-runtime/src/build-catalog.ts",
-      "digest": "sha256:610b07b80a3d92eb1e83cd7ecf2b182c9af3b15f90b3c3737162ecadb1486c9e"
+      "digest": "sha256:71bc2017784f2c0d6ee2a0ca3029fce0a7e6440923e5cd7caac83944a6217c89"
     },
     {
       "path": "packages/module-runtime/src/module-plan.ts",
@@ -68,7 +68,7 @@
     },
     {
       "path": "scripts/hosted-build.mjs",
-      "digest": "sha256:237ebc77f3b34abdc3c17d5eb4d32c64e83539ccdfe333923ca08e9e2fb9cc67"
+      "digest": "sha256:421f4edc7d4e677c6a423f6e8404ae0e4f22e0b7873da26acd1434fee1428eb4"
     },
     {
       "path": "scripts/build-catalog-bundle.mjs",

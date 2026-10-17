@@ -1,10 +1,10 @@
 {
   "checkedAt": "2026-10-17",
   "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
-  "producerRevision": "1950ba5b729e5c1611124abe78722c70362c08b2",
-  "previousProducerRevision": "4c163a3c8162b5d7bc4becb63f00a04617cab5dc",
+  "producerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
+  "previousProducerRevision": "1950ba5b729e5c1611124abe78722c70362c08b2",
   "artifactDigest": null,
-  "artifactDigestReason": "No current-main OCI reference or digest was supplied. The newly added docs/verification/P13-MODEL-OCI-LIFECYCLE.md reports a local full-profile manifest digest sha256:7a2e4fd5d00b36f90a19cfe90b30c6c0c5e01df4f922650696be813abd006b07 for candidate source commit e85c173a318e17eed084bbfb4dde2411a2abc2cf; that report says main advanced beyond the isolated candidate, and the image remained local. It is not a digest for current main 1950ba5b729e5c1611124abe78722c70362c08b2 or a published reference. Earlier anonymous GHCR and GitHub package API lookups returned HTTP 401, which does not establish registry absence.",
+  "artifactDigestReason": "No current-main OCI manifest digest or published reference was supplied for e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f (tree 7c54b5ae786979259f2b616655996cb7eb8e69c9). The refreshed docs/verification/P13-BROWSER-RECOVERY.md reports a local Core image manifest digest sha256:cb6d9d3e792fba6020c561946b07c07aa4f7c7043aaed3597cefbeab586d6a05 for ancestor source bc2b0936d418d1d8f5dcd8b16e74d1f9f3d65c0f (tree 480aadf546cd28944c5a242ef9cd0ac55b215616); current main has advanced beyond that tested tree. The image remained local. The full-profile model lifecycle report separately records local digest sha256:7a2e4fd5d00b36f90a19cfe90b30c6c0c5e01df4f922650696be813abd006b07 for candidate source e85c173a318e17eed084bbfb4dde2411a2abc2cf, also not current main and not published. Earlier anonymous GHCR and GitHub package API requests returned HTTP 401; registry absence is not inferred.",
   "producerModified": false,
   "capabilities": [
     {
@@ -22,7 +22,7 @@
         "Dockerfile"
       ],
       "missing": "At 1950ba5b all eight module packages remain in profiles/full.json, while scripts/profile-build.mjs accepts only core/full and resolves ModuleManifest through resolveModulePlan. Its generated server exports remain profile, moduleManifests, moduleLoaders, moduleDirectories and moduleWorkerEntries; the browser exports profile and moduleBrowserLoaders. There is no versioned scriptorium-build/v1 BuildCatalog resolver, digest/resource catalog, immutable Runtime Base or Build Kit, approved gateway.v0 receipt, or versioned composition manifest binding the selected image closure.",
-      "attempt": "Read-only detached snapshot of remote main at 1950ba5b729e5c1611124abe78722c70362c08b2; compared 4c163a3c8162b5d7bc4becb63f00a04617cab5dc..1950ba5b729e5c1611124abe78722c70362c08b2 and inspected profile-build/profile-package, module-runtime exports, package manifests, Dockerfile and verification records. The build entry points and resolver contract are unchanged; no current producer build or conformance run was performed.",
+      "attempt": "Read-only detached snapshot of remote main at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f; compared 1950ba5b729e5c1611124abe78722c70362c08b2..e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f and rechecked profile-build/profile-package, module-runtime exports, manifests and Dockerfile. No BuildCatalog, Build Kit, receipt or composition-manifest contract was added; no producer build or conformance run was performed.",
       "minimumUnblock": "Existing producer coordinator publishes the versioned resolver/catalog and immutable Runtime Base/Build Kit recipe, then supplies owned disposable-image evidence for Core and two distinct legal non-preset compositions with backend/browser/native closure verification."
     },
     {
@@ -31,10 +31,11 @@
       "gate": "BLOCKED",
       "availableSourcePaths": [
         "packages/api/src/server.ts",
-        "packages/api/src/server.test.ts"
+        "packages/api/src/server.test.ts",
+        "packages/module-runtime/src/module-runtime.ts"
       ],
-      "missing": "At 1950ba5b createServer({ authToken, ... }) still uses SCRIPTORIUM_AUTH_TOKEN, /api/login owner-cookie sessions and the existing /api/version auth modes. New owner-only job-history routes and async domain-job tracking do not verify an issuer/JWKS AccessGrant, bind repository/instance/runtime epoch, enforce hosted principal roles, or accept a signed mutation receipt.",
-      "attempt": "Read current API authentication and route dispatch at 1950ba5b729e5c1611124abe78722c70362c08b2 and compared 4c163a3c8162b5d7bc4becb63f00a04617cab5dc..1950ba5b729e5c1611124abe78722c70362c08b2. The new async action and job-history routes remain owner-cookie based; no hosted grant implementation or conformance run was found or performed. The publishing module share grants are content-sharing records, not Platform AccessGrant verification.",
+      "missing": "At e62bf91 createServer({ authToken, ... }) still uses SCRIPTORIUM_AUTH_TOKEN, /api/login owner-cookie sessions and the existing /api/version auth modes. ModuleRuntime additionally rejects compute HTTP contributions using GET/HEAD, but that method/effect validation does not verify an issuer/JWKS AccessGrant, bind repository/instance/runtime epoch, enforce hosted principal roles, or accept a signed mutation receipt.",
+      "attempt": "Read current API authentication and route dispatch at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f and compared the 1950..e62 relevant source diff. The module-runtime change restricts HTTP methods for compute effects but adds no hosted grant verifier or assignment binding; no grant conformance run was performed. Publishing share grants remain content-sharing records.",
       "minimumUnblock": "Existing producer coordinator delivers hosted-grant and role enforcement plus negative issuer/repository/instance/epoch/expiry and read-only-role tests against an owned disposable runtime; static-token fallback is rejected."
     },
     {
@@ -48,7 +49,7 @@
         "docs/verification/P13-BROWSER-RECOVERY.md"
       ],
       "missing": "At 1950ba5b CoreStoreOptions.githubToken, SCRIPTORIUM_GITHUB_TOKEN and the temporary GIT_ASKPASS helper remain the credential entry points. The 4c..1950 CoreStore changes add bounded historical-metadata reads/caching, not assignment-enforced repository binding, a renewable installation-token GitCredentialProvider, App-scope verification or a signed actor-bound publish authorization receipt. Existing GitHub acceptance uses a supplied token and does not prove App-token renewal.",
-      "attempt": "Read CoreStoreOptions, constructor/token handling and Git askpass execution in the detached 1950ba5b tree and reviewed its CoreStore diff from 4c163a3c8162b5d7bc4becb63f00a04617cab5dc. The diff contains no credential-provider seam. No live credential-expiry or App-installation push test was run.",
+      "attempt": "Read CoreStoreOptions, constructor/token handling and Git askpass execution in the detached e62bf91 tree and searched the 1950..e62 source diff. CoreStoreOptions.githubToken, SCRIPTORIUM_GITHUB_TOKEN and GIT_ASKPASS remain; no credential-provider seam was added. No live expiry/renewal or App-installation push test was run.",
       "minimumUnblock": "Existing producer coordinator delivers numeric repository assignment enforcement, scoped installation-token brokerage and renewal, plus an owned private test-repository run proving fresh clone, mismatch rejection, actual expiry/renewal and actor-authorized push."
     },
     {
@@ -66,7 +67,7 @@
         "tests/e2e/job-inbox.acceptance.spec.ts"
       ],
       "missing": "At 1950ba5b the module-runtime package additionally exports DomainJobActionExecutor and DomainJobProgressSink and ActionHostContext.trackDomainJob; ModuleRuntime propagates declared job metadata and progress. packages/api/src/server.ts durably tracks the registered speaker-eval, speaker-retrain, aspect-review, zukan-proposal and summary-refresh types, with a maximum of 32 active domain jobs. Owner-cookie GET /api/jobs, GET /api/jobs/:id and GET /api/jobs/events expose history; an owner module-action POST with Prefer: respond-async can return 202 with X-Scriptorium-Job-Id and Location. This is useful internal observation for selected declared jobs, but there is still no versioned hosted status/activity contract, /api/platform/v1/status, /quiesce or /resume, operation/runtime-epoch fence, or complete API/MCP/publication activity snapshot and safe quiesce transition.",
-      "attempt": "Read the 4c..1950 diff for action job descriptors, ModuleRuntime host tracking, async API dispatch and job persistence; inspected the current route auth checks and searched the full source tree for hosted status/quiesce/resume interfaces. No build or quiesce conformance run was performed.",
+      "attempt": "Read the 1950..e62 module-runtime/API diff and searched the current source for hosted status, quiesce, resume and assignment/epoch contracts. The diff adds no such interface; existing owner-cookie job history and bounded domain-job tracking remain internal observations. No quiesce conformance run was performed.",
       "minimumUnblock": "Existing producer coordinator delivers authenticated versioned status/activity and quiesce/resume interfaces, then proves in-flight work, checkpoints, uncertain publication, duplicate quiesce, stale resume and healthy-empty replacement cases."
     },
     {
@@ -82,11 +83,12 @@
         "docs/verification/P13-BROWSER-RECOVERY.md",
         "docs/verification/P13-MODEL-OCI-LIFECYCLE.md",
         "tests/integration/model-oci-lifecycle.acceptance.mjs",
-        "tests/integration/model-oci-lifecycle.container.mjs"
+        "tests/integration/model-oci-lifecycle.container.mjs",
+        "tests/e2e/container-recovery.acceptance.mjs"
       ],
-      "missing": "The current tree supplies a profile-image Dockerfile and generic health/readiness/profile metadata, but no current-main published OCI reference/digest, hosted assignment/composition metadata or current-main stable-origin reconstruction proof. The new P13 model lifecycle record reports a local full-profile image digest sha256:7a2e4fd5d00b36f90a19cfe90b30c6c0c5e01df4f922650696be813abd006b07 for candidate source commit e85c173a318e17eed084bbfb4dde2411a2abc2cf, explicitly noting that main advanced beyond that isolated candidate and that the image remained local. It covers model/worker lifecycle and a local replacement container, not browser-journal reconciliation at a stable hosted origin or assignment/composition metadata bound to the same image. The record is not current-main S05 acceptance.",
-      "attempt": "Read the current Dockerfile, runtime metadata routes, OCI/acceptance docs and the new P13-MODEL-OCI-LIFECYCLE candidate record and test at 1950ba5b729e5c1611124abe78722c70362c08b2. The record identifies its exact local candidate digest/source above; no current-main image was built or published and no hosted replacement run was performed. Earlier anonymous GHCR and GitHub package API queries returned HTTP 401; no registry credentials were used and registry absence is not claimed.",
-      "minimumUnblock": "Existing producer coordinator supplies an immutable hosted composition image and digest plus a disposable replacement run at a stable origin; verify confirmed repository data, browser journal reconciliation, and runtime/OCI composition metadata against the same digest."
+      "missing": "The new Composed runtime rerun in docs/verification/P13-BROWSER-RECOVERY.md records a real PROFILE=core local OCI image and browser/GitHub recovery run for ancestor source bc2b0936d418d1d8f5dcd8b16e74d1f9f3d65c0f (tree 480aadf546cd28944c5a242ef9cd0ac55b215616), with manifest digest sha256:cb6d9d3e792fba6020c561946b07c07aa4f7c7043aaed3597cefbeab586d6a05. It reports Chromium IndexedDB retained across /data deletion/recreation at the same origin, Core replay, explicit publication and conflict preservation on a dedicated private synthetic repository. This is useful Core component evidence, but the exact current-main tree is e62bf91 (7c54b5ae786979259f2b616655996cb7eb8e69c9), which has no matching image/proof in that report. No public runtime metadata binds a hosted assignment/composition identity to an OCI image. The separate full-profile model lifecycle digest is for older isolated candidate source e85c173a and is local only. S05 therefore remains incomplete for current main.",
+      "attempt": "Read current Dockerfile/API metadata and compared the 1950..e62 S01-S05 paths. Inspected the new Composed runtime rerun in P13-BROWSER-RECOVERY and verified that its recorded source bc2b0936d418d1d8f5dcd8b16e74d1f9f3d65c0f is an ancestor with tree 480aadf546cd28944c5a242ef9cd0ac55b215616, distinct from current e62 tree 7c54b5ae786979259f2b616655996cb7eb8e69c9. The recorded image remained local; no current-main image was built or published, and no current-main hosted replacement run was performed.",
+      "minimumUnblock": "Existing producer coordinator supplies public runtime metadata bound to a hosted assignment, composition and image identity, then reruns the disposable stable-origin browser recovery against the exact current-main image and corroborates the reported metadata with its OCI/runtime observation."
     }
   ]
 }

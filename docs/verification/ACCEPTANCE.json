@@ -578,5 +578,37 @@
     "admissionDenialFixHead": "8f6ef1a",
     "admissionDenialReviewedWorkerHead": "33df1382bbca8dac5e667b355c4fd8859924b0ad",
     "admissionDenialCorrection": "Kubernetes v1.35.5 omitted validation reason maps to 422/Invalid. Status.message contains a resource/name wrapper and Status.details.causes contains exact VAP/binding/validation text. Root focused 4/4 passed; independent source-based review closed both reader mismatches. No live API acceptance."
+  },
+  "latestDeliveryVerification": {
+    "head": "4f52afd5de0d45ccc51d1b87db7ec95d71b2140f",
+    "document": "docs/verification/DELIVERY-4f52afd.md",
+    "frozenInstall": "passed",
+    "requiredCheck": "passed; 29/29 cached test-stage tasks",
+    "infraAndMapping": {
+      "passed": 56,
+      "failed": 0,
+      "skipped": 0
+    },
+    "kubernetesLocal": {
+      "passed": 4,
+      "liveAcceptance": "NOT_CHECKED"
+    },
+    "githubPartial": {
+      "passed": 6,
+      "skipped": 1,
+      "reason": "owner config absent; no live calls; fixed category still missing"
+    },
+    "fixedAcceptance": {
+      "report": "/tmp/praetorium-4f52afd-acceptance.json",
+      "generatedAt": "2026-10-17T02:07:01.714Z",
+      "inventoryId": "praetorium-t14-miniflare-4f52afd",
+      "inventoryExpiresAt": "2026-10-17T02:36:58.766984+00:00",
+      "exitCode": 2,
+      "errors": [],
+      "status": "BLOCKED",
+      "workersD1Do": "VERIFIED local only",
+      "remainingRequiredCategories": "six BLOCKED/NOT_CHECKED"
+    },
+    "productionApplied": false
   }
 }

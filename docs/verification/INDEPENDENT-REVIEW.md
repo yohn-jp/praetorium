@@ -89,3 +89,18 @@ wrapped message, and the exact inner policy/binding/validation cause; generic 40
 binding-less and evaluation/configuration errors fail. Root's four focused tests
 pass at this composed main. These fixtures follow the documented upstream error
 construction; no actual API server response or enforcement is claimed.
+
+## GitHub partial probe review
+
+The separate reviewer checked clean worker `0ad7d3f3ce8327a7c84d3cdbfc00b69313a8d14f`
+and closed the owner-input, expiry and uncertain-push findings. Descriptor reads
+reject symlink/unsafe/mutable inputs and blocking FIFOs; the effective owner-file
+expiry gates every new outbound operation while cleanup remains available.
+Unknown pushes never gain deletion authority and retain sanitized repository/ref/
+expected-commit recovery records even if a subsequent snapshot is absent. Only
+completed Git fatal HTTP 403/404 responses count as expected permission denials;
+401 and untrusted remote text stay uncertain. Fresh reviewer tests passed 6/6;
+the live test skipped/BLOCKED without owner config, and no network was used.
+Sol integrated the four isolated commits through `4f52afd`, reran the 6 local tests,
+and confirmed the fixed GitHub category remains absent. This is review of the
+partial probe implementation, not real App/broker renewal or T14 certification.

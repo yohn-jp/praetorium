@@ -22,6 +22,8 @@ The current Worker test covers all four migrations, persistent repository DO coo
 
 ## Latest integrated delta
 
+Latest delivery source cut `4f52afd` passes required install/check, infra+mapping 56/56, Kubernetes local 4/4, and GitHub guard 6/6 (live App probe 1 SKIP/BLOCKED). The actual fixed Worker/D1/DO category passes; aggregate remains exit 2 with six blocked categories and errors `[]`. Production files match `b3fbe6d`; subsequent work adds reviewed acceptance probes/docs. Full migration, deployment readiness and live deployment remain unfulfilled. See [the final source-cut verification and remaining implementations](DELIVERY-4f52afd.md).
+
 Main source cut `b3fbe6d` composes static RBAC/admission/network policies, staged guard-before-bootstrap apply, the pinned Kind facility, and Traefik tenant-route watch with priorities `1000 > 10 > 1`. Required install/check, local canonical render/failure tests, actual Worker/D1/DO and local Restic restore were rerun; independent reviewers found no remaining scoped defects. No real cluster was applied or inspected. See [the exact source-cut proof and measurements](PLATFORM-SECURITY-DELTA.md). Producer `fc4eea8` adds a Semantic browser polling fix and newer local full-profile model evidence for an earlier candidate; hosted contracts/current composition remain missing. See [the refreshed preflight](PRODUCER-fc4eea8.md).
 
 The following principal/recovery delta is historical:

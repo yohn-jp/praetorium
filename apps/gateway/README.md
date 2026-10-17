@@ -69,6 +69,23 @@ public JWK with active status. `GATEWAY_TOKEN_ENCRYPTION_KEY` is a base64url
 encoding of exactly 32 random bytes, paired with a stable key ID. Keep all
 pepper and service-auth secrets independent and private.
 
+The Worker imports the active private signing key and token-encryption key once
+per isolate, reusing each only while its exact secret value (and, for token
+encryption, key ID) is unchanged. Each request that signs or verifies a
+credential loads the public registry on demand; login, portal, direct-entry and
+liveness requests do not load it. The KV read sets `cacheTtl=30`, Cloudflare's
+minimum, and does not add a second Worker cache. Cloudflare documents KV as
+eventually consistent across locations, with changes sometimes taking 60
+seconds or more to become visible elsewhere, so this does not provide a strict
+global 30-second revocation bound ([KV consistency](https://developers.cloudflare.com/kv/concepts/how-kv-works/)). Public JWKS responses use `max-age=30`, so
+consumers may retain a returned key for a further 30 seconds. Retired keys
+remain published for existing credentials, while compromised keys are rejected
+by Gateway and omitted from JWKS. Already issued grants remain valid only until
+their embedded expiry.
+`/healthz` checks process liveness without requiring deployment bindings;
+`/readyz` still validates the active signer and configured broker before
+reporting ready.
+
 Run the focused package checks from the repository root:
 
 ```sh

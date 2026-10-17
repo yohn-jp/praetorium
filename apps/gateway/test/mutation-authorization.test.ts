@@ -70,7 +70,7 @@ async function setup(options: {
   configured?: boolean;
   ready?: boolean;
   pendingConfiguration?: boolean;
-  credentialBroker?: NonNullable<GatewayContext["githubCredentialBroker"]>;
+  credentialBroker?: Exclude<Awaited<ReturnType<GatewayContext["getGitHubCredentialBroker"]>>, undefined>;
 } = {}) {
   const pair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -239,9 +239,9 @@ async function setup(options: {
       storeEncrypted: async () => options.onCredentialStore?.(),
     } as unknown as GatewayContext["githubUserTokens"],
     controlPlane: controlPlane as unknown as GatewayContext["controlPlane"],
-    signingKey,
-    keyRegistry,
-    ...(options.credentialBroker ? { githubCredentialBroker: options.credentialBroker } : {}),
+    getKeyRegistry: async () => keyRegistry,
+    getSigningKey: async () => signingKey,
+    getGitHubCredentialBroker: async () => options.credentialBroker,
   } satisfies GatewayContext;
   const request = (body: unknown, overrides: { origin?: string; csrf?: string; cookie?: string } = {}) => new Request(
     `${ORIGIN}/api/repositories/${REPOSITORY_ID}/mutation-authorizations`,

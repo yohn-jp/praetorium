@@ -148,18 +148,19 @@ export function createRuntimeAuthProbeRoutes(context: GatewayContext): Hono {
         now,
         ttlSeconds,
       } as const;
+      const signingKey = await context.getSigningKey();
       const [valid, wrongRepository, wrongEpoch] = await Promise.all([
-        issueAccessGrant(context.signingKey, {
+        issueAccessGrant(signingKey, {
           ...common,
           id: AccessGrantId.parse(newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10)))),
           repositoryId: input.repositoryId,
         }),
-        issueAccessGrant(context.signingKey, {
+        issueAccessGrant(signingKey, {
           ...common,
           id: AccessGrantId.parse(newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10)))),
           repositoryId: differentRepository(input.repositoryId),
         }),
-        issueAccessGrant(context.signingKey, {
+        issueAccessGrant(signingKey, {
           ...common,
           id: AccessGrantId.parse(newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10)))),
           repositoryId: input.repositoryId,

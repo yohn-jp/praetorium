@@ -24,6 +24,7 @@ import {
   startGithubLogin,
   touchSession,
   verifyAccessToken,
+  type KeyRecord,
   type UserId,
   type McpCredentialId,
 } from "@praetorium/auth";
@@ -453,6 +454,7 @@ async function handleMutationAuthorization(
     if (bearerMode) {
       const host = instanceHostname(snapshot.instance.instanceId, context.config.instanceHostnameSuffix);
       const audience = `https://${host}`;
+      const keyRegistry = await context.getKeyRegistry();
       const verified = await verifyAccessToken({
         token: bearerMatch![1]!,
         expectedIssuer: context.config.origin,
@@ -464,7 +466,7 @@ async function handleMutationAuthorization(
         now,
         clockSkewSeconds: 0,
         resolveKey: async (kid) => {
-          const record = context.keyRegistry.find((candidate) =>
+          const record = keyRegistry.find((candidate) =>
             candidate.kid === kid && candidate.status !== "compromised",
           );
           if (!record) return null;
@@ -511,7 +513,7 @@ async function handleMutationAuthorization(
     );
     if (receiptTtlSeconds < 1) return accessDenied(request, context);
 
-    const issued = await issueMutationAuthorizationReceipt(context.signingKey, {
+    const issued = await issueMutationAuthorizationReceipt(await context.getSigningKey(), {
       issuer: context.config.origin,
       audience: GITHUB_PUBLISH_RECEIPT_AUDIENCE,
       subjectUserId: actorUserId,
@@ -620,7 +622,7 @@ async function handleTokenExchange(request: Request, context: GatewayContext, no
       credentialPepper: context.config.credentialPepper,
       repositoryAccessChecker: context.githubAccess,
       rateLimiter: context.tokenExchangeRateLimiter,
-      signingKey: context.signingKey,
+      signingKey: await context.getSigningKey(),
       issuer: context.config.origin,
       tokenTtlSeconds: context.config.accessGrantTtlSeconds,
       lastUsedBucketSeconds: 300,
@@ -646,14 +648,20 @@ async function handleRuntimeGitCredential(request: Request, context: GatewayCont
   const parsed = body ? RuntimeGitCredentialRequestSchema.safeParse(body) : null;
   if (!parsed?.success) return errorResponse(request, "INVALID_REQUEST", "runtime credential request is invalid", context.requestId);
   if (hasCookieName(request, SESSION_COOKIE_NAME)) return errorResponse(request, "UNAUTHENTICATED", "runtime credentials cannot use a browser session", context.requestId);
-  if (!context.githubCredentialBroker) return unavailable(request, context);
+  let githubCredentialBroker;
+  try {
+    githubCredentialBroker = await context.getGitHubCredentialBroker();
+  } catch {
+    return unavailable(request, context);
+  }
+  if (!githubCredentialBroker) return unavailable(request, context);
   const remote = request.headers.get("CF-Connecting-IP") ?? "unknown";
   try {
     const rateKey = await keyedDigest(context.config.credentialPepper, `runtime-git-credential:${remote}`);
     if (!(await context.runtimeCredentialRateLimiter.consume(rateKey, context.requestNow))) {
       return errorResponse(request, "RATE_LIMITED", "runtime credential issuance is rate limited", context.requestId);
     }
-    const result = await context.githubCredentialBroker.issue({ ...parsed.data, now: context.requestNow });
+    const result = await githubCredentialBroker.issue({ ...parsed.data, now: context.requestNow });
     if (result.status === "issued") return json(result.credential);
     if (result.status === "denied") return errorResponse(request, "UNAUTHENTICATED", "runtime credential is not authorized", context.requestId);
     return unavailable(request, context);
@@ -710,7 +718,7 @@ async function handleInstanceAccessHandoff(request: Request, context: GatewayCon
     sessionStore: context.sessionStore,
     repositoryAccessChecker: context.githubAccess,
     codePepper: context.config.handoffPepper,
-    signingKey: context.signingKey,
+    signingKey: await context.getSigningKey(),
     issuer: context.config.origin,
     tokenTtlSeconds: context.config.accessGrantTtlSeconds,
   }, {
@@ -759,7 +767,7 @@ async function handleInstanceAccessRefresh(request: Request, context: GatewayCon
     credentialPepper: context.config.credentialPepper,
     sessionStore: context.sessionStore,
     repositoryAccessChecker: context.githubAccess,
-    signingKey: context.signingKey,
+    signingKey: await context.getSigningKey(),
     issuer: context.config.origin,
     tokenTtlSeconds: context.config.accessGrantTtlSeconds,
   }, {
@@ -873,8 +881,8 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character);
 }
 
-function publicJwks(context: GatewayContext): Response {
-  const keys = context.keyRegistry
+export function publicJwks(keyRegistry: readonly KeyRecord[]): Response {
+  const keys = keyRegistry
     .filter((record) => record.status !== "compromised")
     .map((record) => ({
       kty: "EC",
@@ -885,7 +893,7 @@ function publicJwks(context: GatewayContext): Response {
       alg: "ES256",
       use: "sig",
     }));
-  return Response.json({ keys }, { headers: { "Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff" } });
+  return Response.json({ keys }, { headers: { "Cache-Control": "public, max-age=30, must-revalidate", "X-Content-Type-Options": "nosniff" } });
 }
 
 export function createGatewayRouter(context: GatewayContext): Hono {
@@ -932,8 +940,12 @@ export function createGatewayRouter(context: GatewayContext): Hono {
   });
 
   app.get("/healthz", () => json({ status: "ok" }));
-  app.get("/readyz", () => json({ status: "ready" }));
-  app.get("/.well-known/jwks.json", () => publicJwks(context));
+  app.get("/readyz", async () => {
+    await context.getSigningKey();
+    await context.getGitHubCredentialBroker();
+    return json({ status: "ready" });
+  });
+  app.get("/.well-known/jwks.json", async () => publicJwks(await context.getKeyRegistry()));
   app.get("/auth/github/start", (c) => handleGithubStart(c.req.raw, context, context.requestNow));
   app.get("/auth/github/callback", (c) => handleGithubCallback(c.req.raw, context, context.requestNow));
   app.get("/api/session", (c) => handleSession(c.req.raw, context, context.requestNow));

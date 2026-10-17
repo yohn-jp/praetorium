@@ -1,7 +1,4 @@
 import {
-  createTokenVault,
-  importPrivateKeyJwk,
-  importTokenEncryptionKey,
   type AccessRefreshCredentialStore,
   type HandoffCodeStore,
   type KeyRecord,
@@ -41,6 +38,8 @@ import { createKvDigestUserIndex } from "./adapters/digest-user-index.js";
 import { createControlPlaneClient, type ControlPlaneClient } from "./adapters/control-plane-client.js";
 import { createKvRateLimiter } from "./adapters/rate-limiter-kv.js";
 import { loadKeyRegistry } from "./adapters/key-registry-kv.js";
+import { assertActiveSigningKeyRegistered, resolveActiveSigningKey } from "./adapters/signing-key.js";
+import { resolveTokenVault } from "./adapters/token-vault.js";
 import { createDurableObjectGitHubUserTokenStore } from "./adapters/github-user-tokens.js";
 import { createRuntimeGitCredentialBroker } from "./adapters/runtime-git-broker.js";
 import { createRuntimeCredentialRegistry } from "./adapters/runtime-credential-registry.js";
@@ -83,15 +82,17 @@ export interface GatewayContext {
   readonly mutationReceiptRateLimiter: RateLimiter;
   readonly githubProvider: ReturnType<typeof createGitHubAppOAuthProvider>;
   readonly githubAccess: GitHubAccessProvider;
+  /** Load public signing keys only on routes that sign, verify, or publish credentials. */
+  readonly getKeyRegistry: () => Promise<readonly KeyRecord[]>;
+  /** Require the current secret key to be the active key in the fresh registry. */
+  readonly getSigningKey: () => Promise<SigningKey>;
   /** Set only when a trusted runtime authenticator and assignment reader are configured. */
-  readonly githubCredentialBroker?: GitCredentialBroker;
+  readonly getGitHubCredentialBroker: () => Promise<GitCredentialBroker | undefined>;
   readonly runtimeCredentialRegistry?: ReturnType<typeof createRuntimeCredentialRegistry>;
   readonly githubUserTokens: GitHubUserTokenSource & {
     storeEncrypted(subject: string, tokens: GitHubTokenResponse, issuedAt: string): Promise<void>;
   };
   readonly controlPlane: ControlPlaneClient;
-  readonly signingKey: SigningKey;
-  readonly keyRegistry: readonly KeyRecord[];
 }
 
 function positiveInteger(value: string | undefined, name: string, minimum: number, maximum: number): number {
@@ -127,41 +128,8 @@ function parseOwner(value: string | undefined): string {
   return value;
 }
 
-function decodeBase64Url(value: string): Uint8Array {
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new TypeError("token encryption key must be base64url");
-  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
-  const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
-
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function validateRegistry(value: unknown): readonly KeyRecord[] {
-  if (!Array.isArray(value) || value.length > 8) throw new TypeError("Gateway public key registry is invalid");
-  const statuses = new Set(["active", "next", "retired", "compromised"]);
-  const records = value.map((entry): KeyRecord => {
-    if (!object(entry) || typeof entry["kid"] !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(entry["kid"]) ||
-      typeof entry["status"] !== "string" || !statuses.has(entry["status"]) ||
-      typeof entry["createdAt"] !== "string" ||
-      !(entry["retiredAt"] === null || typeof entry["retiredAt"] === "string") ||
-      !object(entry["publicKeyJwk"])) throw new TypeError("Gateway public key registry is invalid");
-    const jwk = entry["publicKeyJwk"];
-    if (Object.hasOwn(jwk, "d") || jwk["kty"] !== "EC" || jwk["crv"] !== "P-256" ||
-      typeof jwk["x"] !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(jwk["x"]) ||
-      typeof jwk["y"] !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(jwk["y"])) {
-      throw new TypeError("Gateway public key registry contains invalid or private key material");
-    }
-    return {
-      kid: entry["kid"],
-      status: entry["status"] as KeyRecord["status"],
-      publicKeyJwk: { kty: "EC", crv: "P-256", x: jwk["x"], y: jwk["y"] },
-      createdAt: entry["createdAt"],
-      retiredAt: entry["retiredAt"],
-    };
-  });
-  return records;
 }
 
 async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
@@ -177,10 +145,10 @@ async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
   const instanceAccessSecret = requireSecret(env.INSTANCE_ACCESS_SERVICE_AUTH_TOKEN, "INSTANCE_ACCESS_SERVICE_AUTH_TOKEN");
   const tokenKeyId = env.GATEWAY_TOKEN_ENCRYPTION_KEY_ID;
   if (!tokenKeyId || !/^[A-Za-z0-9_-]{1,64}$/.test(tokenKeyId)) throw new TypeError("GATEWAY_TOKEN_ENCRYPTION_KEY_ID is required");
-  const rawTokenKey = decodeBase64Url(requireSecret(env.GATEWAY_TOKEN_ENCRYPTION_KEY, "GATEWAY_TOKEN_ENCRYPTION_KEY"));
-  if (rawTokenKey.byteLength !== 32) throw new TypeError("GATEWAY_TOKEN_ENCRYPTION_KEY must decode to 32 bytes");
-  const tokenKey = await importTokenEncryptionKey(rawTokenKey);
-  const tokenVault = createTokenVault([{ id: tokenKeyId, key: tokenKey }], tokenKeyId);
+  const tokenVault = await resolveTokenVault(
+    tokenKeyId,
+    requireSecret(env.GATEWAY_TOKEN_ENCRYPTION_KEY, "GATEWAY_TOKEN_ENCRYPTION_KEY"),
+  );
   const sessionTtlSeconds = positiveInteger(env.GATEWAY_SESSION_TTL_SECONDS, "GATEWAY_SESSION_TTL_SECONDS", 600, 86_400);
   const handoffTtlSeconds = positiveInteger(env.GATEWAY_HANDOFF_TTL_SECONDS, "GATEWAY_HANDOFF_TTL_SECONDS", 1, 60);
   const accessGrantTtlSeconds = positiveInteger(env.GATEWAY_ACCESS_GRANT_TTL_SECONDS, "GATEWAY_ACCESS_GRANT_TTL_SECONDS", 1, 300);
@@ -258,12 +226,23 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
   if (signingJwk.kty !== "EC" || signingJwk.crv !== "P-256" || typeof signingJwk.x !== "string" || typeof signingJwk.y !== "string" || typeof signingJwk.d !== "string") {
     throw new TypeError("Gateway signing key must be a private P-256 key");
   }
-  const signingKey: SigningKey = { kid: signingConfig["kid"], privateKey: await importPrivateKeyJwk(signingJwk) };
-  const keyRegistry = validateRegistry(await loadKeyRegistry(env.GATEWAY_KV));
-  if (!keyRegistry.some((record) => record.kid === signingKey.kid && record.status === "active" &&
-    record.publicKeyJwk.x === signingJwk.x && record.publicKeyJwk.y === signingJwk.y)) {
-    throw new TypeError("the active Gateway signing key must match its public key registry record");
-  }
+  let keyRegistryPromise: Promise<readonly KeyRecord[]> | undefined;
+  const getKeyRegistry = (): Promise<readonly KeyRecord[]> => {
+    keyRegistryPromise ??= loadKeyRegistry(env.GATEWAY_KV);
+    return keyRegistryPromise;
+  };
+  let signingKeyPromise: Promise<SigningKey> | undefined;
+  const getSigningKey = (): Promise<SigningKey> => {
+    signingKeyPromise ??= (async () => {
+      const [signingKey, keyRegistry] = await Promise.all([
+        resolveActiveSigningKey(signingValue),
+        getKeyRegistry(),
+      ]);
+      assertActiveSigningKeyRegistered(signingKey, signingJwk, keyRegistry);
+      return signingKey;
+    })();
+    return signingKeyPromise;
+  };
 
   if (env.GITHUB_APP_PRIVATE_KEY) {
     const retirementAuth = requireSecret(env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH, "RUNTIME_CREDENTIAL_RETIREMENT_AUTH");
@@ -277,6 +256,26 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
     tokenVault: config.tokenVault,
     revoker: createGitHubInstallationTokenRevoker({ client: createGitHubRestClient({ requestTimeoutMs: 1_000 }) }),
   }) : undefined;
+  const githubAppPrivateKeyPem = env.GITHUB_APP_PRIVATE_KEY
+    ? requireSecret(env.GITHUB_APP_PRIVATE_KEY, "GITHUB_APP_PRIVATE_KEY")
+    : undefined;
+  let githubCredentialBrokerPromise: Promise<GitCredentialBroker | undefined> | undefined;
+  const getGitHubCredentialBroker = (): Promise<GitCredentialBroker | undefined> => {
+    if (!githubAppPrivateKeyPem) return Promise.resolve(undefined);
+    githubCredentialBrokerPromise ??= getKeyRegistry().then((keyRegistry) => createRuntimeGitCredentialBroker({
+      controlPlane: env.CONTROL_PLANE,
+      controlPlaneGatewayAuth: config.controlPlaneSecret,
+      runtimeIdentityIssuer: HttpsOriginSchema.parse(env.CONTROL_PLANE_ORIGIN),
+      gatewayOrigin: config.origin,
+      githubAppId: config.githubAppId,
+      githubAppPrivateKeyPem,
+      repositoryBindings,
+      accessProvider: githubAccess,
+      gatewayKeyRegistry: keyRegistry,
+      ...(runtimeCredentialRegistry ? { credentialLifecycle: runtimeCredentialRegistry } : {}),
+    }));
+    return githubCredentialBrokerPromise;
+  };
   return {
     config,
     env,
@@ -294,24 +293,11 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
     mutationReceiptRateLimiter: createKvRateLimiter(env.GATEWAY_KV, "mutation-receipt", { limit: 10, windowSeconds: 60 }),
     githubProvider: oauth,
     githubAccess,
+    getKeyRegistry,
+    getSigningKey,
+    getGitHubCredentialBroker,
     ...(runtimeCredentialRegistry ? { runtimeCredentialRegistry } : {}),
-    ...(env.GITHUB_APP_PRIVATE_KEY ? {
-      githubCredentialBroker: createRuntimeGitCredentialBroker({
-        controlPlane: env.CONTROL_PLANE,
-        controlPlaneGatewayAuth: config.controlPlaneSecret,
-        runtimeIdentityIssuer: HttpsOriginSchema.parse(env.CONTROL_PLANE_ORIGIN),
-        gatewayOrigin: config.origin,
-        githubAppId: config.githubAppId,
-        githubAppPrivateKeyPem: requireSecret(env.GITHUB_APP_PRIVATE_KEY, "GITHUB_APP_PRIVATE_KEY"),
-        repositoryBindings,
-        accessProvider: githubAccess,
-        gatewayKeyRegistry: keyRegistry,
-        ...(runtimeCredentialRegistry ? { credentialLifecycle: runtimeCredentialRegistry } : {}),
-      }),
-    } : {}),
     githubUserTokens,
     controlPlane,
-    signingKey,
-    keyRegistry,
   };
 }

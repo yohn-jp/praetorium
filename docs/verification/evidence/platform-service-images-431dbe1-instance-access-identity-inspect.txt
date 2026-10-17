@@ -1,0 +1,11 @@
+id=a0225f187adedae2325dd616f318d04d4f76b5c1cfcd905ead243c809b6af143
+image_id=c42a2c7b44d56f7e73fe6c1a325fcd3a1ba9b504bca4af3c35e7c82954456469
+image_name=127.0.0.1:38841/praetorium/platform-instance-access@sha256:daf3f8ff4a04d34e1894790cecd7bc330c7d771d90c9e641b1edc7e0c990de72
+user=10001:10001
+network=none
+readonly=true
+capdrop=["CAP_CHOWN","CAP_DAC_OVERRIDE","CAP_FOWNER","CAP_FSETID","CAP_KILL","CAP_NET_BIND_SERVICE","CAP_SETFCAP","CAP_SETGID","CAP_SETPCAP","CAP_SETUID","CAP_SYS_CHROOT"]
+security=["no-new-privileges"]
+path=docker-entrypoint.sh
+args=["node","dist/server.js"]
+state=running

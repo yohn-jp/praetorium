@@ -371,18 +371,21 @@ production registry, or production BuildKit credentials.
 
 The first run's init containers both exited 0, but the main test command failed
 with a JavaScript syntax error from the probe harness. The second run used the
-corrected harness and the same Pod request later used by the fourth run; its
-main command returned the generic `private runtime metadata or constructor
-validation failed`. That failure was not localized. The fake test registry-push
-configuration was subsequently changed to a structurally valid GHCR auth
-shape; no real credential was introduced. The request SHA-256 for runs two and
-four is
-`53db7221de13a59a324f31a0fbfe23519dcfa6e42b0ceace12dfc970cd546a04`. Run
-three used a diagnostic command and request SHA-256
+corrected harness; its main command returned the generic `private runtime
+metadata or constructor validation failed`. That failure was not localized.
+The fake test registry-push configuration was subsequently changed to a
+structurally valid GHCR auth shape; no real credential was introduced. The
+preserved run-two request SHA-256 is
+`53db7221de13a59a324f31a0fbfe23519dcfa6e42b0ceace12dfc970cd546a04`. The
+run-four summary records that it repeated the run-two command and Pod
+specification, but a raw run-four request snapshot or request hash was not
+retained; exact run-two/run-four request equivalence is therefore not
+independently verifiable from this evidence bundle. Run three used a diagnostic
+command and request SHA-256
 `c5634c56803ddb7d3c84795495ef1d43754cd305881bc6cff7e9f6981a54945e`; each
-stage reported success. The fourth run repeated the original run-two command
-and Pod specification, without separate validator warm-ups, against the
-shape-valid fake test auth input and succeeded. No run-two Secret
+stage reported success. The fourth run was reported to repeat the original
+run-two command and Pod specification, without separate validator warm-ups,
+against the shape-valid fake test auth input and succeeded. No run-two Secret
 resource-version snapshot exists, so the evidence does not claim all Secret
 data was unchanged between the two runs.
 
@@ -399,7 +402,7 @@ only pass/fail stages and filesystem metadata, not secret payloads.
 
 | Attempt | Pod UID                                | Main result                                                              | Evidence                                                                                                                                                                                                                                                 |
 | ------- | -------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1       | `41317fd8-697f-46b5-9c6b-769072550d37` | Harness syntax error; both init containers exited 0                      | Request SHA `b597ad104a0738955784d7e4ac899c12243c2b33eb540bc8449d9594d35c00b7`; main-log SHA `cb0bafba45f1a84fa5ecb6c560208c7269088476840a861f434d76ce8fff9f29`; safe Pod summary SHA `78ffea038bdfd24cae5825b4424504b03d0b1195ea74573bb98484f584200103` |
+| 1       | `41317fd8-697f-46b5-9c6b-769072550d37` | Harness syntax error; both init containers exited 0                      | Request SHA `b597ad104a0738955784d4e7ac899c12243c2b33eb540bc8449d9594d35c00b7`; main-log SHA `cb0bafba45f1a84fa5ecb6c560208c7269088476840a861f434d76ce8fff9f29`; safe Pod summary SHA `78ffea038bdfd24cae5825b4424504b03d0b1195ea74573bb98484f584200103` |
 | 2       | `2b27685a-28b2-412b-8bf4-97a645208df3` | Generic metadata/constructor failure; unresolved                         | Main-log SHA `9171eb556ac4d819ecfd52eb92c99b78675c23099f2e334e60c8047ac0ac7e7b`; safe Pod summary SHA `ff8de84d9bb0e137f925ff4af5c2ea13bb21615244d52df3b73632853e512f19`                                                                                 |
 | 3       | `d74def6a-0e01-44a4-b609-59d9fa3278f8` | Diagnostic checks and constructor passed                                 | Main-log SHA `cb2686cf787807eb041061e7c39e95390335fb384fe713f10c2ed258164825fe`                                                                                                                                                                          |
 | 4       | `d73943fd-c716-410e-982d-bb7baf6b6d84` | Init, metadata checks, buildctl executable check, and constructor passed | Main-log SHA `b777300ff00ce001142b0d273cc2c401721b1473292e02872080e7bdd32ebf50`                                                                                                                                                                          |

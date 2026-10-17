@@ -104,3 +104,37 @@ the live test skipped/BLOCKED without owner config, and no network was used.
 Sol integrated the four isolated commits through `4f52afd`, reran the 6 local tests,
 and confirmed the fixed GitHub category remains absent. This is review of the
 partial probe implementation, not real App/broker renewal or T14 certification.
+
+## Delivery ledger and producer observation review
+
+The separate read-only reviewer verified clean, pushed main
+`a8fd6210c9fb69bc53e7a7d66051a0a9196ebf4b`. The delta from `7c5c4e7` is limited
+to eight documentation files; production paths match `b3fbe6d`. The previous
+coverage-cut finding is closed: `historicalEvidenceCut` preserves the former
+cut verbatim, while the current cut names verification source `4f52afd` and
+observed producer `eab0fad`. All 128 coverage entries and 65 source-handler
+mappings remain present with their incomplete dispositions. The quiet-lint
+proof gap is closed by the explicit command/HEAD/exit-code record at
+`/tmp/praetorium-final-explicit-lint.json` (exit 0 at `ba0b3a7`). Mapping tests
+passed 9/9 after reconciliation.
+
+The reviewer checked the producer's remote ref, clean detached observer and
+fc4..eab diff. New Core/Full local OCI and P12 evidence is accurately separated
+from missing hosted contracts and null Platform artifactDigest. Docker build
+context differences and the original whole-verify ENOSPC/stage-only retry remain
+explicit. No Platform conformance or publication is inferred.
+
+Sol reran required frozen install and full check at exact `a8fd621` (exit 0;
+29/29 cached test-stage tasks; boundary/schema checks passed), with logs
+`/tmp/praetorium-a8fd621-{install,check}.log`. Effect-free Worker preflight
+returned exit 2 for missing canonical operator inputs, with templateProblems=[],
+remoteCalls=false and secretValuesInspected=false. Infrastructure preflight,
+using cached Kind/Kubectl/Kustomize, returned exit 2 with sideEffects=[] and
+missing owned inputs. The acceptance plan remained BLOCKED, effectsExecuted=false,
+with unresolved owner/resources. These are preflight records, not live acceptance.
+
+The reviewer identified additional independent work: fixed GitHub access and
+browser-entry harnesses can exercise current Platform contracts while keeping
+producer/runtime-dependent acceptance blocked. Sol dispatched those two isolated
+implementation areas. Their future commits require their own review and current
+verification; this ledger review does not certify them or close T14/T15.

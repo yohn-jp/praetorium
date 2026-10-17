@@ -78,9 +78,9 @@ const API_VERSIONS: Readonly<Record<KubernetesResourceKind, string>> = {
   Service: "v1",
 };
 
-const PROVISIONER_NAMESPACE = "arcadia-system";
-const PROVISIONER_SERVICE_ACCOUNT = "arcadia-provisioner";
-const PROVISIONER_TENANT_ROLE = "arcadia-provisioner-tenant-runtime";
+const PROVISIONER_NAMESPACE = "praetorium-system";
+const PROVISIONER_SERVICE_ACCOUNT = "praetorium-provisioner";
+const PROVISIONER_TENANT_ROLE = "praetorium-provisioner-tenant-runtime";
 const MAX_LIST_PAGES = 1_000;
 const MAX_TENANT_PODS = 10_000;
 
@@ -1604,7 +1604,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     beforeEffect: RuntimeEffectGuard,
   ): Promise<void> {
     const namespaceName = this.namespaceFor(identity.instanceId);
-    const name = "arcadia-provisioner-runtime";
+    const name = "praetorium-provisioner-runtime";
     const reference = { kind: "RoleBinding", namespace: namespaceName, name } as const;
     const existing = await this.getOptional(reference, signal);
     const binding: KubernetesResource = {
@@ -1846,7 +1846,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       { kind: "ResourceQuota" as const, name: `${name}-quota` },
       { kind: "LimitRange" as const, name: `${name}-limits` },
       { kind: "ServiceAccount" as const, name: `${name}-app` },
-      { kind: "RoleBinding" as const, name: "arcadia-provisioner-runtime" },
+      { kind: "RoleBinding" as const, name: "praetorium-provisioner-runtime" },
     ];
     const namespaceName = this.namespaceFor(identity.instanceId);
     for (const resource of resources) {
@@ -1879,7 +1879,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       { kind: "ResourceQuota" as const, name: `${name}-quota` },
       { kind: "LimitRange" as const, name: `${name}-limits` },
       { kind: "ServiceAccount" as const, name: `${name}-app` },
-      { kind: "RoleBinding" as const, name: "arcadia-provisioner-runtime" },
+      { kind: "RoleBinding" as const, name: "praetorium-provisioner-runtime" },
       { kind: "Deployment" as const, name },
       { kind: "IngressRoute" as const, name },
     ];

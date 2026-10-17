@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   KubernetesRuntimeProvider,
@@ -98,6 +99,7 @@ class FakeKubernetesApi implements KubernetesApi {
   readonly objects = new Map<string, unknown>();
   readonly namespaces = new Map<string, unknown>();
   readonly writes: string[] = [];
+  readonly gets: KubernetesResourceReference[] = [];
   readonly deletes: KubernetesResourceReference[] = [];
   readonly deletePreconditions: Array<{
     readonly reference: KubernetesResourceReference;
@@ -149,6 +151,7 @@ class FakeKubernetesApi implements KubernetesApi {
   }
 
   get(reference: KubernetesResourceReference): Promise<unknown> {
+    this.gets.push(reference);
     const value = this.objects.get(key(reference.kind, reference.namespace, reference.name));
     if (value === undefined) throw new KubernetesApiError(404, "NotFound");
     return Promise.resolve(value);
@@ -805,6 +808,70 @@ describe("Kubernetes runtime provider", () => {
     expect(api.writes).toHaveLength(0);
   });
 
+  it("grants tenant runtimes to the checked-in Praetorium provisioner service account", async () => {
+    const manifest = readFileSync(
+      new URL("../../../infrastructure/kubernetes/base/platform-services.yaml", import.meta.url),
+      "utf8",
+    );
+    const serviceAccount = manifest.match(
+      /^apiVersion:\s*v1\r?\nkind:\s*ServiceAccount\r?\nmetadata:\r?\n\s+name:\s*([^\s#]+)\r?\n\s+namespace:\s*([^\s#]+)/m,
+    );
+    expect(serviceAccount).not.toBeNull();
+
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const runtime = provider(api, targetReservations(), () => 100_000);
+    await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+
+    const binding = record(
+      api.objects.get(key("RoleBinding", NAMESPACE, "praetorium-provisioner-runtime")),
+    );
+    expect(binding).toMatchObject({
+      kind: "RoleBinding",
+      roleRef: {
+        apiGroup: "rbac.authorization.k8s.io",
+        kind: "ClusterRole",
+        name: "praetorium-provisioner-tenant-runtime",
+      },
+      subjects: [
+        {
+          kind: "ServiceAccount",
+          name: serviceAccount?.[1],
+          namespace: serviceAccount?.[2],
+        },
+      ],
+    });
+  });
+
+  it.each([
+    [
+      "a different service account",
+      [{ kind: "ServiceAccount", name: "other", namespace: "praetorium-system" }],
+    ],
+    [
+      "an extra principal",
+      [
+        { kind: "ServiceAccount", name: "praetorium-provisioner", namespace: "praetorium-system" },
+        { kind: "ServiceAccount", name: "other", namespace: "praetorium-system" },
+      ],
+    ],
+  ])("rejects a tenant grant with %s", async (_description, subjects) => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    let time = 100_000;
+    const runtime = provider(api, targetReservations(), () => ++time);
+    await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+    const bindingKey = key("RoleBinding", NAMESPACE, "praetorium-provisioner-runtime");
+    const binding = record(api.objects.get(bindingKey));
+    api.objects.set(bindingKey, { ...binding, subjects });
+    const beforeWrites = [...api.writes];
+
+    await expect(
+      runtime.ensureRunning(spec(), new AbortController().signal, () => undefined),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(api.writes).toEqual(beforeWrites);
+  });
+
   it("rejects resource profiles above the operator quota before rendering", () => {
     const renderer = createKubernetesResourceRenderer({
       namespacePrefix: PREFIX,
@@ -1026,6 +1093,19 @@ describe("Kubernetes runtime provider", () => {
       "ServiceAccount",
       "RoleBinding",
     ]);
+    expect(api.deletes.at(-1)).toEqual({
+      kind: "RoleBinding",
+      namespace: NAMESPACE,
+      name: "praetorium-provisioner-runtime",
+    });
+    const roleBindingReads = api.gets.filter((reference) => reference.kind === "RoleBinding");
+    expect(roleBindingReads.length).toBeGreaterThanOrEqual(3);
+    expect(
+      roleBindingReads.every((reference) => reference.name === "praetorium-provisioner-runtime"),
+    ).toBe(true);
+    expect(api.objects.has(key("RoleBinding", NAMESPACE, "praetorium-provisioner-runtime"))).toBe(
+      false,
+    );
     expect(api.namespaces.has(NAMESPACE)).toBe(true);
     expect(api.writes).not.toContain("delete:Namespace");
   });

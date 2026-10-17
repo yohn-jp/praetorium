@@ -233,3 +233,9 @@ assignment/composition metadata or Platform conformance. S01–S04 interfaces ar
 unchanged; S05 hosted acceptance remains incomplete and accepted artifactDigest
 is null. [Exact audit and limitations](../verification/PRODUCER-eab0fad.md).
 Existing producer ownership and implementation handoffs remain unchanged.
+
+## 16. Published producer presets at `3f7b174` (2026-10-17)
+
+Read-only inspection observed producer main/tag `v0.1.0` at `3f7b174ef6667b004c21e24a9ed89b8329d04c04`, tree `b399ba06cfd24a6b300e40e6b8f428312e93873d`. Core and Full preset images are now publicly retrievable from GHCR. Worker and Sol independently checked raw manifest and config hashes; exact digest references are in [PRODUCER-STATUS.json](../migration/PRODUCER-STATUS.json) and [the source/registry audit](../verification/PRODUCER-3f7b174.md). No Actions workflow was added or triggered by Praetorium.
+
+This removes the absence of published preset images as a blocker. It does not add S01–S04 hosted interfaces or an immutable Runtime Base/Build Kit, arbitrary composition receipt, assignment binding or compatible-release evidence. S05 still lacks hosted exact-image stable-origin conformance. Accepted Platform `artifactDigest` remains null. Existing producer ownership and the concrete receipt/closure/smoke/rollback handoffs remain unchanged; no preset image is substituted for a Platform-admitted composition.

@@ -40,8 +40,8 @@ was fetched by tag and again by digest; the SHA-256 of the raw manifest body
 matched the registry `Docker-Content-Digest` and the digest reference. The raw
 config blob SHA-256 also matched the manifest's config descriptor.
 
-| Published tag | Image manifest digest | Config digest | Descriptor |
-| --- | --- | --- | --- |
+| Published tag                             | Image manifest digest                                                     | Config digest                                                             | Descriptor                                              |
+| ----------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `ghcr.io/yohn-jp/scriptorium/core:v0.1.0` | `sha256:e6c024378f5d09efc24f9b771382ebba0b4cc25e11ec17e61640553663bea3b1` | `sha256:e71411421f19daefed6703c54ffd7dd03e8a3c9b1ee51b44aad258202d009d24` | Docker schema 2 image manifest; `linux/amd64`; 8 layers |
 | `ghcr.io/yohn-jp/scriptorium/full:v0.1.0` | `sha256:12737394de690dfeef541fb614e9595c057ae7aed1b41c693e3ba48657d07684` | `sha256:0dac8d53d31840ee371133b7b447eaaf65b8992c92af8e2cfa93d7c0a0672e24` | Docker schema 2 image manifest; `linux/amd64`; 8 layers |
 

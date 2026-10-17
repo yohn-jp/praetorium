@@ -1,10 +1,10 @@
 {
   "checkedAt": "2026-10-17",
   "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
-  "producerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
-  "previousProducerRevision": "fc4eea880ef895decf6161bf4f45cc958e9700b3",
+  "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
+  "previousProducerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
   "artifactDigest": null,
-  "artifactDigestReason": "At observed eab0fad the packaged application source matches frozen fc4; docs/verification and the migration-ledger verifier changed, not hosted interfaces. New local Core8661aa25, Full startup03cb0ddc and exact-tree Full modelac8aaf8f manifest evidence includes the final polling fix; P12 now passed. Producer records whole-verify final-stage ENOSPC followed by a successful unchanged-stage retry, not an original zero exit. Images remained local, with some duplicate images later removed; no published locator or hosted assignment/composition conformance is supplied. Accepted Platform artifactDigest remains null. See docs/verification/PRODUCER-eab0fad.md.",
+  "artifactDigestReason": "Core and Full preset image manifests are publicly available at exact digests for producer 3f7b174. They are not approved Runtime Base/Build Kit inputs or assignment-bound Platform compositions. S01-S04 interfaces remain missing and S05 lacks hosted composition/runtime metadata and stable-origin conformance. Accepted Platform artifactDigest remains null; see docs/verification/PRODUCER-3f7b174.md.",
   "producerModified": false,
   "capabilities": [
     {
@@ -23,7 +23,8 @@
       ],
       "missing": "At 1950ba5b all eight module packages remain in profiles/full.json, while scripts/profile-build.mjs accepts only core/full and resolves ModuleManifest through resolveModulePlan. Its generated server exports remain profile, moduleManifests, moduleLoaders, moduleDirectories and moduleWorkerEntries; the browser exports profile and moduleBrowserLoaders. There is no versioned scriptorium-build/v1 BuildCatalog resolver, digest/resource catalog, immutable Runtime Base or Build Kit, approved gateway.v0 receipt, or versioned composition manifest binding the selected image closure.",
       "attempt": "Read-only detached snapshot of remote main at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f; compared 1950ba5b729e5c1611124abe78722c70362c08b2..e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f and rechecked profile-build/profile-package, module-runtime exports, manifests and Dockerfile. No BuildCatalog, Build Kit, receipt or composition-manifest contract was added; no producer build or conformance run was performed. Latest read-only e62bf91..271d7b delta audit confirms no change to this hosted interface; see docs/verification/PRODUCER-271d7b.md. No current-checkpoint producer conformance was run. Fresh read-only 271d7b..539375c audit: docs/verification/PRODUCER-539375c.md; owner-cookie recent-activity persistence/resume adds no hosted contract. No producer conformance run was performed. Fresh539375c..fc4eea8 audit: only Semantic browser polling lifecycle production change; no hosted S01-S04 interface added. See docs/verification/PRODUCER-fc4eea8.md. Read-only fc4..eab audit changes no hosted S01-S04 interface; new terminal component results are recorded in docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator publishes the versioned resolver/catalog and immutable Runtime Base/Build Kit recipe, then supplies owned disposable-image evidence for Core and two distinct legal non-preset compositions with backend/browser/native closure verification."
+      "minimumUnblock": "Existing producer coordinator publishes the versioned resolver/catalog and immutable Runtime Base/Build Kit recipe, then supplies owned disposable-image evidence for Core and two distinct legal non-preset compositions with backend/browser/native closure verification.",
+      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
     },
     {
       "id": "S02",
@@ -36,7 +37,8 @@
       ],
       "missing": "At e62bf91 createServer({ authToken, ... }) still uses SCRIPTORIUM_AUTH_TOKEN, /api/login owner-cookie sessions and the existing /api/version auth modes. ModuleRuntime additionally rejects compute HTTP contributions using GET/HEAD, but that method/effect validation does not verify an issuer/JWKS AccessGrant, bind repository/instance/runtime epoch, enforce hosted principal roles, or accept a signed mutation receipt.",
       "attempt": "Read current API authentication and route dispatch at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f and compared the 1950..e62 relevant source diff. The module-runtime change restricts HTTP methods for compute effects but adds no hosted grant verifier or assignment binding; no grant conformance run was performed. Publishing share grants remain content-sharing records. Latest read-only e62bf91..271d7b delta audit confirms no change to this hosted interface; see docs/verification/PRODUCER-271d7b.md. No current-checkpoint producer conformance was run. Fresh read-only 271d7b..539375c audit: docs/verification/PRODUCER-539375c.md; owner-cookie recent-activity persistence/resume adds no hosted contract. No producer conformance run was performed. Fresh539375c..fc4eea8 audit: only Semantic browser polling lifecycle production change; no hosted S01-S04 interface added. See docs/verification/PRODUCER-fc4eea8.md. Read-only fc4..eab audit changes no hosted S01-S04 interface; new terminal component results are recorded in docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator delivers hosted-grant and role enforcement plus negative issuer/repository/instance/epoch/expiry and read-only-role tests against an owned disposable runtime; static-token fallback is rejected."
+      "minimumUnblock": "Existing producer coordinator delivers hosted-grant and role enforcement plus negative issuer/repository/instance/epoch/expiry and read-only-role tests against an owned disposable runtime; static-token fallback is rejected.",
+      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
     },
     {
       "id": "S03",
@@ -50,7 +52,8 @@
       ],
       "missing": "At 1950ba5b CoreStoreOptions.githubToken, SCRIPTORIUM_GITHUB_TOKEN and the temporary GIT_ASKPASS helper remain the credential entry points. The 4c..1950 CoreStore changes add bounded historical-metadata reads/caching, not assignment-enforced repository binding, a renewable installation-token GitCredentialProvider, App-scope verification or a signed actor-bound publish authorization receipt. Existing GitHub acceptance uses a supplied token and does not prove App-token renewal.",
       "attempt": "Read CoreStoreOptions, constructor/token handling and Git askpass execution in the detached e62bf91 tree and searched the 1950..e62 source diff. CoreStoreOptions.githubToken, SCRIPTORIUM_GITHUB_TOKEN and GIT_ASKPASS remain; no credential-provider seam was added. No live expiry/renewal or App-installation push test was run. Latest read-only e62bf91..271d7b delta audit confirms no change to this hosted interface; see docs/verification/PRODUCER-271d7b.md. No current-checkpoint producer conformance was run. Fresh read-only 271d7b..539375c audit: docs/verification/PRODUCER-539375c.md; owner-cookie recent-activity persistence/resume adds no hosted contract. No producer conformance run was performed. Fresh539375c..fc4eea8 audit: only Semantic browser polling lifecycle production change; no hosted S01-S04 interface added. See docs/verification/PRODUCER-fc4eea8.md. Read-only fc4..eab audit changes no hosted S01-S04 interface; new terminal component results are recorded in docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator delivers numeric repository assignment enforcement, scoped installation-token brokerage and renewal, plus an owned private test-repository run proving fresh clone, mismatch rejection, actual expiry/renewal and actor-authorized push."
+      "minimumUnblock": "Existing producer coordinator delivers numeric repository assignment enforcement, scoped installation-token brokerage and renewal, plus an owned private test-repository run proving fresh clone, mismatch rejection, actual expiry/renewal and actor-authorized push.",
+      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
     },
     {
       "id": "S04",
@@ -69,7 +72,8 @@
       ],
       "missing": "At 1950ba5b the module-runtime package additionally exports DomainJobActionExecutor and DomainJobProgressSink and ActionHostContext.trackDomainJob; ModuleRuntime propagates declared job metadata and progress. packages/api/src/server.ts durably tracks the registered speaker-eval, speaker-retrain, aspect-review, zukan-proposal and summary-refresh types, with a maximum of 32 active domain jobs. Owner-cookie GET /api/jobs, GET /api/jobs/:id and GET /api/jobs/events expose history; an owner module-action POST with Prefer: respond-async can return 202 with X-Scriptorium-Job-Id and Location. This is useful internal observation for selected declared jobs, but there is still no versioned hosted status/activity contract, /api/platform/v1/status, /quiesce or /resume, operation/runtime-epoch fence, or complete API/MCP/publication activity snapshot and safe quiesce transition. Current 539375c recent-activity routes are private work-continuation data; they do not provide hosted status or safe quiesce/resume.",
       "attempt": "Read the 1950..e62 module-runtime/API diff and searched the current source for hosted status, quiesce, resume and assignment/epoch contracts. The diff adds no such interface; existing owner-cookie job history and bounded domain-job tracking remain internal observations. No quiesce conformance run was performed. Latest read-only e62bf91..271d7b delta audit confirms no change to this hosted interface; see docs/verification/PRODUCER-271d7b.md. No current-checkpoint producer conformance was run. New RecentActivity migration types concern private user progress, not hosted runtime activity/control. Fresh read-only 271d7b..539375c audit: docs/verification/PRODUCER-539375c.md; owner-cookie recent-activity persistence/resume adds no hosted contract. No producer conformance run was performed. Fresh539375c..fc4eea8 audit: only Semantic browser polling lifecycle production change; no hosted S01-S04 interface added. See docs/verification/PRODUCER-fc4eea8.md. Read-only fc4..eab audit changes no hosted S01-S04 interface; new terminal component results are recorded in docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator delivers authenticated versioned status/activity and quiesce/resume interfaces, then proves in-flight work, checkpoints, uncertain publication, duplicate quiesce, stale resume and healthy-empty replacement cases."
+      "minimumUnblock": "Existing producer coordinator delivers authenticated versioned status/activity and quiesce/resume interfaces, then proves in-flight work, checkpoints, uncertain publication, duplicate quiesce, stale resume and healthy-empty replacement cases.",
+      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
     },
     {
       "id": "S05",
@@ -87,11 +91,33 @@
         "tests/integration/model-oci-lifecycle.container.mjs",
         "tests/e2e/container-recovery.acceptance.mjs"
       ],
-      "missing": "At observed eab0fad the packaged application source matches frozen fc4; docs/verification and the migration-ledger verifier changed, not hosted interfaces. New local Core8661aa25, Full startup03cb0ddc and exact-tree Full modelac8aaf8f manifest evidence includes the final polling fix; P12 now passed. Producer records whole-verify final-stage ENOSPC followed by a successful unchanged-stage retry, not an original zero exit. Images remained local, with some duplicate images later removed; no published locator or hosted assignment/composition conformance is supplied. Accepted Platform artifactDigest remains null. See docs/verification/PRODUCER-eab0fad.md.",
+      "missing": "Published Core/Full preset images exist, but no accepted assignment/composition-bound runtime metadata or exact-image hosted stable-origin recovery/conformance was supplied. Published image identity alone does not satisfy Platform composition admission.",
       "attempt": "Root inspected fetched eab object/tree, runtime/packaging-path diff, FINAL-MIGRATION, P12 and exact-tree P13 report. Actual component evidence is recorded; no Platform producer conformance or registry publication was performed by this campaign. See docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator supplies public runtime metadata bound to a hosted assignment, composition and image identity, then reruns the disposable stable-origin browser recovery against the exact current-main image and corroborates the reported metadata with its OCI/runtime observation."
+      "minimumUnblock": "Existing producer coordinator supplies public runtime metadata bound to a hosted assignment, composition and image identity, then reruns the disposable stable-origin browser recovery against the exact current-main image and corroborates the reported metadata with its OCI/runtime observation.",
+      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md.",
+      "priorMissingObservation": "At observed eab0fad the packaged application source matches frozen fc4; docs/verification and the migration-ledger verifier changed, not hosted interfaces. New local Core8661aa25, Full startup03cb0ddc and exact-tree Full modelac8aaf8f manifest evidence includes the final polling fix; P12 now passed. Producer records whole-verify final-stage ENOSPC followed by a successful unchanged-stage retry, not an original zero exit. Images remained local, with some duplicate images later removed; no published locator or hosted assignment/composition conformance is supplied. Accepted Platform artifactDigest remains null. See docs/verification/PRODUCER-eab0fad.md."
     }
   ],
-  "producerTree": "0721e2441b3f680a3c6785e73d5f8b70857e87ef",
-  "latestAudit": "docs/verification/PRODUCER-eab0fad.md"
+  "producerTree": "b399ba06cfd24a6b300e40e6b8f428312e93873d",
+  "latestAudit": "docs/verification/PRODUCER-3f7b174.md",
+  "priorArtifactObservation": {
+    "producerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
+    "artifactDigestReason": "At observed eab0fad the packaged application source matches frozen fc4; docs/verification and the migration-ledger verifier changed, not hosted interfaces. New local Core8661aa25, Full startup03cb0ddc and exact-tree Full modelac8aaf8f manifest evidence includes the final polling fix; P12 now passed. Producer records whole-verify final-stage ENOSPC followed by a successful unchanged-stage retry, not an original zero exit. Images remained local, with some duplicate images later removed; no published locator or hosted assignment/composition conformance is supplied. Accepted Platform artifactDigest remains null. See docs/verification/PRODUCER-eab0fad.md.",
+    "document": "docs/verification/PRODUCER-eab0fad.md"
+  },
+  "publishedPresetImages": [
+    {
+      "profile": "core",
+      "reference": "ghcr.io/yohn-jp/scriptorium/core@sha256:e6c024378f5d09efc24f9b771382ebba0b4cc25e11ec17e61640553663bea3b1",
+      "configDigest": "sha256:e71411421f19daefed6703c54ffd7dd03e8a3c9b1ee51b44aad258202d009d24",
+      "platform": "linux/amd64"
+    },
+    {
+      "profile": "full",
+      "reference": "ghcr.io/yohn-jp/scriptorium/full@sha256:12737394de690dfeef541fb614e9595c057ae7aed1b41c693e3ba48657d07684",
+      "configDigest": "sha256:0dac8d53d31840ee371133b7b447eaaf65b8992c92af8e2cfa93d7c0a0672e24",
+      "platform": "linux/amd64"
+    }
+  ],
+  "publishedPresetVerification": "Worker and root independently fetched raw tag/digest manifests and config blobs anonymously; hashes/descriptors match. Source association is existing tag/workflow head, with no embedded OCI revision labels. No workflow was triggered and no image was run by this audit."
 }

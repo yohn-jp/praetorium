@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { notifyWorkAvailable } from "./work-notifications.js";
 
 describe("work availability delivery", () => {
+  afterEach(() => vi.restoreAllMocks());
   const env = {
     BUILD_WORK_NOTIFICATION_URL: "https://build.test/internal/work-available",
     BUILD_WORK_NOTIFICATION_TOKEN: "dedicated-notification-token-00000000000",
@@ -67,5 +68,19 @@ describe("work availability delivery", () => {
       ),
     ).toBe("failed");
     expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("records sanitized delivery outcomes without endpoint, instance or credential data", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error("private upstream body"));
+    await notifyWorkAvailable({}, "build", fetcher);
+    await notifyWorkAvailable(env, "build", fetcher);
+    fetcher.mockResolvedValue(new Response(null, { status: 202 }));
+    await notifyWorkAvailable(env, "build", fetcher);
+    expect(log.mock.calls).toEqual(
+      ["disabled", "failed", "notified"].map((outcome) => [
+        JSON.stringify({ event: "work_notification", kind: "build", outcome }),
+      ]),
+    );
   });
 });

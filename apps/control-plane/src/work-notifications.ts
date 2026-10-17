@@ -14,13 +14,19 @@ export async function notifyWorkAvailable(
   fetcher: typeof fetch = fetch,
   instanceId?: string,
 ): Promise<"disabled" | "notified" | "failed"> {
+  const finish = (outcome: "disabled" | "notified" | "failed") => {
+    // A bounded event per durable-work hint, with no endpoint or credential data.
+    // Cloudflare logs can distinguish failed delivery from empty recovery claims.
+    console.info(JSON.stringify({ event: "work_notification", kind, outcome }));
+    return outcome;
+  };
   const endpoint =
     kind === "build" ? env.BUILD_WORK_NOTIFICATION_URL : env.PROVISIONER_WORK_NOTIFICATION_URL;
   const token =
     kind === "build" ? env.BUILD_WORK_NOTIFICATION_TOKEN : env.PROVISIONER_WORK_NOTIFICATION_TOKEN;
-  if (endpoint === undefined && token === undefined) return "disabled";
+  if (endpoint === undefined && token === undefined) return finish("disabled");
   try {
-    if (!endpoint || !token || token.length < 32 || token.length > 512) return "failed";
+    if (!endpoint || !token || token.length < 32 || token.length > 512) return finish("failed");
     const url = new URL(endpoint);
     if (
       url.protocol !== "https:" ||
@@ -30,7 +36,7 @@ export async function notifyWorkAvailable(
       url.hash ||
       url.pathname !== "/internal/work-available"
     ) {
-      return "failed";
+      return finish("failed");
     }
     const response = await fetcher(url, {
       method: "POST",
@@ -42,10 +48,10 @@ export async function notifyWorkAvailable(
       signal: AbortSignal.timeout(3_000),
     });
     await response.body?.cancel();
-    return response.ok ? "notified" : "failed";
+    return finish(response.ok ? "notified" : "failed");
   } catch {
     // Do not log URLs, credentials, or remote response bodies. Startup/timeout
     // reconciliation recovers pending work using the authoritative D1 claim.
-    return "failed";
+    return finish("failed");
   }
 }

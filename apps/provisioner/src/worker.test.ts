@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { WorkAvailability } from "@praetorium/application";
+import { describe, expect, it, vi } from "vitest";
 import type {
   LifecycleExecutionContext,
   LifecycleResult,
@@ -113,7 +114,7 @@ describe("ProvisionerWorker observation reporting", () => {
       executor,
       workerId: "worker-a",
       clusterId: "cluster-a",
-      pollIntervalMs: 100,
+      recoveryIntervalMs: 100,
       retryIntervalMs: 100,
     });
 
@@ -176,7 +177,7 @@ describe("ProvisionerWorker observation reporting", () => {
       executor,
       workerId: "worker-a",
       clusterId: "cluster-a",
-      pollIntervalMs: 100,
+      recoveryIntervalMs: 100,
       retryIntervalMs: 100,
     });
 
@@ -184,5 +185,54 @@ describe("ProvisionerWorker observation reporting", () => {
 
     expect(reports).toHaveLength(1);
     expect(reports[0]).toMatchObject({ terminal: "blocked", observation: null });
+  });
+
+  it("claims immediately, then uses notifications and a bounded recovery claim", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const workAvailability = new WorkAvailability();
+      let calls = 0;
+      let resolveFirst!: () => void;
+      let resolveSecond!: () => void;
+      const firstClaim = new Promise<void>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const secondClaim = new Promise<void>((resolve) => {
+        resolveSecond = resolve;
+      });
+      const operations = {
+        async claimNext() {
+          calls += 1;
+          if (calls === 1) resolveFirst();
+          if (calls === 2) resolveSecond();
+          if (calls === 3) controller.abort();
+          return null;
+        },
+      } as unknown as ProvisionerOperationService;
+      const worker = new ProvisionerWorker({
+        operations,
+        executor: { async execute() { return { status: "blocked", code: "test", reason: "test" }; } },
+        workerId: "worker-a",
+        clusterId: "cluster-a",
+        workAvailability,
+        recoveryIntervalMs: 300_000,
+      });
+
+      const running = worker.run(controller.signal);
+      await firstClaim;
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(calls).toBe(1);
+
+      workAvailability.notify();
+      await secondClaim;
+      expect(calls).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(300_000);
+      await running;
+      expect(calls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

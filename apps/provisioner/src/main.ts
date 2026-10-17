@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { WorkAvailability } from "@praetorium/application";
 import { OperationServiceHttpClient } from "./operation-client.js";
 import { ProvisionerMetrics } from "./metrics.js";
 import { HealthServer } from "./health.js";
@@ -19,6 +20,7 @@ interface ProvisionerConfig {
   readonly runtime: InClusterRuntimeOptions;
   readonly healthPort: number;
   readonly idleTimeoutMs: number;
+  readonly workNotificationToken?: string;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -64,6 +66,14 @@ export function loadProvisionerConfig(env: NodeJS.ProcessEnv = process.env): Pro
   if (controlNamespace !== "praetorium-system" || controlService !== "provisioner") {
     throw new TypeError("runtime control network identity must be praetorium-system/provisioner");
   }
+  const workNotificationToken = env.PROVISIONER_WORK_NOTIFICATION_TOKEN;
+  if (
+    workNotificationToken !== undefined &&
+    workNotificationToken.length > 0 &&
+    !/^[\x21-\x7e]{32,512}$/u.test(workNotificationToken)
+  ) {
+    throw new TypeError("invalid provisioner work notification token");
+  }
   return {
     controlPlaneUrl: controlPlaneUrl.replace(/\/+$/u, ""),
     credentialPath: required(env, "PROVISIONER_CREDENTIAL_PATH"),
@@ -71,6 +81,9 @@ export function loadProvisionerConfig(env: NodeJS.ProcessEnv = process.env): Pro
     clusterId,
     healthPort: positiveInteger(env, "PROVISIONER_HEALTH_PORT", 8080),
     idleTimeoutMs: positiveInteger(env, "PROVISIONER_IDLE_TIMEOUT_MS", DEFAULT_IDLE_TIMEOUT_MS),
+    ...(workNotificationToken === undefined || workNotificationToken.length === 0
+      ? {}
+      : { workNotificationToken }),
     runtime: {
       namespacePrefix,
       clusterId,
@@ -97,8 +110,12 @@ async function waitForAbort(signal: AbortSignal): Promise<void> {
 async function main(): Promise<void> {
   const config = loadProvisionerConfig();
   const credential = await readProvisionerCredential(config.credentialPath);
+  if (config.workNotificationToken === credential) {
+    throw new TypeError("work notification token must be distinct from the provisioner service token");
+  }
   const metrics = new ProvisionerMetrics();
   const logger = new JsonLogger();
+  const workAvailability = new WorkAvailability();
   const operations = new OperationServiceHttpClient({
     baseUrl: config.controlPlaneUrl,
     credential,
@@ -126,6 +143,10 @@ async function main(): Promise<void> {
   let ready = false;
   const health = new HealthServer({
     metrics,
+    workAvailability,
+    ...(config.workNotificationToken === undefined
+      ? {}
+      : { workNotificationToken: config.workNotificationToken }),
     port: config.healthPort,
     isLive: () => live,
     isReady: () => ready,
@@ -153,6 +174,7 @@ async function main(): Promise<void> {
       executor,
       workerId: config.workerId,
       clusterId: config.clusterId,
+      workAvailability,
       metrics,
       logger,
       onReadyChange: (value) => {

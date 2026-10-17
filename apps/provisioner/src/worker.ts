@@ -3,6 +3,7 @@ import {
   type LifecyclePhase,
   type LifecycleResult,
 } from "@praetorium/application/lifecycle";
+import { WorkAvailability } from "@praetorium/application";
 import {
   OperationServiceHttpError,
   type ClaimedProvisionerOperation,
@@ -51,7 +52,8 @@ export interface ProvisionerWorkerOptions {
   readonly clusterId: string;
   readonly leaseSeconds?: number;
   readonly maxConcurrency?: number;
-  readonly pollIntervalMs?: number;
+  readonly workAvailability?: WorkAvailability;
+  readonly recoveryIntervalMs?: number;
   readonly retryIntervalMs?: number;
   readonly heartbeatIntervalMs?: number;
   readonly now?: () => number;
@@ -61,7 +63,7 @@ export interface ProvisionerWorkerOptions {
 }
 
 const DEFAULT_LEASE_SECONDS = 30;
-const DEFAULT_POLL_INTERVAL_MS = 2_000;
+const DEFAULT_WORK_RECOVERY_INTERVAL_MS = 300_000;
 const DEFAULT_RETRY_INTERVAL_MS = 5_000;
 const DEFAULT_MAX_CONCURRENCY = 4;
 
@@ -345,7 +347,8 @@ export class ProvisionerWorker {
   private readonly metrics: ProvisionerMetrics;
   private readonly leaseSeconds: number;
   private readonly maxConcurrency: number;
-  private readonly pollIntervalMs: number;
+  private readonly workAvailability: WorkAvailability;
+  private readonly recoveryIntervalMs: number;
   private readonly retryIntervalMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly locks = new InstanceLocks();
@@ -361,7 +364,15 @@ export class ProvisionerWorker {
       1,
       Math.min(50, options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY),
     );
-    this.pollIntervalMs = Math.max(100, options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+    this.workAvailability = options.workAvailability ?? new WorkAvailability();
+    this.recoveryIntervalMs = options.recoveryIntervalMs ?? DEFAULT_WORK_RECOVERY_INTERVAL_MS;
+    if (
+      !Number.isSafeInteger(this.recoveryIntervalMs) ||
+      this.recoveryIntervalMs < 1 ||
+      this.recoveryIntervalMs > 3_600_000
+    ) {
+      throw new RangeError("work recovery interval must be between 1ms and one hour");
+    }
     this.retryIntervalMs = Math.max(250, options.retryIntervalMs ?? DEFAULT_RETRY_INTERVAL_MS);
     this.heartbeatIntervalMs = Math.max(
       1_000,
@@ -388,10 +399,10 @@ export class ProvisionerWorker {
   }
 
   async run(signal: AbortSignal): Promise<void> {
-    let retryMs = this.pollIntervalMs;
+    let retryMs = DEFAULT_RETRY_INTERVAL_MS;
     while (!signal.aborted) {
       if (this.inFlight.size >= this.maxConcurrency) {
-        await delay(this.pollIntervalMs, signal).catch(() => undefined);
+        await this.workAvailability.wait(signal, this.recoveryIntervalMs);
         continue;
       }
       try {
@@ -401,10 +412,10 @@ export class ProvisionerWorker {
           leaseSeconds: this.leaseSeconds,
           signal,
         });
-        retryMs = this.pollIntervalMs;
+        retryMs = DEFAULT_RETRY_INTERVAL_MS;
         this.setReady(true);
         if (claim === null) {
-          await delay(this.pollIntervalMs, signal).catch(() => undefined);
+          await this.workAvailability.wait(signal, this.recoveryIntervalMs);
           continue;
         }
         this.metrics.increment("operation_claimed");
@@ -419,6 +430,7 @@ export class ProvisionerWorker {
           .finally(() => {
             this.inFlight.delete(claim.operation.id);
             this.metrics.changeInFlight(-1);
+            this.workAvailability.notify();
           });
         this.inFlight.set(claim.operation.id, task);
         this.metrics.changeInFlight(1);
@@ -427,7 +439,7 @@ export class ProvisionerWorker {
         this.setReady(false);
         this.metrics.increment("operation_service_error");
         this.logger.warn("operation_claim_failed", { code: record(error) });
-        await delay(retryMs, signal).catch(() => undefined);
+        await this.workAvailability.wait(signal, retryMs);
         retryMs = Math.min(30_000, Math.ceil(retryMs * 1.8));
       }
     }

@@ -48,10 +48,16 @@ function cli(argv) {
 }
 
 function privateEnvironment(root) {
-  const systemPaths = ["/run/current-system/sw/bin", "/run/wrappers/bin"];
+  const systemPaths = ["/run/wrappers/bin", "/run/current-system/sw/bin"];
   return {
+    // Prefer NixOS's setuid shadow wrappers; the system profile also exposes
+    // non-setuid newuidmap/newgidmap binaries under current-system/sw/bin.
     PATH: [
-      ...new Set([...Object.values(TOOL).map((binary) => path.dirname(binary)), ...systemPaths]),
+      ...new Set([
+        systemPaths[0],
+        ...Object.values(TOOL).map((binary) => path.dirname(binary)),
+        ...systemPaths.slice(1),
+      ]),
     ].join(path.delimiter),
     HOME: root,
     USER: process.env.USER ?? `uid-${process.getuid()}`,

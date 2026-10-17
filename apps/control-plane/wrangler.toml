@@ -14,7 +14,7 @@ service = "praetorium-gateway"
 [[d1_databases]]
 binding = "CONTROL_PLANE_DB"
 database_name = "praetorium-platform"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "08f29fef-eb9e-4541-82fb-777fa2f4aab0"
 migrations_dir = "migrations"
 
 [[durable_objects.bindings]]
@@ -24,3 +24,7 @@ class_name = "RepositoryCoordinator"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RepositoryCoordinator"]
+
+[vars]
+GATEWAY_ORIGIN = "https://praetorium.yohn.jp"
+CONTROL_PLANE_ORIGIN = "https://control.praetorium.yohn.jp"

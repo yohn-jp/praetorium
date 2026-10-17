@@ -1,0 +1,130 @@
+{
+  "apiVersion": "praetorium.io/deployment-inventory/v1",
+  "environment": "deployment",
+  "ownership": {
+    "provider": "k3s",
+    "clusterName": "praetorium-runtime",
+    "context": "praetorium-runtime",
+    "disposable": false,
+    "confirmation": "praetorium-runtime"
+  },
+  "clusterId": null,
+  "cloudflare": {
+    "mode": "remote",
+    "accountId": null,
+    "controlPlaneDatabaseId": "08f29fef-eb9e-4541-82fb-777fa2f4aab0",
+    "gatewayKvNamespaceId": "770c4ac60df74b019409c1203f35687d"
+  },
+  "domains": {
+    "gatewayOrigin": "https://praetorium.yohn.jp",
+    "gatewayServiceUrl": "https://praetorium.yohn.jp",
+    "controlPlaneUrl": "https://control.praetorium.yohn.jp",
+    "instanceHostnameSuffix": "instances.praetorium.yohn.jp",
+    "tlsSecretName": "praetorium-instance-tls"
+  },
+  "gateway": {
+    "allowedRepositoryOwner": "yohn-jp",
+    "githubAppId": "5355765",
+    "githubOauthClientId": "Iv23IiUxWi9dmhwJYuA",
+    "tokenEncryptionKeyId": "initial"
+  },
+  "buildkit": {
+    "endpoint": null,
+    "tlsSecretName": "praetorium-buildkit-client",
+    "allowedClientCidrs": [],
+    "frontendRepository": null,
+    "outputRepository": null
+  },
+  "buildWorker": {
+    "signingKeyId": null,
+    "compositionRepository": null,
+    "buildctlPath": "/usr/local/bin/buildctl"
+  },
+  "buildPolicy": {
+    "registryUrl": "https://ghcr.io",
+    "maxImageLayerBytes": 17179869184,
+    "maxImageVerificationMs": 120000,
+    "maxRegistryRequestMs": 60000,
+    "targetPlatform": "linux/amd64",
+    "runtimeResourceLimits": {
+      "cpuMilli": 2000,
+      "memoryMiB": 4096,
+      "ephemeralStorageMiB": 8192
+    },
+    "cacheRetention": {
+      "maxBytes": null,
+      "maxEntries": null,
+      "minAgeMs": null,
+      "maxEvictions": null
+    },
+    "builderKeys": []
+  },
+  "releasePolicy": {
+    "workerId": null,
+    "operatorActorId": null,
+    "signerIdentityAllowlist": [],
+    "canary": {
+      "owner": null,
+      "disposable": true,
+      "production": false,
+      "repositoryId": null,
+      "instanceId": null,
+      "bindingEpoch": null,
+      "authorizationRevision": null,
+      "requestedModules": null,
+      "resourceProfileId": null
+    }
+  },
+  "images": {
+    "provisioner": null,
+    "instanceAccess": null,
+    "buildWorker": null,
+    "prometheus": null
+  },
+  "secretRefs": {
+    "controlPlaneCredential": {
+      "name": "praetorium-provisioner-credential",
+      "key": "credential"
+    },
+    "instanceAccessServiceAuth": {
+      "name": "praetorium-instance-access-auth",
+      "key": "token"
+    },
+    "buildWorkerControlPlaneAuth": {
+      "name": "praetorium-build-worker-auth",
+      "key": "token"
+    },
+    "buildWorkerSigningKey": {
+      "name": "praetorium-build-worker-signing-key",
+      "key": "private-key.pem"
+    },
+    "buildWorkerRegistryPush": {
+      "name": "praetorium-registry-push",
+      "key": "config.json"
+    },
+    "buildWorkerRegistryPull": {
+      "name": "praetorium-registry-pull",
+      "key": "credential.json"
+    },
+    "applicationImagePull": {
+      "name": "praetorium-application-image-pull",
+      "key": ".dockerconfigjson"
+    },
+    "cloudflareDnsApiToken": {
+      "name": "praetorium-dns-api-token",
+      "key": "api-token"
+    },
+    "buildkitClient": {
+      "name": "praetorium-buildkit-client",
+      "caKey": "ca.crt",
+      "certKey": "tls.crt",
+      "privateKey": "tls.key"
+    }
+  },
+  "acmeContactEmail": "operator@praetorium.localhost",
+  "network": {
+    "kubernetesApiEndpoints": null,
+    "controlPlaneCidrs": [],
+    "gatewayServiceCidrs": []
+  }
+}

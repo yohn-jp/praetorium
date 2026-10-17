@@ -19,6 +19,11 @@ let
 in
 {
   options.praetorium.runtimeHost = {
+    clusterId = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Opaque cluster identity for declarative K3s node ownership labels.";
+    };
     enable = lib.mkEnableOption "Praetorium's K3s runtime host role";
 
     publicIngress = {
@@ -62,6 +67,10 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        assertion = cfg.clusterId == null || builtins.match "clu_[0-9A-HJKMNP-TV-Z]{26}" cfg.clusterId != null;
+        message = "praetorium.runtimeHost.clusterId must be a valid opaque cluster ID";
+      }
       {
         assertion = cfg.managementCidrs != [ ] && lib.all validCidr cfg.managementCidrs;
         message = "praetorium.runtimeHost requires explicit private IPv4 management CIDRs";
@@ -127,6 +136,8 @@ in
         openssh.authorizedKeys.keys = cfg.ssh.authorizedKeys;
       };
     };
+    environment.systemPackages = with pkgs; [ kubectl kustomize fluxcd git nodejs_24 ];
+
     services.k3s = {
       enable = true;
       role = "server";
@@ -134,7 +145,8 @@ in
       extraFlags = [
         "--data-dir=/var/lib/rancher/k3s"
         "--write-kubeconfig-mode=0640"
-      ] ++ lib.optional (cfg.kubernetesApi.tlsSans != [ ])
+      ] ++ lib.optional (cfg.clusterId != null)
+        "--node-label=praetorium.io/cluster-id=${cfg.clusterId}" ++ lib.optional (cfg.kubernetesApi.tlsSans != [ ])
         "--tls-san=${lib.concatStringsSep "," cfg.kubernetesApi.tlsSans}"
         ++ lib.optional (cfg.snapshotDir != null)
           "--etcd-snapshot-dir=${cfg.snapshotDir}";

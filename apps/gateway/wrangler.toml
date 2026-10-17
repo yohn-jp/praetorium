@@ -20,8 +20,8 @@ new_sqlite_classes = ["UserAuthStateDurableObject", "EphemeralCodeDurableObject"
 
 [[kv_namespaces]]
 binding = "GATEWAY_KV"
-id = "00000000000000000000000000000000"
-preview_id = "00000000000000000000000000000000"
+id = "770c4ac60df74b019409c1203f35687d"
+preview_id = "770c4ac60df74b019409c1203f35687d"
 
 [[services]]
 binding = "CONTROL_PLANE"
@@ -30,3 +30,19 @@ service = "praetorium-control-plane"
 # Runtime secrets and environment-specific non-secret values are supplied
 # by the deployment environment. The Worker validates all required bindings
 # and values before serving routes.
+
+[[routes]]
+pattern = "praetorium.yohn.jp"
+custom_domain = true
+
+[vars]
+GATEWAY_ORIGIN = "https://praetorium.yohn.jp"
+CONTROL_PLANE_ORIGIN = "https://control.praetorium.yohn.jp"
+GATEWAY_SESSION_TTL_SECONDS = "28800"
+GATEWAY_HANDOFF_TTL_SECONDS = "60"
+GATEWAY_ACCESS_GRANT_TTL_SECONDS = "300"
+GATEWAY_INSTANCE_HOSTNAME_SUFFIX = "instances.praetorium.yohn.jp"
+GATEWAY_ALLOWED_REPOSITORY_OWNER = "yohn-jp"
+GITHUB_APP_ID = "5355765"
+GITHUB_OAUTH_CLIENT_ID = "Iv23IiUxWi9dmhwJYuA"
+GATEWAY_TOKEN_ENCRYPTION_KEY_ID = "initial"

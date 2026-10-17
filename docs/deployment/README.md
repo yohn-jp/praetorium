@@ -1,4 +1,10 @@
-# Deployment and disposable infrastructure
+# Praetorium deployment
+
+**Operational entry point:** [Reproducible deployment](REPRODUCIBLE-DEPLOYMENT.md) (two NixOS guest roles, Kubernetes controllers and workloads, Cloudflare Worker releases, externally supplied credentials and end-to-end gates).
+
+**Fresh VM installation:** [NixOS ISO/Proxmox setup](NIXOS-INSTALL.md). **Host bootstrap:** [NIXOS-BOOTSTRAP](NIXOS-BOOTSTRAP.md). **Cloudflare-only:** [CLOUDFLARE-ONE-COMMAND](CLOUDFLARE-ONE-COMMAND.md).
+
+The existing Kind-specific verification and infrastructure inventory are retained below for test environments. They are not the production deployment inventory or instructions for mutating a K3s environment.
 
 T12 adds three separate layers. NixOS host modules configure the private K3s runtime host and the isolated BuildKit host. Flux owns only static controllers and the shared platform overlay. The explicit Kind inventory and scripts provide a disposable local path for planning, preflight, and reviewable application. No file contains an old host address, account ID, device path, secret value, or production context.
 

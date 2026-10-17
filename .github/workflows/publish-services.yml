@@ -1,0 +1,95 @@
+name: Publish Praetorium service images
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: praetorium-oci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.0'
+      - name: Install and verify monorepo
+        run: |
+          corepack enable
+          corepack pnpm@11.18.0 install --frozen-lockfile
+          corepack pnpm@11.18.0 check
+          node --test tests/deployment/reproducibility.test.mjs
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: provisioner
+            package: '@praetorium/provisioner'
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
+          - service: instance-access
+            package: '@praetorium/instance-access'
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
+          - service: build-worker
+            package: '@praetorium/build-worker'
+            dockerfile: infrastructure/docker/build-worker.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - name: Validate immutable release tag
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
+            { echo "Invalid semver tag" >&2; exit 1; }
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish pinned service
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          tags: |
+            ghcr.io/yohn-jp/praetorium/${{ matrix.service }}:${{ github.ref_name }}
+          build-args: |
+            NODE_BUILD_IMAGE=docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
+            NODE_RUNTIME_IMAGE=docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
+            BUILDKIT_CLIENT_IMAGE=docker.io/moby/buildkit@sha256:c1d0a1bc930a427f99f72220d1b263d6986d4592b21507fbc7f8bf7ecdaed004
+            BUILDKIT_CLIENT_BUILDCTL_PATH=/usr/bin/buildctl
+            PRAETORIUM_BUILDKIT_BUILDCTL_PATH=/usr/local/bin/buildctl
+            SERVICE_PACKAGE=${{ matrix.package }}
+      - name: Record digest for deployment inventory
+        env:
+          SERVICE: ${{ matrix.service }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          echo "ghcr.io/yohn-jp/praetorium/$SERVICE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"

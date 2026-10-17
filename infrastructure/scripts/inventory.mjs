@@ -142,15 +142,28 @@ export function validateInventory(value) {
     "ownership",
     errors,
   );
-  if (value.ownership?.provider !== "kind") errors.push("ownership.provider must be kind");
+  if (!["kind", "k3s"].includes(value.ownership?.provider)) {
+    errors.push("ownership.provider must be kind or k3s");
+  }
   requiredString(value.ownership?.clusterName, "ownership.clusterName", errors);
   requiredString(value.ownership?.context, "ownership.context", errors);
-  if (value.ownership?.disposable !== true) errors.push("ownership.disposable must be true");
   if (value.ownership?.confirmation !== value.ownership?.clusterName) {
-    errors.push("ownership.confirmation must repeat the explicit disposable cluster name");
+    errors.push("ownership.confirmation must repeat the explicit cluster name");
   }
-  if (value.ownership?.context !== `kind-${value.ownership?.clusterName}`) {
-    errors.push("ownership.context must be the Kind context for ownership.clusterName");
+  if (value.ownership?.provider === "kind") {
+    if (value.environment !== "disposable-test" || value.ownership.disposable !== true) {
+      errors.push("Kind ownership requires a disposable-test inventory");
+    }
+    if (value.ownership.context !== `kind-${value.ownership.clusterName}`) {
+      errors.push("ownership.context must be the Kind context for ownership.clusterName");
+    }
+  } else if (value.ownership?.provider === "k3s") {
+    if (value.environment !== "deployment" || value.ownership.disposable !== false) {
+      errors.push("K3s ownership requires a non-disposable deployment inventory");
+    }
+    if (value.ownership.context === `kind-${value.ownership.clusterName}`) {
+      errors.push("K3s context cannot be a Kind context");
+    }
   }
 
   requiredString(value.clusterId, "clusterId", errors);
@@ -164,8 +177,8 @@ export function validateInventory(value) {
     "cloudflare",
     errors,
   );
-  if (value.cloudflare?.mode !== "local" && value.cloudflare?.mode !== "remote-disposable") {
-    errors.push("cloudflare.mode must be local or remote-disposable");
+  if (!["local", "remote-disposable", "remote"].includes(value.cloudflare?.mode)) {
+    errors.push("cloudflare.mode must be local, remote-disposable or remote");
   }
   if (value.cloudflare?.mode === "local") {
     if (value.cloudflare.accountId !== null)
@@ -764,6 +777,9 @@ export function validateInventory(value) {
 
   if (value.environment === "disposable-test" && value.cloudflare?.mode !== "local") {
     errors.push("disposable-test inventory must use local Worker/D1 mode");
+  }
+  if (value.environment === "deployment" && value.cloudflare?.mode !== "remote") {
+    errors.push("deployment inventory requires a real remote Cloudflare account");
   }
   return { errors, blockers };
 }

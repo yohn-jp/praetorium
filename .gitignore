@@ -9,3 +9,6 @@ coverage/
 !.env.example
 *.pem
 *.key
+
+# Private ephemeral Wrangler configs derived from deployment inventory
+infrastructure/workers/.praetorium-wrangler-*/

@@ -47,6 +47,8 @@ export interface GhcrRegistryClientOptions {
   readonly registryUrl?: string;
   /** Permits HTTP only for loopback registry tests. Never set in production composition. */
   readonly allowInsecureLoopback?: boolean;
+  /** Allows anonymous writes only to an explicitly allowlisted loopback registry. */
+  readonly allowAnonymousLoopbackPublish?: boolean;
   /** Registry-only pull credential. GitHub App or user repository tokens do not satisfy this type. */
   readonly pullCredential?: RegistryCredential;
   /** Separate registry-only push credential; used only to request `push,pull` scope. */
@@ -273,6 +275,12 @@ export class GhcrRegistryClient {
     this.baseUrl = new URL(baseUrl.origin);
     this.allowedRepositories = new Set(options.allowedRepositories.map((repo) => this.validateRepository(repo)));
     this.publishRepositories = new Set((options.publishRepositories ?? []).map((repo) => this.validateRepository(repo)));
+    if (options.allowAnonymousLoopbackPublish === true && !isLoopback(this.baseUrl.hostname)) {
+      throw new TypeError("anonymous registry publishing is allowed only for loopback hosts");
+    }
+    if (options.allowAnonymousLoopbackPublish === true && this.publishRepositories.size === 0) {
+      throw new TypeError("anonymous loopback publishing requires an explicit derived-output repository allowlist");
+    }
     if (options.publishCredential && this.publishRepositories.size === 0) {
       throw new TypeError("publishCredential requires an explicit derived-output repository allowlist");
     }
@@ -328,17 +336,20 @@ export class GhcrRegistryClient {
     };
   }
 
-  /** Issues a write token only from the separately configured GHCR publisher credential. */
+  /** Issues a push token, or an empty token for an explicitly opted-in loopback registry. */
   async issuePublishAuth(repository: string, signal?: AbortSignal): Promise<RegistryAuthToken> {
     const repo = this.requireAllowedRepository(repository);
-    if (!this.options.publishCredential || !this.publishRepositories.has(repo)) {
-      throw new RegistryError("unauthorized", "dedicated registry publisher credential is not configured");
+    const anonymousLoopbackPublisher = this.options.allowAnonymousLoopbackPublish === true;
+    if (!this.publishRepositories.has(repo) || (!this.options.publishCredential && !anonymousLoopbackPublisher)) {
+      throw new RegistryError("unauthorized", "registry publisher is not configured for this repository");
     }
     return {
       registry: this.baseUrl.host,
       repository: repo,
       actions: ["pull", "push"],
-      token: await this.getToken(repo, ["pull", "push"], this.options.publishCredential, signal),
+      token: anonymousLoopbackPublisher && !this.options.publishCredential
+        ? ""
+        : await this.getToken(repo, ["pull", "push"], this.options.publishCredential, signal),
     };
   }
 
@@ -456,18 +467,17 @@ export class GhcrRegistryClient {
   /** Uploads one bounded digest-addressed metadata blob to an explicit derived-output repository. */
   async publishBlob(repository: string, bytes: Uint8Array, signal?: AbortSignal): Promise<Sha256Digest> {
     const repo = this.requireAllowedRepository(repository);
-    const anonymousLoopbackPublisher =
-      this.options.allowInsecureLoopback === true &&
-      this.baseUrl.protocol === "http:" &&
-      isLoopback(this.baseUrl.hostname);
+    const anonymousLoopbackPublisher = this.options.allowAnonymousLoopbackPublish === true;
     if (!this.publishRepositories.has(repo) || (!this.options.publishCredential && !anonymousLoopbackPublisher)) {
-      throw new RegistryError("unauthorized", "dedicated registry publisher is not configured for this repository");
+      throw new RegistryError("unauthorized", "registry publisher is not configured for this repository");
     }
     if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > this.maxMetadataBlobBytes) {
       throw new RegistryError("invalid_content", "metadata blob exceeds the configured size limit");
     }
     const digest = await sha256Digest(bytes);
-    const token = await this.getToken(repo, ["pull", "push"], this.options.publishCredential, signal);
+    const token = anonymousLoopbackPublisher && !this.options.publishCredential
+      ? ""
+      : await this.getToken(repo, ["pull", "push"], this.options.publishCredential, signal);
     const blobUrl = new URL(`/v2/${repo}/blobs/${encodeURIComponent(digest)}`, this.baseUrl);
     const authorization = new Headers();
     if (token) authorization.set("authorization", `Bearer ${token}`);

@@ -73,6 +73,7 @@ export async function createBuildWorker(
     ...(config.registryAllowInsecureLoopback ? { allowInsecureLoopback: true } : {}),
     allowedRepositories: [outputRepository, compositionRepository],
     publishRepositories: [compositionRepository],
+    ...(config.registryAllowAnonymousLoopbackPublish ? { allowAnonymousLoopbackPublish: true } : {}),
     maxImageLayerBytes: config.maxImageLayerBytes,
     maxImageVerificationMs: config.maxImageVerificationMs,
     maxRegistryRequestMs: config.maxRegistryRequestMs,

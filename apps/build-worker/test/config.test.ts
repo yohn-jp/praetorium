@@ -34,12 +34,14 @@ describe("Build worker startup configuration", () => {
       heartbeatIntervalMs: 15_000,
       registryUrl: "https://ghcr.io",
       registryAllowInsecureLoopback: false,
+      registryAllowAnonymousLoopbackPublish: false,
       compositionRepository: "praetorium/compositions",
       maxImageLayerBytes: 17_179_869_184,
       maxImageVerificationMs: 300_000,
       maxRegistryRequestMs: 30_000,
       buildKit: {
         address: "tcp://buildkit.internal:1234",
+        allowInsecureLoopbackRegistry: false,
         maxBuildInputBytes: 65_536,
         maxProgressBytes: 8 * 1024 * 1024,
       },
@@ -108,7 +110,12 @@ describe("Build worker startup configuration", () => {
         PRAETORIUM_BUILD_REGISTRY_URL: "http://127.0.0.1:39567",
         PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY: "1",
       }),
-    ).toMatchObject({ registryUrl: "http://127.0.0.1:39567", registryAllowInsecureLoopback: true });
+    ).toMatchObject({
+      registryUrl: "http://127.0.0.1:39567",
+      registryAllowInsecureLoopback: true,
+      registryAllowAnonymousLoopbackPublish: true,
+      buildKit: { allowInsecureLoopbackRegistry: true },
+    });
     expect(() =>
       readBuildWorkerConfig({
         ...environment,
@@ -129,5 +136,40 @@ describe("Build worker startup configuration", () => {
         PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY: "true",
       }),
     ).toThrow();
+  });
+
+  it("allows explicit anonymous publishing only to the exact TLS loopback host", () => {
+    expect(
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_REGISTRY_URL: "https://127.0.0.1:35009",
+        PRAETORIUM_BUILD_ALLOW_ANONYMOUS_LOOPBACK_PUBLISH: "1",
+      }),
+    ).toMatchObject({
+      registryUrl: "https://127.0.0.1:35009",
+      registryAllowInsecureLoopback: false,
+      registryAllowAnonymousLoopbackPublish: true,
+      buildKit: { allowInsecureLoopbackRegistry: true },
+    });
+    expect(() => readBuildWorkerConfig({
+      ...environment,
+      PRAETORIUM_BUILD_REGISTRY_URL: "https://127.0.0.1:35009",
+      PRAETORIUM_BUILD_ALLOW_ANONYMOUS_LOOPBACK_PUBLISH: "true",
+    })).toThrow();
+    expect(() => readBuildWorkerConfig({
+      ...environment,
+      PRAETORIUM_BUILD_REGISTRY_URL: "https://ghcr.io",
+      PRAETORIUM_BUILD_ALLOW_ANONYMOUS_LOOPBACK_PUBLISH: "1",
+    })).toThrow();
+    expect(() => readBuildWorkerConfig({
+      ...environment,
+      PRAETORIUM_BUILD_REGISTRY_URL: "https://127.0.0.1.example.test:35009",
+      PRAETORIUM_BUILD_ALLOW_ANONYMOUS_LOOPBACK_PUBLISH: "1",
+    })).toThrow();
+    expect(() => readBuildWorkerConfig({
+      ...environment,
+      PRAETORIUM_BUILD_REGISTRY_URL: "http://127.0.0.1:35009",
+      PRAETORIUM_BUILD_ALLOW_ANONYMOUS_LOOPBACK_PUBLISH: "1",
+    })).toThrow();
   });
 });

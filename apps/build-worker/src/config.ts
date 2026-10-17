@@ -14,6 +14,7 @@ export type BuildWorkerConfig = {
   signingKeyId: string;
   registryUrl: string;
   registryAllowInsecureLoopback: boolean;
+  registryAllowAnonymousLoopbackPublish: boolean;
   registryPullCredentialFile?: string;
   compositionRepository: string;
   maxImageLayerBytes: number;
@@ -118,11 +119,29 @@ export function readBuildWorkerConfig(
   if (insecureLoopbackValue !== undefined && insecureLoopbackValue !== "1") {
     throw new TypeError("Build worker environment is invalid");
   }
-  const registryAllowInsecureLoopback = insecureLoopbackValue === "1";
-  const registryUrlValue = environment.PRAETORIUM_BUILD_REGISTRY_URL ?? "https://ghcr.io";
-  if (registryAllowInsecureLoopback && !registryUrlValue.startsWith("http://127.0.0.1:")) {
+  const anonymousLoopbackPublishValue = environment.PRAETORIUM_BUILD_ALLOW_ANONYMOUS_LOOPBACK_PUBLISH;
+  if (anonymousLoopbackPublishValue !== undefined && anonymousLoopbackPublishValue !== "1") {
     throw new TypeError("Build worker environment is invalid");
   }
+  const registryAllowInsecureLoopback = insecureLoopbackValue === "1";
+  const registryUrlValue = environment.PRAETORIUM_BUILD_REGISTRY_URL ?? "https://ghcr.io";
+  let parsedRegistryUrl: URL;
+  try {
+    parsedRegistryUrl = new URL(registryUrlValue);
+  } catch {
+    throw new TypeError("Build worker environment is invalid");
+  }
+  if (registryAllowInsecureLoopback && (parsedRegistryUrl.protocol !== "http:" || parsedRegistryUrl.hostname !== "127.0.0.1")) {
+    throw new TypeError("Build worker environment is invalid");
+  }
+  if (
+    anonymousLoopbackPublishValue === "1" &&
+    parsedRegistryUrl.hostname !== "127.0.0.1"
+  ) {
+    throw new TypeError("Build worker environment is invalid");
+  }
+  const registryAllowAnonymousLoopbackPublish =
+    anonymousLoopbackPublishValue === "1" || registryAllowInsecureLoopback;
   const leaseSeconds = integer(environment, "PRAETORIUM_BUILD_LEASE_SECONDS", 120, 15, 300);
   const heartbeatIntervalMs = integer(
     environment,
@@ -153,6 +172,7 @@ export function readBuildWorkerConfig(
     signingKeyId: required(environment, "PRAETORIUM_BUILD_SIGNING_KEY_ID"),
     registryUrl: registryUrl(registryUrlValue, registryAllowInsecureLoopback),
     registryAllowInsecureLoopback,
+    registryAllowAnonymousLoopbackPublish,
     ...(environment.PRAETORIUM_BUILD_REGISTRY_PULL_CREDENTIAL_FILE === undefined
       ? {}
       : {
@@ -215,7 +235,7 @@ export function readBuildWorkerConfig(
         24 * 60 * 60 * 1000,
       ),
       safePath: required(environment, "PRAETORIUM_BUILDKIT_SAFE_PATH"),
-      allowInsecureLoopbackRegistry: registryAllowInsecureLoopback,
+      allowInsecureLoopbackRegistry: registryAllowAnonymousLoopbackPublish,
     },
   };
 }

@@ -467,21 +467,64 @@ describe("GHCR OCI registry adapter", () => {
     }) as typeof fetch;
     const client = new GhcrRegistryClient({
       ...imageLimits,
-      registryUrl: "http://127.0.0.1:35009",
-      allowInsecureLoopback: true,
+      registryUrl: "https://127.0.0.1:35009",
+      allowAnonymousLoopbackPublish: true,
       allowedRepositories: [repository, "praetorium/runtime-base"],
+      publishRepositories: [repository],
+      pullCredential: { username: "runtime-reader", password: "read-secret" },
+      fetch: fetcher,
+    });
+
+    await expect(client.issuePublishAuth(repository)).resolves.toEqual({
+      registry: "127.0.0.1:35009",
+      repository,
+      actions: ["pull", "push"],
+      token: "",
+    });
+    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
+    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
+    await expect(client.publishBlob("praetorium/runtime-base", bytes)).rejects.toMatchObject({ reason: "unauthorized" });
+    await expect(client.issuePublishAuth("praetorium/runtime-base")).rejects.toMatchObject({ reason: "unauthorized" });
+
+    expect(seen.map(({ method }) => method)).toEqual(["HEAD", "POST", "PUT", "HEAD"]);
+    expect(seen.every(({ authorization }) => authorization === null)).toBe(true);
+    expect(seen[2]?.path).toContain("state=owned&digest=" + encodeURIComponent(digest));
+    expect(seen[2]?.body).toEqual(bytes);
+  });
+
+  it("requires explicit anonymous loopback publication opt-in", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      registryUrl: "https://127.0.0.1:35009",
+      allowedRepositories: [repository],
       publishRepositories: [repository],
       fetch: fetcher,
     });
 
-    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
-    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
-    await expect(client.publishBlob("praetorium/runtime-base", bytes)).rejects.toMatchObject({ reason: "unauthorized" });
+    await expect(client.publishBlob(repository, encoder.encode("metadata")))
+      .rejects.toMatchObject({ reason: "unauthorized" });
+    await expect(client.issuePublishAuth(repository)).rejects.toMatchObject({ reason: "unauthorized" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 
-    expect(seen.map(({ method }) => method)).toEqual(["HEAD", "POST", "PUT", "HEAD"]);
-    expect(seen[0]?.authorization).toBeNull();
-    expect(seen[2]?.path).toContain("state=owned&digest=" + encodeURIComponent(digest));
-    expect(seen[2]?.body).toEqual(bytes);
+  it("rejects anonymous publication opt-in for a non-loopback registry", () => {
+    expect(() => new GhcrRegistryClient({
+      ...imageLimits,
+      registryUrl: "https://registry.example.test",
+      allowAnonymousLoopbackPublish: true,
+      allowedRepositories: [repository],
+      publishRepositories: [repository],
+    })).toThrow(/loopback hosts/u);
+  });
+
+  it("requires an explicit publish repository allowlist for anonymous loopback publication", () => {
+    expect(() => new GhcrRegistryClient({
+      ...imageLimits,
+      registryUrl: "https://127.0.0.1:35009",
+      allowAnonymousLoopbackPublish: true,
+      allowedRepositories: [repository],
+    })).toThrow(/derived-output repository allowlist/u);
   });
 
   it("rejects encoded or cross-repository upload locations before sending composition bytes", async () => {
@@ -501,8 +544,8 @@ describe("GHCR OCI registry adapter", () => {
     }) as typeof fetch;
     const client = new GhcrRegistryClient({
       ...imageLimits,
-      registryUrl: "http://127.0.0.1:35009",
-      allowInsecureLoopback: true,
+      registryUrl: "https://127.0.0.1:35009",
+      allowAnonymousLoopbackPublish: true,
       allowedRepositories: [repository],
       publishRepositories: [repository],
       fetch: fetcher,

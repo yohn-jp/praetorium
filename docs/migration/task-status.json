@@ -261,7 +261,7 @@
         "docs/verification/PLATFORM-SECURITY-DELTA.md"
       ],
       "blockers": [
-        "No explicitly owned disposable Kubernetes cluster; no real scheduling, isolation, ingress, writer-absence or partition acceptance.",
+        "An explicitly owned Kind cluster and actual API admission probes are available. Full provider scheduling, actual image identity, CNI isolation, ingress, capacity, writer-absence and partition acceptance remain unverified.",
         "At production cut b3fbe6d, principal/PSA and static RBAC plus namespace/RoleBinding/resource/Pod/network/route guards are composed in the canonical base and staged apply. Kubernetes package 34/34 and root infra 47/47 pass; these are local proof, not cluster enforcement.",
         "Indefinite not-ready/unreachable tolerations prevent the default automatic node-eviction path but are not host fencing. Operator force deletion/node removal can erase API evidence before a process terminates; no force-delete was performed."
       ],
@@ -270,7 +270,7 @@
         "docs/verification/INDEPENDENT-REVIEW.md",
         "plugins/kubernetes/test/provider.test.ts"
       ],
-      "recordStatus": "Provider principal/PSA and all static RBAC/admission/network/route guards are production-composed at b3fbe6d. Independent scoped review found no remaining defects. Actual scheduling, image identity, isolation, capacity, writer termination and partition acceptance require the explicitly owned disposable cluster and remain unverified."
+      "recordStatus": "Provider principal/PSA, RBAC/admission/network/route paths are integrated. Owned API probes exposed and validated CEL/IPv6 source fixes, integrated through f3327c1. Full scheduling/image/isolation/capacity/writer/partition acceptance remains unverified; see docs/verification/OWNED-KUBERNETES.md."
     },
     "T08": {
       "implementation": "present",
@@ -399,8 +399,8 @@
         "docs/verification/PLATFORM-SECURITY-DELTA.md"
       ],
       "blockers": [
-        "No complete owned disposable Kubernetes inventory/service images/secrets are supplied; no actual cluster apply or enforcement proof was run.",
-        "The canonical static bundle includes minimal RBAC, seven VAPs/bindings and system NetworkPolicies. Apply stages guards before bootstrap grants; Kind is pinned, Traefik watches tenant namespaces with priority1000>10>1. Local checks and reviews do not prove live API/defaulting/plugin/CNI/Traefik behavior.",
+        "Owned product create/ownership verification and bounded canonical Pod/NetworkPolicy API proofs passed. Full baseline apply remains blocked by 25 operator inputs; final service images and actual Build Worker init/constructor verification are in progress.",
+        "The static bundle includes seven VAPs/bindings and system NetworkPolicies. Only a two-policy canonical subset and isolated candidate API probes ran; full guard-before-bootstrap readiness, CNI and Traefik traffic remain unverified.",
         "No production infrastructure was applied."
       ],
       "recordedCheckDocs": [
@@ -408,7 +408,7 @@
         "infrastructure/test/deploy-workers.test.mjs",
         "docs/verification/ACCEPTANCE.md"
       ],
-      "recordStatus": "Canonical static assembly, explicit network inputs, Kind version guard, staged admission apply and Traefik watch/priority fixes are production-wired at b3fbe6d. Root infra47/47 and required fullcheck pass; independent scoped reviews resolved findings. Real environment acceptance remains blocked; see docs/verification/PLATFORM-SECURITY-DELTA.md"
+      "recordStatus": "Product Kind create and ownership checks passed on an owned cluster. Real API probes validated scoped policy fixes and native Secret/emptyDir modes. Service image deployment, zod closure, packaged buildctl and private projected-secret preparation corrections are integrated through 431dbe1 with independent static review; final-image startup/init verification is still in progress. Full deployment and production apply are not certified."
     },
     "T13": {
       "implementation": "present",
@@ -449,7 +449,7 @@
       "blockers": [
         "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout; the fixed harness returned exit 2 with errors=[].",
         "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md.",
-        "Kubernetes isolation runner is implemented and independently reviewed at 0fcf16a, but owned cluster/controller+provider credentials, immutable probe image, ingress/public marker and owned metadata canary are missing. GitHub/browser fixed harnesses are also implemented/reviewed; three fixed files remain absent (BuildKit, producer recovery, stable rollout), and the producer-client renewal step is not implemented. The partial M04 probe remains synthetic, not real provider acceptance.",
+        "The Kubernetes isolation runner is implemented/reviewed, but its complete CNI/ingress/provider/metadata-canary configuration remains unavailable; owned Kind API component probes do not verify that category. GitHub/browser fixed harnesses are also implemented/reviewed; three fixed files remain absent (BuildKit, producer recovery, stable rollout), and producer-client renewal remains unimplemented. The partial M04 probe remains synthetic.",
         "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; S01 receipt/catalog ABI must arrive first, then the inspector/smoke path must be implemented and wired. T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain alongside the blocked producer/environment gates."
       ],
       "recordedCheckDocs": [

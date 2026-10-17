@@ -297,7 +297,7 @@ async function startKubectlProxy(
   assert.ok(Buffer.byteLength(socketPath) < 104, "kubectl proxy Unix socket path is too long");
   assert.ok(namespaceNames.length > 0, "UID-precondition cleanup requires owned namespaces");
   for (const name of namespaceNames) assert.match(name, DNS_LABEL);
-  const acceptedPaths = `^/api/v1/namespaces/(?:${namespaceNames.join("|")})$`;
+  const acceptedPaths = `^/api/v1/namespaces/(${namespaceNames.join("|")})$`;
   const child = spawn(
     kubectlPath,
     [
@@ -341,6 +341,10 @@ async function startKubectlProxy(
         const privateSocket = await lstat(socketPath);
         assert.equal(privateSocket.uid, process.getuid?.());
         assert.equal(privateSocket.mode & 0o077, 0, "kubectl proxy socket is not owner-private");
+        assert.ok(
+          child.exitCode === null && child.signalCode === null,
+          "kubectl proxy exited as its private socket became ready",
+        );
         return {
           child,
           exited,
@@ -369,7 +373,8 @@ async function startKubectlProxy(
 }
 
 async function stopKubectlProxy(proxy, timeoutMs) {
-  if (!proxy || proxy.closed) return;
+  if (!proxy) return;
+  assert.ok(!proxy.closed, "kubectl proxy exited before the requested shutdown");
   proxy.child.kill("SIGTERM");
   const stopped = await Promise.race([
     proxy.exited.then(() => true),
@@ -448,6 +453,44 @@ async function removeKubectlProxyDirectory(directory, socketPath) {
     await unlink(path.join(directory, entry));
   }
   await rmdir(directory);
+}
+
+async function createPrivateKubectlProxy(
+  evidenceDirectory,
+  kubectlPath,
+  kubeconfigPath,
+  context,
+  namespaceNames,
+  timeoutMs,
+) {
+  const directory = path.join(evidenceDirectory, `.t07-${id()}`);
+  await mkdir(directory, { mode: 0o700 });
+  const socketPath = path.join(directory, "p");
+  try {
+    await chmod(directory, 0o700);
+    const directoryInfo = await lstat(directory);
+    assert.ok(directoryInfo.isDirectory() && !directoryInfo.isSymbolicLink());
+    assert.equal(directoryInfo.uid, process.getuid?.());
+    assert.equal(directoryInfo.mode & 0o077, 0);
+    const proxy = await startKubectlProxy(
+      kubectlPath,
+      kubeconfigPath,
+      context,
+      socketPath,
+      namespaceNames,
+      timeoutMs,
+    );
+    return { directory, socketPath, proxy };
+  } catch (error) {
+    try {
+      await removeKubectlProxyDirectory(directory, socketPath);
+    } catch (cleanupError) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; proxy directory cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      );
+    }
+    throw error;
+  }
 }
 
 function jsonOutput(result, label) {
@@ -1166,6 +1209,27 @@ test(
         }
         assertNotFound(exists, `unique test namespace ${name}`);
       }
+      const transportPreflight = await createPrivateKubectlProxy(
+        evidenceDir,
+        kubectlPath,
+        kubeconfigPath,
+        inventory.cluster.context,
+        namespaceDefinitions.map(([name]) => name),
+        boundedCommandTimeout(inventory.timeouts.commandMs),
+      );
+      try {
+        await stopKubectlProxy(transportPreflight.proxy, inventory.timeouts.commandMs);
+        report.namespaceDeleteTransportPreflight = {
+          result: "private-unix-socket-proxy-started-and-stopped-before-resource-creation",
+          apiRequestsSent: 0,
+          pathsRestrictedTo: namespaceDefinitions.map(([name]) => name),
+        };
+      } finally {
+        await removeKubectlProxyDirectory(
+          transportPreflight.directory,
+          transportPreflight.socketPath,
+        );
+      }
       for (const [name, labels] of namespaceDefinitions) {
         const exists = await kubectl(["get", "namespace", name, "-o", "json"]);
         assertNotFound(exists, `unique test namespace ${name}`);
@@ -1638,23 +1702,17 @@ test(
 
     if (ownedNamespaces.length > 0) {
       try {
-        const privateProxyDirectory = path.join(evidenceDir, `.t07-${id()}`);
-        await mkdir(privateProxyDirectory, { mode: 0o700 });
-        kubectlProxyDirectory = privateProxyDirectory;
-        await chmod(privateProxyDirectory, 0o700);
-        const proxyDirectoryInfo = await lstat(privateProxyDirectory);
-        assert.ok(proxyDirectoryInfo.isDirectory() && !proxyDirectoryInfo.isSymbolicLink());
-        assert.equal(proxyDirectoryInfo.uid, inventory.owner.uid);
-        assert.equal(proxyDirectoryInfo.mode & 0o077, 0);
-        kubectlProxySocketPath = path.join(kubectlProxyDirectory, "p");
-        kubectlProxy = await startKubectlProxy(
+        const transport = await createPrivateKubectlProxy(
+          evidenceDir,
           kubectlPath,
           kubeconfigPath,
           inventory.cluster.context,
-          kubectlProxySocketPath,
           ownedNamespaces.map((namespace) => namespace.name),
           boundedCommandTimeout(inventory.timeouts.commandMs),
         );
+        kubectlProxyDirectory = transport.directory;
+        kubectlProxySocketPath = transport.socketPath;
+        kubectlProxy = transport.proxy;
         report.namespaceDeleteMethod =
           "DELETE over an owner-private Unix-domain kubectl proxy socket using DeleteOptions.preconditions.uid; proxy paths are restricted to the recorded owned namespaces";
       } catch (error) {

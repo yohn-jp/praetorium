@@ -156,8 +156,10 @@ fails without issuing an unconditioned delete.
 
 Namespace cleanup sends HTTP DELETE over a Unix-domain `kubectl proxy` socket
 inside a newly created mode-0700 owner-private directory. The proxy starts only
-for cleanup, accepts only the exact recorded owned-namespace paths, and rejects
-the standard non-DELETE HTTP methods; the socket is mode 0600. Each request has
+for a no-request socket startup/shutdown preflight before resource creation and
+again for cleanup; the cleanup proxy accepts only the exact recorded
+owned-namespace paths and rejects the standard non-DELETE HTTP methods. The
+socket is mode 0600. Each request has
 `DeleteOptions.preconditions.uid` set to the exact namespace UID recorded at
 creation, then waits for NotFound. It never uses a get-then-unconditional
 delete, force-deletes pods, or deletes nodes. The JSON report is created

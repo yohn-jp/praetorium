@@ -92,6 +92,9 @@ test("additive rules cannot reopen metadata, local host, multicast or broad netw
     "::169.254.169.254",
     "0:0:0:0:0:0:a9fe:a9fe",
     "fe80::1%lo",
+    "fd00:ec2::254",
+    "fd00:0ec2:0:0:0:0:0:0254",
+    "fd20:ce::254",
     null,
     123,
   ]) {
@@ -107,6 +110,8 @@ test("additive rules cannot reopen metadata, local host, multicast or broad netw
     "168.63.129.16/32",
     "100.100.100.200/32",
     "::169.254.169.254/128",
+    "fd00:ec2::254/128",
+    "fd20:ce::254/128",
     "fe80::1/128",
     "::/0",
     "10.0.1.3/32\n  - bad:",

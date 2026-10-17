@@ -8,7 +8,7 @@ function safeEndpoint(address) {
   if (typeof address !== "string" || address.includes("%") || !isIP(address)) return false;
   const key = addressKey(address);
   if (isIP(key) === 6) {
-    return !/^(?:ff|fe[89ab]|::)/i.test(key) && key !== "::" && key !== "::1";
+    return !/^(?:ff|fe[89ab]|::)/i.test(key) && key !== "fd00:ec2::254" && key !== "fd20:ce::254";
   }
   const [first, second] = key.split(".").map(Number);
   return (

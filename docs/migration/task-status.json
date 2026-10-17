@@ -268,9 +268,10 @@
       "recordedCheckDocs": [
         "docs/migration/tasks/T07.md",
         "docs/verification/INDEPENDENT-REVIEW.md",
-        "plugins/kubernetes/test/provider.test.ts"
+        "plugins/kubernetes/test/provider.test.ts",
+        "docs/verification/KUBERNETES-NETWORK-PACKETS.md"
       ],
-      "recordStatus": "Provider principal/PSA, RBAC/admission/network/route paths are integrated. Owned API probes exposed and validated CEL/IPv6 source fixes, integrated through f3327c1. Full scheduling/image/isolation/capacity/writer/partition acceptance remains unverified; see docs/verification/OWNED-KUBERNETES.md."
+      "recordStatus": "Provider principal/PSA, RBAC/admission/network/route paths are integrated. Owned API probes exposed and validated CEL/IPv6 source fixes, integrated through f3327c1. Full scheduling/image/isolation/capacity/writer/partition acceptance remains unverified; see docs/verification/OWNED-KUBERNETES.md. Actual owned IPv4 packet component passed at 92a681d with live ingress/port/private-target controls, DNS, source renderer closure hashes and UID-guarded cleanup. Root independently confirmed all four namespaces absent and zero run Pods. This does not certify metadata/public HTTPS, IPv6, ingress TLS, capacity/writer integration or full T07/T14."
     },
     "T08": {
       "implementation": "present",
@@ -807,19 +808,20 @@
   },
   "latestCampaignVerification": {
     "checkedAt": "2026-10-17",
-    "mainEvidenceCut": "f7fdb88e8653ec30b737901920586d71e9b4cbd4",
+    "mainEvidenceCut": "c47f8c7010cb4c1cba0006f1b09facf2ef930138",
     "sourceImageCut": "431dbe1c7c86251894efea3de2cf0ec94499ca10",
     "baselineScope": "The earlier evidenceCut and its tests are historical cuts; this field and the linked component documents record later bounded verification without changing full task acceptance.",
-    "requiredFrozenInstallAndCheck": "passed at 864adb2; 29 cached test-stage tasks plus build/lint/typecheck, boundaries and schema checks; explicit launcher ESLint/syntax/format passed",
+    "requiredFrozenInstallAndCheck": "passed at c47f8c7; 29 cached test-stage tasks plus workspace build/lint/typecheck, boundaries and schemas; explicit CNI and provider-read ESLint/format passed. During this check only Sol-owned COVERAGE.json/task-status.json edits were present; runtime and test sources matched the named HEAD.",
     "workerD1Do": "VERIFIED in fresh owned local fixed runner at 5e8d2ad; aggregate exit2, six BLOCKED/NOT_CHECKED, errors=[]",
     "serviceImages": "three actual builds and digest/config/all-layer content readback; bounded service process evidence; independently reviewed through worker c585be27",
     "buildWorkerProjection": "production prepare init and cold constructor-only Pod passed at source431dbe1; final Pod UID d73943fd-c716-410e-982d-bb7baf6b6d84; all containers exit0; no queue/build/service requests",
     "buildWorkerTestInputProvenance": "Earlier generic failure used empty registry auths; before later success its owned test Secret was changed to a structurally valid dummy GHCR credential. Earlier failure was not stage-localized. No producer or real registry auth acceptance is inferred.",
     "buildWorkerCleanup": "UID-precondition cleanup e57f4d91142af73080807da912286038ed46f285e4fa14b93541c669827d1e6f; root independently confirmed praetorium-build namespace absent",
-    "cniPacketProof": "IN_PROGRESS; readiness and kernel modules alone do not prove NetworkPolicy enforcement",
+    "cniPacketProof": "PASS bounded real IPv4 packets at 92a681d; 16 report cases, 67097ms including setup/cleanup; four UID-preconditioned namespace deletes and root-independent 404/zero-Pod observation. Metadata/public HTTPS/IPv6/full T14 remain NOT_CHECKED. See KUBERNETES-NETWORK-PACKETS.md.",
     "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
     "acceptedPlatformArtifactDigest": null,
     "remainingMissingFixedRunners": 3,
-    "productionApplied": false
+    "productionApplied": false,
+    "providerReadPath": "FAILED at c47f8c7 after exact image import and probe Pod execution; primary phase Failed, cause not localized because the harness checked phase before retaining its stage log. All temporary canonical Namespace/ServiceAccount/ClusterRole/Binding were subsequently observed NotFound by root. Diagnostic capture is in progress; no provider runtime acceptance is claimed."
   }
 }

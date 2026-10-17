@@ -193,3 +193,17 @@ Both production defaults remain fail-closed. Their local tests prove refusal, no
 ## 12. Read-only producer delta at `271d7b28` (2026-10-17)
 
 Remote main and a clean detached snapshot resolve to `271d7b28ba40109f502b0bb196a81afdc47cd1d6`, tree `7a5ddf309bcd6c1a5fd594ae2919185a580a60a2`. The relevant delta from `e62bf91c` changes no S01–S05 production interface. Recent-activity migration types describe private user progress, not hosted runtime activity/control; changes to an OCI test harness supply no new execution result. Current-checkpoint artifact digest remains null, and the earlier local Core/Full candidates still belong to their recorded ancestor trees. Full audit and limitations: [PRODUCER-271d7b.md](../verification/PRODUCER-271d7b.md). Existing producer ownership and the open closure/smoke/rollback handoffs remain unchanged.
+
+## 13. Read-only producer delta at `539375c9` (2026-10-17)
+
+Current main is `539375c925754c6ec6f5c445051a32b7293a0724`, tree
+`62b9351539579a17cbd7f00127c1ab218d29c51b`. Recent-activity persistence and
+cross-device resume remain owner-cookie application features, not S04 hosted
+runtime control. S01–S04 interfaces are still missing. S05 now has a newer real
+local Core recovery manifest, `sha256:79d59260c436dfa98b9e250eba9ee616058a756b7d62935b71d5dd5740b7f0b0`,
+from `f3ef4d34`; production image inputs match current main. It remains local and
+has no hosted assignment/composition binding or Platform conformance proof, so
+S05 remains incomplete and the accepted artifact digest stays null. See
+[the exact audit](../verification/PRODUCER-539375c.md) and
+[canonical status](../migration/PRODUCER-STATUS.json). Existing producer ownership
+and the receipt/closure/smoke/rollback handoffs above remain unchanged.

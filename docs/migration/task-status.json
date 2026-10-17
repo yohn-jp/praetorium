@@ -186,7 +186,7 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Current producer 271d7b28ba40109f502b0bb196a81afdc47cd1d6 preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
+        "Current producer 539375c925754c6ec6f5c445051a32b7293a0724 preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
       ],
       "recordedCheckDocs": ["docs/migration/tasks/T04.md", "docs/migration/PRODUCER-STATUS.json"],
       "recordStatus": "Target consumer contracts and adapters are implemented; current producer status controls the gate and no producer artifact/conformance is recorded."
@@ -204,7 +204,7 @@
         "apps/control-plane/src/releases/operator-admission.ts"
       ],
       "blockers": [
-        "No current producer composition or immutable artifact is available for admission at producer revision 271d7b28ba40109f502b0bb196a81afdc47cd1d6.",
+        "No current producer composition or immutable artifact is available for admission at producer revision 539375c925754c6ec6f5c445051a32b7293a0724.",
         "Bounded pinned-safe planner and D1 snapshot are wired into the scheduled Worker; the local Worker runner verifies configured retention policy and durable advisory audit. No cache/OCI deletion or storage reclamation is claimed, and no remote OCI delete executor is required by the current contract."
       ],
       "recordedCheckDocs": [
@@ -252,11 +252,12 @@
         "tests/infra/provisioner-rbac.test.mjs",
         "tests/infra/tenant-pod-policy.test.mjs",
         "apps/provisioner/src/kubernetes-lifecycle-adapter.ts",
-        "apps/control-plane/src/provisioner-routes.ts"
+        "apps/control-plane/src/provisioner-routes.ts",
+        "docs/verification/PLATFORM-SECURITY-DELTA.md"
       ],
       "blockers": [
         "No explicitly owned disposable Kubernetes cluster; no real scheduling, isolation, ingress, writer-absence or partition acceptance.",
-        "At pinned main 4a94433 the provider-generated tenant RoleBinding subject matches the Deployment ServiceAccount and namespace; the provider package passes 32/32 tests, and focused RBAC/tenant-Pod policy structure tests pass 5/5. The static ClusterRole/Binding and tenant Pod VAP files are not included by infrastructure/kubernetes/base/kustomization.yaml, so enforcement is not composed. Namespace/RoleBinding scoping and generic-resource/network/route admission remain incomplete.",
+        "At production cut b3fbe6d, principal/PSA and static RBAC plus namespace/RoleBinding/resource/Pod/network/route guards are composed in the canonical base and staged apply. Kubernetes package34/34 and rootinfra47/47 pass; these are local proof, not cluster enforcement.",
         "Indefinite not-ready/unreachable tolerations prevent the default automatic node-eviction path but are not host fencing. Operator force deletion/node removal can erase API evidence before a process terminates; no force-delete was performed."
       ],
       "recordedCheckDocs": [
@@ -264,7 +265,7 @@
         "docs/verification/INDEPENDENT-REVIEW.md",
         "plugins/kubernetes/test/provider.test.ts"
       ],
-      "recordStatus": "Provider grants match the Deployment ServiceAccount; runtime namespaces receive and validate restricted PSA labels and reject pinned policy versions. Static RBAC and tenant Pod policy resources have structural tests but are not wired through the base Kustomize composition; namespace/RoleBinding scoping and generic-resource/network/route policy plus all live-cluster acceptance remain incomplete. No cluster was applied."
+      "recordStatus": "Provider principal/PSA and all static RBAC/admission/network/route guards are production-composed at b3fbe6d. Independent scoped review found no remaining defects. Actual scheduling, image identity, isolation, capacity, writer termination and partition acceptance require the explicitly owned disposable cluster and remain unverified."
     },
     "T08": {
       "implementation": "present",
@@ -436,7 +437,7 @@
       ],
       "blockers": [
         "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout; the fixed harness returned exit 2 with errors=[].",
-        "Current producer S01-S05 are missing at revision 271d7b28ba40109f502b0bb196a81afdc47cd1d6; artifactDigest is null and no current-main immutable artifact is available.",
+        "Current producer S01-S05 are missing at revision 539375c925754c6ec6f5c445051a32b7293a0724; artifactDigest is null and no current-main immutable artifact is available.",
         "The six blocked fixed categories also lack their executable runner files; supplying resources alone does not complete acceptance. A separate partial M04 Worker test at 37f187c verifies a synthetic local revocation barrier but is not a T14 category pass or real writer/provider acceptance.",
         "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; S01 receipt/catalog ABI must arrive first, then the inspector/smoke path must be implemented and wired. T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain alongside the blocked producer/environment gates."
       ],
@@ -494,7 +495,7 @@
       "id": "S01-S05",
       "capability": "producer catalog, hosted access, Git credentials, quiesce and immutable composition evidence",
       "state": "blocked",
-      "evidence": "docs/migration/PRODUCER-STATUS.json at 271d7b28ba40109f502b0bb196a81afdc47cd1d6 marks each producer gate missing/BLOCKED and artifactDigest null."
+      "evidence": "docs/migration/PRODUCER-STATUS.json at539375c925754c6ec6f5c445051a32b7293a0724 marks each hosted producer gate missing/BLOCKED and accepted artifactDigest null; stronger local Core evidence remains component-only."
     },
     {
       "id": "T09-runtime",

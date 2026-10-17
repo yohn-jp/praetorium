@@ -51,6 +51,12 @@
       "memoryMiB": 4096,
       "ephemeralStorageMiB": 8192
     },
+    "cacheRetention": {
+      "maxBytes": null,
+      "maxEntries": null,
+      "minAgeMs": null,
+      "maxEvictions": null
+    },
     "builderKeys": []
   },
   "releasePolicy": {

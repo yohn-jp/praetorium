@@ -69,7 +69,17 @@ function validate(file) {
 function buildPolicy(inventory) {
   const repository = inventory.buildkit.outputRepository;
   const builderKeys = inventory.buildPolicy.builderKeys;
-  if (!repository || inventory.buildPolicy.targetPlatform === null || builderKeys.length === 0)
+  const cacheRetention = inventory.buildPolicy.cacheRetention;
+  const retentionFields = ["maxBytes", "maxEntries", "minAgeMs", "maxEvictions"];
+  if (
+    !repository ||
+    inventory.buildPolicy.targetPlatform === null ||
+    builderKeys.length === 0 ||
+    !cacheRetention ||
+    !retentionFields.every(
+      (field) => Object.hasOwn(cacheRetention, field) && cacheRetention[field] !== null,
+    )
+  )
     return null;
   const outputRepository = repository.slice("ghcr.io/".length);
   return {
@@ -80,6 +90,7 @@ function buildPolicy(inventory) {
     maxImageVerificationMs: inventory.buildPolicy.maxImageVerificationMs,
     maxRegistryRequestMs: inventory.buildPolicy.maxRegistryRequestMs,
     runtimeResourceLimits: inventory.buildPolicy.runtimeResourceLimits,
+    cacheRetention,
     targetPlatform: inventory.buildPolicy.targetPlatform,
     builderKeys: builderKeys.map((key) => ({
       keyId: key.keyId,
@@ -365,6 +376,7 @@ try {
       .map((file) => `apps/control-plane/migrations/${file}`),
   ];
   const templateProblems = inspectTemplates();
+  const generatedBuildPolicy = buildPolicy(inventory);
   const workerVariables = {
     gateway: [
       "GATEWAY_ORIGIN",
@@ -454,6 +466,7 @@ try {
             "RELEASE_POLICY_JSON (generated only when the complete operator-selected disposable canary policy is supplied)",
           ],
           controlPlaneBuildPolicy: {
+            configured: generatedBuildPolicy !== null,
             sourceVariable: "BUILD_POLICY_JSON",
             fields: [
               "registryUrl",
@@ -465,7 +478,9 @@ try {
               "targetPlatform",
               "builderKeys",
               "runtimeResourceLimits",
+              "cacheRetention",
             ],
+            cacheRetention: generatedBuildPolicy?.cacheRetention ?? null,
             registryUrl: inventory.buildPolicy.registryUrl,
             outputRepository: inventory.buildkit.outputRepository,
             targetPlatform: inventory.buildPolicy.targetPlatform,
@@ -545,6 +560,10 @@ try {
             "PROVISIONER_AUTH_TOKEN",
           ],
           optionalControlPlaneVariables: ["BUILD_POLICY_JSON", "RELEASE_POLICY_JSON"],
+          controlPlaneBuildPolicy: {
+            configured: generatedBuildPolicy !== null,
+            cacheRetention: generatedBuildPolicy?.cacheRetention ?? null,
+          },
           releasePolicyConfigured: releasePolicy(inventory) !== null,
           releaseGates: {
             scheduledCron: "*/5 * * * *",

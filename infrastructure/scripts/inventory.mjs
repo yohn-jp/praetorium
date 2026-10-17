@@ -436,6 +436,7 @@ export function validateInventory(value) {
       "maxRegistryRequestMs",
       "targetPlatform",
       "runtimeResourceLimits",
+      "cacheRetention",
       "builderKeys",
     ],
     "buildPolicy",
@@ -469,6 +470,27 @@ export function validateInventory(value) {
     const amount = value.buildPolicy?.runtimeResourceLimits?.[field];
     if (!Number.isSafeInteger(amount) || amount < 1) {
       errors.push(`buildPolicy.runtimeResourceLimits.${field} must be a positive safe integer`);
+    }
+  }
+  exactKeys(
+    value.buildPolicy?.cacheRetention,
+    ["maxBytes", "maxEntries", "minAgeMs", "maxEvictions"],
+    "buildPolicy.cacheRetention",
+    errors,
+  );
+  for (const [field, minimum, maximum] of [
+    ["maxBytes", 0, Number.MAX_SAFE_INTEGER],
+    ["maxEntries", 1, Number.MAX_SAFE_INTEGER],
+    ["minAgeMs", 0, Number.MAX_SAFE_INTEGER],
+    ["maxEvictions", 1, 32],
+  ]) {
+    const amount = value.buildPolicy?.cacheRetention?.[field];
+    if (amount === null) {
+      blockers.push(`buildPolicy.cacheRetention.${field} has not been supplied`);
+    } else if (!Number.isSafeInteger(amount) || amount < minimum || amount > maximum) {
+      errors.push(
+        `buildPolicy.cacheRetention.${field} must be a safe integer between ${minimum} and ${maximum}`,
+      );
     }
   }
   if (Array.isArray(value.buildPolicy?.builderKeys) && value.buildPolicy.builderKeys.length === 0) {

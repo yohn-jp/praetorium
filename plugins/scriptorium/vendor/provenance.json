@@ -1,6 +1,6 @@
 {
   "schemaVersion": "scriptorium-build-catalog-resolver-provenance/v1",
-  "producerRevision": "91993a136bf8b4b2806acc0850e73acf20b04a53",
+  "producerRevision": "a03ba9b5e3bb79cc5756885d582bca0266fb85e9",
   "sourceTreeClean": true,
   "bundlePath": "build-catalog.mjs",
   "bundleDigest": "sha256:229aabfee2ecc5c72a06a4482938d934d3f4735b85078a52e6dd8d8c87036c6b",

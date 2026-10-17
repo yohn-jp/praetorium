@@ -1,3 +1,5 @@
 d82e298d9b7c47968b6425e3f969a657c14a92a6d2fcb495f6b3c9b6d37591af  run-01-kubeconfig-failure.log
 3d3253b2ec6cff533bebf8e65d464890e50e2e6c76918307fe18ad15fe679a65  run-02-pod-failure.log
 ecde557d7efaf1e6e38a50324add7b5e1f8330c34baa9a7e3bb1d7014a161616  run-02-root-cleanup.json
+3eeaad70d990d8e13fbff19c06ca7d13181763b4399b6dc27b04b44b84cf4d55  run-03-provider-live.log
+9fe54d063f31b5a6695057dd2903fd018be79fe124d19ea0793ee5c9aa1882b7  run-03-root-cleanup.json

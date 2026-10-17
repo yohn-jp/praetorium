@@ -1,0 +1,41 @@
+{
+  "checkedAt": "2026-10-17T05:06:26.496793+00:00",
+  "testSourceCommit": "9a07bc6685dcd9fef6bd8da1d9e06f398aa551a7",
+  "sourceImageCommit": "431dbe1c7c86251894efea3de2cf0ec94499ca10",
+  "runId": "d31768a830ce0dc0446b",
+  "stdoutSha256": "3eeaad70d990d8e13fbff19c06ca7d13181763b4399b6dc27b04b44b84cf4d55",
+  "scope": "root independent cleanup observation after successful actual provider read-path probe",
+  "resources": [
+    {
+      "kind": "Pod",
+      "name": "praetorium-provider-read-d31768a830ce0dc0446b",
+      "previousUid": "7907baa0-8da6-4958-8995-49a03f7bcb63",
+      "observation": "NotFound"
+    },
+    {
+      "kind": "ClusterRoleBinding",
+      "name": "praetorium-provisioner-bootstrap",
+      "previousUid": "f7e636c7-3be3-4ef9-929d-054bb363ac66",
+      "observation": "NotFound"
+    },
+    {
+      "kind": "ClusterRole",
+      "name": "praetorium-provisioner-bootstrap",
+      "previousUid": "3fd038a3-150e-4761-9836-9ced0d3da54a",
+      "observation": "NotFound"
+    },
+    {
+      "kind": "ServiceAccount",
+      "name": "praetorium-provisioner",
+      "previousUid": "bd0322e7-59ac-43a4-8705-6c96f6c783b2",
+      "observation": "NotFound"
+    },
+    {
+      "kind": "Namespace",
+      "name": "praetorium-system",
+      "previousUid": "259da0cb-c813-4c15-abdc-828bbbec44c0",
+      "observation": "NotFound"
+    }
+  ],
+  "apiWrites": false
+}

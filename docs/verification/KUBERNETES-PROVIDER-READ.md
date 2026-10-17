@@ -119,13 +119,18 @@ resources and one unique probe Pod whose program performs only reads. The result
 the actual image starts, reads the projected token, completes both production
 provider reads, reports the absent census, and all UID-guarded cleanup reaches 404. On success, Node prints a small JSON proof with the source commit, archive
 hash, original manifest/config digests, observed runtime `imageID`, cluster
-identity, and probe run ID after cleanup completes.
+identity, and probe run ID after cleanup completes. It also prints a sanitized
+Pod diagnostic before phase assertions and a UID ledger with cleanup outcomes.
 
 ## Result
 
-**FAILED / acceptance not established.** The earlier preparation at base
-`f7fdb88` was not a live run. After CNI cleanup and the API-writer handoff, Sol
-ran the integrated source twice:
+**PARTIAL PASS / full T07 acceptance not established.** The live library
+read-path probe passed on integrated source
+`9a07bc6685dcd9fef6bd8da1d9e06f398aa551a7`: 8 tests passed (7 local checks and
+1 live check), with no failures or skips. The live case took 14.074 seconds;
+the test file took 20.505 seconds total.
+
+The earlier attempts remain part of the record:
 
 - At `69097c0`, three local checks passed but the live case stopped before image
   import or API resource creation: the harness incorrectly expected a bare
@@ -140,12 +145,39 @@ ran the integrated source twice:
   error. Root subsequently observed the canonical Namespace, ServiceAccount,
   ClusterRole and ClusterRoleBinding all `NotFound`.
 
-The original [attempt logs and cleanup observation](evidence/t07-provider-read-attempts/SHA256SUMS)
-are retained byte-for-byte, including whitespace-only lines in Node's original
-error rendering. `git diff --check` may flag those artifact lines; they are
-intentionally preserved rather than normalized. Inspection also found that the harness expected
-`undefined` for the empty page cursor, while the actual `RuntimePage` contract
-requires `null`; this is a test mismatch, not yet proof of the failed Pod's
-exact stage. Diagnostic capture and the contract-aligned assertion are being
-corrected before another run. No provider read-path PASS, full Provisioner,
-producer integration, full T07/T14 or production deployment is claimed.
+For the passing run at `9a07bc6`, the exact preserved Provisioner archive from
+source image commit `431dbe1c7c86251894efea3de2cf0ec94499ca10` was loaded into
+the owned Kind cluster (Kubernetes `v1.35.0`, one node). Its archive SHA-256
+was `5173465b2d29b5d2123a89a696f65b5fb042e6b969f8f50ca82db08808c251a6`; the
+retained image manifest and config digests were
+`sha256:00739c31e414da9494015e859b8ef1b0f2289ceef631274a1f953ef70c3e2e64`
+and `sha256:d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d`.
+The Pod reached `Succeeded` with exit code 0 and runtime image ID equal to the
+config digest. The actual image-exported provider read the projected Service
+Account token, returned zero managed instances, and inspected a known-absent
+instance with a complete zero-Pod writer census. Reservation callbacks were
+not called. The test's empty-page check now follows the production
+`RuntimePage.nextCursor: string | null` contract and requires `null`; this
+correction preceded the passing run but does not independently localize the
+earlier failed Pod's stage.
+
+The runner recorded five owned objects with matching run labels and UIDs,
+accepted UID-preconditioned deletes for each, and confirmed each absent with a
+subsequent 404. A separate root read-only cleanup observation then found the
+same Pod, ClusterRoleBinding, ClusterRole, ServiceAccount, and Namespace
+`NotFound` by their previous UIDs; that independent observation made no API
+writes. The complete original stdout and cleanup observation are retained in
+the evidence bundle.
+
+The three original run logs and both cleanup observations are indexed in the
+[evidence checksum file](evidence/t07-provider-read-attempts/SHA256SUMS) and
+retained byte-for-byte. The [passing run's original stdout](evidence/t07-provider-read-attempts/run-03-provider-live.log)
+and [independent cleanup observation](evidence/t07-provider-read-attempts/run-03-root-cleanup.json)
+are available individually. Earlier logs retain whitespace-only lines in
+Node's original error rendering; `git diff --check` may flag those lines, and
+they remain unchanged. The failed `c47f8c7` Pod's exact provider failure stage
+remains unknown. This evidence establishes only
+the production Kubernetes provider's two read paths and this partial T07
+probe. It does not establish the existing-namespace census path, full
+Provisioner lifecycle, capacity/D1 behavior, producer integration, full
+T07/T14 acceptance, or a production deployment.

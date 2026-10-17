@@ -207,3 +207,16 @@ S05 remains incomplete and the accepted artifact digest stays null. See
 [the exact audit](../verification/PRODUCER-539375c.md) and
 [canonical status](../migration/PRODUCER-STATUS.json). Existing producer ownership
 and the receipt/closure/smoke/rollback handoffs above remain unchanged.
+
+## 14. Read-only producer delta at `fc4eea88` (2026-10-17)
+
+Observed producer main is `fc4eea880ef895decf6161bf4f45cc958e9700b3`, tree
+`7a56bd432597b7f31588af69f12a4e3a14243b46`. The Semantic browser polling fix
+adds no S01–S04 hosted interface. A new local full-profile model/worker run reports
+manifest `sha256:510d8398fcee71015bcd3be2489ff69fd7976bb4c06d0e852c47579c81e427bf`
+for candidate `8804edc9`, matching the older 539 image inputs and predating the new
+production fix. No current-fc4 hosted composition/publication is recorded; S05
+remains incomplete and the accepted artifact digest stays null. Whole verify/P12
+also remain pending in the committed record. See
+[the exact audit](../verification/PRODUCER-fc4eea8.md). Existing handoffs and
+producer ownership are unchanged.

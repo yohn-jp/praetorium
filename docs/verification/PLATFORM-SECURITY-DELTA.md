@@ -55,3 +55,12 @@ requests, and CRD expressions are not completely type-checked by Kubernetes.
 The pinned kindnet controller is fail-open; packet probes remain mandatory.
 T12/T14/T15 full acceptance remains blocked on the explicit owned environments,
 producer contracts/artifacts and remaining runner implementations.
+
+At later docs-only main `bc5c6ea`, root also reran offline Nix module export
+evaluation (`buildHost`, `runtimeHost`) and parsed both module sources. Explicit
+Kind/Kustomize preflight passed the pinned runtime and all four local renders,
+then returned exit2 for missing configured kubectl and operator inventory inputs,
+with `clusterVerified:false` and `sideEffects:[]`. It made no cluster request.
+Logs: `/tmp/praetorium-current-{runtime,build}-nix-parse.out` and
+`/tmp/praetorium-current-infrastructure-preflight.{json,stderr}`. Module syntax and
+exports do not prove an applied NixOS host configuration.

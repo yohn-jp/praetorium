@@ -479,18 +479,17 @@
     }
   ],
   "latestProducerPreflight": {
-    "producerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
-    "documentCommit": "787ede5",
+    "producerRevision": "fc4eea880ef895decf6161bf4f45cc958e9700b3",
     "artifactDigest": null,
-    "artifactDigestReason": "No accepted hosted assignment/composition artifact or published locator is recorded for current producer 539375c. A real local Core recovery run reports manifest sha256:79d59260c436dfa98b9e250eba9ee616058a756b7d62935b71d5dd5740b7f0b0 at source f3ef4d34b5e603885ec2cbf204446b6becef3071, tree 41c3027768948392b8f9a43815c86fa680d636f3; production image inputs are unchanged through 539375c (only docs and a migration test changed). That useful component evidence remains local and lacks hosted metadata/conformance. It is not an accepted Platform composition. Historical full-profile evidence remains scoped to its separate candidate. Registry absence is not inferred from anonymous HTTP 401.",
+    "artifactDigestReason": "No current-fc4 accepted hosted composition or published artifact locator is recorded. New local full-profile model/worker evidence reports manifest sha256:510d8398fcee71015bcd3be2489ff69fd7976bb4c06d0e852c47579c81e427bf at source8804edc9/tree45809bd2, with image inputs matching539375c; currentfc4 adds a production Semantic browser polling fix beyond that image. Core recovery digest79d592 remains local to sourcef3ef4d34 with inputs matching the historical539 checkpoint. Neither binds hosted assignment/composition metadata or supplies Platform conformance. S05 remains incomplete; accepted artifactDigest null. Registry absence is not inferred.",
     "producerModified": false,
     "note": "Separate read-only delta audit. S01-S05 interfaces unchanged; recent-activity migration is private user progress. Original production/test evidence cut is retained; no new producer runtime acceptance was run.",
-    "producerTree": "62b9351539579a17cbd7f00127c1ab218d29c51b",
-    "documentPath": "docs/verification/PRODUCER-539375c.md",
-    "evidenceDocument": "docs/verification/PRODUCER-539375c.md",
-    "previousProducerRevision": "271d7b28ba40109f502b0bb196a81afdc47cd1d6",
-    "previousProducerTree": "7a5ddf309bcd6c1a5fd594ae2919185a580a60a2",
-    "previousDocumentPath": "docs/verification/PRODUCER-271d7b.md"
+    "producerTree": "7a56bd432597b7f31588af69f12a4e3a14243b46",
+    "documentPath": "docs/verification/PRODUCER-fc4eea8.md",
+    "evidenceDocument": "docs/verification/PRODUCER-fc4eea8.md",
+    "previousProducerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
+    "previousProducerTree": "62b9351539579a17cbd7f00127c1ab218d29c51b",
+    "previousDocumentPath": "docs/verification/PRODUCER-539375c.md"
   },
   "latestPlatformDelta": {
     "head": "0cdf51e36d1c2fac894c3a9fc5fcf4b61347a48f",
@@ -574,6 +573,9 @@
     "workers-d1-do": "VERIFIED local owned Miniflare",
     "otherCategories": "six BLOCKED/NOT_CHECKED",
     "remainingMissingFixedRunners": 5,
-    "liveClusterChecked": false
+    "liveClusterChecked": false,
+    "admissionDenialFixHead": "8f6ef1a",
+    "admissionDenialReviewedWorkerHead": "33df1382bbca8dac5e667b355c4fd8859924b0ad",
+    "admissionDenialCorrection": "Kubernetes v1.35.5 omitted validation reason maps to 422/Invalid. Status.message contains a resource/name wrapper and Status.details.causes contains exact VAP/binding/validation text. Root focused 4/4 passed; independent source-based review closed both reader mismatches. No live API acceptance."
   }
 }

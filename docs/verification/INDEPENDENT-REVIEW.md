@@ -78,3 +78,14 @@ local 4/4, and the fixed owned Worker harness. Worker/D1/DO passed; six environm
 gates remained BLOCKED/NOT_CHECKED. Unconfigured Kubernetes acceptance exits1
 before transport construction. Neither reviewer nor Sol executed live Kubernetes
 acceptance; implementation review does not close that gate.
+
+Sol's subsequent upstream-source check found two real response-format mismatches
+in the Kubernetes denial reader: default validation failures are 422/Invalid, and
+`Status.message` wraps the VAP text with the resource/name. Main `8f6ef1a` includes
+the ordered worker corrections through `33df138`; the independent reviewer
+verified both against Kubernetes v1.35.5 dispatcher, admission.NewForbidden and
+apimachinery constructors. The reader now binds resource/group/name, the exact
+wrapped message, and the exact inner policy/binding/validation cause; generic 403,
+binding-less and evaluation/configuration errors fail. Root's four focused tests
+pass at this composed main. These fixtures follow the documented upstream error
+construction; no actual API server response or enforcement is claimed.

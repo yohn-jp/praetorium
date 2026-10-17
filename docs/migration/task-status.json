@@ -124,7 +124,7 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Read-only producer preflight at eab0fad7c811aeedabe29fcd214598dc5207c178: S01-S05 missing/BLOCKED; accepted artifactDigest null. Stronger local Core recovery evidence lacks hosted assignment/composition conformance."
+        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md."
       ],
       "recordedCheckDocs": ["docs/migration/PRODUCER-STATUS.json"],
       "recordStatus": "Read-only producer observation at eab0fad7c811aeedabe29fcd214598dc5207c178 records local Core/Full OCI and terminal P12 component evidence for frozen fc4 application code. Hosted S01-S04 interfaces and accepted S05 composition remain missing; Platform artifactDigest null. See docs/verification/PRODUCER-eab0fad.md. No Platform-to-producer conformance was run."
@@ -191,10 +191,10 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Current producer eab0fad7c811aeedabe29fcd214598dc5207c178 preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
+        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md."
       ],
       "recordedCheckDocs": ["docs/migration/tasks/T04.md", "docs/migration/PRODUCER-STATUS.json"],
-      "recordStatus": "Target consumer contracts and adapters are implemented; current producer status controls the gate and no producer artifact/conformance is recorded."
+      "recordStatus": "Target consumer contracts/adapters are integrated. Published producer presets are recorded, but accepted composition and hosted conformance remain absent; current producer status controls the gate."
     },
     "T05": {
       "implementation": "present",
@@ -209,7 +209,7 @@
         "apps/control-plane/src/releases/operator-admission.ts"
       ],
       "blockers": [
-        "No current producer composition or immutable artifact is available for admission at producer revision eab0fad7c811aeedabe29fcd214598dc5207c178.",
+        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md.",
         "Bounded pinned-safe planner and D1 snapshot are wired into the scheduled Worker; the local Worker runner verifies configured retention policy and durable advisory audit. No cache/OCI deletion or storage reclamation is claimed, and no remote OCI delete executor is required by the current contract."
       ],
       "recordedCheckDocs": [
@@ -363,7 +363,7 @@
         "apps/control-plane/migrations/0002_stable_release_rollouts.sql"
       ],
       "blockers": [
-        "Current producer S01 metadata and accepted immutable composition at eab0fad7c811aeedabe29fcd214598dc5207c178 remain missing; production composition refuses absent metadata.",
+        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md.",
         "No real canary, ten-minute health window, writer-absence observation, stable follower rollout or persisted canary observation is available; S02/S05 canary evidence remains blocked."
       ],
       "recordedCheckDocs": [
@@ -448,8 +448,8 @@
       ],
       "blockers": [
         "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout; the fixed harness returned exit 2 with errors=[].",
-        "Current producer S01-S05 are missing at revision eab0fad7c811aeedabe29fcd214598dc5207c178; artifactDigest is null and no current-main immutable artifact is available.",
-        "Kubernetes isolation runner is implemented and independently reviewed at 0fcf16a, but owned cluster/controller+provider credentials, immutable probe image, ingress/public marker and owned metadata canary are missing. The other five blocked categories lack fixed executable runners. The partial M04 probe remains synthetic, not real provider acceptance.",
+        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md.",
+        "Kubernetes isolation runner is implemented and independently reviewed at 0fcf16a, but owned cluster/controller+provider credentials, immutable probe image, ingress/public marker and owned metadata canary are missing. GitHub/browser fixed harnesses are also implemented/reviewed; three fixed files remain absent (BuildKit, producer recovery, stable rollout), and the producer-client renewal step is not implemented. The partial M04 probe remains synthetic, not real provider acceptance.",
         "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; S01 receipt/catalog ABI must arrive first, then the inspector/smoke path must be implemented and wired. T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain alongside the blocked producer/environment gates."
       ],
       "recordedCheckDocs": [

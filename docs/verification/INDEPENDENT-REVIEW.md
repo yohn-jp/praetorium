@@ -102,7 +102,7 @@ completed Git fatal HTTP 403/404 responses count as expected permission denials;
 401 and untrusted remote text stay uncertain. Fresh reviewer tests passed 6/6;
 the live test skipped/BLOCKED without owner config, and no network was used.
 Sol integrated the four isolated commits through `4f52afd`, reran the 6 local tests,
-and confirmed the fixed GitHub category remains absent. This is review of the
+and confirmed that, at historical cut `4f52afd`, the fixed GitHub runner was absent. It has since been integrated; real acceptance remains blocked as described in the follow-up below. This is review of the
 partial probe implementation, not real App/broker renewal or T14 certification.
 
 ## Delivery ledger and producer observation review

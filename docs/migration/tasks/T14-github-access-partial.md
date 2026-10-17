@@ -1,9 +1,7 @@
 # T14 partial GitHub App access probe
 
 Status: **PARTIAL / BLOCKED FOR FIXED `github-access` ACCEPTANCE**. The fixed
-`github-access` runner remains absent, so `scripts/verify-integration.mjs`
-continues to report that category as **BLOCKED / NOT_CHECKED**. This opt-in
-partial probe cannot make the category VERIFIED.
+`github-access` runner is now implemented and wired to `scripts/verify-integration.mjs`; its [implementation and review](../../verification/FIXED-RUNNER-PROGRESS.md) do not certify live acceptance. The category remains **BLOCKED / NOT_CHECKED** for missing owned live inputs and actual producer-client expiry/renewal evidence. This opt-in partial probe cannot make the category VERIFIED.
 
 ## What the probe can establish
 

@@ -151,7 +151,7 @@ this probe.
   test was performed. Kind's default CNI is not counted as NetworkPolicy
   enforcement here: CNI enforcement is **NOT_CHECKED**.
 - S01-S05 hosted handshakes and an accepted immutable Platform composition are unavailable;
-  there was no real Scriptorium image or runtime.
+  this API probe did not use a Scriptorium image or runtime.
 - No GitHub App user authorization, OCI BuildKit/registry artifact, browser
   entry, ingress, workload startup, cluster isolation/capacity, recovery, or
   stable/pinned rollout was tested here.

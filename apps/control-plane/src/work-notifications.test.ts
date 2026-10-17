@@ -30,6 +30,20 @@ describe("work availability delivery", () => {
     expect(fetcher.mock.calls[0]?.[1]?.redirect).toBe("manual");
   });
 
+  it("scopes operation metadata hints and rejects scoped build hints", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 202 }));
+    const operationEnv = {
+      PROVISIONER_WORK_NOTIFICATION_URL: "https://runtime.test/internal/work-available",
+      PROVISIONER_WORK_NOTIFICATION_TOKEN: env.BUILD_WORK_NOTIFICATION_TOKEN,
+    };
+    expect(await notifyWorkAvailable(operationEnv, "operation", fetcher, "instance-1")).toBe("notified");
+    expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string)).toEqual({
+      version: 1, kind: "operation", instanceId: "instance-1",
+    });
+    expect(await notifyWorkAvailable(env, "build", fetcher, "instance-1")).toBe("failed");
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("keeps dropped notifications separate from durable execution and never retries", async () => {
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error("network unavailable"));
     expect(await notifyWorkAvailable(env, "build", fetcher)).toBe("failed");

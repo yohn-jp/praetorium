@@ -12,6 +12,7 @@ export async function notifyWorkAvailable(
   env: WorkNotificationEnv,
   kind: WorkNotification["kind"],
   fetcher: typeof fetch = fetch,
+  instanceId?: string,
 ): Promise<"disabled" | "notified" | "failed"> {
   const endpoint =
     kind === "build" ? env.BUILD_WORK_NOTIFICATION_URL : env.PROVISIONER_WORK_NOTIFICATION_URL;
@@ -34,7 +35,7 @@ export async function notifyWorkAvailable(
     const response = await fetcher(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(WorkNotificationSchema.parse({ version: 1, kind })),
+      body: JSON.stringify(WorkNotificationSchema.parse({ version: 1, kind, instanceId })),
       // Workers fetch rejects the standard "error" redirect mode. "manual"
       // prevents credential forwarding while allowing the HTTPS request itself.
       redirect: "manual",

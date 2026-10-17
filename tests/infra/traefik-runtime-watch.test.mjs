@@ -4,11 +4,24 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createKubernetesResourceRenderer } from "../../plugins/kubernetes/dist/index.js";
+import { build } from "esbuild";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(import.meta.url);
 const yaml = require(path.join(root, "node_modules/.pnpm/node_modules/js-yaml"));
+const compiledRenderer = await build({
+  entryPoints: [
+    fileURLToPath(new URL("../../plugins/kubernetes/src/kubernetes/renderer.ts", import.meta.url)),
+  ],
+  bundle: true,
+  write: false,
+  platform: "node",
+  format: "esm",
+  target: "node24",
+});
+const { createKubernetesResourceRenderer } = await import(
+  `data:text/javascript;base64,${Buffer.from(compiledRenderer.outputFiles[0].contents).toString("base64")}`
+);
 
 function read(relativePath) {
   return readFileSync(path.join(root, relativePath), "utf8");
@@ -93,7 +106,7 @@ test("Traefik CRD provider watches generated instance routes and the system fall
     {
       kind: "Rule",
       match: "Host(`ins-" + instanceId.slice(4).toLowerCase() + ".instances.example.test`)",
-      priority: 1,
+      priority: 10,
       services: [{ name: runtimeRoute.metadata.name, port: 3847 }],
     },
   ]);
@@ -108,6 +121,17 @@ test("Traefik CRD provider watches generated instance routes and the system fall
   assert.equal(fallback.metadata.namespace, "praetorium-system");
   assert.deepEqual(fallback.spec.entryPoints, ["websecure"]);
   assert.equal(fallback.spec.routes.length, 2);
+  assert.deepEqual(
+    fallback.spec.routes.map((route) => route.priority),
+    [1000, 1],
+  );
+  assert.match(fallback.spec.routes[0].match, /PathPrefix\(`\/_platform`\)/u);
+  assert.doesNotMatch(fallback.spec.routes[1].match, /PathPrefix\(`\/_platform`\)/u);
+  assert.ok(
+    fallback.spec.routes[0].priority > runtimeRoute.spec.routes[0].priority &&
+      runtimeRoute.spec.routes[0].priority > fallback.spec.routes[1].priority,
+    "the reserved platform route wins, then the exact runtime host, then the catch-all",
+  );
   assert.deepEqual(
     fallback.spec.routes.map((route) => route.services),
     [[{ name: "instance-access", port: 8080 }], [{ name: "instance-access", port: 8080 }]],

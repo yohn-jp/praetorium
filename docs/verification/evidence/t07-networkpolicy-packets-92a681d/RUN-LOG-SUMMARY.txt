@@ -17,7 +17,8 @@ NotFound for all four namespaces and zero remaining run-labeled Pods.
 Two earlier attempts at parent source 8269c1fdbe483b16eadef2c41985c82a4973b9d8
 failed before resource creation. The first lacked the owner provider environment;
 the second exposed the bare-hex versus sha256:-prefixed Podman image ID mismatch.
-The second failure led to commit 7c3eb74, included by the successful source.
+The second failure led to normalization change commit 7c3eb74; the passing
+source contains the same canonical digest comparison.
 Original reports and stdout logs for all three attempts are included alongside
 this summary and indexed by SHA256SUMS.
 

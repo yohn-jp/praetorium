@@ -203,7 +203,8 @@ include a claim about deleting any pre-existing namespace or cluster resource.
 Two preceding attempts at `8269c1f` stopped before resource creation: the first
 could not inventory Kind without the owner provider environment; the second
 found Podman's bare-hex image ID did not match the inventory's prefixed form.
-The latter led to commit `7c3eb74`, included in the passing source. The evidence
+The latter led to commit `7c3eb74`, which introduced the digest normalization.
+The passing source contains the same validated comparison. The evidence
 bundle includes all three original reports and stdout logs byte-for-byte.
 
 The live NetworkPolicy VAP still had its previous `::ffff:0:0/96` exclusion,

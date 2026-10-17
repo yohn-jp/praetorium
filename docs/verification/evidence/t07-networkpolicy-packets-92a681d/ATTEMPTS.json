@@ -11,7 +11,7 @@
     },
     {
       "result": "FAIL before resource creation",
-      "cause": "Podman returned the Kind node image ID as bare 64-character hex while inventory used the same digest with a sha256: prefix. Commit 7c3eb74 normalized the two representations by validated digest.",
+      "cause": "Podman returned the Kind node image ID as bare 64-character hex while inventory used the same digest with a sha256: prefix. Commit 7c3eb74 introduced validated digest normalization; the passing source contains the same canonical comparison.",
       "reportSha256": "1b47ab2463366928046f5e9276c98f6eba8c2b8f47d1e32cd780b35777004dd6",
       "stdoutSha256": "7ffcf76b83448833e16dd8dc41815fc1dfae9f27f08f80bd858b68576921006b",
       "reportedCleanupComplete": true,

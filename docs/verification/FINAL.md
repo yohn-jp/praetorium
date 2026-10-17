@@ -20,6 +20,10 @@ The current Worker test covers all four migrations, persistent repository DO coo
 
 [ACCEPTANCE.json](ACCEPTANCE.json) embeds the fixed category results and measurements. [INDEPENDENT-REVIEW.md](INDEPENDENT-REVIEW.md) records findings, fixes and reviewer scope. Previously issued tokens are now tracked encrypted and retired on both quiescing and already-absent-writer paths. Physical writer termination remains independently required. Local simulated GitHub revocation is not real App acceptance.
 
+## Latest integrated delta
+
+Main `0cdf51e` additionally integrates the Kubernetes grant-principal correction (`2bfc296`, with Deployment-bound regression `120b007`) and actual owned local metadata restore test (`ba9bdc1`). Separate read-only reviews found no actionable defects in these deltas. Root's real restore run passed 1/1 at `ba9bdc1` (13369.14 ms test / 13418.54 ms process); an independent reviewer reran it successfully at clean `0cdf51e`. This uses real local Wrangler D1 and Restic, synthetic metadata and in-memory SQLite; it does not replace the real legacy/off-host/producer recovery gates. Static Kubernetes RBAC and admission are still being migrated and no cluster was applied. Required frozen install and full workspace check also passed at `0cdf51e` (test stage 29/29 Turbo tasks, 27 cached). The historical broader Worker acceptance cut above remains separate.
+
 ## Measurements
 
 | Check                                                        | Observed result                                | Scope                                                                                     |

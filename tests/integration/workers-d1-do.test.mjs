@@ -97,7 +97,10 @@ function makeMiniflare(script, persistenceRoot, secrets, compatibilityDate, comp
         "notification must authenticate with its separate test-only token",
       );
       const hint = await request.json();
-      assert.deepEqual(hint, { version: 1, kind: "operation" });
+      assert.equal(hint.version, 1);
+      assert.equal(hint.kind, "operation");
+      assert.ok(Object.keys(hint).every((key) => ["version", "kind", "instanceId"].includes(key)));
+      if (hint.instanceId !== undefined) assert.equal(typeof hint.instanceId, "string");
       secrets.workNotifications.push(hint);
       return new Response(null, { status: secrets.workNotificationStatus });
     },
@@ -421,7 +424,7 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     const operationId = desired.body.operation?.id;
     assert.ok(typeof operationId === "string" && operationId.length > 0);
     await assertEventually(() => secrets.workNotifications.length > 0);
-    assert.deepEqual(secrets.workNotifications[0], { version: 1, kind: "operation" });
+    assert.deepEqual(secrets.workNotifications[0], { version: 1, kind: "operation", instanceId });
     // The notification endpoint deliberately failed; the committed operation
     // must remain readable and claimable from D1 independently of delivery.
     secrets.workNotificationStatus = 202;

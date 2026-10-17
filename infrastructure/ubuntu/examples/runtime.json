@@ -1,0 +1,11 @@
+{
+  "role": "runtime",
+  "clusterId": null,
+  "bindAddress": null,
+  "tlsSans": [],
+  "k3sVersion": null,
+  "k3sBinary": "/root/praetorium-bootstrap/k3s",
+  "k3sBinarySha256": null,
+  "installer": "/root/praetorium-bootstrap/install.sh",
+  "installerSha256": null
+}

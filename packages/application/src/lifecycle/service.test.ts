@@ -188,6 +188,7 @@ function harness(options: HarnessOptions = {}) {
       : [...options.initialWriters];
   const counters = {
     quiesces: [] as { readonly operationId: string; readonly runtimeEpoch: number }[],
+    quiesceRequests: [] as QuiesceRequest[],
     resumes: [] as string[],
     stops: [] as number[],
     starts: [] as number[],
@@ -371,6 +372,7 @@ function harness(options: HarnessOptions = {}) {
       },
       async quiesce(request) {
         timeline.push(`quiesce:${request.runtimeEpoch}`);
+        counters.quiesceRequests.push(request);
         counters.quiesces.push({
           operationId: request.operationId,
           runtimeEpoch: request.runtimeEpoch,
@@ -651,7 +653,7 @@ describe("LifecycleService", () => {
     expect(h.counters.stops).toHaveLength(0);
   });
 
-  it("reuses a timely persisted quiesce receipt after a worker crash past its deadline", async () => {
+  it("re-quiesces a restarted producer after a worker crash past the old deadline", async () => {
     let clock = 1_800_000_000_000;
     const h = harness({ now: () => clock, quiesceTimeoutMs: 10 });
     const firstContext = {
@@ -665,13 +667,92 @@ describe("LifecycleService", () => {
     await expect(h.service.execute("op-01", firstContext)).rejects.toThrow("simulated worker exit");
     expect(h.journal.value.phase).toBe("old-quiesced");
     expect(h.journal.value.quiesceReceipt?.observedAt).toBe(new Date(clock).toISOString());
+    const oldDeadline = h.journal.value.quiesceRequest?.deadline;
+    expect(oldDeadline).toBe(new Date(clock + 10).toISOString());
     clock += 11;
 
     const recovered = await h.service.execute("op-01", h.context);
 
     expect(recovered).toMatchObject({ status: "complete" });
-    expect(h.counters.quiesces).toHaveLength(1);
+    expect(h.counters.quiesces).toHaveLength(2);
+    expect(h.counters.producerStatuses).toHaveLength(2);
+    expect(h.counters.quiesceRequests[1]).toMatchObject({
+      operationId: "op-01",
+      instanceId: "ins_01",
+      runtimeEpoch: 4,
+      reason: "redeploy",
+    });
+    expect(h.counters.quiesceRequests[1]?.deadline).not.toBe(oldDeadline);
+    expect(Date.parse(h.counters.quiesceRequests[1]?.deadline ?? "") > clock).toBe(true);
     expect(h.counters.stops).toEqual([4]);
+  });
+
+  it("does not retire a same-epoch producer that has new work after its process restarted", async () => {
+    let clock = 1_800_000_000_000;
+    let quiesceCalls = 0;
+    const h = harness({
+      now: () => clock,
+      quiesceTimeoutMs: 10,
+      quiesce: (request) => {
+        quiesceCalls += 1;
+        if (quiesceCalls === 1) return {
+          contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+          operationId: request.operationId,
+          instanceId: request.instanceId,
+          runtimeEpoch: request.runtimeEpoch,
+          quiesceRevision: "q-before-restart",
+          disposition: "safe",
+          activeMutations: 0,
+          activeJobs: 0,
+          restartableJobs: 0,
+          pendingCheckpoints: 0,
+          uncertainPublication: false,
+          lastConfirmedRemoteRevision: "a".repeat(40),
+          reasonCodes: [],
+          observedAt: new Date(clock).toISOString(),
+        };
+        return {
+          contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+          operationId: request.operationId,
+          instanceId: request.instanceId,
+          runtimeEpoch: request.runtimeEpoch,
+          quiesceRevision: "q-new-pending-checkpoint",
+          disposition: "blocked",
+          activeMutations: 0,
+          activeJobs: 1,
+          restartableJobs: 0,
+          pendingCheckpoints: 1,
+          uncertainPublication: false,
+          lastConfirmedRemoteRevision: "a".repeat(40),
+          reasonCodes: ["PENDING_CHECKPOINT"],
+          observedAt: new Date(clock).toISOString(),
+        };
+      },
+    });
+    const firstContext = {
+      ...h.context,
+      async report(phase: string) {
+        if (phase === "old-quiesced")
+          throw new Error("simulated worker exit after durable quiesce checkpoint");
+      },
+    };
+
+    await expect(h.service.execute("op-01", firstContext)).rejects.toThrow(
+      "simulated worker exit after durable quiesce checkpoint",
+    );
+    expect(h.journal.value.phase).toBe("old-quiesced");
+    clock += 11;
+
+    const statusCountBeforeRecovery = h.counters.producerStatuses.length;
+    const recovered = await h.service.execute("op-01", h.context);
+
+    expect(recovered.status).toBe("blocked");
+    expect(h.counters.producerStatuses.length).toBeGreaterThan(statusCountBeforeRecovery);
+    expect(h.counters.quiesces).toHaveLength(2);
+    expect(h.counters.quiesces.map((item) => item.operationId)).toEqual(["op-01", "op-01"]);
+    expect(h.counters.resumes).toEqual(["op-01"]);
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.counters.starts).toHaveLength(0);
   });
 
   it("does not treat a lease timeout as proof that the old writer stopped", async () => {
@@ -779,7 +860,7 @@ describe("LifecycleService", () => {
     expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([4]);
   });
 
-  it("resumes an already fenced writer without attempting a fresh network status", async () => {
+  it("requires fresh status before retrying quiesce for a persisted fence", async () => {
     const now = Date.now();
     const request: QuiesceRequest = {
       operationId: "op-01",
@@ -821,11 +902,62 @@ describe("LifecycleService", () => {
     const result = await h.service.execute("op-01", h.context);
 
     expect(result).toMatchObject({ status: "unknown", code: "producer_quiesce_unknown" });
-    expect(h.counters.producerStatuses).toHaveLength(0);
+    expect(h.counters.producerStatuses).toHaveLength(1);
     expect(h.counters.quiesces).toHaveLength(1);
+    expect(h.timeline.indexOf("status:4")).toBeLessThan(h.timeline.indexOf("fence:4"));
     expect(h.counters.resumes).toEqual(["op-01"]);
     expect(h.counters.stops).toHaveLength(0);
     expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([4]);
+  });
+
+  it("keeps the persisted writer fence when restart status cannot confirm the remote", async () => {
+    const now = Date.now();
+    const request: QuiesceRequest = {
+      operationId: "op-01",
+      instanceId: "ins_01",
+      runtimeEpoch: 4,
+      reason: "redeploy",
+      contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+      deadline: new Date(now - 60_000).toISOString(),
+    };
+    const h = harness({
+      now: () => now,
+      remoteObservedAt: new Date(now - 15_001).toISOString(),
+      operation: operation({
+        phase: "old-quiesced",
+        target: deployment(),
+        targetEpoch: 5,
+        targetReservationId: "reservation-target",
+        quiesceRequest: request,
+        quiesceReceipt: {
+          contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+          operationId: request.operationId,
+          instanceId: request.instanceId,
+          runtimeEpoch: request.runtimeEpoch,
+          quiesceRevision: "q-historical-safe",
+          disposition: "safe",
+          activeMutations: 0,
+          activeJobs: 0,
+          restartableJobs: 0,
+          pendingCheckpoints: 0,
+          uncertainPublication: false,
+          lastConfirmedRemoteRevision: "a".repeat(40),
+          reasonCodes: [],
+          observedAt: new Date(now - 60_001).toISOString(),
+        },
+      }),
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result).toMatchObject({ status: "unknown", code: "producer_remote_preflight_unverified" });
+    expect(h.counters.producerStatuses).toHaveLength(1);
+    expect(h.counters.quiesces).toHaveLength(0);
+    expect(h.counters.resumes).toHaveLength(0);
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.counters.starts).toHaveLength(0);
+    expect(h.journal.value.quiesceRequest).toEqual(request);
+    expect(h.journal.value.quiesceReceipt).toMatchObject({ quiesceRevision: "q-historical-safe" });
   });
 
   it("does not activate a target whose actual image digest differs from its admitted digest", async () => {

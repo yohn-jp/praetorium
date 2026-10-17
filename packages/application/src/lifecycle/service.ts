@@ -403,30 +403,6 @@ function receiptMatches(
   );
 }
 
-function persistedSafeReceiptMatches(
-  operation: LifecycleOperation,
-  receipt: QuiesceReceipt,
-  request: QuiesceRequest,
-): boolean {
-  // A receipt is only checkpointed after receiptMatches accepted it against the
-  // deadline and the journal CAS succeeded. The phase therefore records the
-  // historical receive-time proof. On recovery, rechecking against wall-clock
-  // now would incorrectly invalidate that proof after a worker crash.
-  const acceptedPhase = [
-    "old-quiesced",
-    "stopping-old",
-    "old-writer-absent",
-    "starting-target",
-    "target-ready",
-    "route-activated",
-  ].includes(operation.phase);
-  return (
-    acceptedPhase &&
-    receiptMatches(receipt, request, Date.parse(receipt.observedAt)) &&
-    quiesceIsSafe(receipt)
-  );
-}
-
 function quiesceIsSafe(receipt: QuiesceReceipt): boolean {
   return (
     receipt.disposition === "safe" &&
@@ -1170,85 +1146,79 @@ export class LifecycleService {
     }
 
     const persistedRequest = operation.quiesceRequest;
-    const persistedFenceMatches =
+    const persistedOperationMatches =
       persistedRequest !== null &&
       persistedRequest.operationId === operationId &&
       persistedRequest.instanceId === assignment.instanceId &&
       persistedRequest.runtimeEpoch === assignment.runtimeEpoch;
-    if (!persistedFenceMatches) {
-      let status: ProducerStatus;
-      await context.assertLease();
-      try {
-        status = await this.dependencies.producer.status(assignment, context.signal);
-      } catch {
-        return {
-          status: "blocked",
-          result: await this.saveOutcome(
-            operation,
-            checkpoint,
-            "unknown",
-            "producer_remote_preflight_unavailable",
-            "fresh producer remote confirmation was unavailable before retiring the writer",
-          ),
-        };
-      }
-      if (!hasFreshRemoteObservation(assignment, status, this.now())) {
-        return {
-          status: "blocked",
-          result: await this.saveOutcome(
-            operation,
-            checkpoint,
-            "unknown",
-            "producer_remote_preflight_unverified",
-            "fresh, assignment-bound remote confirmation was not available before retiring the writer",
-          ),
-        };
-      }
+    // A persisted receipt proves only that the producer was quiesced when the
+    // worker last checkpointed it. The producer process can restart on the
+    // same runtime epoch and reopen its in-memory mutation gate, so every
+    // retirement attempt needs fresh remote confirmation and a fresh quiesce.
+    let status: ProducerStatus;
+    await context.assertLease();
+    try {
+      status = await this.dependencies.producer.status(assignment, context.signal);
+    } catch {
+      return {
+        status: "blocked",
+        result: await this.saveOutcome(
+          operation,
+          checkpoint,
+          "unknown",
+          "producer_remote_preflight_unavailable",
+          "fresh producer remote confirmation was unavailable before retiring the writer",
+        ),
+      };
+    }
+    if (!hasFreshRemoteObservation(assignment, status, this.now())) {
+      return {
+        status: "blocked",
+        result: await this.saveOutcome(
+          operation,
+          checkpoint,
+          "unknown",
+          "producer_remote_preflight_unverified",
+          "fresh, assignment-bound remote confirmation was not available before retiring the writer",
+        ),
+      };
     }
 
-    const proposedRequest: QuiesceRequest = {
+    const request: QuiesceRequest = {
       operationId,
       instanceId: assignment.instanceId,
       runtimeEpoch: assignment.runtimeEpoch,
-      reason,
+      reason: persistedOperationMatches ? (persistedRequest?.reason ?? reason) : reason,
       contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
       deadline: new Date(this.now() + this.quiesceTimeoutMs).toISOString(),
     };
-    const request = persistedFenceMatches ? persistedRequest : proposedRequest;
     let receipt: QuiesceReceipt;
-    const storedReceipt = operation.quiesceReceipt;
-    const persistedSafeReceipt =
-      storedReceipt !== null && persistedSafeReceiptMatches(operation, storedReceipt, request);
-    if (persistedSafeReceipt) {
-      receipt = storedReceipt;
-    } else {
-      await checkpoint({ phase: "quiescing-old", quiesceRequest: request, quiesceReceipt: null });
-      try {
-        await context.assertLease();
-        receipt = await this.dependencies.producer.quiesce(
-          request,
-          context.assertLease,
-          context.signal,
-        );
-      } catch (error) {
-        const resumed = await this.resumeMatching(request, context);
-        if (!resumed) {
-          return {
-            status: "blocked",
-            result: await this.saveOutcome(
-              operation,
-              checkpoint,
-              "unknown",
-              "quiesce_outcome_unknown",
-              "producer quiesce outcome is unknown and matching resume was not confirmed",
-            ),
-          };
-        }
-        await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });
-        throw error;
+    await checkpoint({ phase: "quiescing-old", quiesceRequest: request, quiesceReceipt: null });
+    try {
+      await context.assertLease();
+      receipt = await this.dependencies.producer.quiesce(
+        request,
+        context.assertLease,
+        context.signal,
+      );
+    } catch (error) {
+      const resumed = await this.resumeMatching(request, context);
+      if (!resumed) {
+        return {
+          status: "blocked",
+          result: await this.saveOutcome(
+            operation,
+            checkpoint,
+            "unknown",
+            "quiesce_outcome_unknown",
+            "producer quiesce outcome is unknown and matching resume was not confirmed",
+          ),
+        };
       }
+      await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });
+      throw error;
     }
-    if (!persistedSafeReceipt && !receiptMatches(receipt, request, this.now())) {
+    if (!receiptMatches(receipt, request, this.now())) {
       const resumed = await this.resumeMatching(request, context);
       if (resumed)
         await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });

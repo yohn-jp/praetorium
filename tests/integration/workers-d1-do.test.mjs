@@ -69,6 +69,7 @@ function makeMiniflare(script, persistenceRoot, secrets, compatibilityDate, comp
       INSTANCE_HOST_SUFFIX: "instances.test",
       CONTROL_PLANE_ORIGIN: "https://control-plane.test",
       RUNTIME_IDENTITY_SIGNING_KEY: secrets.runtimeIdentityKey,
+      RUNTIME_CONTROL_SIGNING_KEY: secrets.runtimeControlKey,
       PROVISIONER_WORK_NOTIFICATION_URL: "https://provisioner-notify.test/internal/work-available",
       PROVISIONER_WORK_NOTIFICATION_TOKEN: secrets.workNotification,
       ...(secrets.buildPolicy ? { BUILD_POLICY_JSON: secrets.buildPolicy } : {}),
@@ -238,6 +239,11 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     true,
     ["sign", "verify"],
   );
+  const controlKey = await webcrypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
   const secrets = {
     gateway: randomBytes(32).toString("base64url"),
     provisioner: randomBytes(32).toString("base64url"),
@@ -247,6 +253,10 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     runtimeIdentityKey: JSON.stringify({
       kid: "t14-owned-runtime-identity",
       privateKeyJwk: await webcrypto.subtle.exportKey("jwk", identityKey.privateKey),
+    }),
+    runtimeControlKey: JSON.stringify({
+      kid: "t14-owned-runtime-control",
+      privateKeyJwk: await webcrypto.subtle.exportKey("jwk", controlKey.privateKey),
     }),
   };
   assert.notEqual(secrets.gateway, secrets.provisioner);
@@ -458,6 +468,44 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
       "same desired-state key replays without duplicating an operation",
     );
     assert.equal(replay.body.operation?.id ?? null, desired.body.operation?.id ?? null);
+
+    const idlePointRequest = { workerId: "test-worker", clusterId: "test-cluster", instanceId };
+    const idlePoint = await postJson(
+      miniflare,
+      "/internal/provisioner/idle-candidate",
+      secrets.provisioner,
+      idlePointRequest,
+      "Authorization",
+    );
+    assert.equal(idlePoint.response.status, 200);
+    assert.equal(idlePoint.body, null, "pending unadmitted runtime is not an idle candidate");
+    const wrongWorker = await postJson(
+      miniflare,
+      "/internal/provisioner/idle-candidate",
+      secrets.provisioner,
+      { ...idlePointRequest, workerId: "another-worker" },
+      "Authorization",
+    );
+    assert.equal(wrongWorker.response.status, 403);
+    const healthDue = await postJson(
+      miniflare,
+      "/internal/provisioner/runtime-health-due",
+      secrets.provisioner,
+      {
+        ...idlePointRequest,
+        repositoryId: testRepository.repositoryId,
+        expectedGeneration: desired.body.instance.generation,
+        expectedRuntimeEpoch: desired.body.instance.runtimeEpoch,
+      },
+      "Authorization",
+    );
+    assert.equal(healthDue.response.status, 200);
+    assert.deepEqual(healthDue.body, {
+      active: false,
+      nextCheckAt: null,
+      sampleDueAt: null,
+      healthOperationId: null,
+    });
 
     const claim = await postJson(
       miniflare,

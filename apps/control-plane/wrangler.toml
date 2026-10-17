@@ -7,6 +7,10 @@ workers_dev = false
 [triggers]
 crons = ["*/5 * * * *"]
 
+[[services]]
+binding = "GATEWAY_SERVICE"
+service = "praetorium-gateway"
+
 [[d1_databases]]
 binding = "CONTROL_PLANE_DB"
 database_name = "praetorium-platform"

@@ -19,6 +19,7 @@ import {
   createGitHubAccessProvider,
   createGitHubAppOAuthProvider,
   createGitHubRestClient,
+  createGitHubInstallationTokenRevoker,
   type GitCredentialBroker,
   type GitHubAccessProvider,
   type GitHubUserTokenSource,
@@ -42,6 +43,7 @@ import { createKvRateLimiter } from "./adapters/rate-limiter-kv.js";
 import { loadKeyRegistry } from "./adapters/key-registry-kv.js";
 import { createDurableObjectGitHubUserTokenStore } from "./adapters/github-user-tokens.js";
 import { createRuntimeGitCredentialBroker } from "./adapters/runtime-git-broker.js";
+import { createRuntimeCredentialRegistry } from "./adapters/runtime-credential-registry.js";
 
 export { type GatewayEnv } from "./env.js";
 
@@ -83,6 +85,7 @@ export interface GatewayContext {
   readonly githubAccess: GitHubAccessProvider;
   /** Set only when a trusted runtime authenticator and assignment reader are configured. */
   readonly githubCredentialBroker?: GitCredentialBroker;
+  readonly runtimeCredentialRegistry?: ReturnType<typeof createRuntimeCredentialRegistry>;
   readonly githubUserTokens: GitHubUserTokenSource & {
     storeEncrypted(subject: string, tokens: GitHubTokenResponse, issuedAt: string): Promise<void>;
   };
@@ -262,6 +265,18 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
     throw new TypeError("the active Gateway signing key must match its public key registry record");
   }
 
+  if (env.GITHUB_APP_PRIVATE_KEY) {
+    const retirementAuth = requireSecret(env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH, "RUNTIME_CREDENTIAL_RETIREMENT_AUTH");
+    if (!/^[\x21-\x7e]{32,4096}$/u.test(retirementAuth) ||
+      retirementAuth === config.controlPlaneSecret || retirementAuth === config.instanceAccessSecret)
+      throw new TypeError("Credential retirement requires a separate bounded service credential");
+  }
+  const runtimeCredentialRegistry = env.GITHUB_APP_PRIVATE_KEY ? createRuntimeCredentialRegistry({
+    controlPlane: env.CONTROL_PLANE,
+    controlPlaneGatewayAuth: config.controlPlaneSecret,
+    tokenVault: config.tokenVault,
+    revoker: createGitHubInstallationTokenRevoker({ client: createGitHubRestClient({ requestTimeoutMs: 1_000 }) }),
+  }) : undefined;
   return {
     config,
     env,
@@ -279,6 +294,7 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
     mutationReceiptRateLimiter: createKvRateLimiter(env.GATEWAY_KV, "mutation-receipt", { limit: 10, windowSeconds: 60 }),
     githubProvider: oauth,
     githubAccess,
+    ...(runtimeCredentialRegistry ? { runtimeCredentialRegistry } : {}),
     ...(env.GITHUB_APP_PRIVATE_KEY ? {
       githubCredentialBroker: createRuntimeGitCredentialBroker({
         controlPlane: env.CONTROL_PLANE,
@@ -290,6 +306,7 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
         repositoryBindings,
         accessProvider: githubAccess,
         gatewayKeyRegistry: keyRegistry,
+        ...(runtimeCredentialRegistry ? { credentialLifecycle: runtimeCredentialRegistry } : {}),
       }),
     } : {}),
     githubUserTokens,

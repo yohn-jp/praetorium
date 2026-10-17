@@ -829,6 +829,25 @@ function publicJwks(context: GatewayContext): Response {
 
 export function createGatewayRouter(context: GatewayContext): Hono {
   const app = new Hono();
+  app.post("/internal/github/retire", async (c) => {
+    const secret = context.env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH;
+    if (!secret || !/^[\x21-\x7e]{32,4096}$/u.test(secret))
+      return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
+    if (!constantTimeEqual(c.req.header("Authorization")?.replace(/^Bearer /u, "") ?? "", secret) ||
+      hasCookieName(c.req.raw, SESSION_COOKIE_NAME))
+      return c.json({ error: { code: "UNAUTHORIZED" } }, 401);
+    if (!context.runtimeCredentialRegistry)
+      return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
+    const input = z.strictObject({ repositoryId: z.number().int().positive().safe(), runtimeEpoch: z.number().int().positive().safe() })
+      .safeParse(await readBoundedJson(c.req.raw));
+    if (!input.success) return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
+    try {
+      const result = await context.runtimeCredentialRegistry.retire(input.data);
+      return result.complete ? c.json(result) : c.json({ error: { code: "CREDENTIAL_RETIREMENT_PENDING" } }, 503);
+    } catch {
+      return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
+    }
+  });
   if (context.env.GATEWAY_GITHUB_WEBHOOK_SECRET) {
     app.route("/api/github/webhooks", createGitHubWebhookRoutes({
       webhookSecret: context.env.GATEWAY_GITHUB_WEBHOOK_SECRET,

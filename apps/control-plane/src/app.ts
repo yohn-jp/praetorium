@@ -60,6 +60,8 @@ export type ControlPlaneDependencies = {
   operatorAdmission?: Hono;
   operatorToken?: string;
   runtimeIdentity?: Hono;
+  runtimeCredentials?: Hono;
+  credentialRetirementSecret?: string;
   now?: () => number;
 };
 /** Only authenticated control metadata enters this Worker. Actor identity comes from Gateway session authority. */
@@ -69,6 +71,7 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
     deps.provisioner?.secret,
     deps.builds?.serviceToken,
     deps.operatorToken,
+    deps.credentialRetirementSecret,
   ].filter((value): value is string => value !== undefined);
   if (
     serviceSecrets.some(
@@ -181,6 +184,7 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
   if (deps.operationAdmin) app.route("/", createOperationAdminRoutes(deps.operationAdmin));
   if (deps.webhook) app.route("/", createGitHubWebhookRoutes(deps.webhook));
   if (deps.runtimeIdentity) app.route("/", deps.runtimeIdentity);
+  if (deps.runtimeCredentials) app.route("/", deps.runtimeCredentials);
   if (deps.operatorAdmission) app.route("/v1/operator/releases", deps.operatorAdmission);
   if (deps.builds) app.route("/", createBuildRoutes(deps.builds));
   if (deps.management) app.route("/", createManagementRoutes(deps.management));

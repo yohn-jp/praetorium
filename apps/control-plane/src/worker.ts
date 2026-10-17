@@ -4,6 +4,12 @@ import { composeReleaseServices } from "./release-composition.js";
 import { createScheduledHandler } from "./scheduled.js";
 import { createRuntimeIdentityRoutes } from "./runtime-identity-routes.js";
 import { createRuntimeBindingMetadataReader } from "./runtime-binding.js";
+import { createRuntimeGitCredentialRoutes } from "./runtime-git-credential-routes.js";
+import { D1RuntimeGitCredentialStore } from "@praetorium/persistence/d1";
+import {
+  createCredentialRetirementBarrier,
+  type CredentialRetirementBinding,
+} from "./credential-retirement.js";
 import { newInstanceId, newOperationId } from "@praetorium/domain";
 import { InstanceService, RepositoryRegistryService } from "@praetorium/application/instances";
 import { OperationService } from "@praetorium/application/operations";
@@ -29,6 +35,8 @@ export interface ControlPlaneEnv {
   GIT_CREDENTIAL_BROKER_LOCATOR?: string;
   RUNTIME_CONTROL_SIGNING_KEY?: string;
   RUNTIME_IDENTITY_SIGNING_KEY?: string;
+  GATEWAY_SERVICE?: CredentialRetirementBinding;
+  RUNTIME_CREDENTIAL_RETIREMENT_AUTH?: string;
   BUILD_POLICY_JSON?: string;
   REGISTRY_PULL_CREDENTIAL?: string;
   BUILD_WORKER_AUTH_TOKEN?: string;
@@ -80,6 +88,14 @@ function composeServices(env: ControlPlaneEnv) {
         })
       : undefined;
   const app = createControlPlaneApp({
+    ...(env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH
+      ? { credentialRetirementSecret: env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH }
+      : {}),
+    runtimeCredentials: createRuntimeGitCredentialRoutes({
+      db: env.CONTROL_PLANE_DB,
+      runtimeBindings: createRuntimeBindingMetadataReader({ db: env.CONTROL_PLANE_DB }),
+      credentials: new D1RuntimeGitCredentialStore(env.CONTROL_PLANE_DB),
+    }),
     ...(env.RUNTIME_IDENTITY_SIGNING_KEY
       ? {
           runtimeIdentity: createRuntimeIdentityRoutes({
@@ -148,6 +164,13 @@ function composeServices(env: ControlPlaneEnv) {
       ? {
           provisioner: {
             operations,
+            retireCredentials: createCredentialRetirementBarrier({
+              db: env.CONTROL_PLANE_DB,
+              ...(env.GATEWAY_SERVICE ? { gateway: env.GATEWAY_SERVICE } : {}),
+              ...(env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH
+                ? { serviceSecret: env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH }
+                : {}),
+            }),
             secret: env.PROVISIONER_AUTH_TOKEN,
             workerId: required(env.PROVISIONER_WORKER_ID),
             clusterId: required(env.PROVISIONER_CLUSTER_ID),
@@ -223,7 +246,8 @@ export class RepositoryCoordinator {
   }
 }
 export default {
-  scheduled: createScheduledHandler<ControlPlaneEnv>((env) => {
+  scheduled: createScheduledHandler<ControlPlaneEnv>(async (env) => {
+    await new D1RuntimeGitCredentialStore(env.CONTROL_PLANE_DB).purgeExpired(Date.now(), 64);
     const { releases } = composeServices(env);
     if (!releases)
       throw new Error("T11 release policy and isolated operator/canary bindings unavailable");

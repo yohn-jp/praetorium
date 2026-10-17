@@ -490,6 +490,27 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     );
     assert.equal(suspended.status, 200);
     assert.equal((await suspended.json()).binding.suspended, true);
+    const auditPath = `https://control-plane.test/v1/instances/${instanceId}/audit?limit=1`;
+    const auditResponse = await miniflare.dispatchFetch(auditPath, {
+      headers: gatewayHeaders(secrets.gateway),
+    });
+    assert.equal(auditResponse.status, 200);
+    const audit = await auditResponse.json();
+    assert.equal(audit.events.length, 1);
+    assert.equal(audit.events[0].instanceId, instanceId);
+    assert.equal(typeof audit.nextCursor, "string");
+    assert.ok(!JSON.stringify(audit).includes("leaseToken"));
+    assert.ok(!JSON.stringify(audit).includes("checkpoint_json"));
+    const auditNext = await miniflare.dispatchFetch(
+      `${auditPath}&cursor=${encodeURIComponent(audit.nextCursor)}`,
+      {
+        headers: gatewayHeaders(secrets.gateway),
+      },
+    );
+    assert.equal(auditNext.status, 200);
+    const nextPage = await auditNext.json();
+    assert.equal(nextPage.events.length, 1);
+    assert.notEqual(nextPage.events[0].eventId, audit.events[0].eventId);
 
     // Exercise the real release composition constructor and isolated operator
     // entry with owned local keys; no real producer manifest is fabricated.

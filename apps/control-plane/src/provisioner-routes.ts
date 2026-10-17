@@ -104,6 +104,9 @@ export interface ProvisionerRoutesDependencies {
   clusterId: string;
   now: () => number;
   prepareClaim?: () => Promise<void> | void;
+  retireCredentials?: (
+    operation: Awaited<ReturnType<OperationService["checkpoint"]>>,
+  ) => Promise<void>;
   issueControlCredential?: (input: unknown) => Promise<unknown>;
   resolveRuntimeContext: (claim: ClaimedOperation) => Promise<unknown>;
 }
@@ -172,7 +175,13 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
   app.post("/checkpoint", async (c) => {
     const input = SaveCheckpoint.parse(await boundedJson(c.req.raw));
     scoped(input);
-    return c.json(await deps.operations.checkpoint({ ...input, now: deps.now() }));
+    const operation = await deps.operations.checkpoint({ ...input, now: deps.now() });
+    if (input.phase === "quiescing-old") {
+      if (!deps.retireCredentials)
+        return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
+      await deps.retireCredentials(operation);
+    }
+    return c.json(operation);
   });
   app.post("/advance-epoch", async (c) => {
     const input = Advance.parse(await boundedJson(c.req.raw));

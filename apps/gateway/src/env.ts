@@ -13,6 +13,7 @@ export interface GatewayEnv {
   readonly GITHUB_APP_ID?: string;
   readonly GITHUB_APP_PRIVATE_KEY?: string;
   readonly CONTROL_PLANE_ORIGIN?: string;
+  readonly RUNTIME_CREDENTIAL_RETIREMENT_AUTH?: string;
   readonly GATEWAY_GITHUB_WEBHOOK_SECRET?: string;
   readonly GITHUB_OAUTH_CLIENT_ID?: string;
   readonly GITHUB_OAUTH_CLIENT_SECRET?: string;

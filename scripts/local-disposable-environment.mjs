@@ -1071,7 +1071,7 @@ function plan() {
           "By default stop both services and remove only the marked owned temp root, using the validated namespace maps to remove BuildKit-owned files; --keep leaves them available with a strict T14 resource inventory.",
         ],
         exclusions: [
-          "No host daemon, existing container store, Docker context, kubeconfig, sysctl, production account, or production resource is read or modified.",
+          "No host daemon, existing container store, Docker context, kubeconfig, production account, or production resource is read or modified. Cleanup only reads kernel overflowuid/overflowgid to classify mapped file owners and never writes sysctl settings.",
           "No credentials are configured or emitted.",
           "No producer artifact or product acceptance criterion is claimed.",
         ],

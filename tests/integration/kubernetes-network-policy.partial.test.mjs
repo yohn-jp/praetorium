@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rmdir,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -210,10 +221,14 @@ async function assertPrivateFile(file, label, { executable = false } = {}) {
   return resolved;
 }
 
-async function run(command, args, { input, timeoutMs, env = process.env } = {}) {
+async function run(
+  command,
+  args,
+  { input, timeoutMs, env = process.env, cwd = process.cwd() } = {},
+) {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      cwd: process.cwd(),
+      cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -271,7 +286,18 @@ function assertNotFound(result, label) {
   );
 }
 
-async function startKubectlProxy(kubectlPath, kubeconfigPath, context, timeoutMs) {
+async function startKubectlProxy(
+  kubectlPath,
+  kubeconfigPath,
+  context,
+  socketPath,
+  namespaceNames,
+  timeoutMs,
+) {
+  assert.ok(Buffer.byteLength(socketPath) < 104, "kubectl proxy Unix socket path is too long");
+  assert.ok(namespaceNames.length > 0, "UID-precondition cleanup requires owned namespaces");
+  for (const name of namespaceNames) assert.match(name, DNS_LABEL);
+  const acceptedPaths = `^/api/v1/namespaces/(?:${namespaceNames.join("|")})$`;
   const child = spawn(
     kubectlPath,
     [
@@ -280,60 +306,66 @@ async function startKubectlProxy(kubectlPath, kubeconfigPath, context, timeoutMs
       "--context",
       context,
       "proxy",
-      "--address=127.0.0.1",
-      "--port=0",
-      "--accept-hosts=^127\\.0\\.0\\.1$",
+      `--unix-socket=${socketPath}`,
+      `--accept-paths=${acceptedPaths}`,
+      "--reject-methods=^(GET|POST|PUT|PATCH|OPTIONS|HEAD|CONNECT|TRACE)$",
     ],
-    { cwd: process.cwd(), env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+    { cwd: process.cwd(), env: process.env, stdio: ["ignore", "ignore", "ignore"] },
   );
   const exited = new Promise((resolve) => {
     child.once("close", (code, signal) => resolve({ code, signal }));
   });
-  return await new Promise((resolve, reject) => {
-    let output = "";
-    let settled = false;
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 1_000).unref();
-      reject(error);
-    };
-    const timer = setTimeout(() => {
-      fail(new Error("kubectl proxy did not become ready before its deadline"));
-    }, timeoutMs);
-    child.once("error", (error) =>
-      fail(new Error(`kubectl proxy could not start: ${error.message}`)),
-    );
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", () => {});
-    child.stdout.on("data", (chunk) => {
-      output = `${output}${chunk}`.slice(-16_384);
-      const match = /Starting to serve on 127\.0\.0\.1:(\d+)/u.exec(output);
-      if (!match || settled) return;
-      const port = Number(match[1]);
-      if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-        fail(new Error("kubectl proxy reported an invalid loopback port"));
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        child,
-        exited,
-        port,
-        get closed() {
-          return child.exitCode !== null || child.signalCode !== null;
-        },
-      });
-    });
-    child.once("close", (code, signal) => {
-      if (settled) return;
-      fail(new Error(`kubectl proxy exited before readiness (${signal ?? `exit ${code}`})`));
-    });
+  let spawnError;
+  child.once("error", (error) => {
+    spawnError = error;
   });
+  try {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (spawnError) throw new Error(`kubectl proxy could not start: ${spawnError.message}`);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        const result = await exited;
+        throw new Error(
+          `kubectl proxy exited before readiness (${result.signal ?? `exit ${result.code}`})`,
+        );
+      }
+      try {
+        const socket = await lstat(socketPath);
+        assert.ok(socket.isSocket(), "kubectl proxy path is not a Unix socket");
+        assert.equal(
+          socket.uid,
+          process.getuid?.(),
+          "kubectl proxy socket has an unexpected owner",
+        );
+        await chmod(socketPath, 0o600);
+        const privateSocket = await lstat(socketPath);
+        assert.equal(privateSocket.uid, process.getuid?.());
+        assert.equal(privateSocket.mode & 0o077, 0, "kubectl proxy socket is not owner-private");
+        return {
+          child,
+          exited,
+          socketPath,
+          get closed() {
+            return child.exitCode !== null || child.signalCode !== null;
+          },
+        };
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      await delay(50);
+    }
+    throw new Error("kubectl proxy did not become ready before its deadline");
+  } catch (error) {
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      const stopped = await Promise.race([exited.then(() => true), delay(1_000).then(() => false)]);
+      if (!stopped) {
+        child.kill("SIGKILL");
+        await exited;
+      }
+    }
+    throw error;
+  }
 }
 
 async function stopKubectlProxy(proxy, timeoutMs) {
@@ -363,8 +395,7 @@ async function deleteNamespaceWithUidPrecondition(proxy, name, uid, timeoutMs) {
   return await new Promise((resolve, reject) => {
     const request = httpRequest(
       {
-        hostname: "127.0.0.1",
-        port: proxy.port,
+        socketPath: proxy.socketPath,
         method: "DELETE",
         path: `/api/v1/namespaces/${encodeURIComponent(name)}`,
         agent: false,
@@ -400,6 +431,23 @@ async function deleteNamespaceWithUidPrecondition(proxy, name, uid, timeoutMs) {
     request.once("error", reject);
     request.end(body);
   });
+}
+
+async function removeKubectlProxyDirectory(directory, socketPath) {
+  if (!directory) return;
+  const directoryInfo = await lstat(directory);
+  assert.ok(directoryInfo.isDirectory() && !directoryInfo.isSymbolicLink());
+  assert.equal(directoryInfo.uid, process.getuid?.());
+  assert.equal(directoryInfo.mode & 0o077, 0, "kubectl proxy directory is not private");
+  const entries = await readdir(directory);
+  for (const entry of entries) {
+    assert.equal(entry, path.basename(socketPath), "unexpected file in private proxy directory");
+    const socketInfo = await lstat(path.join(directory, entry));
+    assert.ok(socketInfo.isSocket(), "refusing to remove a non-socket proxy path");
+    assert.equal(socketInfo.uid, process.getuid?.());
+    await unlink(path.join(directory, entry));
+  }
+  await rmdir(directory);
 }
 
 function jsonOutput(result, label) {
@@ -573,6 +621,7 @@ test(
     );
     const evidenceInfo = await stat(evidenceDir);
     assert.ok(evidenceInfo.isDirectory() && evidenceInfo.uid === inventory.owner.uid);
+    assert.equal(evidenceInfo.mode & 0o077, 0, "owned evidence directory must be private");
     const imageEvidencePath = path.resolve(inventory.image.runtimeImageEvidencePath);
     assert.ok(
       imageEvidencePath.startsWith(`${evidenceDir}${path.sep}`),
@@ -643,6 +692,7 @@ test(
         imagePullPolicy: "Never",
       },
       sourceRendererSha256: null,
+      sourceRendererInputs: [],
       sourceNetworkPolicyManifestSha256: null,
       liveNetworkPolicyAdmission: null,
       renderedPolicySha256: null,
@@ -670,6 +720,8 @@ test(
     let cleanupPhase = false;
     let primaryError;
     let kubectlProxy;
+    let kubectlProxyDirectory;
+    let kubectlProxySocketPath;
     const ownedNamespaces = [];
     const boundedCommandTimeout = (requested) => {
       const deadline = cleanupPhase ? totalDeadline : actionDeadline;
@@ -886,46 +938,63 @@ test(
         });
       }
 
-      kubectlProxy = await startKubectlProxy(
-        kubectlPath,
-        kubeconfigPath,
-        inventory.cluster.context,
-        boundedCommandTimeout(inventory.timeouts.commandMs),
-      );
-      report.namespaceDeleteMethod =
-        "DELETE through a loopback-only kubectl proxy with DeleteOptions.preconditions.uid";
-
+      const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
       const rendererSourcePath = fileURLToPath(
         new URL("../../plugins/kubernetes/src/kubernetes/renderer.ts", import.meta.url),
       );
-      const rendererSource = await readFile(rendererSourcePath);
-      const relevantSourceStatus = await run(
-        "git",
-        [
-          "status",
-          "--porcelain=v1",
-          "--",
-          "plugins/kubernetes/src/kubernetes/renderer.ts",
-          "infrastructure/kubernetes/policies/provisioner-networkpolicy.yaml",
-          "tests/integration/kubernetes-network-policy.partial.test.mjs",
-        ],
-        { timeoutMs: inventory.timeouts.commandMs },
-      );
-      assertCommandOk(relevantSourceStatus, "relevant source worktree status");
-      assert.equal(
-        relevantSourceStatus.stdout,
-        "",
-        "renderer, admission manifest, and runner must match the reported commit",
-      );
-      report.sourceRendererSha256 = sha256(rendererSource);
       const compiled = await build({
+        absWorkingDir: repositoryRoot,
         entryPoints: [rendererSourcePath],
         bundle: true,
         write: false,
         platform: "node",
         format: "esm",
         target: "node24",
+        metafile: true,
       });
+      const rendererInputPaths = Object.keys(compiled.metafile.inputs).sort();
+      assert.ok(rendererInputPaths.length > 0, "renderer bundle did not report its source inputs");
+      const rendererInputs = rendererInputPaths.map((inputPath) => {
+        const absolutePath = path.resolve(repositoryRoot, inputPath);
+        assert.ok(
+          absolutePath.startsWith(`${repositoryRoot}${path.sep}`),
+          `renderer bundle input escapes the repository: ${inputPath}`,
+        );
+        return {
+          absolutePath,
+          relativePath: path.relative(repositoryRoot, absolutePath),
+        };
+      });
+      assert.ok(
+        rendererInputs.some((input) => input.absolutePath === rendererSourcePath),
+        "renderer bundle inputs omitted the requested entrypoint",
+      );
+      const manifestRelativePath =
+        "infrastructure/kubernetes/policies/provisioner-networkpolicy.yaml";
+      const runnerRelativePath = "tests/integration/kubernetes-network-policy.partial.test.mjs";
+      const sourcePaths = [
+        ...rendererInputs.map((input) => input.relativePath),
+        manifestRelativePath,
+        runnerRelativePath,
+      ];
+      const relevantSourceStatus = await run(
+        "git",
+        ["status", "--porcelain=v1", "--untracked-files=all", "--", ...sourcePaths],
+        { timeoutMs: inventory.timeouts.commandMs, cwd: repositoryRoot },
+      );
+      assertCommandOk(relevantSourceStatus, "relevant source worktree status");
+      assert.equal(
+        relevantSourceStatus.stdout,
+        "",
+        "renderer bundle inputs, admission manifest, and runner must match the reported commit",
+      );
+      report.sourceRendererInputs = await Promise.all(
+        rendererInputs.map(async (input) => ({
+          path: input.relativePath,
+          sha256: sha256(await readFile(input.absolutePath)),
+        })),
+      );
+      report.sourceRendererSha256 = sha256(JSON.stringify(report.sourceRendererInputs));
       const rendererModule = await import(
         `data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].contents).toString("base64")}`
       );
@@ -1060,11 +1129,21 @@ test(
               reason:
                 "created namespace lookup found an object without this run's owner labels; refusing deletion",
             };
+            report.ownershipUncertainNamespaces.push({
+              name,
+              reason:
+                "namespace create result was ambiguous and the observed namespace does not prove run ownership",
+            });
           }
           return;
         }
         try {
           assertNotFound(result, `resolve failed namespace create ${name}`);
+          report.ownershipUncertainNamespaces.push({
+            name,
+            reason:
+              "namespace create failed ambiguously and an immediate NotFound does not prove the request cannot complete later",
+          });
         } catch (error) {
           report.ownershipUncertainNamespaces.push({
             name,
@@ -1382,7 +1461,9 @@ test(
         ["private-pod-egress-denied", tenantSource, privateTarget, 8080],
       ];
       const convergenceDeadline = Date.now() + inventory.timeouts.convergenceMs;
+      const convergenceStartedAt = Date.now();
       let converged = false;
+      let convergenceCompletedAt;
       const convergenceTrace = [];
       while (Date.now() < Math.min(convergenceDeadline, actionDeadline)) {
         const allowed = await probe(allowedClient, tenantTarget, 8080);
@@ -1422,10 +1503,18 @@ test(
           localUnlistedListener: true,
           denied: denied.map((result) => !result.reachable),
         });
-        if (allDenied) {
+        const iterationCompletedAt = Date.now();
+        if (
+          allDenied &&
+          iterationCompletedAt <= convergenceDeadline &&
+          iterationCompletedAt <= actionDeadline
+        ) {
           converged = true;
+          convergenceCompletedAt = iterationCompletedAt;
           break;
         }
+        if (iterationCompletedAt > convergenceDeadline || iterationCompletedAt > actionDeadline)
+          break;
         await delay(500);
       }
       assert.equal(
@@ -1490,7 +1579,7 @@ test(
         "live VAP objects reported observedGeneration=current generation and typeChecking={}; NetworkPolicy VAP source/live drift is recorded separately";
       report.networkPolicyConvergence = {
         converged: true,
-        elapsedMs: inventory.timeouts.convergenceMs - Math.max(0, convergenceDeadline - Date.now()),
+        elapsedMs: convergenceCompletedAt - convergenceStartedAt,
         trace: convergenceTrace,
       };
     } catch (error) {
@@ -1501,6 +1590,80 @@ test(
 
     cleanupPhase = true;
     const cleanupErrors = [];
+    for (const pending of [...report.ownershipUncertainNamespaces]) {
+      try {
+        const current = await kubectl(["get", "namespace", pending.name, "-o", "json"]);
+        if (current.code !== 0) {
+          assertNotFound(current, `finalize ambiguous namespace create ${pending.name}`);
+          pending.finalReconciliation = "NotFound; ownership remains uncertain";
+          continue;
+        }
+        const observed = JSON.parse(current.stdout);
+        const labels = observed.metadata?.labels ?? {};
+        if (
+          labels[RUN_LABEL] !== report.runId ||
+          labels[INVENTORY_LABEL] !== inventory.inventoryId ||
+          !observed.metadata?.uid
+        ) {
+          pending.finalReconciliation =
+            "namespace exists without provable run ownership; refusing deletion";
+          report.namespaceCreateConflict = {
+            name: pending.name,
+            observedUid: observed.metadata?.uid ?? null,
+            labels,
+            reason: pending.finalReconciliation,
+          };
+          continue;
+        }
+        if (!ownedNamespaces.some((namespace) => namespace.name === pending.name)) {
+          ownedNamespaces.push({ name: pending.name, uid: observed.metadata.uid });
+          report.namespaces.push({
+            name: pending.name,
+            uid: observed.metadata.uid,
+            role: pending.name.startsWith("praetorium-instances-")
+              ? "tenant"
+              : pending.name === "traefik"
+                ? "canonical-ingress-peer"
+                : "probe-peer",
+            recoveredDuringCleanup: true,
+          });
+        }
+        report.ownershipUncertainNamespaces = report.ownershipUncertainNamespaces.filter(
+          (item) => item !== pending,
+        );
+      } catch (error) {
+        pending.finalReconciliation = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    if (ownedNamespaces.length > 0) {
+      try {
+        const privateProxyDirectory = path.join(evidenceDir, `.t07-${id()}`);
+        await mkdir(privateProxyDirectory, { mode: 0o700 });
+        kubectlProxyDirectory = privateProxyDirectory;
+        await chmod(privateProxyDirectory, 0o700);
+        const proxyDirectoryInfo = await lstat(privateProxyDirectory);
+        assert.ok(proxyDirectoryInfo.isDirectory() && !proxyDirectoryInfo.isSymbolicLink());
+        assert.equal(proxyDirectoryInfo.uid, inventory.owner.uid);
+        assert.equal(proxyDirectoryInfo.mode & 0o077, 0);
+        kubectlProxySocketPath = path.join(kubectlProxyDirectory, "p");
+        kubectlProxy = await startKubectlProxy(
+          kubectlPath,
+          kubeconfigPath,
+          inventory.cluster.context,
+          kubectlProxySocketPath,
+          ownedNamespaces.map((namespace) => namespace.name),
+          boundedCommandTimeout(inventory.timeouts.commandMs),
+        );
+        report.namespaceDeleteMethod =
+          "DELETE over an owner-private Unix-domain kubectl proxy socket using DeleteOptions.preconditions.uid; proxy paths are restricted to the recorded owned namespaces";
+      } catch (error) {
+        cleanupErrors.push(
+          `could not start private UID-preconditioned namespace cleanup transport: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
     for (const namespace of [...ownedNamespaces].reverse()) {
       try {
         const current = await kubectl(["get", "namespace", namespace.name, "-o", "json"]);
@@ -1575,12 +1738,23 @@ test(
     if (kubectlProxy) {
       try {
         await stopKubectlProxy(kubectlProxy, inventory.timeouts.commandMs);
-        report.proxyCleanup = { result: "loopback-kubectl-proxy-stopped" };
+        report.proxyCleanup = { result: "private-unix-domain-kubectl-proxy-stopped" };
       } catch (error) {
         proxyCleanupComplete = false;
         const message = error instanceof Error ? error.message : String(error);
         cleanupErrors.push(message);
         report.proxyCleanup = { result: "failed", error: message };
+      }
+    }
+    if (kubectlProxyDirectory) {
+      try {
+        await removeKubectlProxyDirectory(kubectlProxyDirectory, kubectlProxySocketPath);
+        report.proxyDirectoryCleanup = "private Unix-socket directory removed";
+      } catch (error) {
+        proxyCleanupComplete = false;
+        const message = error instanceof Error ? error.message : String(error);
+        cleanupErrors.push(message);
+        report.proxyDirectoryCleanup = `failed: ${message}`;
       }
     }
     report.cleanupComplete =
@@ -1604,6 +1778,7 @@ test(
       "report directory must belong to the current owner",
     );
     assert.ok(dirInfo.isDirectory());
+    assert.equal(dirInfo.mode & 0o077, 0, "packet report directory must be private");
     await mkdir(reportDir, { recursive: false }).catch((error) => {
       if (error.code !== "EEXIST") throw error;
     });

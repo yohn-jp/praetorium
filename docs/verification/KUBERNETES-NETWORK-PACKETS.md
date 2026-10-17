@@ -100,9 +100,11 @@ committed TypeScript renderer source in memory rather than importing a stale
 renderer option that selects the production ingress peer; the ingress probe
 Pod has only the `app.kubernetes.io/name=traefik` selector label.
 
-The report hashes the committed renderer source, source NetworkPolicy
-admission manifest, and live NetworkPolicy admission expressions. The runner
-requires those relevant source files to match the recorded clean commit. A live VAP's current
+The report hashes every local source input reported by esbuild for the renderer
+bundle, the source NetworkPolicy admission manifest, and the live NetworkPolicy
+admission expressions. It rejects dirty or untracked files in that bundle
+input closure, the admission manifest, and the runner before using the output.
+A live VAP's current
 `observedGeneration` describes the object currently stored by the API server;
 it does not prove that the object matches the current source manifest. The
 runner records the source/live mapped-IPv4 exclusion values and their drift
@@ -147,13 +149,17 @@ responses, unrelated transport errors, and unexpected HTTP responses fail the
 test.
 
 If a namespace-create request has an ambiguous result, the runner follows up
-with an API read and records any matching run-owned namespace UID for cleanup.
-If ownership still cannot be determined, cleanup is recorded incomplete and
-the test fails without issuing an unconditioned delete.
+with API reads and records any matching run-owned namespace UID for cleanup.
+`NotFound` or a namespace without matching run ownership does not clear
+uncertainty after an ambiguous write; cleanup remains incomplete and the test
+fails without issuing an unconditioned delete.
 
-Namespace cleanup sends HTTP DELETE through a loopback-only `kubectl proxy`
-with `DeleteOptions.preconditions.uid` set to the exact namespace UID recorded
-at creation, then waits for NotFound. It never uses a get-then-unconditional
+Namespace cleanup sends HTTP DELETE over a Unix-domain `kubectl proxy` socket
+inside a newly created mode-0700 owner-private directory. The proxy starts only
+for cleanup, accepts only the exact recorded owned-namespace paths, and rejects
+the standard non-DELETE HTTP methods; the socket is mode 0600. Each request has
+`DeleteOptions.preconditions.uid` set to the exact namespace UID recorded at
+creation, then waits for NotFound. It never uses a get-then-unconditional
 delete, force-deletes pods, or deletes nodes. The JSON report is created
 exclusively with mode 0600 and records the cluster/image identity, source and
 live policy hashes/drift, rendered policy hash and UID,

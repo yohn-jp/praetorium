@@ -886,6 +886,26 @@ async function launch(keep) {
     process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
     if (!keep) await cleanup(root);
   } catch (error) {
+    if (keep) {
+      const failure = {
+        schema: "praetorium.local-disposable-failure/v1",
+        failedAt: new Date().toISOString(),
+        ownerUid: process.getuid(),
+        root,
+        production: false,
+        disposable: true,
+        error: error.message,
+        cleanup: `node scripts/local-disposable-environment.mjs --cleanup ${root}`,
+      };
+      await writeFile(
+        path.join(root, "logs", "failure.json"),
+        `${JSON.stringify(failure, null, 2)}\n`,
+        { mode: 0o600 },
+      );
+      process.stderr.write(`Preserved owned temp root after failed --keep run: ${root}\n`);
+      process.stderr.write(`Inspect private logs; clean with: ${failure.cleanup}\n`);
+      throw error;
+    }
     try {
       const cleanedRoot = await cleanup(root);
       process.stderr.write(`Cleaned owned temp root after failed run: ${cleanedRoot}\n`);

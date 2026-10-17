@@ -213,7 +213,7 @@ function composeServices(env: ControlPlaneEnv) {
         }
       : {}),
   });
-  return { app, releases };
+  return { app, releases, buildServices };
 }
 export function composeControlPlane(env: ControlPlaneEnv) {
   return composeServices(env).app;
@@ -248,7 +248,8 @@ export class RepositoryCoordinator {
 export default {
   scheduled: createScheduledHandler<ControlPlaneEnv>(async (env) => {
     await new D1RuntimeGitCredentialStore(env.CONTROL_PLANE_DB).purgeExpired(Date.now(), 64);
-    const { releases } = composeServices(env);
+    const { releases, buildServices } = composeServices(env);
+    if (buildServices) await buildServices.planCacheMaintenance(new Date());
     if (!releases)
       throw new Error("T11 release policy and isolated operator/canary bindings unavailable");
     return releases.scheduled;

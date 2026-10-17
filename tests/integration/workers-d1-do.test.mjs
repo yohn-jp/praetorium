@@ -49,6 +49,7 @@ function makeMiniflare(script, persistenceRoot, secrets, compatibilityDate, comp
     name: "praetorium-control-plane-t14",
     script,
     modules: true,
+    unsafeTriggerHandlers: true,
     compatibilityDate,
     compatibilityFlags,
     bindings: {
@@ -517,30 +518,32 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     await miniflare.dispose();
     const builderKey = await webcrypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
     const releaseOperator = randomBytes(32).toString("base64url");
+    const buildPolicy = JSON.stringify({
+      registryUrl: "https://registry.test",
+      allowedRepositories: ["praetorium-t14/output"],
+      outputRepository: "praetorium-t14/output",
+      maxImageLayerBytes: 1048576,
+      cacheRetention: { maxBytes: 1048576, maxEntries: 32, minAgeMs: 0, maxEvictions: 8 },
+      maxImageVerificationMs: 5000,
+      maxRegistryRequestMs: 1000,
+      runtimeResourceLimits: { cpuMilli: 1000, memoryMiB: 1024, ephemeralStorageMiB: 1024 },
+      targetPlatform: "linux/amd64",
+      builderKeys: [
+        {
+          keyId: "t14-owned-builder",
+          publicKeyBase64: Buffer.from(
+            await webcrypto.subtle.exportKey("raw", builderKey.publicKey),
+          ).toString("base64"),
+        },
+      ],
+    });
     miniflare = makeMiniflare(
       script,
       persistenceRoot,
       {
         ...secrets,
         releaseOperator,
-        buildPolicy: JSON.stringify({
-          registryUrl: "https://registry.test",
-          allowedRepositories: ["praetorium-t14/output"],
-          outputRepository: "praetorium-t14/output",
-          maxImageLayerBytes: 1048576,
-          maxImageVerificationMs: 5000,
-          maxRegistryRequestMs: 1000,
-          runtimeResourceLimits: { cpuMilli: 1000, memoryMiB: 1024, ephemeralStorageMiB: 1024 },
-          targetPlatform: "linux/amd64",
-          builderKeys: [
-            {
-              keyId: "t14-owned-builder",
-              publicKeyBase64: Buffer.from(
-                await webcrypto.subtle.exportKey("raw", builderKey.publicKey),
-              ).toString("base64"),
-            },
-          ],
-        }),
+        buildPolicy,
         releasePolicy: JSON.stringify({
           workerId: "t14-owned-release-worker",
           clusterId: "test-cluster",
@@ -581,6 +584,32 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
       422,
       "operator authority reaches real admission but cannot admit a malformed manifest",
     );
+    // The real scheduled entry plans/audits cache retention even without T11
+    // release bindings. Missing T11 remains an explicit scheduled failure.
+    await miniflare.dispose();
+    miniflare = makeMiniflare(
+      script,
+      persistenceRoot,
+      { ...secrets, buildPolicy },
+      compatibilityDateMatch[1],
+      compatibilityFlags,
+    );
+    await miniflare.ready;
+    const scheduledResponse = await miniflare.dispatchFetch(
+      "https://control-plane.test/cdn-cgi/handler/scheduled?cron=*%2F5%20*%20*%20*%20*",
+    );
+    assert.equal(scheduledResponse.status, 500, "missing T11 policy remains unavailable");
+    const maintenanceDb = await miniflare.getD1Database("CONTROL_PLANE_DB");
+    const maintenance = await maintenanceDb
+      .prepare(
+        "SELECT metadata_json FROM audit_events WHERE action='build-cache.gc.planned' ORDER BY occurred_at DESC LIMIT 1",
+      )
+      .first();
+    assert.ok(maintenance, "actual scheduled entry durably audited cache planning");
+    const maintenanceMetadata = JSON.parse(maintenance.metadata_json);
+    assert.equal(maintenanceMetadata.deletionAttempted, false);
+    assert.equal(maintenanceMetadata.advisoryOnly, true);
+    assert.equal(maintenanceMetadata.policy.maxEvictions, 8);
   } finally {
     await miniflare?.dispose();
     await rm(persistenceRoot, { recursive: true, force: true });

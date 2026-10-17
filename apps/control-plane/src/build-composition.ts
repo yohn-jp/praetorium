@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { planCacheMaintenance } from "./cache-maintenance.js";
 import { ResourceRequirementsSchema, buildKey } from "@praetorium/contracts";
 import { BuildQueueService } from "@praetorium/application/builds";
 import { BuildArtifactCache } from "@praetorium/application/build-cache";
@@ -23,6 +24,12 @@ const Policy = z.strictObject({
   maxImageVerificationMs: z.number().int().positive().max(120000),
   maxRegistryRequestMs: z.number().int().positive().max(60000),
   runtimeResourceLimits: ResourceRequirementsSchema,
+  cacheRetention: z.strictObject({
+    maxBytes: z.number().int().nonnegative().safe(),
+    maxEntries: z.number().int().positive().safe(),
+    minAgeMs: z.number().int().nonnegative().safe(),
+    maxEvictions: z.number().int().min(1).max(32),
+  }),
   targetPlatform: z.enum(["linux/amd64", "linux/arm64"]),
   builderKeys: z
     .array(
@@ -138,5 +145,7 @@ export function composeBuildServices(
     resourceLimits: policy.runtimeResourceLimits,
     cache,
     cacheStore,
+    planCacheMaintenance: (now: Date) =>
+      planCacheMaintenance({ db, cacheStore, policy: policy.cacheRetention, now }),
   };
 }

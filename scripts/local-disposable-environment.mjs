@@ -327,11 +327,10 @@ async function pullAndStartRegistry(root, env, onRegistryStarted) {
   } catch (error) {
     let details = "";
     try {
-      details = await run(
-        TOOL.podman,
-        [...baseArgs, "logs", "--tail", "100", REGISTRY_CONTAINER],
-        { env, logPath: path.join(root, "logs", "registry-container.log") },
-      );
+      details = await run(TOOL.podman, [...baseArgs, "logs", "--tail", "100", REGISTRY_CONTAINER], {
+        env,
+        logPath: path.join(root, "logs", "registry-container.log"),
+      });
     } catch (logError) {
       details = `could not read registry container logs: ${logError.message}`;
     }
@@ -453,8 +452,9 @@ async function subordinateIdRanges(filename, username, ownerId) {
     .map((line) => line.split(":"))
     .filter((fields) => fields.length === 3 && [username, String(ownerId)].includes(fields[0]))
     .map((fields) => ({ start: Number(fields[1]), count: Number(fields[2]) }))
-    .filter(({ start, count }) =>
-      Number.isSafeInteger(start) && Number.isSafeInteger(count) && start > 0 && count > 0,
+    .filter(
+      ({ start, count }) =>
+        Number.isSafeInteger(start) && Number.isSafeInteger(count) && start > 0 && count > 0,
     );
 }
 
@@ -488,7 +488,9 @@ async function validateNamespaceMaps(uidMap, gidMap, ownerUid, ownerGid) {
     uidMap[1][0] !== 1 ||
     gidMap[1][0] !== 1
   ) {
-    throw new Error("BuildKit namespace must map container root to only the current local user/group");
+    throw new Error(
+      "BuildKit namespace must map container root to only the current local user/group",
+    );
   }
   const username = await localUsernameForUid(ownerUid);
   const uidRanges = await subordinateIdRanges("/etc/subuid", username, ownerUid);
@@ -501,7 +503,9 @@ async function validateNamespaceMaps(uidMap, gidMap, ownerUid, ownerGid) {
         entry[1] + entry[2] <= start + count,
     );
   if (!inRange(uidMap[1], uidRanges) || !inRange(gidMap[1], gidRanges))
-    throw new Error("BuildKit namespace maps do not match the current user's subordinate ID grants");
+    throw new Error(
+      "BuildKit namespace maps do not match the current user's subordinate ID grants",
+    );
   return { uidMap, gidMap };
 }
 
@@ -732,9 +736,7 @@ function outerIdIsMapped(id, ownerId, mapping) {
   if (id === ownerId) return true;
   return (
     Array.isArray(mapping) &&
-    mapping.some(
-      (entry) => Array.isArray(entry) && id >= entry[1] && id < entry[1] + entry[2],
-    )
+    mapping.some((entry) => Array.isArray(entry) && id >= entry[1] && id < entry[1] + entry[2])
   );
 }
 
@@ -790,7 +792,7 @@ async function removeMappedOwnedRoot(root, rootDevice, owner) {
   const scanner = [
     'const fs = await import("node:fs/promises");',
     'const path = await import("node:path");',
-    'const [root, expectedDeviceText, expectedOwnerText, expectedOverflowUidText, expectedOverflowGidText] = process.argv.slice(1);',
+    "const [root, expectedDeviceText, expectedOwnerText, expectedOverflowUidText, expectedOverflowGidText] = process.argv.slice(1);",
     "const expectedDevice = Number(expectedDeviceText);",
     "const expectedOwner = JSON.parse(expectedOwnerText);",
     "const expectedOverflowUid = Number(expectedOverflowUidText);",
@@ -800,25 +802,25 @@ async function removeMappedOwnedRoot(root, rootDevice, owner) {
     'if (JSON.stringify(await parseMap("uid")) !== JSON.stringify(expectedOwner.buildkitUidMap) || JSON.stringify(await parseMap("gid")) !== JSON.stringify(expectedOwner.buildkitGidMap)) throw new Error("cleanup namespace UID/GID maps do not match owner record");',
     'const [overflowUidText, overflowGidText] = await Promise.all([fs.readFile("/proc/sys/kernel/overflowuid", "utf8"), fs.readFile("/proc/sys/kernel/overflowgid", "utf8")]);',
     'if (Number(overflowUidText.trim()) !== expectedOverflowUid || Number(overflowGidText.trim()) !== expectedOverflowGid) throw new Error("kernel overflow UID/GID changed before mapped cleanup");',
-    'const rootInfo = await fs.lstat(root);',
+    "const rootInfo = await fs.lstat(root);",
     'if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || rootInfo.dev !== expectedDevice || rootInfo.uid !== 0 || rootInfo.gid !== 0 || (rootInfo.mode & 0o077) !== 0) throw new Error("mapped cleanup root identity, mode, or device changed");',
     'const ownerPath = path.join(root, "owner.json");',
-    'const ownerInfo = await fs.lstat(ownerPath);',
+    "const ownerInfo = await fs.lstat(ownerPath);",
     'if (!ownerInfo.isFile() || ownerInfo.isSymbolicLink() || ownerInfo.uid !== 0 || ownerInfo.gid !== 0 || (ownerInfo.mode & 0o077) !== 0) throw new Error("mapped cleanup owner marker identity or mode changed");',
     'const owner = JSON.parse(await fs.readFile(ownerPath, "utf8"));',
     'if (JSON.stringify(owner) !== JSON.stringify(expectedOwner) || owner.schema !== "praetorium.local-disposable-owner/v2" || owner.root !== root || owner.disposable !== true || owner.production !== false || owner.ownerUid !== expectedOwner.ownerUid || owner.ownerGid !== expectedOwner.ownerGid || owner.buildkitSocket !== path.join(root, "runtime", "buildkit.sock")) throw new Error("mapped cleanup owner marker does not match the prevalidated ownership record");',
     'const mountInfo = await fs.readFile("/proc/self/mountinfo", "utf8");',
     'for (const line of mountInfo.split("\\n")) { if (!line) continue; const [mountFields] = line.split(" - ", 1); const fields = mountFields?.split(" "); if (!fields || fields.length < 5) throw new Error("could not parse cleanup namespace mount information"); const mountPoint = path.resolve(fields[4].replace(/\\\\([0-7]{3})/gu, (_escape, octal) => String.fromCharCode(Number.parseInt(octal, 8)))); const relative = path.relative(root, mountPoint); if (relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) throw new Error(`refusing mapped cleanup: mountpoint under owned root: ${mountPoint}`); }',
-    'const mapped = (id, entries) => entries.some(([inner, _outer, count]) => id >= inner && id < inner + count);',
+    "const mapped = (id, entries) => entries.some(([inner, _outer, count]) => id >= inner && id < inner + count);",
     "const pending = [root];",
     "while (pending.length > 0) {",
     "  const current = pending.pop();",
     "  const info = await fs.lstat(current);",
-    '  if (info.dev !== expectedDevice) throw new Error(`filesystem boundary under owned root: ${current}`);',
-    '  if (info.uid === expectedOverflowUid || info.gid === expectedOverflowGid || !mapped(info.uid, expectedOwner.buildkitUidMap) || !mapped(info.gid, expectedOwner.buildkitGidMap)) throw new Error(`unmapped or ambiguous overflow owner under owned root: ${current}`);',
+    "  if (info.dev !== expectedDevice) throw new Error(`filesystem boundary under owned root: ${current}`);",
+    "  if (info.uid === expectedOverflowUid || info.gid === expectedOverflowGid || !mapped(info.uid, expectedOwner.buildkitUidMap) || !mapped(info.gid, expectedOwner.buildkitGidMap)) throw new Error(`unmapped or ambiguous overflow owner under owned root: ${current}`);",
     "  if (info.isDirectory()) for (const entry of await fs.readdir(current)) pending.push(path.join(current, entry));",
     "}",
-    'await fs.rm(root, { recursive: true, force: true });',
+    "await fs.rm(root, { recursive: true, force: true });",
   ].join("\n");
   new Script(`(async () => {\n${scanner}\n})`, {
     filename: "mapped-disposable-cleanup-child.js",
@@ -858,7 +860,9 @@ async function verifyOwnedTree(root, owner) {
     const current = pending.pop();
     const info = await lstat(current);
     if (info.dev !== rootDevice)
-      throw new Error(`refusing cleanup: mount or filesystem boundary under owned root: ${current}`);
+      throw new Error(
+        `refusing cleanup: mount or filesystem boundary under owned root: ${current}`,
+      );
     if (
       !outerIdIsMapped(info.uid, owner.ownerUid, owner.buildkitUidMap) ||
       !outerIdIsMapped(info.gid, owner.ownerGid, owner.buildkitGidMap)

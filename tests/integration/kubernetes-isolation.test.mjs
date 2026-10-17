@@ -24,6 +24,7 @@ import {
   parseRuntimeInstanceId,
   parseRuntimeReleaseId,
   parseRuntimeRepositoryId,
+  runtimeNamespaceName,
 } from "../../plugins/kubernetes/dist/index.js";
 
 const CATEGORY = "kubernetes-isolation";
@@ -620,8 +621,8 @@ function runId() {
   return randomBytes(10).toString("hex");
 }
 
-function runtimeNamespace(prefix, instanceId) {
-  return `${prefix}-${instanceId.slice(4).toLowerCase()}`;
+function runtimeNamespace(config, instanceId) {
+  return runtimeNamespaceName(config.cluster.namespacePrefix, instanceId);
 }
 
 function runtimeService(instanceId) {
@@ -736,13 +737,13 @@ class TestControllerReservations {
   }
 }
 
-function makeRuntime(config, api, reservations) {
+function makeRenderer(config) {
   const maximumResources = {
     cpuMilli: config.cluster.maximumResources.cpuMilli,
     memoryMiB: config.cluster.maximumResources.memoryMiB,
     ephemeralStorageMiB: config.cluster.maximumResources.ephemeralStorageMiB,
   };
-  const renderer = createKubernetesResourceRenderer({
+  return createKubernetesResourceRenderer({
     namespacePrefix: config.cluster.namespacePrefix,
     clusterId: config.cluster.id,
     ingressNamespace: config.cluster.ingressNamespace,
@@ -752,11 +753,14 @@ function makeRuntime(config, api, reservations) {
     controlService: "provisioner",
     maximumResources,
   });
+}
+
+function makeRuntime(config, api, reservations) {
   return new KubernetesRuntimeProvider({
     api,
     namespacePrefix: config.cluster.namespacePrefix,
     clusterId: config.cluster.id,
-    renderer,
+    renderer: makeRenderer(config),
     reservations,
     maxCapacityAgeMs: 30_000,
     maxActivationEvidenceAgeMs: 30_000,
@@ -2676,8 +2680,8 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
       runtime,
     );
     // These product-identity creates are server-side dry runs only. Requiring
-    // them after the owned metadata route has been verified makes missing or
-    // stale fixture input fail before any network probe or workload creation.
+    // them after exact metadata-canary object identity is verified makes
+    // incomplete fixture input fail before the route probe or workload creation.
     await verifyProvisionerAdmissionGuards(
       providerTransport,
       controllerTransport,
@@ -3387,6 +3391,28 @@ test("T14 Kubernetes private config validator rejects unowned, unsafe, or incomp
     [],
   );
   assert.deepEqual(validateConfig(valid, inventory, now), []);
+  const renderedSpec = runtimeSpec(valid, `ins_${"0".repeat(26)}`, valid.network.hostnameSuffix);
+  const renderedService = makeRenderer(valid)
+    .renderRunning(renderedSpec)
+    .find((resource) => resource.kind === "Service");
+  assert.ok(renderedService, "production renderer did not emit the runtime Service");
+  assert.equal(
+    runtimeNamespace(valid, renderedSpec.instanceId),
+    renderedService.metadata.namespace,
+    "runner namespace must match the namespace rendered by the production provider",
+  );
+  assert.equal(
+    runtimeService(renderedSpec.instanceId),
+    renderedService.metadata.name,
+    "runner Service name must match the production provider renderer",
+  );
+  assert.ok(
+    validRunNamespace(
+      runtimeNamespace(valid, renderedSpec.instanceId),
+      valid.cluster.namespacePrefix,
+    ),
+    "a production-rendered runtime namespace must satisfy the runner's namespace gate",
+  );
   assert.ok(
     validateConfig(
       Object.fromEntries(Object.entries(valid).filter(([key]) => key !== "metadataFixture")),

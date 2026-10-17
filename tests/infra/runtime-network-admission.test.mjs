@@ -139,6 +139,12 @@ const networkPolicyScenarios = [
   rejected("ingress-port-range", networkPolicy, (object) => {
     object.spec.ingress[0].ports[0].endPort = listenerPort + 1;
   }),
+  rejected("named-ingress-port", networkPolicy, (object) => {
+    object.spec.ingress[0].ports[0].port = "http";
+  }),
+  rejected("all-ingress-ports", networkPolicy, (object) => {
+    delete object.spec.ingress[0].ports[0].port;
+  }),
   rejected("dns-port-range", networkPolicy, (object) => {
     object.spec.egress[0].ports[0].endPort = 54;
   }),

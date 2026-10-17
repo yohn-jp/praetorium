@@ -53,6 +53,7 @@ spec:
         object.spec.ingress.all(rule,
           has(rule.from) && has(rule.ports) && rule.from.size() == 1 && rule.ports.size() == 1 &&
           !has(rule.ports[0].endPort) && rule.ports[0].protocol == "TCP" &&
+          has(rule.ports[0].port) && type(rule.ports[0].port) == int &&
           rule.ports[0].port >= 1 && rule.ports[0].port <= 65535 &&
           rule.ports[0].port == object.spec.ingress[0].ports[0].port
         ) &&

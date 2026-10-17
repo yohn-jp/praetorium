@@ -489,7 +489,8 @@
     "evidenceDocument": "docs/verification/PRODUCER-fc4eea8.md",
     "previousProducerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
     "previousProducerTree": "62b9351539579a17cbd7f00127c1ab218d29c51b",
-    "previousDocumentPath": "docs/verification/PRODUCER-539375c.md"
+    "previousDocumentPath": "docs/verification/PRODUCER-539375c.md",
+    "documentCommit": "69bd25c"
   },
   "latestPlatformDelta": {
     "head": "0cdf51e36d1c2fac894c3a9fc5fcf4b61347a48f",

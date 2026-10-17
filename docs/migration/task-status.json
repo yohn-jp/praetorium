@@ -13,8 +13,8 @@
     "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
     "sourceSnapshotPath": "/tmp/praetorium-campaign-source",
     "sourceSnapshotGitMetadata": "unavailable; source revision is pinned in docs/migration/PLAN.md and SOURCE-HANDLERS.json",
-    "producerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
-    "producerStatusDocumentCommit": "787ede5",
+    "producerRevision": "fc4eea880ef895decf6161bf4f45cc958e9700b3",
+    "producerStatusDocumentCommit": "69bd25c",
     "partialWorkerTestEvidenceCommit": "37f187c",
     "productionSourceOnlyCommit": "b3fbe6dcfb586b8f6aa28f5e06fa71ae89733061",
     "kubernetesPrincipalTestCommit": "120b007",
@@ -45,8 +45,8 @@
     "rootCheckRunForThisLedger": true,
     "frozenInstallStatus": "passed at b3fbe6d; source/manifests unchanged through docs checkpoint 787ede5",
     "rootCheckStatus": "Required literal corepack pnpm@11.18.0 check passed at b3fbe6d with PATH=/tmp/praetorium-bin:$PATH; 29/29 cached test tasks, boundaries and schemas passed. Earlier named runs remain historical.",
-    "producerRefreshNote": "Current read-only audit at 787ede5 records 539375c, S01-S05 missing/BLOCKED and accepted artifactDigest null. New local Core component evidence and equal production image inputs are documented in PRODUCER-539375c.md.",
-    "previousProducerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
+    "producerRefreshNote": "Read-only audit at69bd25c records fc4eea8. S01-S04 hosted interfaces remain missing; S05 has stronger local full-profile evidence for a candidate predating the new production Semantic browser fix. No current-fc4 accepted composition/publication; artifactDigest null. See docs/verification/PRODUCER-fc4eea8.md.",
+    "previousProducerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
     "previousProducerStatusDocumentCommit": "5089752",
     "kubernetesRbacPolicyCommit": "ec47ce5",
     "tenantPodAdmissionPolicyCommit": "1a8c1c1",
@@ -61,8 +61,8 @@
   },
   "producerPreflight": {
     "checkedInStatusPath": "docs/migration/PRODUCER-STATUS.json",
-    "producerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
-    "producerStatusDocumentCommit": "787ede5",
+    "producerRevision": "fc4eea880ef895decf6161bf4f45cc958e9700b3",
+    "producerStatusDocumentCommit": "69bd25c",
     "statusAtEvidenceCut": "missing",
     "gate": "BLOCKED",
     "producerModified": false,
@@ -99,8 +99,8 @@
         "artifactDigest": null
       }
     ],
-    "note": "Current read-only audit at 787ede5 records 539375c, S01-S05 missing/BLOCKED and accepted artifactDigest null. New local Core component evidence and equal production image inputs are documented in PRODUCER-539375c.md.",
-    "previousProducerRevision": "271d7b28ba40109f502b0bb196a81afdc47cd1d6",
+    "note": "Read-only audit at69bd25c records fc4eea8. S01-S04 hosted interfaces remain missing; S05 has stronger local full-profile evidence for a candidate predating the new production Semantic browser fix. No current-fc4 accepted composition/publication; artifactDigest null. See docs/verification/PRODUCER-fc4eea8.md.",
+    "previousProducerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
     "previousProducerStatusDocumentCommit": "5089752"
   },
   "tasks": {
@@ -123,10 +123,10 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Read-only producer preflight at 539375c925754c6ec6f5c445051a32b7293a0724: S01-S05 missing/BLOCKED; accepted artifactDigest null. Stronger local Core recovery evidence lacks hosted assignment/composition conformance."
+        "Read-only producer preflight at fc4eea880ef895decf6161bf4f45cc958e9700b3: S01-S05 missing/BLOCKED; accepted artifactDigest null. Stronger local Core recovery evidence lacks hosted assignment/composition conformance."
       ],
       "recordedCheckDocs": ["docs/migration/PRODUCER-STATUS.json"],
-      "recordStatus": "Current read-only audit at 787ede5 records 539375c, S01-S05 missing/BLOCKED and accepted artifactDigest null. New local Core component evidence and equal production image inputs are documented in PRODUCER-539375c.md."
+      "recordStatus": "Read-only audit at69bd25c records fc4eea8. S01-S04 hosted interfaces remain missing; S05 has stronger local full-profile evidence for a candidate predating the new production Semantic browser fix. No current-fc4 accepted composition/publication; artifactDigest null. See docs/verification/PRODUCER-fc4eea8.md."
     },
     "T02": {
       "implementation": "partial",
@@ -188,7 +188,7 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Current producer 539375c925754c6ec6f5c445051a32b7293a0724 preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
+        "Current producer fc4eea880ef895decf6161bf4f45cc958e9700b3 preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
       ],
       "recordedCheckDocs": ["docs/migration/tasks/T04.md", "docs/migration/PRODUCER-STATUS.json"],
       "recordStatus": "Target consumer contracts and adapters are implemented; current producer status controls the gate and no producer artifact/conformance is recorded."
@@ -206,7 +206,7 @@
         "apps/control-plane/src/releases/operator-admission.ts"
       ],
       "blockers": [
-        "No current producer composition or immutable artifact is available for admission at producer revision 539375c925754c6ec6f5c445051a32b7293a0724.",
+        "No current producer composition or immutable artifact is available for admission at producer revision fc4eea880ef895decf6161bf4f45cc958e9700b3.",
         "Bounded pinned-safe planner and D1 snapshot are wired into the scheduled Worker; the local Worker runner verifies configured retention policy and durable advisory audit. No cache/OCI deletion or storage reclamation is claimed, and no remote OCI delete executor is required by the current contract."
       ],
       "recordedCheckDocs": [
@@ -360,7 +360,7 @@
         "apps/control-plane/migrations/0002_stable_release_rollouts.sql"
       ],
       "blockers": [
-        "Current producer S01 metadata and accepted immutable composition at 539375c925754c6ec6f5c445051a32b7293a0724 remain missing; production composition refuses absent metadata.",
+        "Current producer S01 metadata and accepted immutable composition at fc4eea880ef895decf6161bf4f45cc958e9700b3 remain missing; production composition refuses absent metadata.",
         "No real canary, ten-minute health window, writer-absence observation, stable follower rollout or persisted canary observation is available; S02/S05 canary evidence remains blocked."
       ],
       "recordedCheckDocs": [
@@ -442,7 +442,7 @@
       ],
       "blockers": [
         "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout; the fixed harness returned exit 2 with errors=[].",
-        "Current producer S01-S05 are missing at revision 539375c925754c6ec6f5c445051a32b7293a0724; artifactDigest is null and no current-main immutable artifact is available.",
+        "Current producer S01-S05 are missing at revision fc4eea880ef895decf6161bf4f45cc958e9700b3; artifactDigest is null and no current-main immutable artifact is available.",
         "Kubernetes isolation runner is implemented and independently reviewed at 0fcf16a, but owned cluster/controller+provider credentials, immutable probe image, ingress/public marker and owned metadata canary are missing. The other five blocked categories lack fixed executable runners. The partial M04 probe remains synthetic, not real provider acceptance.",
         "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; S01 receipt/catalog ABI must arrive first, then the inspector/smoke path must be implemented and wired. T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain alongside the blocked producer/environment gates."
       ],
@@ -500,7 +500,7 @@
       "id": "S01-S05",
       "capability": "producer catalog, hosted access, Git credentials, quiesce and immutable composition evidence",
       "state": "blocked",
-      "evidence": "docs/migration/PRODUCER-STATUS.json at 539375c925754c6ec6f5c445051a32b7293a0724 marks each hosted producer gate missing/BLOCKED and accepted artifactDigest null; stronger local Core evidence remains component-only."
+      "evidence": "Read-only audit at69bd25c records fc4eea8. S01-S04 hosted interfaces remain missing; S05 has stronger local full-profile evidence for a candidate predating the new production Semantic browser fix. No current-fc4 accepted composition/publication; artifactDigest null. See docs/verification/PRODUCER-fc4eea8.md."
     },
     {
       "id": "T09-runtime",

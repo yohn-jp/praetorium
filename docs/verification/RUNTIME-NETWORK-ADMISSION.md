@@ -23,9 +23,12 @@ Access in `praetorium-system`, and Provisioner in `praetorium-system`. Each
 peer receives the same single TCP listener port. The existing producer contract
 and renderer bound that listener to 1–65535; the policies enforce that same
 range without choosing a new port. DNS is limited to the `kube-dns` Pods in
-`kube-system`; public egress is limited to TCP 443 and preserves the target
-renderer’s complete IPv4/IPv6 private-address exclusions, including
-`168.63.129.16/32`.
+`kube-system`; IP egress is limited to TCP 443 and uses the same explicit
+reserved, metadata, and non-public CIDR exclusions as the static system
+policies. This includes IPv4-compatible (`::/96`) and mapped
+(`::ffff:0:0/96`) destinations, IPv6 site-local (`fec0::/10`), documentation,
+unspecified and multicast ranges, IPv4 multicast/reserved (`224.0.0.0/4`,
+`240.0.0.0/4`), and `168.63.129.16/32`.
 
 The IngressRoute accepts one `websecure` host derived from the stable
 `ins-<instance-id>` hostname and one service with the exact local runtime
@@ -65,4 +68,4 @@ existing listener range and the exact rendered object shapes. These policies
 also do not prove runtime writer absence or authorize deletion. Lifecycle
 fencing and the Provisioner's narrowly scoped RBAC remain responsible for
 those operations. This change makes no live-cluster or producer acceptance
-claim.
+claim and does not assert how a CNI routes traffic to excluded destinations.

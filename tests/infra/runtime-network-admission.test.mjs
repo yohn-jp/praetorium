@@ -153,6 +153,41 @@ const networkPolicyScenarios = [
       (cidr) => cidr !== "168.63.129.16/32",
     );
   }),
+  rejected("ipv4-multicast-egress-enabled", networkPolicy, (object) => {
+    object.spec.egress[1].to[0].ipBlock.except = object.spec.egress[1].to[0].ipBlock.except.filter(
+      (cidr) => cidr !== "224.0.0.0/4",
+    );
+  }),
+  rejected("ipv4-reserved-egress-enabled", networkPolicy, (object) => {
+    object.spec.egress[1].to[0].ipBlock.except = object.spec.egress[1].to[0].ipBlock.except.filter(
+      (cidr) => cidr !== "240.0.0.0/4",
+    );
+  }),
+  rejected("ipv4-compatible-ipv6-egress-enabled", networkPolicy, (object) => {
+    object.spec.egress[1].to[1].ipBlock.except = object.spec.egress[1].to[1].ipBlock.except.filter(
+      (cidr) => cidr !== "::/96",
+    );
+  }),
+  rejected("ipv4-mapped-ipv6-egress-enabled", networkPolicy, (object) => {
+    object.spec.egress[1].to[1].ipBlock.except = object.spec.egress[1].to[1].ipBlock.except.filter(
+      (cidr) => cidr !== "::ffff:0:0/96",
+    );
+  }),
+  rejected("site-local-ipv6-egress-enabled", networkPolicy, (object) => {
+    object.spec.egress[1].to[1].ipBlock.except = object.spec.egress[1].to[1].ipBlock.except.filter(
+      (cidr) => cidr !== "fec0::/10",
+    );
+  }),
+  rejected("documentation-ipv6-egress-enabled", networkPolicy, (object) => {
+    object.spec.egress[1].to[1].ipBlock.except = object.spec.egress[1].to[1].ipBlock.except.filter(
+      (cidr) => cidr !== "2001:db8::/32",
+    );
+  }),
+  rejected("multicast-ipv6-egress-enabled", networkPolicy, (object) => {
+    object.spec.egress[1].to[1].ipBlock.except = object.spec.egress[1].to[1].ipBlock.except.filter(
+      (cidr) => cidr !== "ff00::/8",
+    );
+  }),
   rejected("private-egress-peer-added", networkPolicy, (object) => {
     object.spec.egress[1].to.push({ ipBlock: { cidr: "10.0.0.0/8" } });
   }),
@@ -255,7 +290,30 @@ test("target admission covers the actual renderer's tenant policy and endpoint s
     networkPolicy.spec.ingress.map((rule) => rule.ports[0].port),
     [listenerPort, listenerPort, listenerPort],
   );
-  assert.ok(networkPolicy.spec.egress[1].to[0].ipBlock.except.includes("168.63.129.16/32"));
+  assert.deepEqual(networkPolicy.spec.egress[1].to[0].ipBlock.except, [
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.168.0.0/16",
+    "168.63.129.16/32",
+    "198.18.0.0/15",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+  ]);
+  assert.deepEqual(networkPolicy.spec.egress[1].to[1].ipBlock.except, [
+    "::/128",
+    "::1/128",
+    "::/96",
+    "::ffff:0:0/96",
+    "2001:db8::/32",
+    "fc00::/7",
+    "fec0::/10",
+    "fe80::/10",
+    "ff00::/8",
+  ]);
   assert.deepEqual(ingressRoute.spec.routes[0].services, [
     { name: ingressRoute.metadata.name, port: listenerPort },
   ]);

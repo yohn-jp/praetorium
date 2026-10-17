@@ -511,18 +511,33 @@ describe("Kubernetes runtime provider", () => {
     const ipv4Block = ipBlocks
       .map((item) => record(record(item).ipBlock))
       .find((item) => item.cidr === "0.0.0.0/0");
-    expect(ipv4Block?.except).toEqual(
-      expect.arrayContaining([
-        "10.0.0.0/8",
-        "100.64.0.0/10",
-        "127.0.0.0/8",
-        "169.254.0.0/16",
-        "172.16.0.0/12",
-        "192.0.0.0/24",
-        "192.168.0.0/16",
-        "168.63.129.16/32",
-      ]),
-    );
+    expect(ipv4Block?.except).toEqual([
+      "10.0.0.0/8",
+      "100.64.0.0/10",
+      "127.0.0.0/8",
+      "169.254.0.0/16",
+      "172.16.0.0/12",
+      "192.0.0.0/24",
+      "192.168.0.0/16",
+      "168.63.129.16/32",
+      "198.18.0.0/15",
+      "224.0.0.0/4",
+      "240.0.0.0/4",
+    ]);
+    const ipv6Block = ipBlocks
+      .map((item) => record(record(item).ipBlock))
+      .find((item) => item.cidr === "::/0");
+    expect(ipv6Block?.except).toEqual([
+      "::/128",
+      "::1/128",
+      "::/96",
+      "::ffff:0:0/96",
+      "2001:db8::/32",
+      "fc00::/7",
+      "fec0::/10",
+      "fe80::/10",
+      "ff00::/8",
+    ]);
     expect((record(egress[0]).ports as unknown[]).map((item) => record(item).port)).toEqual([
       53, 53,
     ]);

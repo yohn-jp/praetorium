@@ -753,6 +753,14 @@ function createPlatform(options: { readonly maxCapacitySnapshotAgeMs?: number } 
   liveDatabases.push(database);
   database.exec("PRAGMA foreign_keys = ON");
   database.exec(readFileSync(fileURLToPath(schemaUrl), "utf8"));
+  database.exec(
+    readFileSync(
+      fileURLToPath(
+        new URL("../../../apps/control-plane/migrations/0004_runtime_git_credentials.sql", import.meta.url),
+      ),
+      "utf8",
+    ),
+  );
   const store = new D1PlatformStore(new SqliteD1Database(database), options);
   let instanceCounter = 0;
   const registry = new RepositoryRegistryService(

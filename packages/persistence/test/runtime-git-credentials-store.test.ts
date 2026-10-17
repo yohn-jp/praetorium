@@ -312,7 +312,111 @@ describe("D1RuntimeGitCredentialStore", () => {
         .get(otherRepository.tokenId),
     ).toMatchObject({ status: "active" });
   });
+
+  it("retires the proof-bound old epoch atomically at old-writer-absent", async () => {
+    const db = new SQLiteD1();
+    const credentialStore = new D1RuntimeGitCredentialStore(db);
+    const retired = registration(111);
+    const otherEpoch = registration(112, { runtimeEpoch: 5 });
+    const otherInstance = registration(113, { instanceId: "ins_repo-7001-other" });
+    const otherRepository = registration(114, {
+      repositoryId: 7002,
+      installationId: 9002,
+      instanceId: "ins_repo-7002",
+    });
+    seedOtherBinding(db);
+    await credentialStore.register(retired, NOW);
+    await credentialStore.register(otherEpoch, NOW);
+    await credentialStore.register(otherInstance, NOW);
+    await credentialStore.register(otherRepository, NOW);
+    seedRunningOperation(db, 5);
+
+    const platform = new D1PlatformStore(db);
+    const checkpoint = {
+      operationId: "op_retire-1",
+      workerId: "worker-1",
+      leaseToken: "operation-lease-token-long-enough",
+      leaseEpoch: 2,
+      expectedCheckpointSequence: 0,
+      phase: "old-writer-absent" as const,
+      checkpoint: {
+        writerAbsenceProof: absenceProof({ retiredRuntimeEpoch: 4 }),
+      },
+      now: NOW + 1,
+    };
+
+    await expect(
+      platform.appendOperationCheckpoint({ ...checkpoint, leaseToken: "stale-lease-token-long-enough" }),
+    ).resolves.toBeNull();
+    await expect(
+      platform.appendOperationCheckpoint({ ...checkpoint, expectedCheckpointSequence: 1 }),
+    ).resolves.toBeNull();
+    expect(await credentialStore.listPending(7001, 4, NOW + 1, 8)).toEqual([]);
+
+    const absentProof = (retiredRuntimeEpoch: number | null, instanceId = "ins_repo-7001", repositoryId = 7001) => ({
+      writerAbsenceProof: absenceProof({ retiredRuntimeEpoch, instanceId, repositoryId }),
+    });
+    for (const [sequence, proof] of [
+      [0, absentProof(null)],
+      [1, absentProof(4, "ins_repo-7001-other")],
+      [2, absentProof(4, "ins_repo-7001", 7002)],
+      [3, absentProof(6)],
+    ] as const) {
+      await expect(
+        platform.appendOperationCheckpoint({
+          ...checkpoint,
+          expectedCheckpointSequence: sequence,
+          checkpoint: proof,
+        }),
+      ).resolves.toMatchObject({
+        id: "op_retire-1",
+        phase: "old-writer-absent",
+        checkpointSequence: sequence + 1,
+      });
+      expect(await credentialStore.listPending(7001, 4, NOW + 1, 8)).toEqual([]);
+    }
+
+    await expect(
+      platform.appendOperationCheckpoint({
+        ...checkpoint,
+        expectedCheckpointSequence: 4,
+        checkpoint: absentProof(4),
+      }),
+    ).resolves.toMatchObject({
+      id: "op_retire-1",
+      phase: "old-writer-absent",
+      checkpointSequence: 5,
+    });
+    await expect(credentialStore.listPending(7001, 4, NOW + 1, 8)).resolves.toMatchObject([
+      { tokenId: retired.tokenId, status: "revocation_pending" },
+    ]);
+    await expect(credentialStore.listPending(7001, 5, NOW + 1, 8)).resolves.toEqual([]);
+    await expect(credentialStore.listPending(7002, 4, NOW + 1, 8)).resolves.toEqual([]);
+    for (const token of [otherEpoch, otherInstance, otherRepository])
+      expect(
+        db.database
+          .prepare("SELECT status FROM runtime_git_credentials WHERE token_id = ?")
+          .get(token.tokenId),
+      ).toMatchObject({ status: "active" });
+  });
 });
+
+function absenceProof(input: {
+  readonly retiredRuntimeEpoch: number | null;
+  readonly instanceId?: string;
+  readonly repositoryId?: number;
+}) {
+  return {
+    instanceId: input.instanceId ?? "ins_repo-7001",
+    repositoryId: input.repositoryId ?? 7001,
+    retiredRuntimeEpoch: input.retiredRuntimeEpoch,
+    providerObservationId: "provider-census-1",
+    censusObservedAt: new Date(NOW).toISOString(),
+    remainingWriters: 0,
+    evidenceIdentities: [],
+    source: "runtime-provider-census" as const,
+  };
+}
 
 function seedOtherBinding(db: SQLiteD1): void {
   db.database
@@ -330,7 +434,7 @@ function seedOtherBinding(db: SQLiteD1): void {
     .run(NOW, NOW);
 }
 
-function seedRunningOperation(db: SQLiteD1): void {
+function seedRunningOperation(db: SQLiteD1, runtimeEpoch = 4): void {
   db.database
     .prepare(
       `INSERT INTO operations (
@@ -340,12 +444,12 @@ function seedRunningOperation(db: SQLiteD1): void {
          deployment_revision_id, build_id, prerequisite_build_id, idempotency_scope, idempotency_key,
          request_hash, actor_id, authorization_revision, request_id, created_at, updated_at
        ) VALUES (
-         'op_retire-1', 'ins_repo-7001', 7001, 7, 4, 'redeploy', 'running', 'accepted',
+         'op_retire-1', 'ins_repo-7001', 7001, 7, ?, 'redeploy', 'running', 'accepted',
          1, 2, 'worker-1', 'operation-lease-token-long-enough', ?, 0, NULL,
          0, NULL, NULL, 'cluster-1', 'res_epoch-4',
          NULL, NULL, NULL, 'repo:7001', 'retire-checkpoint-1',
          'request-hash', 'actor-1', 1, NULL, ?, ?
        )`,
     )
-    .run(NOW + 30_000, NOW, NOW);
+    .run(runtimeEpoch, NOW + 30_000, NOW, NOW);
 }

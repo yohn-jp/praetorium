@@ -1253,18 +1253,29 @@ export class D1PlatformStore implements OperationStore {
            WHERE operation_id = ? AND checkpoint_sequence = ? AND changes() = 1`,
         )
         .bind(sequence, checkpointJson, input.workerId, input.now, input.operationId, sequence),
-      ...(input.phase === "quiescing-old"
+      ...(input.phase === "quiescing-old" || input.phase === "old-writer-absent"
         ? [
             this.db
               .prepare(
                 `UPDATE runtime_git_credentials SET status = 'revocation_pending', updated_at = ?
          WHERE status = 'active' AND changes() = 1 AND EXISTS (
            SELECT 1 FROM operations o
-           WHERE o.operation_id = ? AND o.checkpoint_sequence = ? AND o.phase = 'quiescing-old'
+           WHERE o.operation_id = ? AND o.checkpoint_sequence = ?
              AND o.instance_id = runtime_git_credentials.instance_id
              AND o.repository_id = runtime_git_credentials.repository_id
-             AND json_extract(o.checkpoint_json, '$.lifecycle.quiesceRequest.instanceId') = o.instance_id
-             AND json_extract(o.checkpoint_json, '$.lifecycle.quiesceRequest.runtimeEpoch') = runtime_git_credentials.runtime_epoch
+             AND (
+               (o.phase = 'quiescing-old'
+                AND json_extract(o.checkpoint_json, '$.lifecycle.quiesceRequest.instanceId') = o.instance_id
+                AND json_extract(o.checkpoint_json, '$.lifecycle.quiesceRequest.runtimeEpoch') = runtime_git_credentials.runtime_epoch)
+               OR
+               (o.phase = 'old-writer-absent'
+                AND json_type(o.checkpoint_json, '$.writerAbsenceProof.instanceId') = 'text'
+                AND json_extract(o.checkpoint_json, '$.writerAbsenceProof.instanceId') = o.instance_id
+                AND json_type(o.checkpoint_json, '$.writerAbsenceProof.repositoryId') = 'integer'
+                AND json_extract(o.checkpoint_json, '$.writerAbsenceProof.repositoryId') = o.repository_id
+                AND json_type(o.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'integer'
+                AND json_extract(o.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = runtime_git_credentials.runtime_epoch)
+             )
          )`,
               )
               .bind(input.now, input.operationId, sequence),

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdtemp, open, readFile, realpath, rm } from "node:fs/promises";
+import { constants } from "node:fs";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -297,7 +298,64 @@ function createRunnerEnvironment(inventoryPath, category, isolatedHome, source =
     XDG_CONFIG_HOME: path.join(isolatedHome, ".config"),
     PRAETORIUM_T14_INVENTORY_PATH: inventoryPath,
     PRAETORIUM_T14_CATEGORY: category,
+    PRAETORIUM_T14_RESULT_PATH: path.join(isolatedHome, "runner-result.json"),
   };
+}
+
+// A blocked prerequisite is distinct from a failed assertion. Only the fixed
+// repository runner can write this per-process, owner-only result location.
+// A sidecar can never promote a nonzero process to VERIFIED.
+async function readRunnerResult(resultPath) {
+  let handle;
+  try {
+    handle = await open(
+      resultPath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const info = await handle.stat();
+    if (
+      !info.isFile() ||
+      info.size > 4096 ||
+      (info.mode & 0o022) !== 0 ||
+      (process.getuid && info.uid !== process.getuid())
+    )
+      return {};
+    const buffer = Buffer.alloc(4097);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > 4096) return {};
+    return JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
+  } catch (error) {
+    return error.code === "ENOENT" ? null : {};
+  } finally {
+    await handle?.close();
+  }
+}
+
+function classifyRunnerResult(category, result, report = null) {
+  if (result.error || result.signal || !Number.isInteger(result.status)) {
+    return { status: "FAILED", reason: "fixed runner did not complete normally" };
+  }
+  if (report !== null) {
+    const valid =
+      hasOnlyKeys(report, ["reportVersion", "category", "status", "reason"]) &&
+      report.reportVersion === 1 &&
+      report.category === category &&
+      ["BLOCKED", "FAILED"].includes(report.status) &&
+      typeof report.reason === "string" &&
+      report.reason.length > 0 &&
+      report.reason.length <= 512 &&
+      !/[\u0000-\u001f\u007f]/u.test(report.reason);
+    if (!valid || result.status === 0) {
+      return {
+        status: "FAILED",
+        reason: "fixed runner outcome report is invalid or contradicts its exit",
+      };
+    }
+    return { status: report.status, reason: report.reason };
+  }
+  return result.status === 0
+    ? { status: "VERIFIED", reason: "fixed acceptance runner passed" }
+    : { status: "FAILED", reason: `fixed runner exited with status ${result.status}` };
 }
 
 async function readInventory(inventoryPath) {
@@ -359,6 +417,7 @@ async function executeFixedRunners(categories, inventoryPath) {
     }
     const isolatedHome = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-home-"));
     let result;
+    let outcome;
     try {
       result = spawnSync(process.execPath, ["--test", runnerPath], {
         cwd: REPOSITORY_ROOT,
@@ -367,6 +426,11 @@ async function executeFixedRunners(categories, inventoryPath) {
         stdio: "ignore",
         shell: false,
       });
+      outcome = classifyRunnerResult(
+        category.id,
+        result,
+        await readRunnerResult(path.join(isolatedHome, "runner-result.json")),
+      );
     } finally {
       await rm(isolatedHome, { recursive: true, force: true });
     }
@@ -377,19 +441,11 @@ async function executeFixedRunners(categories, inventoryPath) {
         executed: false,
         reason: "fixed runner could not start",
       });
-    } else if (result.status === 0) {
-      results.push({
-        id: category.id,
-        status: "VERIFIED",
-        executed: true,
-        reason: "fixed acceptance runner passed",
-      });
     } else {
       results.push({
         id: category.id,
-        status: "FAILED",
         executed: true,
-        reason: `fixed runner exited with status ${result.status ?? "unknown"}`,
+        ...outcome,
       });
     }
   }
@@ -464,6 +520,7 @@ export {
   REQUIRED_CATEGORIES,
   createReport,
   createRunnerEnvironment,
+  classifyRunnerResult,
   parseCli,
   validateInventory,
 };

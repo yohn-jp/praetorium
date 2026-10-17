@@ -4,7 +4,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createRunnerEnvironment, REQUIRED_CATEGORIES } from "../../scripts/verify-integration.mjs";
+import {
+  classifyRunnerResult,
+  createRunnerEnvironment,
+  REQUIRED_CATEGORIES,
+} from "../../scripts/verify-integration.mjs";
 
 const scriptPath = path.resolve("scripts/verify-integration.mjs");
 const fixturePath = path.resolve("tests/integration/fixtures/acceptance-inventory.fixture.json");
@@ -192,7 +196,39 @@ test("fixed runners do not inherit ambient credentials or machine configuration"
     XDG_CONFIG_HOME: "/temporary/isolated-home/.config",
     PRAETORIUM_T14_INVENTORY_PATH: "/owned-test/inventory.json",
     PRAETORIUM_T14_CATEGORY: "github-access",
+    PRAETORIUM_T14_RESULT_PATH: "/temporary/isolated-home/runner-result.json",
   });
+});
+
+test("a fixed runner prerequisite report cannot promote a failed or signaled process to proof", () => {
+  const report = {
+    reportVersion: 1,
+    category: "github-access",
+    status: "BLOCKED",
+    reason: "Owned GitHub App input is unavailable",
+  };
+  assert.deepEqual(classifyRunnerResult("github-access", { status: 1 }, report), {
+    status: "BLOCKED",
+    reason: report.reason,
+  });
+  assert.equal(classifyRunnerResult("github-access", { status: 1 }).status, "FAILED");
+  assert.equal(classifyRunnerResult("github-access", { status: 0 }).status, "VERIFIED");
+  assert.equal(classifyRunnerResult("github-access", { status: 0 }, report).status, "FAILED");
+  assert.equal(
+    classifyRunnerResult("github-access", { status: null, signal: "SIGTERM" }, report).status,
+    "FAILED",
+  );
+  for (const invalid of [
+    { ...report, category: "browser-entry" },
+    { ...report, status: "VERIFIED" },
+    { ...report, reason: "" },
+    { ...report, reason: "unsafe\nreason" },
+    { ...report, reason: "x".repeat(513) },
+    { ...report, command: "untrusted" },
+    {},
+  ]) {
+    assert.equal(classifyRunnerResult("github-access", { status: 1 }, invalid).status, "FAILED");
+  }
 });
 
 test("production declarations and incomplete category sets block the run", async () => {

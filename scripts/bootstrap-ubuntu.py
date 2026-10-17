@@ -13,7 +13,6 @@ from pathlib import Path
 import re
 import shutil
 import socket
-import stat
 import subprocess
 import sys
 
@@ -63,9 +62,16 @@ def cidrs(values, label):
     require(isinstance(values, list) and values, label + " must be nonempty")
     for value in values:
         subnet = ipaddress.ip_network(concrete(value, label), strict=True)
+        forbidden = tuple(ipaddress.ip_network(x) for x in (
+            "0.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+            "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
+            "224.0.0.0/4", "240.0.0.0/4"
+        ))
         require(isinstance(subnet, ipaddress.IPv4Network) and
-                                not subnet.is_multicast and not subnet.is_reserved and subnet.prefixlen >= 16,
-                label + " must contain explicit IPv4 CIDRs of /16 or narrower")
+                not subnet.is_multicast and not subnet.is_reserved and
+                (subnet.prefixlen >= 16 or subnet.is_private) and
+                not any(subnet.overlaps(blocked) for blocked in forbidden),
+                label + " must contain explicit safe IPv4 CIDRs (public /16 or narrower)")
     require(len(values) == len(set(values)), label + " contains duplicates")
     return values
 
@@ -239,8 +245,13 @@ def apply_runtime(config):
            "INSTALL_K3S_EXEC": "server", "INSTALL_K3S_SYMLINK": "skip"}
     execute("/bin/sh", config["installer"], env=env)
     execute("systemctl", "enable", "--now", "k3s.service")
-    execute("/usr/local/bin/k3s", "kubectl", "get", "nodes",
-            "-l", "praetorium.io/cluster-id=" + config["clusterId"])
+    nodes = json.loads(output("/usr/local/bin/k3s", "kubectl", "get", "nodes",
+                              "-l", "praetorium.io/cluster-id=" + config["clusterId"],
+                              "-o", "json"))
+    require(nodes.get("items"), "no K3s node registered with declared cluster identity")
+    require(all(any(c.get("type") == "Ready" and c.get("status") == "True"
+                    for c in node.get("status", {}).get("conditions", []))
+                for node in nodes["items"]), "K3s node not Ready")
 
 
 def apply_build(config):
@@ -334,7 +345,14 @@ def main():
     require(os.geteuid() == 0, "run as root, including --check")
     require(Path(args.config).is_absolute(), "config path must be absolute")
     config_path = owned_file(args.config, "config", secret=True)
-    config = json.loads(config_path.read_text(encoding="utf-8"))
+    def reject_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, "duplicate JSON configuration key: " + key)
+            result[key] = value
+        return result
+    config = json.loads(config_path.read_text(encoding="utf-8"),
+                        object_pairs_hook=reject_duplicates)
     require(isinstance(config, dict) and config.get("role") == args.role,
             "config role mismatch")
     host_preflight(args.role)

@@ -31,6 +31,24 @@ const roleBindingPolicy = roleBindingDocuments.find(
 const roleBindingPolicyBinding = roleBindingDocuments.find(
   (document) => document.kind === "ValidatingAdmissionPolicyBinding",
 );
+const runtimeResourcePolicy = namespaceDocuments.find(
+  (document) => document.metadata.name === "praetorium-provisioner-runtime-resources",
+);
+const runtimeResourceBinding = namespaceDocuments.find(
+  (document) =>
+    document.kind === "ValidatingAdmissionPolicyBinding" &&
+    document.metadata.name === "praetorium-provisioner-runtime-resources",
+);
+const runtimeResourceDeletePolicy = namespaceDocuments.find(
+  (document) =>
+    document.metadata.name === "praetorium-provisioner-runtime-resource-delete" &&
+    document.kind === "ValidatingAdmissionPolicy",
+);
+const runtimeResourceDeleteBinding = namespaceDocuments.find(
+  (document) =>
+    document.metadata.name === "praetorium-provisioner-runtime-resource-delete" &&
+    document.kind === "ValidatingAdmissionPolicyBinding",
+);
 
 test("Namespace policy uses the v1 policy API and rejects unowned or retired namespaces", () => {
   assert.equal(namespacePolicy.apiVersion, "admissionregistration.k8s.io/v1");
@@ -70,12 +88,27 @@ test("Namespace policy uses the v1 policy API and rejects unowned or retired nam
     "pod-security.kubernetes.io/enforce",
     "pod-security.kubernetes.io/audit",
     "pod-security.kubernetes.io/warn",
+    "pod-security.kubernetes.io/enforce-version",
+    "pod-security.kubernetes.io/audit-version",
+    "pod-security.kubernetes.io/warn-version",
   ]) {
     assert.ok(currentIdentity.includes(`object.metadata.labels["${key}"]`), `missing ${key}`);
-    assert.ok(
-      oldIdentity.includes(`oldObject.metadata.labels["${key}"]`),
-      `old object missing ${key}`,
-    );
+    if (!key.endsWith("-version")) {
+      assert.ok(
+        oldIdentity.includes(`oldObject.metadata.labels["${key}"]`),
+        `old object missing ${key}`,
+      );
+    }
+  }
+  for (const key of [
+    "pod-security.kubernetes.io/enforce-version",
+    "pod-security.kubernetes.io/audit-version",
+    "pod-security.kubernetes.io/warn-version",
+  ]) {
+    assert.ok(currentIdentity.includes(`"${key}" in object.metadata.labels`));
+    assert.ok(currentIdentity.includes(`object.metadata.labels["${key}"] == "latest"`));
+    assert.ok(oldIdentity.includes(`"${key}" in oldObject.metadata.labels`));
+    assert.ok(oldIdentity.includes(`oldObject.metadata.labels["${key}"] == "latest"`));
   }
   assert.match(oldIdentity, /request\.operation != "UPDATE"/u);
 });
@@ -102,6 +135,16 @@ test("RoleBinding policy closes broad create rights to one provider grant", () =
   const oldBindingIdentity = expressions[2];
   assert.match(namespaceIdentity, /namespaceObject != null/u);
   assert.match(namespaceIdentity, /@@CLUSTER_ID@@/u);
+  assert.match(namespaceIdentity, /pod-security\.kubernetes\.io\/enforce/u);
+  assert.match(namespaceIdentity, /pod-security\.kubernetes\.io\/audit/u);
+  assert.match(namespaceIdentity, /pod-security\.kubernetes\.io\/warn/u);
+  for (const mode of ["enforce", "audit", "warn"]) {
+    const versionKey = `pod-security.kubernetes.io/${mode}-version`;
+    assert.ok(namespaceIdentity.includes(`"${versionKey}" in namespaceObject.metadata.labels`));
+    assert.ok(
+      namespaceIdentity.includes(`namespaceObject.metadata.labels["${versionKey}"] == "latest"`),
+    );
+  }
   assert.match(bindingIdentity, /request\.operation == "DELETE" \? oldObject : object/u);
   assert.match(bindingIdentity, /praetorium-provisioner-runtime/u);
   assert.match(bindingIdentity, /praetorium-provisioner-tenant-runtime/u);
@@ -125,6 +168,142 @@ test("RoleBinding policy closes broad create rights to one provider grant", () =
       `namespace missing ${key}`,
     );
   }
+  for (const mode of ["enforce", "audit", "warn"]) {
+    assert.ok(
+      namespaceIdentity.includes(
+        `namespaceObject.metadata.labels["pod-security.kubernetes.io/${mode}"] == "restricted"`,
+      ),
+    );
+  }
+});
+
+test("runtime resource admission covers the renderer's exact kinds and delete oldObject", () => {
+  assert.ok(runtimeResourcePolicy);
+  assert.ok(runtimeResourceBinding);
+  assert.ok(runtimeResourceDeletePolicy);
+  assert.ok(runtimeResourceDeleteBinding);
+  assert.equal(runtimeResourcePolicy.kind, "ValidatingAdmissionPolicy");
+  assert.equal(runtimeResourceDeletePolicy.kind, "ValidatingAdmissionPolicy");
+  assert.equal(runtimeResourcePolicy.spec.failurePolicy, "Fail");
+  assert.equal(runtimeResourceDeletePolicy.spec.failurePolicy, "Fail");
+  assert.deepEqual(runtimeResourceBinding.spec.validationActions, ["Deny"]);
+  assert.deepEqual(runtimeResourceDeleteBinding.spec.validationActions, ["Deny"]);
+  assert.equal(runtimeResourceBinding.spec.policyName, runtimeResourcePolicy.metadata.name);
+  assert.equal(
+    runtimeResourceDeleteBinding.spec.policyName,
+    runtimeResourceDeletePolicy.metadata.name,
+  );
+  assert.equal(runtimeResourceBinding.spec.matchResources, undefined);
+  assert.equal(runtimeResourceDeleteBinding.spec.matchResources, undefined);
+
+  const writes = runtimeResourcePolicy.spec.matchConstraints.resourceRules;
+  const deletes = runtimeResourceDeletePolicy.spec.matchConstraints.resourceRules;
+  assert.deepEqual(
+    writes.map(({ apiGroups, apiVersions, operations, resources }) => ({
+      apiGroups,
+      apiVersions,
+      operations,
+      resources,
+    })),
+    [
+      {
+        apiGroups: [""],
+        apiVersions: ["v1"],
+        operations: ["CREATE", "UPDATE"],
+        resources: ["limitranges", "resourcequotas", "serviceaccounts", "services"],
+      },
+      {
+        apiGroups: ["apps"],
+        apiVersions: ["v1"],
+        operations: ["CREATE", "UPDATE"],
+        resources: ["deployments"],
+      },
+      {
+        apiGroups: ["networking.k8s.io"],
+        apiVersions: ["v1"],
+        operations: ["CREATE", "UPDATE"],
+        resources: ["networkpolicies"],
+      },
+      {
+        apiGroups: ["traefik.io"],
+        apiVersions: ["v1alpha1"],
+        operations: ["CREATE", "UPDATE"],
+        resources: ["ingressroutes"],
+      },
+    ],
+  );
+  assert.deepEqual(
+    deletes.map(({ apiGroups, apiVersions, operations, resources }) => ({
+      apiGroups,
+      apiVersions,
+      operations,
+      resources,
+    })),
+    writes.map(({ apiGroups, apiVersions, resources }) => ({
+      apiGroups,
+      apiVersions,
+      operations: ["DELETE"],
+      resources,
+    })),
+  );
+
+  const source = readFileSync(
+    resolve(repositoryRoot, "plugins/kubernetes/src/kubernetes/renderer.ts"),
+    "utf8",
+  );
+  for (const kind of [
+    "ServiceAccount",
+    "Service",
+    "LimitRange",
+    "ResourceQuota",
+    "Deployment",
+    "NetworkPolicy",
+    "IngressRoute",
+  ]) {
+    assert.ok(source.includes(`kind: "${kind}"`), `renderer does not emit ${kind}`);
+  }
+  assert.match(source, /metadata\(spec, ns, `\$\{name\}-app`\)/u);
+  assert.match(source, /metadata\(spec, ns, `\$\{name\}-network`\)/u);
+  assert.match(source, /metadata\(spec, ns, `\$\{name\}-quota`\)/u);
+  assert.match(source, /metadata\(spec, ns, `\$\{name\}-limits`\)/u);
+  assert.match(source, /metadata\(spec, ns, name\)/u);
+  const naming = readFileSync(resolve(repositoryRoot, "plugins/kubernetes/src/naming.ts"), "utf8");
+  assert.match(naming, /`arcadia-\$\{instanceId\.replace\("_", "-"\)\.toLowerCase\(\)\}`/u);
+
+  const expressions = runtimeResourcePolicy.spec.validations.map(({ expression }) => expression);
+  assert.match(expressions[0], /namespaceObject != null/u);
+  assert.match(expressions[0], /@@CLUSTER_ID@@/u);
+  assert.match(expressions[1], /request\.resource\.resource/u);
+  assert.match(expressions[1], /arcadia-ins-/u);
+  assert.match(expressions[1], /object\.metadata\.labels\["praetorium\.io\/repository-id"\]/u);
+  assert.match(expressions[1], /object\.metadata\.labels\["praetorium\.io\/runtime-epoch"\]/u);
+  assert.match(expressions[1], /object\.metadata\.labels\["arcadia\.io\/generation"\]/u);
+  assert.match(expressions[2], /request\.operation != "UPDATE"/u);
+  assert.match(expressions[2], /oldObject\.metadata\.labels\["arcadia\.io\/instance-id"\]/u);
+
+  const deleteExpressions = runtimeResourceDeletePolicy.spec.validations.map(
+    ({ expression }) => expression,
+  );
+  assert.match(deleteExpressions[0], /namespaceObject != null/u);
+  assert.match(deleteExpressions[0], /@@CLUSTER_ID@@/u);
+  assert.match(deleteExpressions[1], /oldObject\.metadata\.labels\["arcadia\.io\/instance-id"\]/u);
+  assert.match(
+    deleteExpressions[1],
+    /oldObject\.metadata\.labels\["praetorium\.io\/repository-id"\]/u,
+  );
+  for (const [expressionSet, source] of [
+    [expressions, "namespaceObject"],
+    [deleteExpressions, "namespaceObject"],
+  ]) {
+    for (const key of [
+      "pod-security.kubernetes.io/enforce-version",
+      "pod-security.kubernetes.io/audit-version",
+      "pod-security.kubernetes.io/warn-version",
+    ]) {
+      assert.ok(expressionSet[0].includes(`"${key}" in ${source}.metadata.labels`));
+      assert.ok(expressionSet[0].includes(`${source}.metadata.labels["${key}"] == "latest"`));
+    }
+  }
 });
 
 test("policy identity matches the provider principal and emitted ownership contract", () => {
@@ -140,6 +319,9 @@ test("policy identity matches the provider principal and emitted ownership contr
 
   assert.match(provider, /const PROVISIONER_NAMESPACE = "praetorium-system";/u);
   assert.match(provider, /const PROVISIONER_SERVICE_ACCOUNT = "praetorium-provisioner";/u);
+  for (const mode of ["enforce", "audit", "warn"]) {
+    assert.ok(provider.includes(`"pod-security.kubernetes.io/${mode}": "restricted"`));
+  }
   assert.match(
     provider,
     /const PROVISIONER_TENANT_ROLE = "praetorium-provisioner-tenant-runtime";/u,
@@ -163,13 +345,15 @@ test("policy identity matches the provider principal and emitted ownership contr
   const expressions = [
     ...namespacePolicy.spec.validations.map(({ expression }) => expression),
     ...roleBindingPolicy.spec.validations.map(({ expression }) => expression),
+    ...runtimeResourcePolicy.spec.validations.map(({ expression }) => expression),
+    ...runtimeResourceDeletePolicy.spec.validations.map(({ expression }) => expression),
   ].join("\n");
   for (const key of sourceLabelKeys) {
     assert.ok(expressions.includes(key), `admission policies do not cover provider label ${key}`);
   }
 });
 
-test("the bootstrap boundary excludes unrelated legacy and runtime resource policies", () => {
+test("the boundary excludes legacy data operations and unrelated runtime resource policies", () => {
   const policySources = [
     readFileSync(
       resolve(repositoryRoot, "infrastructure/kubernetes/policies/provisioner-boundary.yaml"),
@@ -187,10 +371,12 @@ test("the bootstrap boundary excludes unrelated legacy and runtime resource poli
     "configmaps",
     "secrets",
     "jobs",
-    "networkpolicies",
-    "ingressroutes",
+    "pods",
     "PathPrefix",
-    "targetPort",
+    "targetport",
+    "ipblock",
+    "entrypoints",
+    "ports:",
   ]) {
     assert.ok(
       !policySources.toLowerCase().includes(forbidden.toLowerCase()),

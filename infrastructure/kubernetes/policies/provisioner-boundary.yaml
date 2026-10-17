@@ -33,7 +33,13 @@ spec:
           object.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@" &&
           object.metadata.labels["pod-security.kubernetes.io/enforce"] == "restricted" &&
           object.metadata.labels["pod-security.kubernetes.io/audit"] == "restricted" &&
-          object.metadata.labels["pod-security.kubernetes.io/warn"] == "restricted"
+          object.metadata.labels["pod-security.kubernetes.io/warn"] == "restricted" &&
+          (!("pod-security.kubernetes.io/enforce-version" in object.metadata.labels) ||
+            object.metadata.labels["pod-security.kubernetes.io/enforce-version"] == "latest") &&
+          (!("pod-security.kubernetes.io/audit-version" in object.metadata.labels) ||
+            object.metadata.labels["pod-security.kubernetes.io/audit-version"] == "latest") &&
+          (!("pod-security.kubernetes.io/warn-version" in object.metadata.labels) ||
+            object.metadata.labels["pod-security.kubernetes.io/warn-version"] == "latest")
         )
       message: The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.
     - expression: >-
@@ -50,7 +56,28 @@ spec:
           oldObject.metadata.labels["pod-security.kubernetes.io/warn"] == "restricted" &&
           oldObject.metadata.labels["pod-security.kubernetes.io/enforce"] == object.metadata.labels["pod-security.kubernetes.io/enforce"] &&
           oldObject.metadata.labels["pod-security.kubernetes.io/audit"] == object.metadata.labels["pod-security.kubernetes.io/audit"] &&
-          oldObject.metadata.labels["pod-security.kubernetes.io/warn"] == object.metadata.labels["pod-security.kubernetes.io/warn"]
+          oldObject.metadata.labels["pod-security.kubernetes.io/warn"] == object.metadata.labels["pod-security.kubernetes.io/warn"] &&
+          (!("pod-security.kubernetes.io/enforce-version" in oldObject.metadata.labels) ||
+            oldObject.metadata.labels["pod-security.kubernetes.io/enforce-version"] == "latest") &&
+          (!("pod-security.kubernetes.io/audit-version" in oldObject.metadata.labels) ||
+            oldObject.metadata.labels["pod-security.kubernetes.io/audit-version"] == "latest") &&
+          (!("pod-security.kubernetes.io/warn-version" in oldObject.metadata.labels) ||
+            oldObject.metadata.labels["pod-security.kubernetes.io/warn-version"] == "latest") &&
+          (("pod-security.kubernetes.io/enforce-version" in oldObject.metadata.labels) ==
+            ("pod-security.kubernetes.io/enforce-version" in object.metadata.labels)) &&
+          (("pod-security.kubernetes.io/audit-version" in oldObject.metadata.labels) ==
+            ("pod-security.kubernetes.io/audit-version" in object.metadata.labels)) &&
+          (("pod-security.kubernetes.io/warn-version" in oldObject.metadata.labels) ==
+            ("pod-security.kubernetes.io/warn-version" in object.metadata.labels)) &&
+          (!("pod-security.kubernetes.io/enforce-version" in oldObject.metadata.labels) ||
+            oldObject.metadata.labels["pod-security.kubernetes.io/enforce-version"] ==
+              object.metadata.labels["pod-security.kubernetes.io/enforce-version"]) &&
+          (!("pod-security.kubernetes.io/audit-version" in oldObject.metadata.labels) ||
+            oldObject.metadata.labels["pod-security.kubernetes.io/audit-version"] ==
+              object.metadata.labels["pod-security.kubernetes.io/audit-version"]) &&
+          (!("pod-security.kubernetes.io/warn-version" in oldObject.metadata.labels) ||
+            oldObject.metadata.labels["pod-security.kubernetes.io/warn-version"] ==
+              object.metadata.labels["pod-security.kubernetes.io/warn-version"])
         )
       message: The Provisioner may not take over or change an existing namespace identity.
 ---
@@ -60,4 +87,208 @@ metadata:
   name: praetorium-provisioner-instance-namespaces
 spec:
   policyName: praetorium-provisioner-instance-namespaces
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: praetorium-provisioner-runtime-resources
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["limitranges", "resourcequotas", "serviceaccounts", "services"]
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["networkpolicies"]
+      - apiGroups: ["traefik.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingressroutes"]
+  matchConditions:
+    - name: dedicated-provisioner-identity
+      expression: >-
+        request.userInfo.username ==
+        "system:serviceaccount:praetorium-system:praetorium-provisioner"
+  validations:
+    - expression: >-
+        namespaceObject != null &&
+        namespaceObject.metadata.name.startsWith("praetorium-instances-") &&
+        namespaceObject.metadata.labels["arcadia.io/instance-id"].matches("^ins_[0-9A-HJKMNP-TV-Z]{26}$") &&
+        namespaceObject.metadata.name == "praetorium-instances-" +
+          namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&
+        namespaceObject.metadata.labels["arcadia.io/platform"] == "arcadia-platform" &&
+        namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] == "arcadia-provisioner" &&
+        namespaceObject.metadata.labels["praetorium.io/repository-id"].matches("^[1-9][0-9]*$") &&
+        int(namespaceObject.metadata.labels["praetorium.io/repository-id"]) <= 9007199254740991 &&
+        namespaceObject.metadata.labels["arcadia.io/ownership-version"] == "v1" &&
+        namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/enforce"] == "restricted" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/audit"] == "restricted" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/warn"] == "restricted" &&
+        (!("pod-security.kubernetes.io/enforce-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/enforce-version"] == "latest") &&
+        (!("pod-security.kubernetes.io/audit-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/audit-version"] == "latest") &&
+        (!("pod-security.kubernetes.io/warn-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/warn-version"] == "latest")
+      message: The Provisioner may mutate runtime resources only in a correctly owned, restricted instance namespace.
+    - expression: >-
+        object.metadata.namespace == namespaceObject.metadata.name &&
+        object.metadata.name == (
+          request.resource.resource == "serviceaccounts"
+            ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-app"
+            : request.resource.resource == "networkpolicies"
+              ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-network"
+              : request.resource.resource == "resourcequotas"
+                ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-quota"
+                : request.resource.resource == "limitranges"
+                  ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-limits"
+                  : (request.resource.resource in ["services", "deployments", "ingressroutes"]
+                    ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii()
+                    : "")
+        ) &&
+        object.metadata.labels["arcadia.io/platform"] == namespaceObject.metadata.labels["arcadia.io/platform"] &&
+        object.metadata.labels["app.kubernetes.io/managed-by"] == namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] &&
+        object.metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+        object.metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
+        object.metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
+        int(object.metadata.labels["praetorium.io/runtime-epoch"]) <= 9007199254740991 &&
+        object.metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
+        int(object.metadata.labels["arcadia.io/generation"]) <= 9007199254740991 &&
+        object.metadata.labels["arcadia.io/release-id"].matches("^(none|[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)$") &&
+        object.metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
+        object.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
+        object.metadata.labels["app.kubernetes.io/name"] == "scriptorium"
+      message: The Provisioner may mutate only the fixed resource names with complete instance, repository, generation, and cluster ownership labels.
+    - expression: >-
+        request.operation != "UPDATE" || (
+          oldObject.metadata.namespace == namespaceObject.metadata.name &&
+          oldObject.metadata.name == object.metadata.name &&
+          oldObject.metadata.labels["arcadia.io/platform"] == namespaceObject.metadata.labels["arcadia.io/platform"] &&
+          oldObject.metadata.labels["app.kubernetes.io/managed-by"] == namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] &&
+          oldObject.metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+          oldObject.metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
+          oldObject.metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
+          int(oldObject.metadata.labels["praetorium.io/runtime-epoch"]) <= 9007199254740991 &&
+          oldObject.metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
+          int(oldObject.metadata.labels["arcadia.io/generation"]) <= 9007199254740991 &&
+          oldObject.metadata.labels["arcadia.io/release-id"].matches("^(none|[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)$") &&
+          oldObject.metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
+          oldObject.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
+          oldObject.metadata.labels["app.kubernetes.io/name"] == "scriptorium" &&
+          oldObject.metadata.labels["arcadia.io/platform"] == object.metadata.labels["arcadia.io/platform"] &&
+          oldObject.metadata.labels["app.kubernetes.io/managed-by"] == object.metadata.labels["app.kubernetes.io/managed-by"] &&
+          oldObject.metadata.labels["arcadia.io/instance-id"] == object.metadata.labels["arcadia.io/instance-id"] &&
+          oldObject.metadata.labels["praetorium.io/repository-id"] == object.metadata.labels["praetorium.io/repository-id"] &&
+          oldObject.metadata.labels["arcadia.io/ownership-version"] == object.metadata.labels["arcadia.io/ownership-version"] &&
+          oldObject.metadata.labels["arcadia.io/runtime-cluster-id"] == object.metadata.labels["arcadia.io/runtime-cluster-id"]
+        )
+      message: The Provisioner may not update a runtime object created under different ownership.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: praetorium-provisioner-runtime-resources
+spec:
+  policyName: praetorium-provisioner-runtime-resources
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: praetorium-provisioner-runtime-resource-delete
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["limitranges", "resourcequotas", "serviceaccounts", "services"]
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["deployments"]
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["networkpolicies"]
+      - apiGroups: ["traefik.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["DELETE"]
+        resources: ["ingressroutes"]
+  matchConditions:
+    - name: dedicated-provisioner-identity
+      expression: >-
+        request.userInfo.username ==
+        "system:serviceaccount:praetorium-system:praetorium-provisioner"
+  validations:
+    - expression: >-
+        namespaceObject != null &&
+        namespaceObject.metadata.name.startsWith("praetorium-instances-") &&
+        namespaceObject.metadata.labels["arcadia.io/instance-id"].matches("^ins_[0-9A-HJKMNP-TV-Z]{26}$") &&
+        namespaceObject.metadata.name == "praetorium-instances-" +
+          namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&
+        namespaceObject.metadata.labels["arcadia.io/platform"] == "arcadia-platform" &&
+        namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] == "arcadia-provisioner" &&
+        namespaceObject.metadata.labels["praetorium.io/repository-id"].matches("^[1-9][0-9]*$") &&
+        int(namespaceObject.metadata.labels["praetorium.io/repository-id"]) <= 9007199254740991 &&
+        namespaceObject.metadata.labels["arcadia.io/ownership-version"] == "v1" &&
+        namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/enforce"] == "restricted" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/audit"] == "restricted" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/warn"] == "restricted" &&
+        (!("pod-security.kubernetes.io/enforce-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/enforce-version"] == "latest") &&
+        (!("pod-security.kubernetes.io/audit-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/audit-version"] == "latest") &&
+        (!("pod-security.kubernetes.io/warn-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/warn-version"] == "latest")
+      message: The Provisioner may delete runtime resources only inside a correctly owned, restricted instance namespace.
+    - expression: >-
+        oldObject.metadata.namespace == namespaceObject.metadata.name &&
+        oldObject.metadata.name == (
+          request.resource.resource == "serviceaccounts"
+            ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-app"
+            : request.resource.resource == "networkpolicies"
+              ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-network"
+              : request.resource.resource == "resourcequotas"
+                ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-quota"
+                : request.resource.resource == "limitranges"
+                  ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-limits"
+                  : (request.resource.resource in ["services", "deployments", "ingressroutes"]
+                    ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii()
+                    : "")
+        ) &&
+        oldObject.metadata.labels["arcadia.io/platform"] == namespaceObject.metadata.labels["arcadia.io/platform"] &&
+        oldObject.metadata.labels["app.kubernetes.io/managed-by"] == namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] &&
+        oldObject.metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+        oldObject.metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
+        oldObject.metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
+        int(oldObject.metadata.labels["praetorium.io/runtime-epoch"]) <= 9007199254740991 &&
+        oldObject.metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
+        int(oldObject.metadata.labels["arcadia.io/generation"]) <= 9007199254740991 &&
+        oldObject.metadata.labels["arcadia.io/release-id"].matches("^(none|[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)$") &&
+        oldObject.metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
+        oldObject.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
+        oldObject.metadata.labels["app.kubernetes.io/name"] == "scriptorium"
+      message: The Provisioner may delete only the correctly named runtime object owned by this instance namespace.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: praetorium-provisioner-runtime-resource-delete
+spec:
+  policyName: praetorium-provisioner-runtime-resource-delete
   validationActions: [Deny]

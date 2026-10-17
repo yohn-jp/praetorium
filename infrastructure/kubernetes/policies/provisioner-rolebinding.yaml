@@ -28,7 +28,16 @@ spec:
         namespaceObject.metadata.labels["praetorium.io/repository-id"].matches("^[1-9][0-9]*$") &&
         int(namespaceObject.metadata.labels["praetorium.io/repository-id"]) <= 9007199254740991 &&
         namespaceObject.metadata.labels["arcadia.io/ownership-version"] == "v1" &&
-        namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@"
+        namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/enforce"] == "restricted" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/audit"] == "restricted" &&
+        namespaceObject.metadata.labels["pod-security.kubernetes.io/warn"] == "restricted" &&
+        (!("pod-security.kubernetes.io/enforce-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/enforce-version"] == "latest") &&
+        (!("pod-security.kubernetes.io/audit-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/audit-version"] == "latest") &&
+        (!("pod-security.kubernetes.io/warn-version" in namespaceObject.metadata.labels) ||
+          namespaceObject.metadata.labels["pod-security.kubernetes.io/warn-version"] == "latest")
       message: The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.
     - expression: >-
         (

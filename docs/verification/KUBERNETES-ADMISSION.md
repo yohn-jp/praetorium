@@ -18,10 +18,17 @@ plus a positive safe-integer repository ID. `@@CLUSTER_ID@@` uses the existing
 inventory render substitution. A paired runtime identity change is adding the
 three Namespace Pod Security labels (`enforce`, `audit`, and `warn`) with the
 value `restricted`; the policy requires them on create/update and preserves
-them on update. Do not wire this policy until that provider change is
-integrated. Namespace updates require the old identity and security labels to
-be present and unchanged; fields such as resourceVersion, UID, timestamps,
-annotations, and managedFields are not compared.
+them on update, matching the provider's namespace renderer and existing
+namespace validation. Namespace updates require the old identity and security
+labels to be present and unchanged; fields such as resourceVersion, UID,
+timestamps, annotations, and managedFields are not compared. Per-mode Pod Security version
+labels may be absent (the provider shape) or `latest`; older minor-version
+pins are denied on create and update, and existing values must remain
+unchanged. Kubernetes documents these per-mode labels as version pins; current
+Restricted policy changes also apply to host probe/lifecycle fields, so a
+provisioner-controlled downgrade would weaken the namespace boundary. See the
+[Pod Security Admission reference](https://kubernetes.io/docs/concepts/security/pod-security-admission/)
+and the [v1.34 Restricted host-probe change](https://kubernetes.io/blog/2025/08/27/kubernetes-v1-34-release/).
 
 The provider only reads and creates Namespaces; it never patches or deletes
 them. The admission policy permits an ownership-preserving update for safe
@@ -54,10 +61,19 @@ restricts the bootstrap `create` and the fixed tenant binding shape; it does
 not replace the separate RBAC policy or the provider's runtime ownership
 checks.
 
-This unit does not admit or constrain application Pods, NetworkPolicies,
-IngressRoutes, routes, ports, network topology, or arbitrary in-namespace
-runtime resources. It also adds no legacy PVC or data-deletion-marker flow.
-Those are outside this namespace and RoleBinding bootstrap boundary.
+`provisioner-boundary.yaml` also covers CREATE/UPDATE/DELETE for the provider's
+ServiceAccount, Service, LimitRange, ResourceQuota, Deployment,
+NetworkPolicy, and IngressRoute resources. It checks each object's fixed name,
+namespace, instance, repository, generation, runtime epoch, release, and
+cluster ownership labels against the namespace. Updates require the prior
+object to have the same instance/repository/cluster owner; epoch, generation,
+and release can change to the new valid values during a provider transition.
+Delete checks `oldObject`. These generic rules do not inspect workload
+templates or route/network policy specs; route/port and network topology
+policy stays with the separate gateway/network policy unit. Resource DELETE
+admission does not prove writer-process death; the provider's lifecycle fence
+and writer census remain responsible for that decision. No legacy PVC or
+data-deletion-marker flow is included.
 
 ## Kubernetes API baseline and evidence
 
@@ -73,10 +89,10 @@ and its [Validating Admission Policy reference](https://kubernetes.io/docs/refer
 
 `tests/infra/kubernetes-admission.test.mjs` parses the YAML documents and checks
 the binding-to-policy relationships, provider identity/label names,
-operation coverage, old-object guards, cluster-ID parameter, and omitted
-legacy/runtime resources. These are manifest contract checks, not a Kubernetes
-CEL execution test. No local Kubernetes API server or CEL evaluator was
-available here, so CEL compilation and real admission outcomes remain
-unverified. Run server-side dry-run and positive/negative admission cases on an
-explicitly disposable Kubernetes v1.30+ cluster before treating this policy as
-operationally validated.
+operation coverage, renderer resource kinds/names, old-object guards,
+cluster-ID parameter, and omitted legacy/data operations. These are manifest
+contract checks, not a Kubernetes API server test. An independent CEL
+evaluator review is tracked separately; no Kubernetes API server was available
+in this worktree. Run server-side dry-run and positive/negative admission cases
+on an explicitly disposable Kubernetes v1.30+ cluster before treating this
+policy as operationally validated.

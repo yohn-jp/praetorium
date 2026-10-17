@@ -4,6 +4,7 @@ import {
   loadFileBuilderSigner,
 } from "@praetorium/application/builds";
 import type { BuildCandidateVerifier, BuildQueuePort } from "@praetorium/application/builds";
+import { WorkAvailability } from "@praetorium/application";
 import { GhcrCandidateVerifier, GhcrRegistryClient, requireSha256Digest } from "@praetorium/ghcr";
 import type { CompositionArtifactInspector, RegistryCredential } from "@praetorium/ghcr";
 import {
@@ -18,6 +19,10 @@ import { readBuildWorkerConfig } from "./config.js";
 import { BuildQueueHttpClient, readBuildServiceToken } from "./http-client.js";
 import { readRegistryPullCredential } from "./registry-credential.js";
 import {
+  closeBuildWorkNotificationServer,
+  startBuildWorkNotificationServer,
+} from "./work-notification-server.js";
+import {
   ScriptoriumBuildCandidateReceiptReader,
   ScriptoriumCompositionArtifactInspector,
   type BuildKitRootfsExporter,
@@ -30,6 +35,7 @@ export type BuildWorkerDependencies = {
   registryCredential?: RegistryCredential;
   queue?: BuildQueuePort;
   signer?: Awaited<ReturnType<typeof loadFileBuilderSigner>>;
+  workAvailability?: WorkAvailability;
 };
 
 function repositoryPath(repository: string, registryHost: string): string {
@@ -41,6 +47,16 @@ function repositoryPath(repository: string, registryHost: string): string {
     throw new TypeError("Build worker registry repository is invalid");
   }
   return path;
+}
+
+function reusesRegistryCredential(token: string, credential: RegistryCredential): boolean {
+  const pair = `${credential.username}:${credential.password}`;
+  return (
+    token === credential.username ||
+    token === credential.password ||
+    token === pair ||
+    token === Buffer.from(pair, "utf8").toString("base64")
+  );
 }
 
 export async function createBuildWorker(
@@ -68,6 +84,16 @@ export async function createBuildWorker(
     registryOrigin.host === "ghcr.io"
       ? await readBuildKitRegistryCredential(config.buildKit, registryOrigin.host)
       : undefined;
+  if (
+    config.notificationToken !== undefined &&
+    (config.notificationToken === serviceToken ||
+      (registryCredential !== undefined &&
+        reusesRegistryCredential(config.notificationToken, registryCredential)) ||
+      (publishCredential !== undefined &&
+        reusesRegistryCredential(config.notificationToken, publishCredential)))
+  ) {
+    throw new TypeError("Build worker credentials must remain separate");
+  }
   const registry = new GhcrRegistryClient({
     registryUrl: config.registryUrl,
     ...(config.registryAllowInsecureLoopback ? { allowInsecureLoopback: true } : {}),
@@ -137,12 +163,17 @@ export async function createBuildWorker(
     workerId: config.workerId,
     leaseSeconds: config.leaseSeconds,
     heartbeatIntervalMs: config.heartbeatIntervalMs,
+    ...(dependencies.workAvailability ? { workAvailability: dependencies.workAvailability } : {}),
   });
 }
 
 export async function main(): Promise<void> {
   const config = readBuildWorkerConfig();
-  const worker = await createBuildWorker(process.env);
+  const workAvailability = new WorkAvailability();
+  const worker = await createBuildWorker(process.env, { workAvailability });
+  const notificationServer = config.notificationEnabled
+    ? await startBuildWorkNotificationServer(config, workAvailability)
+    : undefined;
   const shutdown = new AbortController();
   const stop = (): void => {
     shutdown.abort();
@@ -150,9 +181,13 @@ export async function main(): Promise<void> {
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  await worker.runUntilStopped(shutdown.signal, config.idleDelayMs);
-  process.removeListener("SIGINT", stop);
-  process.removeListener("SIGTERM", stop);
+  try {
+    await worker.runUntilStopped(shutdown.signal, config.reconciliationIntervalMs);
+  } finally {
+    if (notificationServer) await closeBuildWorkNotificationServer(notificationServer);
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

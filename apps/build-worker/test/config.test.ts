@@ -32,6 +32,10 @@ describe("Build worker startup configuration", () => {
       controlPlaneUrl: "https://control.example",
       leaseSeconds: 120,
       heartbeatIntervalMs: 15_000,
+      reconciliationIntervalMs: 300_000,
+      notificationEnabled: false,
+      notificationHost: "127.0.0.1",
+      notificationPort: 8788,
       registryUrl: "https://ghcr.io",
       registryAllowInsecureLoopback: false,
       registryAllowAnonymousLoopbackPublish: false,
@@ -46,6 +50,39 @@ describe("Build worker startup configuration", () => {
         maxProgressBytes: 8 * 1024 * 1024,
       },
     });
+  });
+
+  it("bounds fallback reconciliation and enables notifications only with a dedicated token", () => {
+    expect(
+      readBuildWorkerConfig({
+        ...environment,
+        PRAETORIUM_BUILD_RECONCILIATION_INTERVAL_MS: "60000",
+        PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED: "1",
+        PRAETORIUM_BUILD_WORK_NOTIFICATION_HOST: "0.0.0.0",
+        PRAETORIUM_BUILD_WORK_NOTIFICATION_PORT: "8790",
+        PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN: "n".repeat(48),
+      }),
+    ).toMatchObject({
+      reconciliationIntervalMs: 60_000,
+      notificationEnabled: true,
+      notificationHost: "0.0.0.0",
+      notificationPort: 8790,
+      notificationToken: "n".repeat(48),
+    });
+    for (const override of [
+      { PRAETORIUM_BUILD_RECONCILIATION_INTERVAL_MS: "1000" },
+      { PRAETORIUM_BUILD_RECONCILIATION_INTERVAL_MS: "300001" },
+      { PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED: "true" },
+      { PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED: "1" },
+      {
+        PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED: "1",
+        PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN: "short",
+      },
+      { PRAETORIUM_BUILD_WORK_NOTIFICATION_HOST: "localhost" },
+      { PRAETORIUM_BUILD_WORK_NOTIFICATION_PORT: "65536" },
+    ]) {
+      expect(() => readBuildWorkerConfig({ ...environment, ...override })).toThrow();
+    }
   });
 
   it("rejects HTTP control URLs, relative secret paths, unbounded values, and a heartbeat longer than the lease", () => {

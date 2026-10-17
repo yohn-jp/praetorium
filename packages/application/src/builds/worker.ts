@@ -15,6 +15,7 @@ import type {
   BuildQueueReportInput,
   BuildQueuePort,
 } from "./queue-types.js";
+import type { WorkAvailability } from "../work-availability.js";
 
 export class BuildLeaseLostError extends Error {
   constructor() {
@@ -34,6 +35,7 @@ type WorkerOptions = {
   workerId: string;
   leaseSeconds: number;
   heartbeatIntervalMs: number;
+  workAvailability?: Pick<WorkAvailability, "wait">;
   now?: () => number;
 };
 
@@ -104,9 +106,13 @@ export class BuildWorkerService {
     return true;
   }
 
-  async runUntilStopped(signal: AbortSignal, idleDelayMs: number): Promise<void> {
-    if (!Number.isSafeInteger(idleDelayMs) || idleDelayMs < 1 || idleDelayMs > 60_000) {
-      throw new TypeError("Idle delay is invalid");
+  async runUntilStopped(signal: AbortSignal, reconciliationIntervalMs: number): Promise<void> {
+    if (
+      !Number.isSafeInteger(reconciliationIntervalMs) ||
+      reconciliationIntervalMs < 1 ||
+      reconciliationIntervalMs > 300_000
+    ) {
+      throw new TypeError("Build reconciliation interval is invalid");
     }
     while (!signal.aborted) {
       let didWork = false;
@@ -115,7 +121,13 @@ export class BuildWorkerService {
       } catch {
         // Retry after a bounded delay; response bodies, credentials and raw logs are not emitted.
       }
-      if (!didWork && !signal.aborted) await delay(idleDelayMs, signal);
+      if (!didWork && !signal.aborted) {
+        if (this.options.workAvailability) {
+          await this.options.workAvailability.wait(signal, reconciliationIntervalMs);
+        } else {
+          await delay(reconciliationIntervalMs, signal);
+        }
+      }
     }
   }
 

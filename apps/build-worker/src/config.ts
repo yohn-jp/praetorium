@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isIP } from "node:net";
 import type { BuildKitProviderConfig } from "@praetorium/buildkit";
 
 export type BuildWorkerConfig = {
@@ -9,7 +10,11 @@ export type BuildWorkerConfig = {
   maxResponseBytes: number;
   leaseSeconds: number;
   heartbeatIntervalMs: number;
-  idleDelayMs: number;
+  reconciliationIntervalMs: number;
+  notificationEnabled: boolean;
+  notificationHost: string;
+  notificationPort: number;
+  notificationToken?: string;
   signingKeyFile: string;
   signingKeyId: string;
   registryUrl: string;
@@ -61,6 +66,14 @@ function requiredInteger(
 ): number {
   if (environment[name] === undefined) throw new TypeError("Build worker environment is invalid");
   return integer(environment, name, min, min, max);
+}
+
+function booleanFlag(environment: NodeJS.ProcessEnv, name: string, fallback = false): boolean {
+  const value = environment[name];
+  if (value === undefined) return fallback;
+  if (value === "1") return true;
+  if (value === "0") return false;
+  throw new TypeError("Build worker environment is invalid");
 }
 
 function baseUrl(value: string): string {
@@ -152,6 +165,22 @@ export function readBuildWorkerConfig(
   );
   if (heartbeatIntervalMs >= leaseSeconds * 1000)
     throw new TypeError("Build worker environment is invalid");
+  const notificationEnabled = booleanFlag(
+    environment,
+    "PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED",
+  );
+  const notificationHost = environment.PRAETORIUM_BUILD_WORK_NOTIFICATION_HOST ?? "127.0.0.1";
+  const notificationToken = environment.PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN;
+  if (
+    isIP(notificationHost) === 0 ||
+    (notificationToken !== undefined &&
+      (notificationToken.length < 32 ||
+        notificationToken.length > 4096 ||
+        /[^\x21-\x7e]/u.test(notificationToken))) ||
+    (notificationEnabled && notificationToken === undefined)
+  ) {
+    throw new TypeError("Build worker environment is invalid");
+  }
 
   return {
     workerId: required(environment, "PRAETORIUM_BUILD_WORKER_ID"),
@@ -167,7 +196,23 @@ export function readBuildWorkerConfig(
     ),
     leaseSeconds,
     heartbeatIntervalMs,
-    idleDelayMs: integer(environment, "PRAETORIUM_BUILD_IDLE_DELAY_MS", 1000, 10, 60_000),
+    reconciliationIntervalMs: integer(
+      environment,
+      "PRAETORIUM_BUILD_RECONCILIATION_INTERVAL_MS",
+      300_000,
+      60_000,
+      300_000,
+    ),
+    notificationEnabled,
+    notificationHost,
+    notificationPort: integer(
+      environment,
+      "PRAETORIUM_BUILD_WORK_NOTIFICATION_PORT",
+      8788,
+      1,
+      65_535,
+    ),
+    ...(notificationToken === undefined ? {} : { notificationToken }),
     signingKeyFile: absolute(environment, "PRAETORIUM_BUILD_SIGNING_KEY_FILE"),
     signingKeyId: required(environment, "PRAETORIUM_BUILD_SIGNING_KEY_ID"),
     registryUrl: registryUrl(registryUrlValue, registryAllowInsecureLoopback),

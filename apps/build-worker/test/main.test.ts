@@ -77,6 +77,36 @@ afterEach(async () => {
 });
 
 describe("build worker composition", () => {
+  it("rejects notification authentication reused from service or registry credentials", async () => {
+    const environment = await workerEnvironment();
+    const signer: BuilderSigner = { sign: vi.fn(async () => { throw new Error("unused"); }) };
+    environment.PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED = "1";
+
+    environment.PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN = "service-token-".padEnd(48, "x");
+    await expect(createBuildWorker(environment, { signer })).rejects.toThrow(
+      "Build worker credentials must remain separate",
+    );
+
+    const registryPassword = "registry-publish-token-".padEnd(48, "p");
+    const dockerConfigDirectory = environment.PRAETORIUM_BUILDKIT_DOCKER_CONFIG_DIRECTORY;
+    if (!dockerConfigDirectory) throw new Error("BuildKit fixture config path is missing");
+    await writeFile(
+      path.join(dockerConfigDirectory, "config.json"),
+      JSON.stringify({
+        auths: {
+          "ghcr.io": {
+            auth: Buffer.from(`builder:${registryPassword}`).toString("base64"),
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    environment.PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN = registryPassword;
+    await expect(createBuildWorker(environment, { signer })).rejects.toThrow(
+      "Build worker credentials must remain separate",
+    );
+  });
+
   it("uses the canonical queue/provider path and fails closed without an approved producer receipt", async () => {
     const environment = await workerEnvironment();
     const claim: BuildClaim = {

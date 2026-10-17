@@ -9,6 +9,7 @@ import type {
   BuildQueueReportInput,
 } from "./queue-types.js";
 import type { BuildInput } from "@praetorium/contracts";
+import { WorkAvailability } from "../work-availability.js";
 
 const input: BuildInput = {
   contractVersion: "scriptorium-build/v1",
@@ -61,7 +62,11 @@ function buildClaim(buildKey: string): BuildClaim {
   };
 }
 
-async function harness(options: { cancelHeartbeat?: number; staleHeartbeat?: number } = {}) {
+async function harness(options: {
+  cancelHeartbeat?: number;
+  staleHeartbeat?: number;
+  workAvailability?: Pick<WorkAvailability, "wait">;
+} = {}) {
   const heartbeats: BuildQueueHeartbeatInput[] = [];
   const reports: BuildQueueReportInput[] = [];
   let heartbeatCount = 0;
@@ -105,6 +110,7 @@ async function harness(options: { cancelHeartbeat?: number; staleHeartbeat?: num
     workerId: "worker-1",
     leaseSeconds: 60,
     heartbeatIntervalMs: 30_000,
+    ...(options.workAvailability ? { workAvailability: options.workAvailability } : {}),
     now: () => Date.now(),
   });
   return { worker, queue, execute, attest, heartbeats, reports, claim };
@@ -188,7 +194,7 @@ describe("BuildWorkerService", () => {
     expect(h.queue.report).toHaveBeenCalledOnce();
   });
 
-  it("keeps polling while idle and exits when shutdown is requested", async () => {
+  it("uses bounded reconciliation when no notification listener is configured", async () => {
     const h = await harness();
     vi.mocked(h.queue.claimNext).mockResolvedValue(null);
     const shutdown = new AbortController();
@@ -198,5 +204,64 @@ describe("BuildWorkerService", () => {
     clearTimeout(timer);
 
     expect(vi.mocked(h.queue.claimNext).mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("claims at startup and reconciles after a lost notification only at the bounded deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const workAvailability = new WorkAvailability();
+      const h = await harness({ workAvailability });
+      const shutdown = new AbortController();
+      let claims = 0;
+      vi.mocked(h.queue.claimNext).mockImplementation(async () => {
+        claims++;
+        if (claims === 2) shutdown.abort();
+        return null;
+      });
+
+      const running = h.worker.runUntilStopped(shutdown.signal, 300_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(claims).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(299_999);
+      expect(claims).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await running;
+      expect(claims).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("claims from D1 after a work notification wakes the idle worker", async () => {
+    let wake!: () => void;
+    const workAvailability: Pick<WorkAvailability, "wait"> = {
+      wait: vi.fn(async (signal) => {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          signal.addEventListener("abort", resolve, { once: true });
+        });
+      }),
+    };
+    const h = await harness({ workAvailability });
+    const shutdown = new AbortController();
+    let claims = 0;
+    vi.mocked(h.queue.claimNext).mockImplementation(async () => {
+      claims++;
+      if (claims === 1) return null;
+      if (claims === 2) return h.claim;
+      shutdown.abort();
+      return null;
+    });
+
+    const running = h.worker.runUntilStopped(shutdown.signal, 300_000);
+    await vi.waitFor(() => expect(workAvailability.wait).toHaveBeenCalledOnce());
+    wake();
+    await running;
+
+    expect(claims).toBe(3);
+    expect(workAvailability.wait).toHaveBeenCalledWith(shutdown.signal, 300_000);
+    expect(h.queue.claimNext).toHaveBeenCalledTimes(3);
   });
 });

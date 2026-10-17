@@ -117,7 +117,7 @@ function stubConfiguredRegistry(
 
 describe("GHCR candidate verification", () => {
   it("returns a canonical statement only after persisted-input, composition, closure, and smoke checks", async () => {
-    const { verifier, inspection, candidate, compositionDigest } = await fixture();
+    const { verifier, registry, inspection, candidate, compositionDigest } = await fixture();
 
     await expect(verifier.verifyUnsignedCandidate(candidate, approvedOutput, activeSignal)).resolves.toEqual({
       schemaVersion: "praetorium.build-artifact/v1",
@@ -134,6 +134,9 @@ describe("GHCR candidate verification", () => {
       contractVersion: "scriptorium-build/v1",
       issuedAt: "2026-10-17T00:00:00.000Z",
     });
+    expect(registry.readBlob).toHaveBeenCalledWith(
+      candidate.compositionManifest.repository, compositionDigest, 4 * 1024 * 1024, activeSignal,
+    );
     expect(inspection.inspectAndSmoke).toHaveBeenCalledWith(
       expect.objectContaining({ imageReference: `ghcr.io/praetorium/derived@${digestA}` }),
       expect.any(AbortSignal),

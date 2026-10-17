@@ -77,7 +77,7 @@ export async function createBuildWorker(
     maxImageLayerBytes: config.maxImageLayerBytes,
     maxImageVerificationMs: config.maxImageVerificationMs,
     maxRegistryRequestMs: config.maxRegistryRequestMs,
-    maxMetadataBlobBytes: 4 * 1024 * 1024,
+    maxMetadataBlobBytes: 8 * 1024 * 1024,
     ...(registryCredential ? { pullCredential: registryCredential } : {}),
     ...(publishCredential ? { publishCredential } : {}),
   });

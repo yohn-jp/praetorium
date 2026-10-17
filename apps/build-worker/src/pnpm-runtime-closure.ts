@@ -281,10 +281,10 @@ async function readPackageMetadata(root: string, packageRoot: string, signal: Ab
   if (!isRecord(meta)) throw new Error("runtime package peer dependency metadata is invalid");
   const optionalPeerDependencies = new Set<string>();
   for (const [name, details] of Object.entries(meta)) {
-    if (!peerDependencies.includes(name) || !isRecord(details) || (details.optional !== undefined && typeof details.optional !== "boolean")) {
+    if (!isRecord(details) || (details.optional !== undefined && typeof details.optional !== "boolean")) {
       throw new Error("runtime package peer dependency metadata is inconsistent");
     }
-    if (details.optional === true) optionalPeerDependencies.add(name);
+    if (peerDependencies.includes(name) && details.optional === true) optionalPeerDependencies.add(name);
   }
   return { name: value.name, version: value.version, dependencies, peerDependencies, optionalPeerDependencies, optionalDependencies };
 }

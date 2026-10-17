@@ -20,6 +20,40 @@ describe("runtime package closure verification", () => {
     expect(result).toEqual(fixture.request.runtimePackages);
   });
 
+  it("ignores orphan optional peer metadata from the MCP debug runtime package", async () => {
+    const fixture = await makeRuntimeImage();
+
+    expect(await verifyRuntimePackageClosure(fixture.request)).toEqual(fixture.request.runtimePackages);
+  });
+
+  it("does not turn an orphan peer metadata key into a runtime dependency edge", async () => {
+    const fixture = await makeRuntimeImage();
+    const nodeModules = path.join(fixture.imageRoot, "app/node_modules");
+    const supportsColor = path.join(nodeModules, ".pnpm/supports-color@1.0.0/node_modules/supports-color");
+    const debug = path.join(nodeModules, ".pnpm/debug@4.4.3/node_modules/debug");
+    await writePackage(supportsColor, { name: "supports-color", version: "1.0.0" });
+    await mkdir(path.join(debug, "node_modules"), { recursive: true });
+    await symlink(supportsColor, path.join(debug, "node_modules/supports-color"), "dir");
+
+    await expect(verifyRuntimePackageClosure(fixture.request))
+      .rejects.toThrow(/pnpm store contains runtime packages outside the selected production dependency closure/u);
+  });
+
+  it("keeps a declared peer required when an unrelated peer metadata key is optional", async () => {
+    const fixture = await makeRuntimeImage();
+    const debug = path.join(fixture.imageRoot, "app/node_modules/.pnpm/debug@4.4.3/node_modules/debug");
+    await writePackage(debug, {
+      name: "debug",
+      version: "4.4.3",
+      dependencies: { ms: "^2.1.3" },
+      peerDependencies: { "required-peer": "^1.0.0" },
+      peerDependenciesMeta: { "supports-color": { optional: true } },
+    });
+
+    await expect(verifyRuntimePackageClosure(fixture.request))
+      .rejects.toThrow(/required runtime dependency is missing: required-peer/u);
+  });
+
   it("rejects unselected packages left in the physical pnpm store", async () => {
     const fixture = await makeRuntimeImage();
     const excluded = path.join(fixture.imageRoot, "app/node_modules/.pnpm/onnxruntime-node@1.0.0/node_modules/onnxruntime-node");
@@ -59,21 +93,32 @@ async function makeRuntimeImage(): Promise<{
   const nodeModules = path.join(imageRoot, "app/node_modules");
   const api = path.join(nodeModules, ".pnpm/file+packages+api@workspace/node_modules/@scriptorium/api");
   const core = path.join(nodeModules, ".pnpm/file+packages+core@workspace/node_modules/@scriptorium/core");
-  const dependency = path.join(nodeModules, ".pnpm/dep@1.2.3/node_modules/dep");
+  const debug = path.join(nodeModules, ".pnpm/debug@4.4.3/node_modules/debug");
+  const ms = path.join(nodeModules, ".pnpm/ms@2.1.3/node_modules/ms");
   await Promise.all([
     mkdir(api, { recursive: true }),
     mkdir(core, { recursive: true }),
-    mkdir(dependency, { recursive: true }),
+    mkdir(debug, { recursive: true }),
+    mkdir(ms, { recursive: true }),
     mkdir(path.join(nodeModules, "@scriptorium"), { recursive: true }),
     mkdir(path.join(api, "node_modules/@scriptorium"), { recursive: true }),
+    mkdir(path.join(api, "node_modules"), { recursive: true }),
+    mkdir(path.join(debug, "node_modules"), { recursive: true }),
   ]);
   await Promise.all([
-    writePackage(api, { name: "@scriptorium/api", version: "0.1.0", dependencies: { "@scriptorium/core": "workspace:*", dep: "^1.2.3" } }),
+    writePackage(api, { name: "@scriptorium/api", version: "0.1.0", dependencies: { "@scriptorium/core": "workspace:*", debug: "^4.4.3" } }),
     writePackage(core, { name: "@scriptorium/core", version: "0.1.0" }),
-    writePackage(dependency, { name: "dep", version: "1.2.3" }),
+    writePackage(debug, {
+      name: "debug",
+      version: "4.4.3",
+      dependencies: { ms: "^2.1.3" },
+      peerDependenciesMeta: { "supports-color": { optional: true } },
+    }),
+    writePackage(ms, { name: "ms", version: "2.1.3" }),
     symlink(api, path.join(nodeModules, "@scriptorium/api")),
     symlink(core, path.join(api, "node_modules/@scriptorium/core"), "dir"),
-    symlink(dependency, path.join(api, "node_modules/dep"), "dir"),
+    symlink(debug, path.join(api, "node_modules/debug"), "dir"),
+    symlink(ms, path.join(debug, "node_modules/ms"), "dir"),
   ]);
   const lockBytes = Buffer.from([
     "---\n",
@@ -88,10 +133,15 @@ async function makeRuntimeImage(): Promise<{
     "  packages/api: {}\n",
     "  packages/core: {}\n",
     "packages:\n",
-    "  dep@1.2.3:\n",
+    "  debug@4.4.3:\n",
     "    resolution: {integrity: sha512-AbCd==}\n",
+    "  ms@2.1.3:\n",
+    "    resolution: {integrity: sha512-XyZ==}\n",
     "snapshots:\n",
-    "  dep@1.2.3: {}\n",
+    "  debug@4.4.3:\n",
+    "    dependencies:\n",
+    "      ms: 2.1.3\n",
+    "  ms@2.1.3: {}\n",
   ].join(""));
   const lockPath = path.join(imageRoot, "usr/share/scriptorium/pnpm-lock.yaml");
   await mkdir(path.dirname(lockPath), { recursive: true });
@@ -112,11 +162,18 @@ async function makeRuntimeImage(): Promise<{
       lockIntegrity: null,
     },
     {
-      name: "dep",
-      version: "1.2.3",
-      packagePath: "/app/node_modules/.pnpm/dep@1.2.3/node_modules/dep",
-      lockIdentity: "dep@1.2.3",
+      name: "debug",
+      version: "4.4.3",
+      packagePath: "/app/node_modules/.pnpm/debug@4.4.3/node_modules/debug",
+      lockIdentity: "debug@4.4.3",
       lockIntegrity: "sha512-AbCd==",
+    },
+    {
+      name: "ms",
+      version: "2.1.3",
+      packagePath: "/app/node_modules/.pnpm/ms@2.1.3/node_modules/ms",
+      lockIdentity: "ms@2.1.3",
+      lockIntegrity: "sha512-XyZ==",
     },
   ].sort((left, right) => left.packagePath < right.packagePath ? -1 : left.packagePath > right.packagePath ? 1 : 0);
   return {

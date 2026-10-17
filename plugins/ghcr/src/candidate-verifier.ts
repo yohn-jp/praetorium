@@ -13,6 +13,8 @@ import { isSha256Digest, sha256Digest, type Sha256Digest } from "./digest.js";
 import type { GhcrRegistryClient } from "./oci-registry-client.js";
 import type { OciPlatform, VerifiedOciImage } from "./oci-types.js";
 
+const MAX_COMPOSITION_MANIFEST_BYTES = 4 * 1024 * 1024;
+
 export interface CompositionArtifactInspection {
   readonly imageDigest: Sha256Digest;
   readonly compositionManifestDigest: Sha256Digest;
@@ -106,7 +108,7 @@ export class GhcrCandidateVerifier {
     try {
       [image, compositionBlob] = await Promise.all([
         this.registry.verifyImage(repository, candidate.manifestDigest, platform, signal),
-        this.registry.readBlob(candidate.compositionManifest.repository, candidate.compositionManifest.digest, undefined, signal),
+        this.registry.readBlob(candidate.compositionManifest.repository, candidate.compositionManifest.digest, MAX_COMPOSITION_MANIFEST_BYTES, signal),
       ]);
     } catch {
       if (signal.aborted) throw new CandidateVerificationError("canceled", "candidate registry verification was canceled");

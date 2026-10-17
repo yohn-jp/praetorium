@@ -100,6 +100,8 @@ function candidate(overrides: Partial<ProvisionerIdleCandidate> = {}): Provision
     bindingSuspended: false,
     hasActiveOperation: false,
     healthOperationId: null,
+    activeCanaryHealth: false,
+    healthNextCheckAt: null,
     currentRuntime: resolvedRuntime(),
     ...overrides,
   };
@@ -137,6 +139,36 @@ function status(
     },
     lastConfirmedRemoteRevision: "e".repeat(40),
     observedAt: overrides.observedAt ?? new Date(now).toISOString(),
+  };
+}
+
+function verifiedProducerStatus(): ProducerStatus {
+  return {
+    ...status(),
+    persistence: {
+      state: "verified",
+      observedRemoteCommit: "f".repeat(40),
+      formats: [],
+    },
+  };
+}
+
+function verifiedHealthEvidence(observedAt = new Date(now).toISOString()) {
+  return {
+    applicationProbeId: "application-probe",
+    uiApiMcpProbeId: "ui-api-mcp-probe",
+    persistenceProbeId: "persistence-probe",
+    grantPolicyMatched: true,
+    controlServicePolicyMatched: true,
+    validGrantAccepted: true,
+    wrongRepositoryGrantRejected: true,
+    wrongEpochGrantRejected: true,
+    invalidServiceCredentialRejected: true,
+    validGrantProbeId: "valid-grant-probe",
+    wrongRepositoryProbeId: "wrong-repository-probe",
+    wrongEpochProbeId: "wrong-epoch-probe",
+    invalidServiceCredentialProbeId: "invalid-service-credential-probe",
+    observedAt,
   };
 }
 
@@ -242,11 +274,16 @@ function harness(
     readonly identityExpiry?: number | ((currentNow: number) => number);
     readonly journalConfigured?: boolean;
     readonly authProbe?: RuntimeAuthAcceptanceProbe;
+    readonly recordHealth?: () => Promise<{ readonly recorded: true }>;
+    readonly canaryHealthDue?: (currentNow: number) => Promise<{
+      readonly active: boolean;
+      readonly nextCheckAt: number | null;
+      readonly sampleDueAt: number | null;
+      readonly healthOperationId: string | null;
+    }>;
     readonly activityOffsetMs?: number;
     readonly candidates?: () => readonly ProvisionerIdleCandidate[];
-    readonly listCandidatePage?: (
-      cursor: string | null,
-    ) => Promise<{
+    readonly listCandidatePage?: (cursor: string | null) => Promise<{
       readonly items: readonly ProvisionerIdleCandidate[];
       readonly nextCursor: string | null;
     }>;
@@ -273,13 +310,23 @@ function harness(
     expiresAt: new Date(currentNow + 30_000).toISOString(),
     operationId: "op_observation",
   }));
+  const runtimeCanaryHealthDue = vi.fn(
+    async () =>
+      options.canaryHealthDue?.(currentNow) ?? {
+        active: false,
+        nextCheckAt: null,
+        sampleDueAt: null,
+        healthOperationId: null,
+      },
+  );
   const operations = {
     listIdleCandidates,
     createIdleStop,
     issueObservationCredential,
     async recordRuntimeHealth() {
-      return { recorded: false };
+      return options.recordHealth?.() ?? { recorded: false };
     },
+    runtimeCanaryHealthDue,
   } as unknown as ProvisionerOperationService;
   const endpointId = parseRuntimeInstanceId(instanceId);
   const endpoint =
@@ -360,6 +407,7 @@ function harness(
     controller,
     createIdleStop,
     issueObservationCredential,
+    runtimeCanaryHealthDue,
     listIdleCandidates,
     runtimeCursors,
     journalPath,
@@ -494,6 +542,7 @@ describe("ProvisionerIdleController", () => {
     await h.controller.processDueOnce();
 
     expect(h.listIdleCandidates).toHaveBeenCalledOnce();
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
   });
 
   it("coalesces duplicate work signals into one idle discovery refresh", async () => {
@@ -608,17 +657,19 @@ describe("ProvisionerIdleController", () => {
   });
 
   it("runs a full health acceptance probe once per exact health operation trigger", async () => {
-    const verifyObserved = vi.fn(async () => ({}) as never);
+    const verifyObserved = vi.fn(async () => verifiedHealthEvidence());
     const authProbe = {
       available: true,
       withEndpointResolver: () => authProbe,
-      verify: async () => ({}) as never,
+      verify: async () => verifiedHealthEvidence(),
       verifyObserved,
       forLease: () => ({}) as never,
     } as unknown as RuntimeAuthAcceptanceProbe;
     const h = harness({
       candidate: candidate({ healthOperationId: "op_health_01" }),
       runtimeObservation: providerObservation({ imageDigest: platformDigest }),
+      status: verifiedProducerStatus(),
+      recordHealth: async () => ({ recorded: true }),
       authProbe,
     });
 
@@ -627,6 +678,150 @@ describe("ProvisionerIdleController", () => {
 
     expect(verifyObserved).toHaveBeenCalledOnce();
     expect(verifyObserved).toHaveBeenCalledWith(expect.anything(), "op_health_01", undefined);
+  });
+
+  it("queries only an active canary and deduplicates its persisted sample due token", async () => {
+    const verifyObserved = vi.fn(async () => verifiedHealthEvidence());
+    const authProbe = {
+      available: true,
+      withEndpointResolver: () => authProbe,
+      verify: async () => verifiedHealthEvidence(),
+      verifyObserved,
+      forLease: () => ({}) as never,
+    } as unknown as RuntimeAuthAcceptanceProbe;
+    const recordHealth = vi.fn(async () => ({ recorded: true as const }));
+    const h = harness({
+      candidate: candidate({ activeCanaryHealth: true, healthNextCheckAt: now - 1 }),
+      activityOffsetMs: 0,
+      status: verifiedProducerStatus(),
+      runtimeObservation: providerObservation({ imageDigest: platformDigest }),
+      canaryHealthDue: async (currentNow) => ({
+        active: true,
+        nextCheckAt: currentNow - 1,
+        sampleDueAt: now - 1_000,
+        healthOperationId: "op_canary_sample_01",
+      }),
+      recordHealth,
+      authProbe,
+    });
+
+    await h.controller.scanOnce();
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
+    await h.controller.processDueOnce();
+    expect(h.runtimeCanaryHealthDue).toHaveBeenCalledOnce();
+    expect(verifyObserved).toHaveBeenCalledOnce();
+    expect(recordHealth).toHaveBeenCalledOnce();
+
+    await h.controller.processDueOnce();
+    expect(h.runtimeCanaryHealthDue).toHaveBeenCalledOnce();
+    h.advance(5 * 60_000);
+    await h.controller.processDueOnce();
+
+    expect(h.runtimeCanaryHealthDue).toHaveBeenCalledTimes(2);
+    expect(verifyObserved).toHaveBeenCalledOnce();
+    expect(recordHealth).toHaveBeenCalledOnce();
+  });
+
+  it("retries a failed canary sample on a bounded timer and waits before querying again", async () => {
+    let attempts = 0;
+    const verifyObserved = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("temporary_canary_probe_failure");
+      return verifiedHealthEvidence();
+    });
+    const authProbe = {
+      available: true,
+      withEndpointResolver: () => authProbe,
+      verify: async () => verifiedHealthEvidence(),
+      verifyObserved,
+      forLease: () => ({}) as never,
+    } as unknown as RuntimeAuthAcceptanceProbe;
+    const recordHealth = vi.fn(async () => ({ recorded: true as const }));
+    const h = harness({
+      candidate: candidate({ activeCanaryHealth: true, healthNextCheckAt: now - 1 }),
+      activityOffsetMs: 0,
+      status: verifiedProducerStatus(),
+      runtimeObservation: providerObservation({ imageDigest: platformDigest }),
+      canaryHealthDue: async (currentNow) => ({
+        active: true,
+        nextCheckAt: currentNow - 1,
+        sampleDueAt: now - 1_000,
+        healthOperationId: "op_canary_sample_retry_01",
+      }),
+      recordHealth,
+      authProbe,
+    });
+
+    await h.controller.scanOnce();
+    await h.controller.processDueOnce();
+    expect(h.runtimeCanaryHealthDue).toHaveBeenCalledOnce();
+    expect(verifyObserved).toHaveBeenCalledOnce();
+    expect(recordHealth).not.toHaveBeenCalled();
+
+    await h.controller.processDueOnce();
+    expect(verifyObserved).toHaveBeenCalledOnce();
+    h.advance(5_000);
+    await h.controller.processDueOnce();
+    expect(verifyObserved).toHaveBeenCalledTimes(2);
+    expect(recordHealth).toHaveBeenCalledOnce();
+
+    h.advance(5 * 60_000);
+    await h.controller.processDueOnce();
+    expect(h.runtimeCanaryHealthDue).toHaveBeenCalledTimes(2);
+    expect(verifyObserved).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the local canary timer when the candidate leaves canary observation", async () => {
+    let active = true;
+    const h = harness({
+      candidates: () => [
+        candidate({
+          activeCanaryHealth: active,
+          healthNextCheckAt: active ? now + 10_000 : null,
+        }),
+      ],
+    });
+
+    await h.controller.scanOnce();
+    active = false;
+    await h.controller.scanOnce();
+    h.advance(10 * 60_000);
+    await h.controller.processDueOnce();
+
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
+  });
+
+  it("retries a failed health operation probe with bounded backoff", async () => {
+    let attempts = 0;
+    const verifyObserved = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("temporary_health_probe_failure");
+      return verifiedHealthEvidence();
+    });
+    const authProbe = {
+      available: true,
+      withEndpointResolver: () => authProbe,
+      verify: async () => verifiedHealthEvidence(),
+      verifyObserved,
+      forLease: () => ({}) as never,
+    } as unknown as RuntimeAuthAcceptanceProbe;
+    const h = harness({
+      candidate: candidate({ healthOperationId: "op_health_retry_01" }),
+      activityOffsetMs: 0,
+      runtimeObservation: providerObservation({ imageDigest: platformDigest }),
+      status: verifiedProducerStatus(),
+      recordHealth: async () => ({ recorded: true }),
+      authProbe,
+    });
+
+    await h.controller.scanOnce();
+    expect(verifyObserved).toHaveBeenCalledOnce();
+    await h.controller.processDueOnce();
+    expect(verifyObserved).toHaveBeenCalledOnce();
+
+    h.advance(5_000);
+    await h.controller.processDueOnce();
+    expect(verifyObserved).toHaveBeenCalledTimes(2);
   });
 
   it.each([

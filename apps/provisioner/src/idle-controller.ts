@@ -39,6 +39,7 @@ const IDLE_RECHECK_INTERVAL_MS = 300_000;
 const MAX_AVAILABILITY_WAIT_MS = 3_600_000;
 const INITIAL_RETRY_INTERVAL_MS = 5_000;
 const MAX_RETRY_INTERVAL_MS = 300_000;
+const MIN_CANARY_POINT_RECHECK_MS = 300_000;
 const IDENTITY_REFRESH_MARGIN_MS = 90_000;
 const MAX_RECORDED_HEALTH_TRIGGERS = 10_000;
 
@@ -78,6 +79,22 @@ interface TrackedRuntime {
   readonly inspector: IdleRuntimeInspector;
   identityRefreshAt: number | undefined;
   idleCheckAt: number | undefined;
+  retryAt: number | undefined;
+  retryMs: number;
+  canaryHealthCheckAt: number | undefined;
+  canaryHealthQueryRetryMs: number;
+  readonly healthProbeRetries: Map<string, PendingHealthProbeRetry>;
+}
+
+interface HealthProbeTrigger {
+  readonly key: string;
+  readonly operationId: string;
+  readonly kind: "operation" | "canary";
+  readonly pointRecheckAt?: number;
+}
+
+interface PendingHealthProbeRetry {
+  readonly trigger: HealthProbeTrigger;
   retryAt: number | undefined;
   retryMs: number;
 }
@@ -191,6 +208,49 @@ function sameIdleBinding(left: RuntimeAssignment, right: RuntimeAssignment): boo
     left.runtimeEpoch === right.runtimeEpoch &&
     left.clusterId === right.clusterId
   );
+}
+
+function operationHealthProbeTrigger(
+  candidate: ProvisionerIdleCandidate,
+): HealthProbeTrigger | undefined {
+  const operationId = candidate.healthOperationId;
+  if (operationId === null) return undefined;
+  return {
+    kind: "operation",
+    operationId,
+    key: JSON.stringify([
+      "operation",
+      candidate.instanceId,
+      candidate.repositoryId,
+      candidate.generation,
+      candidate.runtimeEpoch,
+      candidate.clusterId,
+      operationId,
+    ]),
+  };
+}
+
+function canaryHealthProbeTrigger(
+  assignment: RuntimeAssignment,
+  operationId: string,
+  sampleDueAt: number,
+  pointRecheckAt: number,
+): HealthProbeTrigger {
+  return {
+    kind: "canary",
+    operationId,
+    pointRecheckAt,
+    key: JSON.stringify([
+      "canary",
+      assignment.instanceId,
+      assignment.repositoryId,
+      assignment.generation,
+      assignment.runtimeEpoch,
+      assignment.clusterId,
+      operationId,
+      sampleDueAt,
+    ]),
+  };
 }
 
 function validActivityCounts(activity: ProducerStatus["activity"]): boolean {
@@ -397,6 +457,10 @@ export class ProvisionerIdleController {
       if (runtime.identityRefreshAt !== undefined) values.push(runtime.identityRefreshAt);
       if (runtime.idleCheckAt !== undefined) values.push(runtime.idleCheckAt);
       if (runtime.retryAt !== undefined) values.push(runtime.retryAt);
+      if (runtime.canaryHealthCheckAt !== undefined) values.push(runtime.canaryHealthCheckAt);
+      for (const retry of runtime.healthProbeRetries.values()) {
+        if (retry.retryAt !== undefined) values.push(retry.retryAt);
+      }
     }
     return values.length === 0 ? undefined : Math.min(...values);
   }
@@ -417,15 +481,41 @@ export class ProvisionerIdleController {
         }
       }
       if (signal.aborted) return;
-      const dueAt = tracked.retryAt ?? tracked.idleCheckAt;
+      for (const retry of [...tracked.healthProbeRetries.values()]) {
+        if (signal.aborted) return;
+        if (retry.retryAt !== undefined && retry.retryAt <= this.now()) {
+          retry.retryAt = undefined;
+          await this.evaluateCandidate(
+            tracked.candidate,
+            tracked.assignment,
+            tracked.inspector,
+            signal,
+            false,
+            retry.trigger,
+          );
+        }
+      }
+      if (signal.aborted) return;
+      let currentTracked = this.tracked.get(tracked.assignment.instanceId);
+      if (currentTracked === undefined) continue;
+      if (
+        currentTracked.canaryHealthCheckAt !== undefined &&
+        currentTracked.canaryHealthCheckAt <= this.now()
+      ) {
+        currentTracked.canaryHealthCheckAt = undefined;
+        await this.checkCanaryHealthDue(currentTracked, signal);
+      }
+      currentTracked = this.tracked.get(tracked.assignment.instanceId);
+      if (currentTracked === undefined) continue;
+      const dueAt = currentTracked.retryAt ?? currentTracked.idleCheckAt;
       if (dueAt !== undefined && dueAt <= this.now()) {
-        tracked.retryAt = undefined;
-        tracked.idleCheckAt = undefined;
-        if (tracked.candidate.hasActiveOperation) continue;
+        currentTracked.retryAt = undefined;
+        currentTracked.idleCheckAt = undefined;
+        if (currentTracked.candidate.hasActiveOperation) continue;
         await this.evaluateCandidate(
-          tracked.candidate,
-          tracked.assignment,
-          tracked.inspector,
+          currentTracked.candidate,
+          currentTracked.assignment,
+          currentTracked.inspector,
           signal,
           false,
         );
@@ -542,6 +632,7 @@ export class ProvisionerIdleController {
     inspector: IdleRuntimeInspector | undefined,
     signal?: AbortSignal,
     allowHealthProbe = false,
+    healthProbe?: HealthProbeTrigger,
   ): Promise<void> {
     if (inspector === undefined) return;
     let tracked = this.tracked.get(candidate.instanceId);
@@ -554,11 +645,36 @@ export class ProvisionerIdleController {
         idleCheckAt: undefined,
         retryAt: undefined,
         retryMs: INITIAL_RETRY_INTERVAL_MS,
+        canaryHealthCheckAt: undefined,
+        canaryHealthQueryRetryMs: INITIAL_RETRY_INTERVAL_MS,
+        healthProbeRetries: new Map(),
       };
     } else {
       tracked = { ...tracked, candidate, assignment, inspector };
     }
     this.tracked.set(candidate.instanceId, tracked);
+    const operationTrigger = operationHealthProbeTrigger(candidate);
+    for (const [key, retry] of tracked.healthProbeRetries) {
+      if (retry.trigger.kind === "operation" && key !== operationTrigger?.key) {
+        tracked.healthProbeRetries.delete(key);
+      }
+    }
+    const canaryProbePending = [...tracked.healthProbeRetries.values()].some(
+      (retry) => retry.trigger.kind === "canary",
+    );
+    if (!candidate.activeCanaryHealth) {
+      tracked.canaryHealthCheckAt = undefined;
+      for (const [key, retry] of tracked.healthProbeRetries) {
+        if (retry.trigger.kind === "canary") tracked.healthProbeRetries.delete(key);
+      }
+    } else if (!canaryProbePending) {
+      tracked.canaryHealthCheckAt = candidate.healthNextCheckAt ?? undefined;
+    }
+    const trigger =
+      healthProbe ??
+      (allowHealthProbe && !candidate.hasActiveOperation ? operationTrigger : undefined);
+    const healthTrigger =
+      trigger?.kind === "operation" && trigger.key !== operationTrigger?.key ? undefined : trigger;
     try {
       const runtimeObservation = await inspector.inspect(assignment, signal);
       const providerObservedAt = this.now();
@@ -572,6 +688,7 @@ export class ProvisionerIdleController {
       if (!providerReady) {
         this.metrics?.increment("idle_runtime_not_ready");
         this.scheduleRetry(tracked);
+        if (healthTrigger !== undefined) this.scheduleHealthProbeRetry(tracked, healthTrigger);
         return;
       }
 
@@ -590,6 +707,7 @@ export class ProvisionerIdleController {
         if (expiresAt - this.now() <= IDENTITY_REFRESH_MARGIN_MS) {
           if (!(await this.refreshIdentity(tracked, signal ?? new AbortController().signal))) {
             tracked.idleCheckAt = tracked.identityRefreshAt;
+            if (healthTrigger !== undefined) this.scheduleHealthProbeRetry(tracked, healthTrigger);
             return;
           }
         }
@@ -623,38 +741,29 @@ export class ProvisionerIdleController {
       ) {
         this.metrics?.increment("idle_producer_status_stale_or_mismatched");
         this.scheduleRetry(tracked);
+        if (healthTrigger !== undefined) this.scheduleHealthProbeRetry(tracked, healthTrigger);
         return;
       }
 
       if (
-        allowHealthProbe &&
-        !candidate.hasActiveOperation &&
-        candidate.healthOperationId !== null &&
+        healthTrigger !== undefined &&
         this.options.authProbe !== undefined &&
-        this.options.operations.recordRuntimeHealth !== undefined
+        this.options.operations.recordRuntimeHealth !== undefined &&
+        !this.recordedHealthTriggers.has(healthTrigger.key) &&
+        this.isHealthProbeRetryDue(tracked, healthTrigger)
       ) {
-        const trigger = JSON.stringify([
-          candidate.instanceId,
-          candidate.runtimeEpoch,
-          candidate.healthOperationId,
-        ]);
-        if (!this.recordedHealthTriggers.has(trigger)) {
-          this.recordedHealthTriggers.add(trigger);
-          if (this.recordedHealthTriggers.size > MAX_RECORDED_HEALTH_TRIGGERS) {
-            const oldest = this.recordedHealthTriggers.values().next().value;
-            if (oldest !== undefined) this.recordedHealthTriggers.delete(oldest);
-          }
-          await this.recordHealthSample(
-            candidate,
-            assignment,
-            runtimeObservation,
-            status,
-            this.options.authProbe.withEndpointResolver((runtimeAssignment, endpointSignal) =>
-              inspector.controlEndpoint(runtimeAssignment, endpointSignal),
-            ),
-            signal,
-          );
-        }
+        await this.attemptHealthProbe(
+          tracked,
+          candidate,
+          assignment,
+          runtimeObservation,
+          status,
+          this.options.authProbe.withEndpointResolver((runtimeAssignment, endpointSignal) =>
+            inspector.controlEndpoint(runtimeAssignment, endpointSignal),
+          ),
+          healthTrigger,
+          signal,
+        );
       }
 
       if (candidate.hasActiveOperation) {
@@ -778,6 +887,7 @@ export class ProvisionerIdleController {
       this.metrics?.increment("idle_observation_unavailable");
       this.logger?.warn("idle_observation_unavailable", { code: errorCode(error) });
       this.scheduleRetry(tracked);
+      if (healthTrigger !== undefined) this.scheduleHealthProbeRetry(tracked, healthTrigger);
     }
   }
 
@@ -786,16 +896,170 @@ export class ProvisionerIdleController {
     tracked.retryMs = Math.min(MAX_RETRY_INTERVAL_MS, Math.ceil(tracked.retryMs * 1.8));
   }
 
+  private scheduleHealthProbeRetry(tracked: TrackedRuntime, trigger: HealthProbeTrigger): void {
+    if (this.recordedHealthTriggers.has(trigger.key)) return;
+    const existing = tracked.healthProbeRetries.get(trigger.key);
+    if (existing?.retryAt !== undefined && existing.retryAt > this.now()) return;
+    const retry = existing ?? {
+      trigger,
+      retryAt: undefined,
+      retryMs: INITIAL_RETRY_INTERVAL_MS,
+    };
+    retry.retryAt = this.now() + retry.retryMs;
+    retry.retryMs = Math.min(MAX_RETRY_INTERVAL_MS, Math.ceil(retry.retryMs * 1.8));
+    tracked.healthProbeRetries.set(trigger.key, retry);
+  }
+
+  private isHealthProbeRetryDue(tracked: TrackedRuntime, trigger: HealthProbeTrigger): boolean {
+    const retry = tracked.healthProbeRetries.get(trigger.key);
+    return retry === undefined || retry.retryAt === undefined || retry.retryAt <= this.now();
+  }
+
+  private async checkCanaryHealthDue(tracked: TrackedRuntime, signal: AbortSignal): Promise<void> {
+    if (!tracked.candidate.activeCanaryHealth) return;
+    let due: Awaited<ReturnType<ProvisionerOperationService["runtimeCanaryHealthDue"]>>;
+    try {
+      due = await this.options.operations.runtimeCanaryHealthDue({
+        workerId: this.options.workerId,
+        clusterId: tracked.assignment.clusterId,
+        instanceId: tracked.assignment.instanceId,
+        repositoryId: tracked.assignment.repositoryId,
+        expectedGeneration: tracked.assignment.generation,
+        expectedRuntimeEpoch: tracked.assignment.runtimeEpoch,
+        signal,
+      });
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
+      this.metrics?.increment("runtime_canary_health_due_failed");
+      this.logger?.warn("runtime_canary_health_due_failed", { code: errorCode(error) });
+      tracked.canaryHealthCheckAt = this.now() + tracked.canaryHealthQueryRetryMs;
+      tracked.canaryHealthQueryRetryMs = Math.min(
+        MAX_RETRY_INTERVAL_MS,
+        Math.ceil(tracked.canaryHealthQueryRetryMs * 1.8),
+      );
+      return;
+    }
+
+    if (!due.active) {
+      tracked.canaryHealthCheckAt = undefined;
+      for (const [key, retry] of tracked.healthProbeRetries) {
+        if (retry.trigger.kind === "canary") tracked.healthProbeRetries.delete(key);
+      }
+      return;
+    }
+    if (due.nextCheckAt === null || due.healthOperationId === null) {
+      throw new Error("runtime_canary_health_due_invalid");
+    }
+    tracked.canaryHealthQueryRetryMs = INITIAL_RETRY_INTERVAL_MS;
+    const now = this.now();
+    if (due.sampleDueAt === null) {
+      tracked.canaryHealthCheckAt =
+        due.nextCheckAt <= now ? now + MIN_CANARY_POINT_RECHECK_MS : due.nextCheckAt;
+      return;
+    }
+    if (due.sampleDueAt > now) {
+      tracked.canaryHealthCheckAt = Math.max(
+        now + 1_000,
+        Math.min(due.nextCheckAt, due.sampleDueAt),
+      );
+      return;
+    }
+
+    const trigger = canaryHealthProbeTrigger(
+      tracked.assignment,
+      due.healthOperationId,
+      due.sampleDueAt,
+      due.nextCheckAt,
+    );
+    for (const [key, retry] of tracked.healthProbeRetries) {
+      if (retry.trigger.kind === "canary" && key !== trigger.key) {
+        tracked.healthProbeRetries.delete(key);
+      }
+    }
+    if (this.recordedHealthTriggers.has(trigger.key)) {
+      tracked.canaryHealthCheckAt = Math.max(due.nextCheckAt, now + MIN_CANARY_POINT_RECHECK_MS);
+      return;
+    }
+
+    await this.evaluateCandidate(
+      tracked.candidate,
+      tracked.assignment,
+      tracked.inspector,
+      signal,
+      false,
+      trigger,
+    );
+    const current = this.tracked.get(tracked.assignment.instanceId);
+    if (current === undefined) return;
+    if (this.recordedHealthTriggers.has(trigger.key)) {
+      current.canaryHealthCheckAt = Math.max(
+        due.nextCheckAt,
+        this.now() + MIN_CANARY_POINT_RECHECK_MS,
+      );
+    } else if (current.healthProbeRetries.has(trigger.key)) {
+      current.canaryHealthCheckAt = undefined;
+    } else {
+      current.canaryHealthCheckAt = Math.max(
+        due.nextCheckAt,
+        this.now() + MIN_CANARY_POINT_RECHECK_MS,
+      );
+    }
+  }
+
+  private async attemptHealthProbe(
+    tracked: TrackedRuntime,
+    candidate: ProvisionerIdleCandidate,
+    assignment: RuntimeAssignment,
+    observation: RuntimeObservation,
+    producer: Awaited<ReturnType<ScriptoriumControlHttpClient["status"]>>,
+    authProbe: RuntimeAuthAcceptanceProbe,
+    trigger: HealthProbeTrigger,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    try {
+      const recorded = await this.recordHealthSample(
+        candidate,
+        assignment,
+        observation,
+        producer,
+        authProbe,
+        trigger.operationId,
+        signal,
+      );
+      if (!recorded) {
+        this.scheduleHealthProbeRetry(tracked, trigger);
+        return;
+      }
+      this.recordedHealthTriggers.add(trigger.key);
+      if (this.recordedHealthTriggers.size > MAX_RECORDED_HEALTH_TRIGGERS) {
+        const oldest = this.recordedHealthTriggers.values().next().value;
+        if (oldest !== undefined) this.recordedHealthTriggers.delete(oldest);
+      }
+      tracked.healthProbeRetries.delete(trigger.key);
+      if (trigger.kind === "canary" && trigger.pointRecheckAt !== undefined) {
+        tracked.canaryHealthCheckAt = Math.max(
+          trigger.pointRecheckAt,
+          this.now() + MIN_CANARY_POINT_RECHECK_MS,
+        );
+      }
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason ?? error;
+      this.metrics?.increment("runtime_health_probe_failed");
+      this.logger?.warn("runtime_health_probe_failed", { code: errorCode(error) });
+      this.scheduleHealthProbeRetry(tracked, trigger);
+    }
+  }
+
   private async recordHealthSample(
     candidate: ProvisionerIdleCandidate,
     assignment: RuntimeAssignment,
     observation: RuntimeObservation,
     producer: Awaited<ReturnType<ScriptoriumControlHttpClient["status"]>>,
     authProbe: RuntimeAuthAcceptanceProbe,
+    operationId: string,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const recordHealth = this.options.operations.recordRuntimeHealth;
-    const operationId = candidate.healthOperationId;
     const actualImageDigest = observation.observedImageDigest;
     if (
       authProbe === undefined ||
@@ -803,7 +1067,7 @@ export class ProvisionerIdleController {
       operationId === null ||
       actualImageDigest !== assignment.deployment.platformManifestDigest
     )
-      return;
+      return false;
     const auth = await authProbe.verifyObserved(assignment, operationId, signal);
     const now = this.now();
     const verifiedAt = Date.parse(auth.observedAt);
@@ -832,7 +1096,7 @@ export class ProvisionerIdleController {
       !auth.invalidServiceCredentialProbeId
     ) {
       this.metrics?.increment("runtime_health_evidence_unverified");
-      return;
+      return false;
     }
     const persistence: RuntimePersistenceObservation = producer.persistence ?? {
       state: "unknown",
@@ -841,7 +1105,7 @@ export class ProvisionerIdleController {
     };
     if (persistence.state !== "verified" || persistence.observedRemoteCommit === null) {
       this.metrics?.increment("runtime_health_persistence_unverified");
-      return;
+      return false;
     }
     const readinessEvidence: LifecycleReadinessEvidence = {
       assignment,
@@ -868,6 +1132,7 @@ export class ProvisionerIdleController {
       ...(signal === undefined ? {} : { signal }),
     });
     if (result.recorded) this.metrics?.increment("runtime_health_sample_recorded");
+    return result.recorded;
   }
 
   private finishCandidatePage(): void {

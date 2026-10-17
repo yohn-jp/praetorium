@@ -1,7 +1,10 @@
-import type {
-  LifecyclePhase,
-  LifecycleReadinessEvidence,
-} from "@praetorium/application/lifecycle";
+import type { LifecyclePhase, LifecycleReadinessEvidence } from "@praetorium/application/lifecycle";
+import {
+  RuntimeCanaryHealthDueRequestSchema,
+  RuntimeCanaryHealthDueResponseSchema,
+  type RuntimeCanaryHealthDueRequest,
+  type RuntimeCanaryHealthDueResponse,
+} from "@praetorium/contracts";
 
 export type ProvisionerOperationKind = "start" | "stop" | "redeploy" | "update";
 export type ProvisionerOperationStatus =
@@ -179,6 +182,8 @@ export interface ProvisionerIdleCandidate {
   readonly bindingSuspended: boolean;
   readonly hasActiveOperation: boolean;
   readonly healthOperationId: string | null;
+  readonly activeCanaryHealth: boolean;
+  readonly healthNextCheckAt: number | null;
   readonly currentRuntime: ProvisionerResolvedRuntime;
 }
 
@@ -393,6 +398,9 @@ export interface ProvisionerOperationService {
   ): Promise<number | null>;
   issueControlCredential(input: ControlCredentialRequest): Promise<ControlCredentialResponse>;
   recordRuntimeHealth?(input: RuntimeHealthObservationInput): Promise<{ readonly recorded: true }>;
+  runtimeCanaryHealthDue(
+    input: RuntimeCanaryHealthDueRequest & { readonly signal?: AbortSignal },
+  ): Promise<RuntimeCanaryHealthDueResponse>;
   releaseRuntime(input: {
     readonly reservationId: string;
     readonly operationId: string;
@@ -529,9 +537,9 @@ function parseResources(input: unknown, message: string): RuntimeResources {
   };
 }
 
-function parsePersistenceDeclaration(input: unknown): NonNullable<
-  ProvisionerResolvedRuntime["assignment"]["persistence"]
-> {
+function parsePersistenceDeclaration(
+  input: unknown,
+): NonNullable<ProvisionerResolvedRuntime["assignment"]["persistence"]> {
   const value = object(input, "runtime persistence declaration invalid");
   if (value.contractVersion !== "scriptorium-persistence/v1")
     throw new TypeError("runtime persistence declaration version invalid");
@@ -564,7 +572,8 @@ function parsePersistenceDeclaration(input: unknown): NonNullable<
     if (!/^[a-z][a-z0-9.-]{0,127}$/u.test(formatId))
       throw new TypeError("runtime writable persistence format ID invalid");
     const pair = `${formatId}\u0000${version}`;
-    if (writablePairs.has(pair)) throw new TypeError("duplicate runtime writable persistence format");
+    if (writablePairs.has(pair))
+      throw new TypeError("duplicate runtime writable persistence format");
     writablePairs.add(pair);
     return { formatId, version };
   });
@@ -779,9 +788,17 @@ function parseIdleCandidate(input: unknown): ProvisionerIdleCandidate {
   );
   if (
     typeof value.bindingSuspended !== "boolean" ||
-    typeof value.hasActiveOperation !== "boolean"
+    typeof value.hasActiveOperation !== "boolean" ||
+    typeof value.activeCanaryHealth !== "boolean"
   ) {
     throw new TypeError("idle candidate eligibility flags invalid");
+  }
+  const healthNextCheckAt =
+    value.healthNextCheckAt === null
+      ? null
+      : safeInteger(value.healthNextCheckAt, "idle candidate health check time invalid");
+  if (value.activeCanaryHealth !== (healthNextCheckAt !== null)) {
+    throw new TypeError("idle candidate canary health schedule is inconsistent");
   }
   const currentRuntime = parseResolvedRuntime(value.currentRuntime);
   const healthOperationId =
@@ -805,6 +822,8 @@ function parseIdleCandidate(input: unknown): ProvisionerIdleCandidate {
     bindingSuspended: value.bindingSuspended,
     hasActiveOperation: value.hasActiveOperation,
     healthOperationId,
+    activeCanaryHealth: value.activeCanaryHealth,
+    healthNextCheckAt,
     currentRuntime,
   };
 }
@@ -1478,6 +1497,15 @@ export class OperationServiceHttpClient
     if (Object.keys(value).length !== 1 || value.recorded !== true)
       throw new TypeError("runtime health observation was not recorded");
     return { recorded: true };
+  }
+
+  async runtimeCanaryHealthDue(
+    input: RuntimeCanaryHealthDueRequest & { readonly signal?: AbortSignal },
+  ): Promise<RuntimeCanaryHealthDueResponse> {
+    const body = RuntimeCanaryHealthDueRequestSchema.parse(withoutSignal(input));
+    return RuntimeCanaryHealthDueResponseSchema.parse(
+      await this.post("/runtime-health-due", body, input.signal),
+    );
   }
 
   async releaseRuntime(input: {

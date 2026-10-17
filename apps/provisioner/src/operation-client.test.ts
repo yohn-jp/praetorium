@@ -243,6 +243,9 @@ describe("OperationServiceHttpClient", () => {
             desiredState: "running",
             bindingSuspended: false,
             hasActiveOperation: false,
+            healthOperationId: null,
+            activeCanaryHealth: false,
+            healthNextCheckAt: null,
             currentRuntime: runtime,
           },
         ],
@@ -287,6 +290,9 @@ describe("OperationServiceHttpClient", () => {
               desiredState: "running",
               bindingSuspended: false,
               hasActiveOperation: false,
+              healthOperationId: null,
+              activeCanaryHealth: false,
+              healthNextCheckAt: null,
               currentRuntime: {
                 ...runtime,
                 assignment: { ...runtime.assignment, instanceId: "ins_other" },
@@ -536,6 +542,107 @@ describe("OperationServiceHttpClient", () => {
       status: 409,
       retryable: false,
     });
+  });
+
+  it("uses the exact assignment for the canary health due point query", async () => {
+    let request: { path: string; body: Record<string, unknown> } | undefined;
+    const service = client(async (input, init) => {
+      request = {
+        path: new URL(String(input)).pathname,
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      };
+      return Response.json({
+        active: true,
+        nextCheckAt: 1_900_000_300_000,
+        sampleDueAt: 1_900_000_000_000,
+        healthOperationId: "op_canary_health_01",
+      });
+    });
+
+    const result = await service.runtimeCanaryHealthDue({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      expectedGeneration: 2,
+      expectedRuntimeEpoch: 5,
+    });
+
+    expect(request).toEqual({
+      path: "/internal/provisioner/runtime-health-due",
+      body: {
+        workerId: "worker-a",
+        clusterId: "cluster-a",
+        instanceId: "ins_01",
+        repositoryId: 123456,
+        expectedGeneration: 2,
+        expectedRuntimeEpoch: 5,
+      },
+    });
+    expect(result).toEqual({
+      active: true,
+      nextCheckAt: 1_900_000_300_000,
+      sampleDueAt: 1_900_000_000_000,
+      healthOperationId: "op_canary_health_01",
+    });
+  });
+
+  it("parses an explicitly advertised canary health schedule", async () => {
+    const service = client(async () =>
+      Response.json({
+        items: [
+          {
+            instanceId: "ins_01",
+            repositoryId: 123456,
+            generation: 2,
+            runtimeEpoch: 5,
+            clusterId: "cluster-a",
+            desiredState: "running",
+            bindingSuspended: false,
+            hasActiveOperation: false,
+            healthOperationId: null,
+            activeCanaryHealth: true,
+            healthNextCheckAt: 1_900_000_000_000,
+            currentRuntime: resolvedRuntime("rev_01", 5, `sha256:${"b".repeat(64)}`),
+          },
+        ],
+        nextCursor: null,
+      }),
+    );
+
+    const page = await service.listIdleCandidates({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      limit: 25,
+      cursor: null,
+    });
+
+    expect(page.items[0]).toMatchObject({
+      activeCanaryHealth: true,
+      healthNextCheckAt: 1_900_000_000_000,
+    });
+  });
+
+  it("rejects inconsistent canary health due hints", async () => {
+    const service = client(async () =>
+      Response.json({
+        active: false,
+        nextCheckAt: 1_900_000_300_000,
+        sampleDueAt: null,
+        healthOperationId: null,
+      }),
+    );
+
+    await expect(
+      service.runtimeCanaryHealthDue({
+        workerId: "worker-a",
+        clusterId: "cluster-a",
+        instanceId: "ins_01",
+        repositoryId: 123456,
+        expectedGeneration: 2,
+        expectedRuntimeEpoch: 5,
+      }),
+    ).rejects.toThrow();
   });
 
   it("refuses non-TLS remote Control Plane endpoints and header injection", () => {

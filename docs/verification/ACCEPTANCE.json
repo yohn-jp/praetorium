@@ -42,7 +42,9 @@
       "disposable": true,
       "production": false,
       "expiresAt": "2026-10-17T00:52:16.149799Z",
-      "availableResources": ["workers-d1-do"],
+      "availableResources": [
+        "workers-d1-do"
+      ],
       "missingResources": [
         "github-access",
         "buildkit-registry",
@@ -481,10 +483,12 @@
     "artifactDigestReason": "No accepted hosted assignment/composition artifact or published locator is recorded for current producer 539375c. A real local Core recovery run reports manifest sha256:79d59260c436dfa98b9e250eba9ee616058a756b7d62935b71d5dd5740b7f0b0 at source f3ef4d34b5e603885ec2cbf204446b6becef3071, tree 41c3027768948392b8f9a43815c86fa680d636f3; production image inputs are unchanged through 539375c (only docs and a migration test changed). That useful component evidence remains local and lacks hosted metadata/conformance. It is not an accepted Platform composition. Historical full-profile evidence remains scoped to its separate candidate. Registry absence is not inferred from anonymous HTTP 401.",
     "producerModified": false,
     "note": "Separate read-only delta audit. S01-S05 interfaces unchanged; recent-activity migration is private user progress. Original production/test evidence cut is retained; no new producer runtime acceptance was run.",
-    "producerTree": "7a5ddf309bcd6c1a5fd594ae2919185a580a60a2",
-    "documentPath": "docs/verification/PRODUCER-271d7b.md",
+    "producerTree": "62b9351539579a17cbd7f00127c1ab218d29c51b",
+    "documentPath": "docs/verification/PRODUCER-539375c.md",
     "evidenceDocument": "docs/verification/PRODUCER-539375c.md",
-    "previousProducerRevision": "271d7b28ba40109f502b0bb196a81afdc47cd1d6"
+    "previousProducerRevision": "271d7b28ba40109f502b0bb196a81afdc47cd1d6",
+    "previousProducerTree": "7a5ddf309bcd6c1a5fd594ae2919185a580a60a2",
+    "previousDocumentPath": "docs/verification/PRODUCER-271d7b.md"
   },
   "latestPlatformDelta": {
     "head": "0cdf51e36d1c2fac894c3a9fc5fcf4b61347a48f",

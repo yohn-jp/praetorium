@@ -232,7 +232,7 @@ async function makeHarness(
         };
       },
     },
-    signingKey,
+    getSigningKey: async () => signingKey,
   } as unknown as GatewayContext;
   const gateway = createRuntimeAuthProbeRoutes(gatewayContext);
   const db = new ProbeDatabase(statementJson, actorId, auditActors);

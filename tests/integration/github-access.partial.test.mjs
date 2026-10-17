@@ -644,6 +644,7 @@ function gitBaseEnvironment(home, globalConfig) {
     GIT_CONFIG_GLOBAL: globalConfig,
     GIT_TERMINAL_PROMPT: "0",
     GIT_LFS_SKIP_SMUDGE: "1",
+    LC_ALL: "C",
   };
 }
 
@@ -685,11 +686,8 @@ function isDefinitiveGitAuthorizationDenial(error) {
     return false;
   }
   const stderr = typeof error.stderr === "string" ? error.stderr : "";
-  return (
-    /The requested URL returned error: (?:401|403|404)\b/iu.test(stderr) ||
-    /^\s*remote:\s*(?:Write access to repository not granted\.?|Permission to .+ denied to .+|Repository not found\.?)\s*$/imu.test(
-      stderr,
-    )
+  return /^fatal: unable to access '[^\r\n]+': The requested URL returned error: (?:403|404)\r?$/mu.test(
+    stderr,
   );
 }
 
@@ -851,7 +849,8 @@ test("only a completed explicit GitHub authorization refusal proves a negative p
       code: 128,
       killed: false,
       signal: null,
-      stderr: "fatal: unable to access remote: The requested URL returned error: 403",
+      stderr:
+        "fatal: unable to access 'https://github.com/owned-org/t14-sibling.git/': The requested URL returned error: 403",
     });
   };
   const gate = async (effect) => effect();
@@ -883,6 +882,65 @@ test("only a completed explicit GitHub authorization refusal proves a negative p
     null,
   );
   assert.deepEqual(recoveryRecords, []);
+});
+
+test("invalid credentials and remote hook text do not prove a negative push", async () => {
+  const expectedCommit = "c".repeat(40);
+  const repository = { id: 70003, owner: "owned-org", name: "t14-auth-check" };
+  const ref = "refs/heads/praetorium-t14-unproven-denial";
+  const gate = async (effect) => effect();
+  const cases = [
+    {
+      label: "invalid credential status",
+      stderr:
+        "fatal: unable to access 'https://github.com/owned-org/t14-auth-check.git/': The requested URL returned error: 401",
+    },
+    {
+      label: "untrusted server hook text",
+      stderr: "remote: Write access to repository not granted.",
+    },
+  ];
+
+  for (const { label, stderr } of cases) {
+    const runGit = async (_cwd, args) => {
+      if (args[0] === "rev-parse") return { stdout: `${expectedCommit}\n` };
+      assert.equal(args[0], "push");
+      throw Object.assign(new Error(label), {
+        code: 128,
+        killed: false,
+        signal: null,
+        stderr,
+      });
+    };
+    const push = await attemptOwnedRefPush(
+      "/unused/local-repository",
+      "https://example.invalid/owned-org/t14-auth-check.git",
+      ref,
+      expectedCommit,
+      {},
+      gate,
+      runGit,
+    );
+    assert.equal(push.outcome, "uncertain", `${label} was accepted as proof of denial`);
+
+    const recoveryRecords = [];
+    await assert.rejects(
+      observedRefAfterPush({
+        cwd: "/unused/local-repository",
+        remote: "https://example.invalid/owned-org/t14-auth-check.git",
+        ref,
+        env: {},
+        gate,
+        push,
+        repository,
+        expectedCommit,
+        recoveryRecords,
+        readRef: async () => null,
+      }),
+      /Git push outcome is uncertain/u,
+    );
+    assert.deepEqual(recoveryRecords, [refRecoveryRecord(repository, ref, expectedCommit)]);
+  }
 });
 
 async function issueGitHubScopedTokens(config, client, now, gate) {

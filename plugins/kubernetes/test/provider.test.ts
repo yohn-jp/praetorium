@@ -816,7 +816,23 @@ describe("Kubernetes runtime provider", () => {
     const serviceAccount = manifest.match(
       /^apiVersion:\s*v1\r?\nkind:\s*ServiceAccount\r?\nmetadata:\r?\n\s+name:\s*([^\s#]+)\r?\n\s+namespace:\s*([^\s#]+)/m,
     );
+    const provisionerDeployment = manifest
+      .split(/^---\s*$/m)
+      .find(
+        (document) =>
+          /^kind:\s*Deployment\s*$/m.test(document) &&
+          /^metadata:\r?\n\s+name:\s*praetorium-provisioner\s*$/m.test(document),
+      );
+    const deploymentNamespace = provisionerDeployment?.match(
+      /^metadata:\r?\n\s+name:\s*praetorium-provisioner\r?\n\s+namespace:\s*([^\s#]+)/m,
+    );
+    const deploymentServiceAccount = provisionerDeployment?.match(
+      /^\s+serviceAccountName:\s*([^\s#]+)/m,
+    );
     expect(serviceAccount).not.toBeNull();
+    expect(provisionerDeployment).toBeDefined();
+    expect(deploymentNamespace?.[1]).toBe(serviceAccount?.[2]);
+    expect(deploymentServiceAccount?.[1]).toBe(serviceAccount?.[1]);
 
     const api = new FakeKubernetesApi();
     api.addNode();

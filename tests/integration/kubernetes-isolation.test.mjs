@@ -29,6 +29,7 @@ import {
 const CATEGORY = "kubernetes-isolation";
 const INVENTORY_ENV = "PRAETORIUM_T14_INVENTORY_PATH";
 const RUNNER_CATEGORY_ENV = "PRAETORIUM_T14_CATEGORY";
+const CONTROL_PROBE_NAMESPACE = "praetorium-observability";
 const MAX_FILE_BYTES = 64 * 1024;
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u;
 const DOMAIN = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u;
@@ -168,8 +169,10 @@ function validateConfig(config, inventory, now = Date.now()) {
       "config.cluster.namespacePrefix must match the deployed tenant namespace admission prefix",
     );
   }
-  if (!DNS_LABEL.test(config?.cluster?.ingressNamespace ?? "")) {
-    errors.push("config.cluster.ingressNamespace must be a Kubernetes namespace name");
+  if (config?.cluster?.ingressNamespace !== "traefik") {
+    errors.push(
+      "config.cluster.ingressNamespace must match the deployed tenant ingress policy namespace",
+    );
   }
   if (config?.cluster?.instanceAccessNamespace !== "praetorium-system") {
     errors.push("config.cluster.instanceAccessNamespace must match the deployed peer namespace");
@@ -541,7 +544,7 @@ function runtimeSpec(config, instanceId, hostSuffix) {
         ephemeralStorageMiB: config.cluster.resourceProfile.ephemeralStorageMiB,
       },
     },
-    hostname: `${instanceId.slice(4).toLowerCase()}.${hostSuffix}`,
+    hostname: `ins-${instanceId.slice(4).toLowerCase()}.${hostSuffix}`,
     runtimeConfig: {},
     application: {
       httpPort: config.probe.httpPort,
@@ -916,6 +919,48 @@ async function preflightCluster(config, controllerApi, provider) {
     );
   }
 
+  const observabilityNamespace = await controllerApi.getNamespace(CONTROL_PROBE_NAMESPACE);
+  assert.equal(namespaceOf(observabilityNamespace), CONTROL_PROBE_NAMESPACE);
+  assert.equal(
+    metadataOf(observabilityNamespace).labels?.["app.kubernetes.io/part-of"],
+    "praetorium",
+    "control-probe namespace is not labeled as part of the deployed platform",
+  );
+  for (const key of ["enforce", "audit", "warn"]) {
+    assert.equal(
+      metadataOf(observabilityNamespace).labels?.[`pod-security.kubernetes.io/${key}`],
+      "restricted",
+      `control-probe namespace must retain Pod Security Standard ${key}=restricted`,
+    );
+  }
+
+  const prometheusService = await controllerApi.get({
+    kind: "Service",
+    namespace: CONTROL_PROBE_NAMESPACE,
+    name: "praetorium-prometheus",
+  });
+  assert.deepEqual(
+    prometheusService?.spec?.selector,
+    { [APP_LABEL]: "prometheus" },
+    "actual Prometheus Service selector changed",
+  );
+  const prometheusDeployment = await controllerApi.get({
+    kind: "Deployment",
+    namespace: CONTROL_PROBE_NAMESPACE,
+    name: "praetorium-prometheus",
+  });
+  assert.equal(metadataOf(prometheusDeployment).labels?.[APP_LABEL], "prometheus");
+  assert.deepEqual(
+    prometheusDeployment?.spec?.selector?.matchLabels,
+    { [APP_LABEL]: "prometheus" },
+    "actual Prometheus Deployment selector changed",
+  );
+  assert.equal(
+    prometheusDeployment?.spec?.template?.metadata?.labels?.[APP_LABEL],
+    "prometheus",
+    "actual Prometheus Pod template selector changed",
+  );
+
   const provisionerConfig = await controllerApi.get({
     kind: "ConfigMap",
     namespace: "praetorium-system",
@@ -943,6 +988,17 @@ async function preflightCluster(config, controllerApi, provider) {
       `private T14 input does not match target provisioner setting ${key}`,
     );
   }
+
+  const instanceAccessConfig = await controllerApi.get({
+    kind: "ConfigMap",
+    namespace: "praetorium-system",
+    name: "praetorium-instance-access-config",
+  });
+  assert.equal(
+    instanceAccessConfig?.data?.INSTANCE_ACCESS_INSTANCE_HOSTNAME_SUFFIX,
+    config.network.hostnameSuffix,
+    "private T14 input does not match the target instance hostname suffix",
+  );
 
   for (const service of [
     {
@@ -1477,23 +1533,22 @@ function controlApiReachableScript() {
 async function runControlApiProbe({
   api,
   config,
-  helperNamespace,
   controlHealthTarget,
   run,
   inventoryId,
   trackedPods,
 }) {
   const name = `control-api-${randomBytes(5).toString("hex")}`;
-  const key = `${helperNamespace}/${name}`;
+  const key = `${CONTROL_PROBE_NAMESPACE}/${name}`;
   try {
     await createAndRunPod({
       api,
       config,
-      namespace: helperNamespace,
+      namespace: CONTROL_PROBE_NAMESPACE,
       name,
       run,
       inventoryId,
-      labels: { [APP_LABEL]: "provisioner" },
+      labels: { [APP_LABEL]: "prometheus" },
       script: controlApiReachableScript(),
       env: [{ name: "T14_CONTROL_HEALTH_URL", value: controlHealthTarget.url }],
       timeoutMs: config.timeouts.readinessMs,
@@ -1533,7 +1588,7 @@ async function runPositiveAppProbes({
 }) {
   const name = `app-auth-${randomBytes(5).toString("hex")}`;
   const host = `${runtimeService(spec.instanceId)}.${runtimeNamespace(config, spec.instanceId)}.svc.cluster.local`;
-  const labels = { [APP_LABEL]: "instance-access" };
+  const labels = { [APP_LABEL]: "provisioner" };
   const { entry } = await createAndRunPod({
     api,
     config,
@@ -1561,6 +1616,44 @@ async function runPositiveAppProbes({
     },
     podKey: `${helperNamespace}/${name}`,
   };
+}
+
+async function verifyRuntimePeer({
+  runtime,
+  api,
+  config,
+  spec,
+  helperNamespace,
+  run,
+  inventoryId,
+  trackedPods,
+}) {
+  const { podKey } = await runPositiveAppProbes({
+    api,
+    config,
+    spec,
+    helperNamespace,
+    run,
+    inventoryId,
+    trackedPods,
+  });
+  try {
+    const observation = await runtime.inspect(spec, abortSignal(config.timeouts.requestMs));
+    assert.equal(observation.state, "running", "cross-instance peer is not running");
+    assert.equal(observation.writerState, "running", "cross-instance peer writer is not ready");
+    assert.equal(observation.writerCensus.complete, true, "peer writer census is incomplete");
+    assert.equal(observation.writerCensus.queriedPodCount, 1, "peer must have exactly one writer");
+    assert.equal(
+      observation.observedImageDigest,
+      spec.release.platformManifestDigest,
+      "cross-instance peer imageID does not match the configured immutable platform digest",
+    );
+    const writerUid = observation.writerCensus.pods[0]?.uid;
+    assert.ok(typeof writerUid === "string" && writerUid.length > 0);
+    return writerUid;
+  } finally {
+    await cleanupPod(api, trackedPods, podKey, run, inventoryId, config.timeouts.requestMs);
+  }
 }
 
 async function activateAndVerifyIngress({
@@ -1804,11 +1897,10 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     const clusterProof = await preflightCluster(config, controllerApi, runtime);
 
     // Prove the control API is live and reachable from a run-owned Pod using
-    // the exact provisioner NetworkPolicy source label, without a token mount.
+    // the exact Prometheus source allowed by the deployed system NetworkPolicy.
     await runControlApiProbe({
       api: controllerApi,
       config,
-      helperNamespace,
       controlHealthTarget: clusterProof.controlHealthTarget,
       run,
       inventoryId: inventory.inventoryId,
@@ -1949,11 +2041,20 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     // Run actual packets from tenant-labelled Pods. Stop only the source writer
     // to respect the provider's one-Pod ResourceQuota; keep the target serving.
     await stopRuntimeAndWait(runtime, providerApi, specA, guard, config);
+    const peerBeforeA = await verifyRuntimePeer({
+      runtime,
+      api: controllerApi,
+      config,
+      spec: specB,
+      helperNamespace,
+      run,
+      inventoryId: inventory.inventoryId,
+      trackedPods,
+    });
     const controlBeforeA = await getLiveProvisionerHealthTarget(controllerApi);
     await runControlApiProbe({
       api: controllerApi,
       config,
-      helperNamespace,
       controlHealthTarget: controlBeforeA,
       run,
       inventoryId: inventory.inventoryId,
@@ -1969,6 +2070,21 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
       inventoryId: inventory.inventoryId,
       trackedPods,
     });
+    const peerAfterA = await verifyRuntimePeer({
+      runtime,
+      api: controllerApi,
+      config,
+      spec: specB,
+      helperNamespace,
+      run,
+      inventoryId: inventory.inventoryId,
+      trackedPods,
+    });
+    assert.equal(
+      peerAfterA,
+      peerBeforeA,
+      "cross-instance peer writer changed during the denial probe",
+    );
     const controlAfterA = await getLiveProvisionerHealthTarget(controllerApi);
     assert.equal(
       controlAfterA.uid,
@@ -1978,7 +2094,6 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     await runControlApiProbe({
       api: controllerApi,
       config,
-      helperNamespace,
       controlHealthTarget: controlAfterA,
       run,
       inventoryId: inventory.inventoryId,
@@ -2011,11 +2126,20 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     });
 
     await stopRuntimeAndWait(runtime, providerApi, specB, guard, config);
+    const peerBeforeB = await verifyRuntimePeer({
+      runtime,
+      api: controllerApi,
+      config,
+      spec: specA,
+      helperNamespace,
+      run,
+      inventoryId: inventory.inventoryId,
+      trackedPods,
+    });
     const controlBeforeB = await getLiveProvisionerHealthTarget(controllerApi);
     await runControlApiProbe({
       api: controllerApi,
       config,
-      helperNamespace,
       controlHealthTarget: controlBeforeB,
       run,
       inventoryId: inventory.inventoryId,
@@ -2031,6 +2155,21 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
       inventoryId: inventory.inventoryId,
       trackedPods,
     });
+    const peerAfterB = await verifyRuntimePeer({
+      runtime,
+      api: controllerApi,
+      config,
+      spec: specA,
+      helperNamespace,
+      run,
+      inventoryId: inventory.inventoryId,
+      trackedPods,
+    });
+    assert.equal(
+      peerAfterB,
+      peerBeforeB,
+      "cross-instance peer writer changed during the denial probe",
+    );
     const controlAfterB = await getLiveProvisionerHealthTarget(controllerApi);
     assert.equal(
       controlAfterB.uid,
@@ -2040,7 +2179,6 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     await runControlApiProbe({
       api: controllerApi,
       config,
-      helperNamespace,
       controlHealthTarget: controlAfterB,
       run,
       inventoryId: inventory.inventoryId,
@@ -2221,6 +2359,13 @@ test("T14 Kubernetes private config validator rejects unowned, unsafe, or incomp
       inventory,
       now,
     ).some((error) => error.includes("loopback")),
+  );
+  assert.ok(
+    validateConfig(
+      { ...valid, cluster: { ...valid.cluster, ingressNamespace: "custom-traefik" } },
+      inventory,
+      now,
+    ).some((error) => error.includes("tenant ingress policy namespace")),
   );
   assert.ok(
     validateConfig(

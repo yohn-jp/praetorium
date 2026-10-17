@@ -42,9 +42,7 @@
       "disposable": true,
       "production": false,
       "expiresAt": "2026-10-17T00:52:16.149799Z",
-      "availableResources": [
-        "workers-d1-do"
-      ],
+      "availableResources": ["workers-d1-do"],
       "missingResources": [
         "github-access",
         "buildkit-registry",
@@ -477,14 +475,16 @@
     }
   ],
   "latestProducerPreflight": {
-    "producerRevision": "271d7b28ba40109f502b0bb196a81afdc47cd1d6",
-    "documentCommit": "eefb86d",
+    "producerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
+    "documentCommit": "787ede5",
     "artifactDigest": null,
-    "artifactDigestReason": "No current-main OCI manifest digest or published reference was supplied for 271d7b28ba40109f502b0bb196a81afdc47cd1d6 (tree 7a5ddf309bcd6c1a5fd594ae2919185a580a60a2). The refreshed docs/verification/P13-BROWSER-RECOVERY.md reports a local Core image manifest digest sha256:cb6d9d3e792fba6020c561946b07c07aa4f7c7043aaed3597cefbeab586d6a05 for ancestor source bc2b0936d418d1d8f5dcd8b16e74d1f9f3d65c0f (tree 480aadf546cd28944c5a242ef9cd0ac55b215616); current main has advanced beyond that tested tree. The image remained local. The full-profile model lifecycle report separately records local digest sha256:7a2e4fd5d00b36f90a19cfe90b30c6c0c5e01df4f922650696be813abd006b07 for candidate source e85c173a318e17eed084bbfb4dde2411a2abc2cf, also not current main and not published. Earlier anonymous GHCR and GitHub package API requests returned HTTP 401; registry absence is not inferred.",
+    "artifactDigestReason": "No accepted hosted assignment/composition artifact or published locator is recorded for current producer 539375c. A real local Core recovery run reports manifest sha256:79d59260c436dfa98b9e250eba9ee616058a756b7d62935b71d5dd5740b7f0b0 at source f3ef4d34b5e603885ec2cbf204446b6becef3071, tree 41c3027768948392b8f9a43815c86fa680d636f3; production image inputs are unchanged through 539375c (only docs and a migration test changed). That useful component evidence remains local and lacks hosted metadata/conformance. It is not an accepted Platform composition. Historical full-profile evidence remains scoped to its separate candidate. Registry absence is not inferred from anonymous HTTP 401.",
     "producerModified": false,
     "note": "Separate read-only delta audit. S01-S05 interfaces unchanged; recent-activity migration is private user progress. Original production/test evidence cut is retained; no new producer runtime acceptance was run.",
     "producerTree": "7a5ddf309bcd6c1a5fd594ae2919185a580a60a2",
-    "documentPath": "docs/verification/PRODUCER-271d7b.md"
+    "documentPath": "docs/verification/PRODUCER-271d7b.md",
+    "evidenceDocument": "docs/verification/PRODUCER-539375c.md",
+    "previousProducerRevision": "271d7b28ba40109f502b0bb196a81afdc47cd1d6"
   },
   "latestPlatformDelta": {
     "head": "0cdf51e36d1c2fac894c3a9fc5fcf4b61347a48f",
@@ -518,6 +518,39 @@
       "realLegacyOrOffHostAcceptance": false
     },
     "independentReview": "No actionable defects in the two reviewed deltas; full campaign review remains partial",
+    "productionApplied": false
+  },
+  "latestPlatformSecurityDelta": {
+    "sourceHead": "b3fbe6dcfb586b8f6aa28f5e06fa71ae89733061",
+    "documentationHead": "787ede595401e4c3b9b06fca505837fcc4b6bc80",
+    "scope": "Composed static infrastructure plus fresh owned local Worker/D1/DO and synthetic metadata restore; historical broader evidence remains separate",
+    "proofDocument": "docs/verification/PLATFORM-SECURITY-DELTA.md",
+    "frozenInstall": "passed",
+    "requiredCheck": "passed; test stage 29/29 cached tasks",
+    "infraTests": {
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0
+    },
+    "fixedAcceptance": {
+      "report": "/tmp/praetorium-b3fbe6d-acceptance.json",
+      "generatedAt": "2026-10-17T01:37:09.461Z",
+      "exitCode": 2,
+      "errors": [],
+      "status": "BLOCKED",
+      "workers-d1-do": "VERIFIED",
+      "otherRequiredCategories": "six BLOCKED/NOT_CHECKED",
+      "inventory": "/tmp/praetorium-t14-workers-b3fbe6d.json",
+      "expiresAt": "2026-10-17T02:07:04.046775+00:00"
+    },
+    "localRestore": {
+      "passed": 1,
+      "testDurationMs": 11217.63271,
+      "processDurationMs": 11285.769401,
+      "scope": "actual local Wrangler D1/Restic tools, synthetic metadata only"
+    },
+    "independentReview": "Apply/Kind sequencing at ee33c38, composed route and API-defaulting reviews at b3fbe6d found no remaining defects in scoped paths",
+    "liveClusterChecked": false,
     "productionApplied": false
   }
 }

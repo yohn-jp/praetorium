@@ -33,3 +33,27 @@ S01–S05 producer contracts/artifact, live App credential lifecycle, real Build
 At worker `9778d93`, the security reviewer verified the actual tenant grant creation, strict existing-grant validation, deletion and remaining-resource census. Integrated `2bfc296` changes the old Arcadia principal to `praetorium-system/praetorium-provisioner` and uses the matching Praetorium tenant role and binding names. The reviewer found no production-path defect. Follow-up `120b007` also ties the regression directly to the named Provisioner Deployment namespace and `serviceAccountName`; the reviewer reran the 25 provider tests, while root's full Kubernetes package check passed all 29 tests. Static bootstrap RBAC and admission remain separate unfinished infrastructure work; this principal correction does not authorize a running cluster by itself.
 
 A separate read-only recovery reviewer checked clean main `0cdf51e36d1c2fac894c3a9fc5fcf4b61347a48f`, confirmed the scoped files match worker `c3d8ddc`, independently verified the official Restic archive checksum and reran the actual local restore test: 1 pass, 0 failures, 0 skipped. The reviewer traced explicit local Wrangler configuration and isolated child environments, encrypted archive and real Restic operations, restrictive file modes, in-memory SQLite validation and authentication failure before staging modified ciphertext. No actionable defect was found. This is local synthetic Platform metadata evidence only, with no remote D1, off-host storage, source data, producer, cutover or retirement acceptance. See [LEGACY-METADATA-PARTIAL.md](LEGACY-METADATA-PARTIAL.md).
+
+## Composed static infrastructure and route corrections
+
+Separate read-only reviewers checked the minimal bootstrap/tenant RBAC graph,
+namespace/RoleBinding/resource guards, Pod security and PSA, and exact network/route
+policies during their isolated implementation. Root assembled these in the same
+canonical Kustomize path used by render and apply.
+
+At `ee33c38`, an independent reviewer traced the real CLI version checks and
+apply order: discovery, strict full server dry-run, 14 guards only, current live
+policy/binding readiness, then the full bootstrap bundle. Focused checks passed
+22/22; no order bypass was found. Root then fixed a real API compatibility issue:
+Kubernetes injects match-all selectors and `scope: "*"`. At `b3fbe6d` a separate
+reviewer confirmed those neutral defaults are accepted while restrictive scopes,
+nonempty selectors and changes to the Pod namespace selector remain rejected.
+Their cached-tool infra run passed 53/53, distinct from root's 47/47 invocation.
+
+The route reviewer found that all-namespace Traefik watch exposed a priority tie
+between live tenant routes and the stopped fallback. The composed `b3fbe6d`
+renderer, provider pre/post-write matcher, wired VAP and watch configuration now
+agree on reserved1000 > runtime10 > fallback1. The independent reviewer reran
+infra8/8 and Kubernetes34/34 on this exact clean main and found the defect closed.
+These are source/local-tool checks, not live Helm, API/defaulting or traffic proof.
+See [the source-cut record](PLATFORM-SECURITY-DELTA.md). Full T15 remains partial.

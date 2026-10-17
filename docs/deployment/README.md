@@ -49,7 +49,7 @@ Bootstrap Flux against the explicit disposable context and configure its `flux-s
 node scripts/deploy-infrastructure.mjs apply --inventory infrastructure/test/disposable-inventory.json --confirm praetorium-t12-local
 ```
 
-Application requires `kind`, `kubectl`, a successful render of the base, controller, deployment and disposable Kustomize targets, the cert-manager and Traefik CRDs, ready immutable service images, all BuildKit mTLS inputs, and the namespace-local operator-managed Secrets above. It applies only the rendered `overlays/disposable` static shared resources to the named inventory cluster, checks the four fixed deployments, and rejects unresolved tokens or any `praetorium-instances-*` namespace. It never invokes Flux prune or applies dynamic instance resources. The static ServiceAccount has no RBAC binding. The Node Provisioner currently stays unready and claims no operation because Scriptorium's S03 assignment ABI and S02 grant-probe transport are unavailable. Runtime namespace/workload/RBAC creation remains gated until those production ports and permissions are implemented and reviewed.
+Application requires exact Kind v0.31.0, `kubectl`, a successful render of the base, controller, deployment and disposable Kustomize targets, the cert-manager and Traefik CRDs, ready immutable service images, all BuildKit mTLS inputs, and the namespace-local operator-managed Secrets above. It requires v1 admission API discovery, server-dry-runs the complete rendered `overlays/disposable` bundle with strict validation, applies its 14 admission guards, waits for current-generation type-check status and exact Deny bindings, then applies the complete static bundle and checks the four fixed deployments, and rejects unresolved tokens or any `praetorium-instances-*` namespace. It never invokes Flux prune or applies dynamic instance resources. The static Provisioner ServiceAccount has the minimal bootstrap ClusterRoleBinding; it binds per-tenant permissions only after namespace ownership validation. The Node Provisioner currently stays unready and claims no operation because Scriptorium's S03 assignment ABI and S02 grant-probe transport are unavailable. Runtime namespace/workload/RBAC creation remains gated until those production ports and permissions are implemented and reviewed.
 
 The deployment script resolves tools from `PATH`, or from explicit executable paths in `PRAETORIUM_KIND_BIN`, `PRAETORIUM_KUBECTL_BIN`, and `PRAETORIUM_KUSTOMIZE_BIN`. When standalone Kustomize is absent, it validates and renders the four checked-in targets with `kubectl kustomize`. The preflight performs only client-version and local-render checks; it does not inspect or contact the current Kubernetes context.
 
@@ -115,8 +115,17 @@ Supply the BuildKit mTLS server key/certificate/client CA through the host's sec
 
 ## Stable stopped-instance routing
 
-The static Traefik IngressRoute always sends matching instance hosts to `instance-access`, including a higher-priority `/_platform` path. That service remains available while an instance is stopped, so its provider can return the durable stopped response without an instance workload or dynamic Flux object. The disposable overlay uses a self-signed wildcard certificate. The deployment overlay uses cert-manager DNS-01 with a Kubernetes secret reference to the Cloudflare token; the token itself is never stored here.
+Traefik watches the dynamic tenant namespaces with cluster-scoped CRD RBAC. The static fallback sends matching stopped-instance hosts to `instance-access` at priority1; a running instance has an exact-host route at priority10, while `/_platform` always wins at priority1000. That service remains available while an instance is stopped, so its provider can return the durable stopped response without an instance workload or dynamic Flux object. The disposable overlay uses a self-signed wildcard certificate. The deployment overlay uses cert-manager DNS-01 with a Kubernetes secret reference to the Cloudflare token; the token itself is never stored here.
 
 ## Verification limits
 
 Nix syntax and schema validation show that templates parse and reject incomplete input; they do not certify a live K3s, Flux, Worker, D1, ingress, registry, or BuildKit deployment. The checked-in inventory intentionally cannot pass infrastructure application or Worker preflight until an operator supplies owned disposable test resources, real Gateway/Control Plane locators, a public builder key and target platform, and immutable service image digests. Production DNS, Cloudflare, D1, NixOS, and K3s changes remain outside this task.
+
+The admission status gate does not prove the admission plugin is enforcing, and
+Kubernetes does not fully type-check CRD expressions. Run actual positive/negative
+admission and packet probes in the explicit owned disposable cluster before
+claiming readiness. Kind's pinned NetworkPolicy controller is policy-capable but
+fail-open; configuration alone is insufficient. See
+[admission apply](../verification/ADMISSION-APPLY.md),
+[Kind runtime](../verification/KIND-RUNTIME.md), and
+[Traefik watch](../verification/TRAEFIK-RUNTIME-WATCH.md).

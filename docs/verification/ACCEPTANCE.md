@@ -29,3 +29,14 @@ Deployment plan/preflight recognizes migrations 0001–0004 and both private Wor
 [ACCEPTANCE.json](ACCEPTANCE.json) preserves the machine-readable category report, current measurements, runner implementation limits and explicitly labeled historical evidence. [LOCAL-ENVIRONMENT.json](LOCAL-ENVIRONMENT.json) records substrate attempts and limits. No actual composition build/cache-hit/start/redeploy performance or resource measurement is available.
 
 The Build Worker closure inspector/smoke runner and evidence-based compatible rollback checker also remain unimplemented. They need the producer ABI/evidence and Platform implementation/wiring; external resource availability alone does not finish them. See [FINAL.md](FINAL.md).
+
+## Composed infrastructure checkpoint
+
+At clean main source `b3fbe6d`, root reran required frozen install/check, all local
+infra tests (47/47), actual owned local Worker/D1/DO (VERIFIED), and actual local
+D1/Restic restore with synthetic metadata (1/1). The fixed aggregate returned
+exit 2 with six categories BLOCKED/NOT_CHECKED and errors `[]`. This newer local
+cut supplements the historical broader report above. No actual cluster admission,
+Traefik/CNI enforcement or producer conformance was run. Exact logs, measurements,
+independent review and limitations: [PLATFORM-SECURITY-DELTA.md](PLATFORM-SECURITY-DELTA.md).
+Current producer audit: [539375c](PRODUCER-539375c.md), accepted artifactDigest null.

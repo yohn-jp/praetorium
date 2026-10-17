@@ -42,6 +42,18 @@ function execute(script, args) {
     throw new Error(script + " failed (" + (result.error?.code ?? result.status) + ")");
   }
 }
+function executeTool(command, args) {
+  const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: "inherit",
+    shell: process.platform === "win32", timeout: 15 * 60_000 });
+  if (result.error || result.status !== 0) throw new Error(command + " prerequisite failed");
+}
+const revision = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
+const dirty = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
+if (revision.status !== 0 || dirty.status !== 0 || dirty.stdout.trim()) {
+  throw new Error("Deployment requires a clean immutable Git checkout");
+}
+console.log("Deploying Git revision " + revision.stdout.trim());
+executeTool("corepack", ["pnpm@11.18.0", "install", "--frozen-lockfile"]);
 const k3s = ["--inventory", options["--inventory"], "--secret-files", options["--secret-files"],
   "--kubeconfig", options["--kubeconfig"], "--confirm", options["--confirm"]];
 const cloudflare = ["--inventory", options["--inventory"], "--secret-files", options["--secret-files"]];

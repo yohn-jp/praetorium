@@ -119,6 +119,8 @@ try {
     console.log("No Cloudflare resource mutated.");
     process.exit(0);
   }
+  run("corepack", ["pnpm@11.18.0", "install", "--frozen-lockfile"], { capture: false });
+  run("corepack", ["pnpm@11.18.0", "build"], { capture: false });
   // Publish the same operator-supplied runtime tokens to the respective Worker
   // that K3s reads from its namespace Secret; never ask for a second token.
   for (const [worker, key, role] of [
@@ -133,8 +135,6 @@ try {
     wrangler(["secret", "put", "RELEASE_OPERATOR_TOKEN", "--config", conf.control],
       { input: privateBytes("releaseOperatorToken"), capture: true });
   }
-  run("corepack", ["pnpm@11.18.0", "install", "--frozen-lockfile"], { capture: false });
-  run("corepack", ["pnpm@11.18.0", "build"], { capture: false });
   wrangler(["d1", "migrations", "apply", "praetorium-platform", "--remote",
     "--config", conf.control], { capture: false });
   wrangler(["deploy", "--config", conf.control], { capture: false });

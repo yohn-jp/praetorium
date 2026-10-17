@@ -24,7 +24,7 @@ const EXPECTED_MANIFEST = "sha256:00739c31e414da9494015e859b8ef1b0f2289ceef63127
 const EXPECTED_CONFIG = "sha256:d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d";
 const EXPECTED_IMAGE = "praetorium-owned.local/praetorium/platform-provisioner:main-431dbe1";
 const EXPECTED_WRITE_CONFIRMATION =
-  "create canonical provisioner bootstrap and one read-only probe Pod in praetorium-system";
+  "create canonical provisioner bootstrap and one read-path probe Pod in praetorium-system";
 const SYSTEM_NAMESPACE = "praetorium-system";
 const TEST_TIMEOUT_MS = 420_000;
 const PROCESS_TIMEOUT_MS = 30_000;
@@ -153,7 +153,9 @@ async function runBounded(command, args, { input, timeoutMs = PROCESS_TIMEOUT_MS
         if (error instanceof Error && error.code === "ESRCH") return;
         try {
           child.kill(signal);
-        } catch {}
+        } catch {
+          return;
+        }
       }
     };
     const waitForProcessGroupExit = async () => {
@@ -927,6 +929,8 @@ test(
     let imageLoadCompleted = false;
     let preserveResources = false;
     let acceptanceProof;
+    let probeFailure;
+    let probeFailed = false;
     try {
       const namespaceYaml = await canonicalDoc(
         repo,
@@ -1184,9 +1188,15 @@ test(
         probeRunId: runId,
       };
     } catch (error) {
+      probeFailed = true;
       if (error instanceof RecoveredCreateOutcomeError) {
         created.push(error.resource);
-        throw new Error(`${error.message}; automatic cleanup will use its ownership label and UID`);
+        probeFailure = new Error(
+          `${error.message}; automatic cleanup will use its ownership label and UID`,
+          { cause: error },
+        );
+      } else {
+        probeFailure = error;
       }
       if (
         error instanceof UncertainCreateOutcomeError ||
@@ -1194,23 +1204,30 @@ test(
       ) {
         preserveResources = true;
       }
-      throw error;
-    } finally {
-      if (preserveResources) {
-        client.agent.destroy();
-        throw new Error(
-          "uncertain API or process outcome; automatic cleanup was withheld for reconciliation",
-        );
-      }
-      let cleanupFailure;
-      try {
-        await cleanup(client, created, runId);
-      } catch (error) {
-        cleanupFailure = error;
-      }
-      client.agent.destroy();
-      if (cleanupFailure) throw cleanupFailure;
     }
+
+    if (preserveResources) {
+      client.agent.destroy();
+      throw new Error(
+        "uncertain API or process outcome; automatic cleanup was withheld for reconciliation",
+        { cause: probeFailure },
+      );
+    }
+    let cleanupFailure;
+    try {
+      await cleanup(client, created, runId);
+    } catch (error) {
+      cleanupFailure = error;
+    }
+    client.agent.destroy();
+    if (probeFailed && cleanupFailure) {
+      throw new AggregateError(
+        [probeFailure, cleanupFailure],
+        "provider read probe and resource cleanup both failed",
+      );
+    }
+    if (cleanupFailure) throw cleanupFailure;
+    if (probeFailed) throw probeFailure;
 
     assert.equal(
       imageLoadCompleted,

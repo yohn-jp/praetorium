@@ -64,7 +64,10 @@ are converted locally from their source YAML documents and created through the
 actual Kubernetes API. The runner adds a random `praetorium.io/t07-run-id`
 ownership label to each bootstrap object and the probe Pod. It captures each
 successful API response's UID and requires both that UID and the run label to
-match before deleting the object. The unique probe Pod runs
+match before deleting the object. The probe program performs only Kubernetes
+reads. Its ServiceAccount uses the canonical Provisioner ClusterRole, which
+also grants provisioning writes; this probe does not claim a read-only token.
+The unique probe Pod runs
 as UID/GID 10001 with a read-only root filesystem, no privilege escalation,
 all Linux capabilities dropped, and `RuntimeDefault` seccomp. Its only
 credential is Kubernetes' projected ServiceAccount token; the test confirms
@@ -105,13 +108,13 @@ From the isolated Praetorium worktree, after that handoff:
 ```sh
 PRAETORIUM_T07_PROVIDER_READ_OWNER_ROOT=/tmp/praetorium-owned-kube-fresh-1000-20261017 \
 PRAETORIUM_T07_PROVIDER_READ_CONFIRMATION=praetorium-owned-kube-fresh-20261017 \
-PRAETORIUM_T07_PROVIDER_READ_API_WRITE_CONFIRMATION='create canonical provisioner bootstrap and one read-only probe Pod in praetorium-system' \
+PRAETORIUM_T07_PROVIDER_READ_API_WRITE_CONFIRMATION='create canonical provisioner bootstrap and one read-path probe Pod in praetorium-system' \
 node --test tests/integration/kubernetes-provider-read.partial.test.mjs
 ```
 
 The runner invokes the private Podman wrapper to import the exact archive into
 the owned cluster. It then creates only the four absent canonical bootstrap
-resources and one unique read-only probe Pod. The result is successful only if
+resources and one unique probe Pod whose program performs only reads. The result is successful only if
 the actual image starts, reads the projected token, completes both production
 provider reads, reports the absent census, and all UID-guarded cleanup reaches 404. On success, Node prints a small JSON proof with the source commit, archive
 hash, original manifest/config digests, observed runtime `imageID`, cluster

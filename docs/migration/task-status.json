@@ -754,7 +754,7 @@
     "productionApplied": false
   },
   "latestFixedRunnerImplementation": {
-    "sourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "sourceHead": "d23b9af25155ebe8469de8bb58b8cbba793b6a73",
     "document": "docs/verification/FIXED-RUNNER-PROGRESS.md",
     "implementedFixedPaths": [
       "tests/integration/workers-d1-do.test.mjs",
@@ -768,13 +768,13 @@
       "tests/integration/stable-rollout.test.mjs"
     ],
     "remainingMissingFixedRunners": 3,
-    "githubImplementationReview": "pending partial-probe write-ahead recovery and deletion-readback correction",
+    "githubImplementationReview": "closed at worker f33ba36a28f429c8478caa5396dc91ae37ea883a; actual producer client renewal still unavailable; live NOT_CHECKED",
     "browserImplementationReview": "closed at worker ff7cea8863b137007f3a346e4cf4638f077921a2; live NOT_CHECKED",
     "requiredInstallAndCheck": "passed at exact sourceHead; 29/29 cached test-stage tasks plus boundaries/schema",
     "infraAndMappingTestsPassed": 57,
     "kubernetesLocalTestsPassed": 4,
     "githubFixedLocalTestsPassed": 3,
-    "githubPartialLocalTestsPassed": 6,
+    "githubPartialLocalTestsPassed": 7,
     "githubPartialLiveTestsSkipped": 1,
     "missingInputFixedContract": "both new fixed runners exit1 and classify BLOCKED/OWNER_INPUT_MISSING through actual verifier environment",
     "actualFixedAcceptanceReport": "/tmp/praetorium-164ae3b-acceptance.json",
@@ -786,6 +786,11 @@
     "remainingProducerConsumerImplementation": "Fixed GitHub category still requires actual producer client expiry/renewal after S03; direct Platform broker calls cannot certify it",
     "applicationAndDeploymentSourceBaseline": "b3fbe6dcfb586b8f6aa28f5e06fa71ae89733061",
     "baselineScope": "apps/packages/plugins/infrastructure and scripts except verify-integration.mjs are unchanged; that verifier and acceptance tests changed",
-    "productionApplied": false
+    "productionApplied": false,
+    "infraAndMappingVerificationHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "kubernetesLocalVerificationHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "actualFixedAcceptanceSourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "reviewDocument": "docs/verification/INDEPENDENT-REVIEW.md",
+    "reviewDocumentCommit": "5f0bcd9"
   }
 }

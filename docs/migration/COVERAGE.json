@@ -290,7 +290,7 @@
     {"id":"M04","kind":"required-capability","parentId":"A13","source":"docs/architecture/PLATFORM.md","surface":"revoke already-issued repository/epoch-scoped GitHub installation tokens during runtime retirement","task":"T02","disposition":"encrypted-known-token-registry-revoker-and-retirement-barrier-integrated; local-evidence-only","status":"partial","target":["apps/control-plane/migrations/0004_runtime_git_credentials.sql","packages/persistence/src/d1/runtime-git-credentials-store.ts","apps/control-plane/src/runtime-git-credential-routes.ts","apps/control-plane/src/credential-retirement.ts","apps/control-plane/src/runtime-binding.ts","apps/gateway/src/adapters/runtime-credential-registry.ts","apps/gateway/src/context.ts","apps/gateway/src/router.ts"],"proofs":["packages/persistence/test/runtime-git-credentials-store.test.ts","apps/control-plane/src/runtime-git-credential-routes.test.ts","apps/control-plane/src/credential-retirement.test.ts","apps/control-plane/src/runtime-binding.test.ts","apps/control-plane/src/runtime-identity-routes.test.ts","apps/gateway/test/runtime-credential-registry.test.ts","tests/integration/workers-d1-do.test.mjs","apps/gateway/test/runtime-retirement-route.test.ts","tests/integration/runtime-credentials-worker.partial.test.mjs"],"relatedCoverageEntries":["A13","A18"],"blocker":"Source cut 27142b0 encrypts known issued tokens, invokes a scoped GitHub revoker during quiescing and already-absent-writer retirement, durably tracks pending/revoked state, and withholds target identity while matching unexpired active/pending credentials remain. Focused package/SQLite tests and independent review cover these paths. The separate actual Wrangler Worker/D1 probe at test-only commit 37f187c passed 1/1: synthetic zero-census old-writer-absent checkpoint remains 503/pending on GitHub 401, then succeeds after synthetic 204 acknowledgement; null retired epoch skips the callback. The absence proof, credentials, and GitHub responses are synthetic; there was no actual writer/census/runtime lease or live GitHub App/API call. No global or instantaneous revocation guarantee is claimed."}
   ],
   "latestFixedRunnerImplementation": {
-    "sourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "sourceHead": "d23b9af25155ebe8469de8bb58b8cbba793b6a73",
     "document": "docs/verification/FIXED-RUNNER-PROGRESS.md",
     "implementedFixedPaths": [
       "tests/integration/workers-d1-do.test.mjs",
@@ -304,13 +304,13 @@
       "tests/integration/stable-rollout.test.mjs"
     ],
     "remainingMissingFixedRunners": 3,
-    "githubImplementationReview": "pending partial-probe write-ahead recovery and deletion-readback correction",
+    "githubImplementationReview": "closed at worker f33ba36a28f429c8478caa5396dc91ae37ea883a; actual producer client renewal still unavailable; live NOT_CHECKED",
     "browserImplementationReview": "closed at worker ff7cea8863b137007f3a346e4cf4638f077921a2; live NOT_CHECKED",
     "requiredInstallAndCheck": "passed at exact sourceHead; 29/29 cached test-stage tasks plus boundaries/schema",
     "infraAndMappingTestsPassed": 57,
     "kubernetesLocalTestsPassed": 4,
     "githubFixedLocalTestsPassed": 3,
-    "githubPartialLocalTestsPassed": 6,
+    "githubPartialLocalTestsPassed": 7,
     "githubPartialLiveTestsSkipped": 1,
     "missingInputFixedContract": "both new fixed runners exit1 and classify BLOCKED/OWNER_INPUT_MISSING through actual verifier environment",
     "actualFixedAcceptanceReport": "/tmp/praetorium-164ae3b-acceptance.json",
@@ -322,6 +322,11 @@
     "remainingProducerConsumerImplementation": "Fixed GitHub category still requires actual producer client expiry/renewal after S03; direct Platform broker calls cannot certify it",
     "applicationAndDeploymentSourceBaseline": "b3fbe6dcfb586b8f6aa28f5e06fa71ae89733061",
     "baselineScope": "apps/packages/plugins/infrastructure and scripts except verify-integration.mjs are unchanged; that verifier and acceptance tests changed",
-    "productionApplied": false
+    "productionApplied": false,
+    "infraAndMappingVerificationHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "kubernetesLocalVerificationHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "actualFixedAcceptanceSourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "reviewDocument": "docs/verification/INDEPENDENT-REVIEW.md",
+    "reviewDocumentCommit": "5f0bcd9"
   }
 }

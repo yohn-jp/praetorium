@@ -126,5 +126,29 @@
     "Historical generic scratch and OCI digests are not producer-composition acceptance.",
     "No Kubernetes image pull or cluster creation was attempted.",
     "T14 remains blocked on all real integration resources and producer evidence."
-  ]
+  ],
+  "latestGenericSubstrateVerification": {
+    "sourceHead": "423f9b72766515eae01d3740c476bbbe5978c1b1",
+    "launcherSha256": "cabd3594212bd8432eb2ed4aada4c04bd8d925a1b418037df4092c4cee5cc1bb",
+    "status": "VERIFIED_GENERIC_SUBSTRATE_ONLY",
+    "root": "/tmp/praetorium-owned-vCcqpN",
+    "rootAbsentAfterRun": true,
+    "exitCode": 0,
+    "manifestDigest": "sha256:ff72f652ad69ef0a3373ecf8ddf96ebab779b4103f972db16189b976d51351c0",
+    "configDigest": "sha256:5ab69c9e82a1cd32c7067ae11667024e4fc55e95418b7632bfc99fe755e47519",
+    "layerDigest": "sha256:ee4698ed613404354a043e771f69a6527b1c26997d590188b11dc2fec3dc07bb",
+    "manifestBytes": 498,
+    "configBytes": 450,
+    "layerBytes": 131,
+    "log": "/tmp/praetorium-423f9b7-environment-smoke.log",
+    "scope": "Real generic scratch BuildKit push/loopback-registry byte verification and cleanup; no producer composition/admission acceptance",
+    "priorFreshMainAttempt": {
+      "sourceHead": "cfa1f577fbbcdbab49ff2abecb1572350244bb34",
+      "exitCode": 1,
+      "reason": "loopback registry readiness fetch failed; root rTuDsb cleaned",
+      "log": "/tmp/praetorium-cfa1f57-environment-smoke.log"
+    },
+    "historicalRecordNote": "Earlier evidenceCut/launcher failures remain historical. Current generic helper setup is fixed and independently reviewed; full T14 and producer contract gates remain blocked.",
+    "productionApplied": false
+  }
 }

@@ -8,7 +8,7 @@ certified by creating a file or running its local guards.
 
 The browser implementation review closed at worker `ff7cea8` after correcting
 actual UI response status, owner expiry, cookie diagnostics, module identity and
-active-build observation. GitHub implementation review remains open for the
+active-build observation. At this cut, GitHub implementation review was still open for the
 reused partial probe's pre-write durable recovery and verified deletion readback.
 The direct broker path already records a pending recovery tuple before push;
 those records remain outside temporary HOME and contain no credentials. Both
@@ -44,3 +44,21 @@ are unchanged. Direct Platform token-broker expiry assertions cannot replace
 actual producer client renewal; the fixed GitHub harness stays BLOCKED for that
 missing S03 step. T06 closure/smoke implementation, T09 compatible rollback and
 all real acceptance requirements remain unresolved. No production apply occurred.
+
+## Reviewed recovery follow-up
+
+The GitHub findings are closed at worker `f33ba36`, integrated through main
+`d23b9af`. The partial child now persists/syncs its own PENDING journal before
+every push, rechecks owner expiry after that write, and verifies deletion absence
+before marking CLEANED. Direct instrumentation in the actual child preserves
+real Git; no interposer or alternate transport was introduced. Root reran the
+partial suite: 7 local passed, 1 live skipped/BLOCKED; fixed local guards remained
+3/3. Required frozen install and full check passed at exact `d23b9af`.
+Independent review closure is recorded in [INDEPENDENT-REVIEW.md](INDEPENDENT-REVIEW.md).
+The older table above remains the `164ae3b` observation; live gates did not pass.
+
+Further T12 work corrected the generic launcher and reached a real owned Kind
+API. [ENVIRONMENT-RECHECK.md](ENVIRONMENT-RECHECK.md) records the scoped generic
+OCI proof. Real API validation found canonical NetworkPolicy/Pod CEL type errors;
+those corrections and their enforcement proof are a separate in-progress unit,
+not proof that these four fixed category implementations all ran successfully.

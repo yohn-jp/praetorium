@@ -9,9 +9,6 @@ import {
   type D1Database,
 } from "@praetorium/persistence/d1";
 
-const MAX_RETENTION_BYTES = 1_099_511_627_776; // 1 TiB
-const MAX_RETENTION_ENTRIES = 100_000;
-const MAX_MIN_AGE_MS = 10 * 365 * 24 * 60 * 60 * 1_000;
 const MAX_EVICTIONS_PER_RUN = 32;
 const MAX_AUDIT_METADATA_BYTES = 8_192;
 const SYSTEM_ACTOR_ID = "system:build-cache-maintenance";
@@ -178,10 +175,10 @@ function validatePolicy(value: CacheRetentionPolicy): CacheRetentionPolicy {
   }
 
   const bounds: Readonly<Record<keyof CacheRetentionPolicy, readonly [number, number]>> = {
-    maxBytes: [0, MAX_RETENTION_BYTES],
-    maxEntries: [1, MAX_RETENTION_ENTRIES],
-    minAgeMs: [0, MAX_MIN_AGE_MS],
-    maxEvictions: [0, MAX_EVICTIONS_PER_RUN],
+    maxBytes: [0, Number.MAX_SAFE_INTEGER],
+    maxEntries: [1, Number.MAX_SAFE_INTEGER],
+    minAgeMs: [0, Number.MAX_SAFE_INTEGER],
+    maxEvictions: [1, MAX_EVICTIONS_PER_RUN],
   };
   for (const [key, [minimum, maximum]] of Object.entries(bounds) as [
     keyof CacheRetentionPolicy,

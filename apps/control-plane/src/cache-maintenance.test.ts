@@ -27,6 +27,26 @@ afterEach(() => {
 });
 
 describe("cache maintenance advisory planning", () => {
+  it("accepts the full configured safe-integer retention range", async () => {
+    const { db, cacheStore } = createStore();
+    const policy = {
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxEntries: Number.MAX_SAFE_INTEGER,
+      minAgeMs: Number.MAX_SAFE_INTEGER,
+      maxEvictions: 32,
+    };
+
+    const result = await planCacheMaintenance({
+      db,
+      cacheStore,
+      policy,
+      now: new Date("2026-01-01T00:00:00.000Z"),
+    });
+
+    expect(result.policy).toEqual(policy);
+    expect(result.overBudget).toBe(false);
+  });
+
   it("uses the current D1 pin snapshot, protects conflicts, and audits only a bounded advisory plan", async () => {
     const { database, db, cacheStore } = createStore();
     const running = await seedArtifact(database, "build-running", "attempt-running", "a", "a");
@@ -119,18 +139,34 @@ describe("cache maintenance advisory planning", () => {
     });
   });
 
-  it("rejects unbounded or extended retention policy before reading or auditing", async () => {
+  it("enforces safe-integer policy bounds before reading or auditing", async () => {
     const { database, db, cacheStore } = createStore();
     const readSnapshot = vi.fn(cacheStore.getGarbageCollectionSnapshot.bind(cacheStore));
 
-    await expect(
-      planCacheMaintenance({
-        db,
-        cacheStore: { getGarbageCollectionSnapshot: readSnapshot },
-        policy: { maxBytes: 0, maxEntries: 1, minAgeMs: 0, maxEvictions: 33 },
-        now: new Date("2026-01-01T00:00:00.000Z"),
-      }),
-    ).rejects.toThrow(/maxEvictions/u);
+    for (const [policy, expectedField] of [
+      [{ maxBytes: 0, maxEntries: 1, minAgeMs: 0, maxEvictions: 0 }, "maxEvictions"],
+      [
+        {
+          maxBytes: Number.MAX_SAFE_INTEGER + 1,
+          maxEntries: 1,
+          minAgeMs: 0,
+          maxEvictions: 1,
+        },
+        "maxBytes",
+      ],
+      [{ maxBytes: 0, maxEntries: 0, minAgeMs: 0, maxEvictions: 1 }, "maxEntries"],
+      [{ maxBytes: 0, maxEntries: 1, minAgeMs: -1, maxEvictions: 1 }, "minAgeMs"],
+      [{ maxBytes: 0, maxEntries: 1, minAgeMs: 0, maxEvictions: 33 }, "maxEvictions"],
+    ] as const) {
+      await expect(
+        planCacheMaintenance({
+          db,
+          cacheStore: { getGarbageCollectionSnapshot: readSnapshot },
+          policy,
+          now: new Date("2026-01-01T00:00:00.000Z"),
+        }),
+      ).rejects.toThrow(expectedField);
+    }
     await expect(
       planCacheMaintenance({
         db,

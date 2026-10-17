@@ -20,6 +20,12 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { systemNetworkRenderValues } from "../infrastructure/scripts/system-network.mjs";
+import {
+  assertKindRuntimeVersion,
+  KIND_RUNTIME_VERSION,
+  NODE_IMAGE,
+} from "../infrastructure/scripts/kind-runtime.mjs";
+import { applyGuardedBundle } from "../infrastructure/scripts/guarded-apply.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -178,6 +184,26 @@ function resolveExecutable(command) {
     }
   }
   return null;
+}
+
+function kindRuntime() {
+  try {
+    const version = assertKindRuntimeVersion(run("kind", ["version"], { timeout: 5_000 }));
+    return { valid: true, version, requiredVersion: KIND_RUNTIME_VERSION, nodeImage: NODE_IMAGE };
+  } catch (error) {
+    return {
+      valid: false,
+      requiredVersion: KIND_RUNTIME_VERSION,
+      nodeImage: NODE_IMAGE,
+      error: error.message,
+    };
+  }
+}
+
+function requireKindRuntime() {
+  const runtime = kindRuntime();
+  if (!runtime.valid) throw new Error(runtime.error);
+  return runtime;
 }
 
 function preflightKustomize() {
@@ -469,6 +495,7 @@ function report({
   dependencies,
   clusterVerified = false,
   kustomizeValidation,
+  runtime,
   sideEffects = [],
 }) {
   const { inventory, blockers } = inventoryResult;
@@ -481,6 +508,7 @@ function report({
     kubeconfig: kubeconfigPath(inventory),
     clusterVerified,
     dependencies,
+    ...(runtime ? { kindRuntime: runtime } : {}),
     ...(kustomizeValidation ? { kustomizeValidation } : {}),
     blockers,
     sideEffects,
@@ -515,8 +543,9 @@ try {
     if (inventoryResult.blockers.length > 0) process.exitCode = 2;
   } else if (args.action === "preflight") {
     const kustomize = preflightKustomize();
+    const runtime = kindRuntime();
     const dependencies = {
-      kind: available("kind"),
+      kind: runtime.valid,
       kubectl: available("kubectl"),
       kustomize: kustomize.valid,
     };
@@ -529,6 +558,7 @@ try {
       dependencies,
       clusterVerified: false,
       kustomizeValidation: kustomize,
+      runtime,
     });
     if (missing.length > 0 || inventoryResult.blockers.length > 0) {
       process.stderr.write(
@@ -547,6 +577,7 @@ try {
   } else if (args.action === "create") {
     if (!available("kind") || !available("kubectl"))
       throw new Error("create requires installed kind and kubectl");
+    const runtime = requireKindRuntime();
     const kubeconfig = kubeconfigPath(inventory, { createDirectory: true });
     if (pathEntryExists(kubeconfig))
       throw new Error(`refusing to overwrite an existing disposable kubeconfig: ${kubeconfig}`);
@@ -578,6 +609,7 @@ try {
         action: args.action,
         inventoryResult,
         dependencies: { kind: true, kubectl: true },
+        runtime,
         clusterVerified: true,
         sideEffects: [`created disposable Kind cluster ${inventory.ownership.clusterName}`],
       });
@@ -588,6 +620,7 @@ try {
     for (const command of ["kind", "kubectl"]) {
       if (!available(command)) throw new Error(`apply requires installed ${command}`);
     }
+    const runtime = requireKindRuntime();
     const kustomize = preflightKustomize();
     if (!kustomize.valid)
       throw new Error(
@@ -615,8 +648,49 @@ try {
       "/apis/traefik.io/v1alpha1",
     ]);
     const bundle = renderStaticBundle(inventory);
-    run("kubectl", ["--kubeconfig", kubeconfig, "--context", context, "apply", "-f", "-"], {
-      input: bundle,
+    const kubeArgs = ["--kubeconfig", kubeconfig, "--context", context];
+    const readGuard = (resource, name) => {
+      const output = run(
+        "kubectl",
+        [
+          ...kubeArgs,
+          "--request-timeout=5s",
+          "get",
+          resource,
+          name,
+          "--ignore-not-found",
+          "-o",
+          "json",
+        ],
+        { timeout: 7_000 },
+      );
+      return output.trim() === "" ? null : JSON.parse(output);
+    };
+    await applyGuardedBundle({
+      bundle,
+      discover: () =>
+        JSON.parse(
+          run(
+            "kubectl",
+            [
+              ...kubeArgs,
+              "--request-timeout=5s",
+              "get",
+              "--raw",
+              "/apis/admissionregistration.k8s.io/v1",
+            ],
+            { timeout: 7_000 },
+          ),
+        ),
+      serverDryRun: (input) =>
+        run("kubectl", [...kubeArgs, "apply", "--dry-run=server", "--validate=strict", "-f", "-"], {
+          input,
+        }),
+      apply: (input) => run("kubectl", [...kubeArgs, "apply", "-f", "-"], { input }),
+      readPolicy: (name) =>
+        readGuard("validatingadmissionpolicies.admissionregistration.k8s.io", name),
+      readBinding: (name) =>
+        readGuard("validatingadmissionpolicybindings.admissionregistration.k8s.io", name),
     });
     for (const [namespace, name] of [
       ["praetorium-system", "praetorium-instance-access"],
@@ -641,6 +715,7 @@ try {
       action: args.action,
       inventoryResult,
       dependencies: { kind: true, kubectl: true, kustomize: true },
+      runtime,
       clusterVerified: true,
       sideEffects: [`applied static shared resources to ${context}`],
     });

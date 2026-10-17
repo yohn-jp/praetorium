@@ -1,9 +1,10 @@
 # Admission policy deployment gate
 
-The infrastructure apply path needs to install and verify the admission guards
-before it grants the provisioner the broad bootstrap RoleBinding. The helper in
-`infrastructure/scripts/admission-readiness.mjs` provides the read-only checks
-and guard-only bundle extraction for that sequence:
+The infrastructure apply path installs and verifies the admission guards
+before it grants the provisioner the broad bootstrap ClusterRoleBinding.
+`scripts/deploy-infrastructure.mjs` uses `applyGuardedBundle` from
+`infrastructure/scripts/guarded-apply.mjs` with explicit owned-cluster kubectl
+clients and the read-only checks in `admission-readiness.mjs`:
 
 1. Require API discovery for both `admissionregistration.k8s.io/v1`
    `validatingadmissionpolicies` and

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -45,4 +47,40 @@ test("keeps Kind's default network and the disposable ownership labels", () => {
   assert.match(config, /"praetorium\.io\/cluster-id": "@@CLUSTER_ID@@"/u);
   assert.match(config, /"praetorium\.io\/disposable": "true"/u);
   assert.doesNotMatch(config, /disableDefaultCNI\s*:\s*true/u);
+});
+
+test("create rejects an unsupported CLI before invoking Kind create or writing a kubeconfig", () => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "praetorium-kind-version-"));
+  try {
+    const kind = path.join(temporary, "kind");
+    const kubectl = path.join(temporary, "kubectl");
+    const calls = path.join(temporary, "calls");
+    writeFileSync(
+      kind,
+      `#!/bin/sh\nif [ "$1" = "version" ] || [ "$1" = "--version" ]; then echo 'kind v0.30.0 go1.25.0 linux/amd64'; else echo unexpected >> '${calls}'; exit 1; fi\n`,
+      { mode: 0o700 },
+    );
+    writeFileSync(kubectl, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    const result = spawnSync(
+      process.execPath,
+      [
+        "scripts/deploy-infrastructure.mjs",
+        "create",
+        "--inventory",
+        "infrastructure/test/disposable-inventory.json",
+        "--confirm",
+        "praetorium-t12-local",
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...process.env, PRAETORIUM_KIND_BIN: kind, PRAETORIUM_KUBECTL_BIN: kubectl },
+      },
+    );
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /Kind runtime v0.30.0 is unsupported/);
+    assert.throws(() => readFileSync(calls), { code: "ENOENT" });
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });

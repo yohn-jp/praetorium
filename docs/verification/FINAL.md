@@ -5,7 +5,7 @@ The full migration is **not complete**. Implementation, local verification, depl
 | State                         | Result                                                                                                                                                                                                                                               |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Production implementation     | Repository identity/auth/build/lifecycle/UI/provider paths are integrated. Producer-dependent transports fail closed. Build closure inspection/smoke and compatible rollback checks remain unimplemented; T14 has six missing real-category runners. |
-| Local verification            | Required frozen install and full check pass at production cut `487ff55fd705890651ab84c247bc738d7f1c4e54`. Actual Worker/D1/DO category passes; narrower browser/process/credential evidence has explicit limits.                                     |
+| Local verification            | Required frozen install and full check pass at production cut `27142b0ab28e6c7323af3e2c11ed6121bf830574`. Actual Worker/D1/DO category passes; narrower browser/process/credential evidence has explicit limits.                                     |
 | Integrated product acceptance | BLOCKED: no complete login → producer composition → running instance → reconnect/reconfigure/redeploy proof.                                                                                                                                         |
 | Deployment ready              | No. Required operator inputs, immutable service images, owned disposable acceptance and producer contracts/artifact remain missing.                                                                                                                  |
 | Production deployed           | No production Cloudflare, D1, DNS, K3s or NixOS application occurred.                                                                                                                                                                                |
@@ -22,13 +22,14 @@ The current Worker test covers all four migrations, persistent repository DO coo
 
 ## Measurements
 
-| Check                                                        | Observed result                                | Scope                                                             |
-| ------------------------------------------------------------ | ---------------------------------------------- | ----------------------------------------------------------------- |
-| Same-cut actual Worker test                                  | 1/1 pass, 2847.46 ms test / 3095.18 ms process | Local Wrangler/workerd/D1/DO, explicit owned temporary inventory  |
-| Full workspace test stage                                    | 29/29 Turbo tasks, 2.207 s with cache          | Local source verification; not product latency                    |
-| Actual Gateway Chromium probe                                | 1/1 pass, 2047.88 ms                           | Local cookie/session/redirect security only                       |
-| Actual Provisioner process                                   | 1/1 pass, 390.17 ms                            | Health 200/readiness 503, zero claims without producer capability |
-| Real composition build/cache-hit/start/redeploy/resource use | NOT_CHECKED                                    | Requires real producer artifacts and owned execution environment  |
+| Check                                                        | Observed result                                | Scope                                                                                     |
+| ------------------------------------------------------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Same-cut actual Worker test                                  | 1/1 pass, 3201.90 ms test / 3469.93 ms process | Local Wrangler/workerd/D1/DO, explicit owned temporary inventory                          |
+| Full workspace test stage                                    | 29/29 Turbo tasks, 5.056 s with cache          | Local source verification; not product latency                                            |
+| Actual Gateway Chromium probe                                | 1/1 pass, 2865.99 ms                           | Local cookie/session/redirect security only                                               |
+| Actual Provisioner process                                   | 1/1 pass, 390.17 ms                            | Health 200/readiness 503, zero claims without producer capability                         |
+| Actual credential checkpoint probe                           | 1/1 pass, 3417.45 ms test / 3736.85 ms process | Actual local Worker/D1, synthetic absence and local GitHub/Gateway transport at `37f187c` |
+| Real composition build/cache-hit/start/redeploy/resource use | NOT_CHECKED                                    | Requires real producer artifacts and owned execution environment                          |
 
 Historical generic BuildKit/OCI substrate results are retained in [LOCAL-ENVIRONMENT.json](LOCAL-ENVIRONMENT.json). The fresh launcher failed at host user-namespace setup before a build; no historical scratch digest is represented as producer acceptance.
 

@@ -7,8 +7,8 @@
     "checkedAt": "2026-10-17",
     "repository": "yohn-jp/praetorium",
     "branch": "main",
-    "head": "487ff55fd705890651ab84c247bc738d7f1c4e54",
-    "integratedMainHead": "487ff55fd705890651ab84c247bc738d7f1c4e54",
+    "head": "27142b0ab28e6c7323af3e2c11ed6121bf830574",
+    "integratedMainHead": "27142b0ab28e6c7323af3e2c11ed6121bf830574",
     "sourceRepository": "yohn-jp/arcadia-platform",
     "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
     "producerRepository": "yohn-jp/scriptorium",
@@ -27,8 +27,8 @@
   },
   "fixedAcceptanceExecution": {
     "command": "node scripts/verify-integration.mjs --environment /tmp/praetorium-t14-workers-inventory.json",
-    "reportPath": "/tmp/praetorium-487ff55-acceptance.json",
-    "reportGeneratedAt": "2026-10-17T00:20:37.570Z",
+    "reportPath": "/tmp/praetorium-27142b0-acceptance.json",
+    "reportGeneratedAt": "2026-10-17T00:30:29.367Z",
     "reportExitCode": 2,
     "status": "BLOCKED",
     "mode": "run",
@@ -57,7 +57,7 @@
       "status": "VERIFIED",
       "proofStatus": "VERIFIED",
       "runnerPath": "tests/integration/workers-d1-do.test.mjs",
-      "sourceHead": "487ff55fd705890651ab84c247bc738d7f1c4e54",
+      "sourceHead": "27142b0ab28e6c7323af3e2c11ed6121bf830574",
       "workerEntry": "apps/control-plane/src/worker.ts",
       "runtime": "Miniflare 4.20260730.0",
       "bundler": "The actual Wrangler dry-run deployment bundler produced the Worker bundle from the production entry and checked-in compatibility date and flags.",
@@ -83,8 +83,8 @@
       "testResult": {
         "passed": 1,
         "failed": 0,
-        "runnerElapsedMs": 2847.46136,
-        "elapsedMs": 3095.175198,
+        "runnerElapsedMs": 3201.90201,
+        "elapsedMs": 3469.929844,
         "measurementNote": "Separate direct runner at the same clean source HEAD measured one passing test; fixed aggregate category report carries no duration."
       },
       "limitations": [
@@ -159,28 +159,28 @@
     ]
   },
   "latestRootVerification": {
-    "sourceHead": "487ff55fd705890651ab84c247bc738d7f1c4e54",
+    "sourceHead": "27142b0ab28e6c7323af3e2c11ed6121bf830574",
     "frozenInstall": {
       "exitCode": 0,
-      "log": "/tmp/praetorium-487ff55-install.log"
+      "log": "/tmp/praetorium-current-install.log"
     },
     "check": {
       "exitCode": 0,
       "turboTasks": 29,
-      "lastTestStageSeconds": 2.207,
-      "log": "/tmp/praetorium-487ff55-check.log"
+      "lastTestStageSeconds": 5.056,
+      "log": "/tmp/praetorium-current-check.log"
     },
     "workersDirect": {
       "exitCode": 0,
-      "testElapsedMs": 2847.46136,
-      "log": "/tmp/praetorium-487ff55-workers.log"
+      "testElapsedMs": 3201.90201,
+      "log": "/tmp/praetorium-27142b0-workers.log"
     },
     "gatewayPartial": {
-      "sourceHead": "6bf79ec99c646b27bfd238730deae9819b46bf49",
+      "sourceHead": "42e724650eb3493f6703b5a32f7619397e0be24c",
       "exitCode": 0,
-      "testElapsedMs": 2047.879363,
+      "testElapsedMs": 2865.99432,
       "gatewaySourceUnchangedThroughEvidenceCut": true,
-      "log": "/tmp/praetorium-latest-gateway-partial.log",
+      "log": "/tmp/praetorium-42e7246-gateway-partial.log",
       "scope": "Actual local Gateway Worker/DO/KV Chromium cookie/session/redirect boundaries; no successful GitHub login, Instance Access, producer or stable-origin acceptance."
     },
     "provisionerPartial": {
@@ -199,6 +199,14 @@
       "migrations": 4,
       "remoteCalls": false,
       "secretValuesInspected": false
+    },
+    "runtimeCredentialsPartial": {
+      "sourceHead": "37f187c60eb8d5bea842e1bb8e681a7ff62a146b",
+      "exitCode": 0,
+      "testsPassed": 1,
+      "processElapsedMs": 3736.849118,
+      "log": "/tmp/praetorium-37f187c-credentials-partial.log",
+      "scope": "Actual CP Worker/migrations/private credential and checkpoint routes; actual Gateway registry/vault/GitHub revoker helper with local binding and synthetic GitHub HTTP responses. Synthetic absence checkpoint remains503 after401; 204 acknowledgement and retry return200; null epoch does not call Gateway. No actual provider census, liveGitHub, producer or fullGatewayHTTP acceptance."
     }
   },
   "runnerImplementationLimits": [
@@ -453,5 +461,17 @@
       "No production credential, external GitHub service, production cluster, stable product origin, Scriptorium build, release publication, or producer recovery operation was used.",
       "No global token revocation guarantee is claimed."
     ]
-  }
+  },
+  "knownImplementationGaps": [
+    {
+      "task": "T06",
+      "path": "apps/build-worker/src/main.ts",
+      "gap": "Default UnavailableCompositionArtifactInspector: concrete digest-backed OCI closure inspector and declared smoke implementation/wiring remain missing; S01 ABI delivery is a prerequisite, not automatic enablement."
+    },
+    {
+      "task": "T09",
+      "path": "apps/provisioner/src/lifecycle-executor.ts",
+      "gap": "isRollbackCompatible always false: evidence-based compatible rollback checker is missing; producer compatibility evidence must precede enablement."
+    }
+  ]
 }

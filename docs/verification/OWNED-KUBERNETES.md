@@ -248,19 +248,55 @@ VAP and binding summaries compare byte-for-byte before and after. Evidence is
 preserved outside the repository at
 `/tmp/praetorium-owned-kube-evidence-20261017/current`; its SHA-256 manifest is
 `/tmp/praetorium-owned-kube-evidence-20261017/SHA256SUMS`, hash
-`e76a2c23d708b6fc88c10969f0c9ec525ea506929c3d3bd2a0d00c2f7af746a6`. The
+`ed5a500547a3ec53871e02ba0d91d7f5b407b6b3554fd9d9d86ff3b08abc917e`. The
 candidate matrix report hash is
 `da9094d95f7664a937cdc73fbb4c5ea287a83141723814b54b9b1b8b487241f9`; the
 cleanup report hash is
 `4fa6999e3af2ee40c1380bbf061d90a2e65ac2513b384d65bed02a56deb3b01e`. The
 archive omits kubeconfig, auth, private environment, and key material.
 
+## Build Worker secret-mount filesystem metadata
+
+After the admission probe, the same owned v1.35.0 Kind cluster ran one
+restricted, short-lived Pod using the digest-pinned public Node image
+`docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5`.
+It used UID/GID/fsGroup 10001, a read-only Secret projection with mode `0440`,
+an 8 Mi memory `emptyDir`, and a 2 Gi temporary `emptyDir`. The kubelet
+confirmed the requested image digest; the Pod exited 0. The process printed
+only IDs, file type, mode, ownership, symlink target metadata, and whether a
+read-only open succeeded. It never read or logged Secret payload bytes.
+
+The actual kubelet-mounted roots were group/world writable: Secret projection
+root `03777` (UID 0/GID 10001), projected `..data` target `02755`, memory
+`emptyDir` root `03777`, and temporary `emptyDir` root `02777`. The projected
+file was `0440` (UID 0/GID 10001), and UID/GID/group 10001 successfully opened
+it read-only. These observations are relevant to the Build Worker secret
+preparation path: validation that requires private modes on source mount
+directories cannot accept these raw Kubernetes mounts. This probe did not
+execute `prepare-runtime-secrets`, copy material into the private runtime
+directory, invoke the Build Worker constructor, or make a build request; those
+remain separate acceptance gates.
+
+The temporary Pod, benign Secret, and unique namespace were deleted with exact
+UID preconditions. The API returned HTTP 200 for all three deletes, and
+follow-up GETs confirmed the namespace, Pod, and Secret absent. The report SHA
+is `c50180d8ffa7b3d021c0983d8aafeaa005fa9731d14bf6690d8c3395f94ed1ca`; the
+metadata-only output SHA is
+`5a4e9b9c3bbe1fe87e427697341c1c628de6f3254a71ed7ed6a921b208b05357`, and the
+cleanup verification SHA is
+`2daf994a6eb32d0cd3a55c1f731ce00a210a7f0a3a10a05c7b430df46daca5e6`.
+These reports are in the private evidence archive's
+`current/buildworker-secret-fs-20261017/`
+directory (private absolute paths and credentials are excluded from the
+archive index).
+
 The IPv6 change was integrated after this live probe at main commit
 `f3327c1edeb8e4aabd3c0d740a512e9db1b90a35`; the renderer, VAP, and system
 policy file hashes at that commit are byte-identical to worker `522af7c`. The
 probe used the worker checkout and did not rerun the integrated product
-render/guard path, so that path still needs an integration recheck. The fresh
-cluster remains an explicitly owned disposable environment for a separate
-bounded T12 Build Worker secret-projection probe. Kind's default networking
-does not certify NetworkPolicy packet enforcement, so CNI enforcement remains
+render/guard path, so that path still needs an integration recheck. The
+secret-mount metadata probe is complete. The explicitly owned cluster is
+retained for the separately bounded Build Worker private-copy/init-component
+check; its completion is not implied here. Kind's default networking does not
+certify NetworkPolicy packet enforcement, so CNI enforcement remains
 **NOT_CHECKED**; no producer artifact or integrated T14 flow was used.

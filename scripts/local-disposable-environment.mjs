@@ -20,6 +20,7 @@ import { constants as fsConstants } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
+import { Script } from "node:vm";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -807,7 +808,7 @@ async function removeMappedOwnedRoot(root, rootDevice, owner) {
     'const owner = JSON.parse(await fs.readFile(ownerPath, "utf8"));',
     'if (JSON.stringify(owner) !== JSON.stringify(expectedOwner) || owner.schema !== "praetorium.local-disposable-owner/v2" || owner.root !== root || owner.disposable !== true || owner.production !== false || owner.ownerUid !== expectedOwner.ownerUid || owner.ownerGid !== expectedOwner.ownerGid || owner.buildkitSocket !== path.join(root, "runtime", "buildkit.sock")) throw new Error("mapped cleanup owner marker does not match the prevalidated ownership record");',
     'const mountInfo = await fs.readFile("/proc/self/mountinfo", "utf8");',
-    'for (const line of mountInfo.split("\\n")) { if (!line) continue; const [mountFields] = line.split(" - ", 1); const fields = mountFields?.split(" "); if (!fields || fields.length < 5) throw new Error("could not parse cleanup namespace mount information"); const mountPoint = path.resolve(fields[4].replace(/\\\\([0-7]{3})/gu, (_escape, octal) => String.fromCharCode(Number.parseInt(octal, 8))); const relative = path.relative(root, mountPoint); if (relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) throw new Error(`refusing mapped cleanup: mountpoint under owned root: ${mountPoint}`); }',
+    'for (const line of mountInfo.split("\\n")) { if (!line) continue; const [mountFields] = line.split(" - ", 1); const fields = mountFields?.split(" "); if (!fields || fields.length < 5) throw new Error("could not parse cleanup namespace mount information"); const mountPoint = path.resolve(fields[4].replace(/\\\\([0-7]{3})/gu, (_escape, octal) => String.fromCharCode(Number.parseInt(octal, 8)))); const relative = path.relative(root, mountPoint); if (relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) throw new Error(`refusing mapped cleanup: mountpoint under owned root: ${mountPoint}`); }',
     'const mapped = (id, entries) => entries.some(([inner, _outer, count]) => id >= inner && id < inner + count);',
     "const pending = [root];",
     "while (pending.length > 0) {",
@@ -819,6 +820,9 @@ async function removeMappedOwnedRoot(root, rootDevice, owner) {
     "}",
     'await fs.rm(root, { recursive: true, force: true });',
   ].join("\n");
+  new Script(`(async () => {\n${scanner}\n})`, {
+    filename: "mapped-disposable-cleanup-child.js",
+  });
   args.push(
     "--setuid=0",
     "--setgid=0",

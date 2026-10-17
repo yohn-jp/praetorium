@@ -1,6 +1,6 @@
 # Reproducible Praetorium deployment
 
-This is the operator runbook for **NixOS or dedicated Ubuntu 24.04 guest roles**, the Cloudflare Workers and the K3s application plane. It does not use SOPS, require Proxmox host modifications, install a new GitHub App, or deploy from locally edited source files. Every deploy is tied to a checked-out Git commit, a complete owner-supplied nonsecret inventory and private file-backed credentials.
+This is the operator runbook for **NixOS or dedicated Ubuntu 24.04 / 26.04 guest roles**, the Cloudflare Workers and the K3s application plane. It does not use SOPS, require Proxmox host modifications, install a new GitHub App, or deploy from locally edited source files. Every deploy is tied to a checked-out Git commit, a complete owner-supplied nonsecret inventory and private file-backed credentials.
 
 ## 0. Bootstrap sequence (one-time)
 
@@ -11,7 +11,7 @@ On Proxmox create two independent Linux VMs:
 | runtime | Ubuntu or NixOS, K3s, Flux, cert-manager, Traefik, Praetorium deployments | 2–4 vCPU, 4–8 GiB RAM, persistent OS disk |
 | build | Ubuntu or NixOS, rootless mTLS BuildKit, separately bounded cache device | 2–4 vCPU, 4–8 GiB RAM, persistent OS disk and separate preformatted XFS cache device |
 
-The numbers are starting estimates, not tested sizing limits. A single-VM BuildKit+runtime arrangement is deliberately disallowed by the current BuildKit role; do not bypass its no-K3s assertion. Proxmox itself remains untouched. Follow [NixOS initial install](NIXOS-INSTALL.md) on each VM, or the isolated [Ubuntu 24.04 bootstrap](UBUNTU-2404.md) on fresh Ubuntu guests. Ubuntu uses its own root-owned JSON inputs and does not use `bootstrap-linux.sh` or NixOS modules.
+The numbers are starting estimates, not tested sizing limits. A single-VM BuildKit+runtime arrangement is deliberately disallowed by the current BuildKit role; do not bypass its no-K3s assertion. Proxmox itself remains untouched. Follow [NixOS initial install](NIXOS-INSTALL.md) on each VM, or the isolated [Ubuntu 24.04 / 26.04 bootstrap](UBUNTU-2404.md) on fresh Ubuntu guests. Ubuntu uses its own root-owned JSON inputs and does not use `bootstrap-linux.sh` or NixOS modules.
 
 Clone the repository on each guest at **the same reviewed immutable commit** (replace `COMMIT` with the actual merged/released commit):
 

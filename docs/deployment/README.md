@@ -2,7 +2,7 @@
 
 **Operational entry point:** [Reproducible deployment](REPRODUCIBLE-DEPLOYMENT.md) (two isolated host roles, Kubernetes controllers and workloads, Cloudflare Worker releases, externally supplied credentials and end-to-end gates).
 
-**Fresh VM installation:** [NixOS ISO/Proxmox setup](NIXOS-INSTALL.md) or [Ubuntu 24.04 host bootstrap](UBUNTU-2404.md). **NixOS bootstrap:** [NIXOS-BOOTSTRAP](NIXOS-BOOTSTRAP.md). **Cloudflare-only:** [CLOUDFLARE-ONE-COMMAND](CLOUDFLARE-ONE-COMMAND.md).
+**Fresh VM installation:** [NixOS ISO/Proxmox setup](NIXOS-INSTALL.md) or [Ubuntu 24.04 / 26.04 host bootstrap](UBUNTU-2404.md). **NixOS bootstrap:** [NIXOS-BOOTSTRAP](NIXOS-BOOTSTRAP.md). **Cloudflare-only:** [CLOUDFLARE-ONE-COMMAND](CLOUDFLARE-ONE-COMMAND.md).
 
 The existing Kind-specific verification and infrastructure inventory are retained below for test environments. They are not the production deployment inventory or instructions for mutating a K3s environment.
 

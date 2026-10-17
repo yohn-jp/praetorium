@@ -1,9 +1,9 @@
-# Ubuntu 24.04 host bootstrap (two dedicated VMs)
+# Ubuntu 24.04 / 26.04 host bootstrap (two dedicated VMs)
 
 This is an **additive alternative** to the NixOS host roles. The existing
 Cloudflare/K3s deployment inventory, Render/Kustomize/Flux manifests, Node
 services, and `scripts/deploy-platform.mjs` are unchanged. Both guests must be
-**new, dedicated Ubuntu Server 24.04 LTS x86_64 VMs**, on a privately managed
+**new, dedicated Ubuntu Server 24.04 / 26.04 LTS x86_64 VMs**, on a privately managed
 network. Do not run this on Proxmox, an existing shared Ubuntu host, or a host
 with application workloads. No changes to NixOS roles are required.
 
@@ -83,7 +83,7 @@ for a mismatched IP. Fill the operator input JSON with:
   (systemd memory limit), and `tasksMax` (integer).
 
 This BuildKit service does not receive K3s credentials, a privileged Docker
-socket, GitHub tokens or signing keys. Ubuntu 24.04 normally confines
+socket, GitHub tokens or signing keys. Ubuntu 24.04 / 26.04 normally confines
 unprivileged user namespaces. This bootstrap installs a **path-specific**
 AppArmor rule for `rootlesskit`; it refuses an already globally weakened
 `kernel.apparmor_restrict_unprivileged_userns=0` configuration. It does not

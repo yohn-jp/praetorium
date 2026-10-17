@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Additive Ubuntu 24.04 host bootstrap. --check makes no changes.
+"""Additive Ubuntu 24.04 / 26.04 host bootstrap. --check makes no changes.
 
 Only fresh, dedicated VMs are accepted. No disk formatting, firewall rewrites,
 SSH configuration, production deployment or existing service replacement.
@@ -118,14 +118,18 @@ def verify_certificate_ip(cert, address):
             "server certificate does not match bindAddress")
 
 
-def host_preflight(role):
+def verify_ubuntu_release():
     os_release = dict(
         line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines()
         if "=" in line
     )
     require(os_release.get("ID", "").strip('"') == "ubuntu" and
-            os_release.get("VERSION_ID", "").strip('"') == "24.04",
-            "Ubuntu 24.04 LTS is required")
+            os_release.get("VERSION_ID", "").strip('"') in ("24.04", "26.04"),
+            "Ubuntu 24.04 or 26.04 LTS is required")
+
+
+def host_preflight(role):
+    verify_ubuntu_release()
     require(os.uname().machine == "x86_64", "only x86_64 supported")
     require(not ROLE_MARKER.exists(), "existing Praetorium Ubuntu role; refusing to reconfigure")
     require(not (Path("/etc/NIXOS").exists()), "NixOS must use the existing bootstrap")

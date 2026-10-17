@@ -15,6 +15,21 @@ spec.loader.exec_module(bootstrap)
 
 
 class PreflightTests(unittest.TestCase):
+    def test_supported_ubuntu_lts_releases_are_accepted(self):
+        for version in ("24.04", "26.04"):
+            with self.subTest(version=version), patch.object(
+                    bootstrap.Path, "read_text", return_value=
+                    'ID=ubuntu\nVERSION_ID="' + version + '"\n'):
+                bootstrap.verify_ubuntu_release()
+
+    def test_other_releases_and_distributions_are_rejected(self):
+        for data in ('ID=ubuntu\nVERSION_ID="25.10"\n',
+                     'ID=debian\nVERSION_ID="26.04"\n', 'ID=ubuntu\n'):
+            with self.subTest(data=data), patch.object(
+                    bootstrap.Path, "read_text", return_value=data):
+                with self.assertRaisesRegex(ValueError, "24.04 or 26.04"):
+                    bootstrap.verify_ubuntu_release()
+
     def test_missing_oci_runtime_is_rejected(self):
         with patch.object(bootstrap.shutil, "which", return_value=None):
             with self.assertRaisesRegex(ValueError, "missing preinstalled OCI runtime"):

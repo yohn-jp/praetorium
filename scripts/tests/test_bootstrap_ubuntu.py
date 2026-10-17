@@ -16,6 +16,22 @@ spec.loader.exec_module(bootstrap)
 
 
 class PreflightTests(unittest.TestCase):
+    def test_packaged_rootlesskit_profile_does_not_get_a_conflicting_attachment(self):
+        with patch.object(bootstrap.Path, "is_file", return_value=True), \
+                patch.object(bootstrap, "write_new") as write, \
+                patch.object(bootstrap, "execute") as execute:
+            bootstrap.configure_rootlesskit_apparmor("/usr/bin/rootlesskit")
+            write.assert_not_called()
+            execute.assert_called_once_with("apparmor_parser", "-r", "/etc/apparmor.d/rootlesskit")
+
+    def test_custom_rootlesskit_profile_does_not_modify_the_packaged_one(self):
+        with patch.object(bootstrap.Path, "is_file", return_value=True), \
+                patch.object(bootstrap, "write_new") as write, \
+                patch.object(bootstrap, "execute"):
+            bootstrap.configure_rootlesskit_apparmor("/usr/local/bin/rootlesskit")
+            self.assertEqual(write.call_args.args[0], bootstrap.APPARMOR_PROFILE)
+            self.assertIn("/usr/local/bin/rootlesskit flags=", write.call_args.args[1])
+
     def storage_root(self):
         root = MagicMock(spec=Path)
         root.resolve.return_value = root

@@ -302,6 +302,20 @@ def apply_runtime(config):
         raise ValueError("K3s node with declared cluster identity did not become Ready")
 
 
+def configure_rootlesskit_apparmor(rootlesskit):
+    # Ubuntu ships an attachment for /usr/bin/rootlesskit. A second profile
+    # for that executable conflicts and prevents the userns allowance.
+    packaged_profile = Path("/etc/apparmor.d/rootlesskit")
+    if rootlesskit == "/usr/bin/rootlesskit" and packaged_profile.is_file():
+        execute("apparmor_parser", "-r", str(packaged_profile))
+    else:
+        write_new(APPARMOR_PROFILE, "\n".join([
+            "abi <abi/4.0>,", "include <tunables/global>", "",
+            rootlesskit + " flags=(unconfined) {", "  userns,", "}", ""
+        ]))
+        execute("apparmor_parser", "-r", str(APPARMOR_PROFILE))
+
+
 def apply_build(config):
     rootlesskit = executable("rootlesskit")
     slirp4netns = executable("slirp4netns")
@@ -333,19 +347,15 @@ def apply_build(config):
         '  minFreeSpace = ' + str(config["minFreeMiB"] * 1024 * 1024),
         '  reservedSpace = "5%"', ''
     ]))
-    # Path-scoped AppArmor accommodation, not a host-wide sysctl disable.
-    write_new(APPARMOR_PROFILE, "\n".join([
-        "abi <abi/4.0>,", "include <tunables/global>", "",
-        rootlesskit + " flags=(unconfined) {", "  userns,", "}", ""
-    ]))
-    execute("apparmor_parser", "-r", str(APPARMOR_PROFILE))
+    configure_rootlesskit_apparmor(rootlesskit)
     port = str(config["listenPort"])
     allow = " ".join(config["clientCidrs"] + config["egressCidrs"] +
                      ["127.0.0.0/8", "::1/128"])
     command = (" ".join([rootlesskit, "--net=slirp4netns",
                "--slirp4netns-binary=" + slirp4netns,
+               "--copy-up=/etc",
                "--disable-host-loopback", "--port-driver=builtin",
-               "--publish-port=" + config["bindAddress"] + ":" + port + ":" + port + "/tcp",
+               "--publish=" + config["bindAddress"] + ":" + port + ":" + port + "/tcp",
                buildkitd, "--config=" + str(BUILD_CONFIG), "--rootless"]))
     write_new(BUILD_UNIT, "\n".join([
         "[Unit]", "Description=Praetorium isolated rootless mTLS BuildKit",
@@ -365,7 +375,10 @@ def apply_build(config):
         "CPUQuota=" + config["cpuQuota"],
         "MemoryMax=" + config["memoryMax"],
         "TasksMax=" + str(config["tasksMax"]),
-        "CapabilityBoundingSet=CAP_SETUID CAP_SETGID",
+        # Restricting the bounding set to SETUID/GID breaks newuidmap and
+        # capabilities needed inside the child user namespace. The host
+        # daemon runs as buildkit with no ambient host capabilities.
+        "AmbientCapabilities=",
         "DevicePolicy=closed", "DeviceAllow=/dev/net/tun rw",
         "PrivateTmp=true", "ProtectHome=true", "ProtectSystem=strict",
         "ReadWritePaths=" + str(BUILD_ROOT) + " /run/praetorium-buildkit",

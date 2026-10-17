@@ -108,10 +108,20 @@ df -h /var/lib/praetorium-buildkit
 
 This BuildKit service does not receive K3s credentials, a privileged Docker
 socket, GitHub tokens or signing keys. Ubuntu 24.04 / 26.04 normally confines
-unprivileged user namespaces. This bootstrap installs a **path-specific**
-AppArmor rule for `rootlesskit`; it refuses an already globally weakened
+unprivileged user namespaces. This bootstrap reuses Ubuntu's packaged
+`rootlesskit` AppArmor profile for `/usr/bin/rootlesskit`, or installs a
+**path-specific** rule for a separately staged executable. It does not create
+a second executable attachment that conflicts with the packaged profile.
+It refuses an already globally weakened
 `kernel.apparmor_restrict_unprivileged_userns=0` configuration. It does not
 disable AppArmor globally. <https://github.com/moby/buildkit/blob/master/docs/rootless.md>
+
+The daemon runs as the dedicated `buildkit` user, with no ambient host
+capabilities. Keep the normal capability bounding set for subordinate-ID
+helpers and capabilities inside the child user namespace; limiting it to
+SETUID/SETGID prevents UID mapping on the validated Ubuntu host. RootlessKit
+uses `--publish` for the private listener and `--copy-up=/etc` to preserve
+isolated DNS configuration when the host resolver restarts.
 
 ## Nonmutating preflight, then explicit apply
 

@@ -258,19 +258,23 @@ archive omits kubeconfig, auth, private environment, and key material.
 ## Build Worker secret-mount filesystem metadata
 
 After the admission probe, the same owned v1.35.0 Kind cluster ran one
-restricted, short-lived Pod using the digest-pinned public Node image
+short-lived Pod using the digest-pinned public Node image
 `docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5`.
-It used UID/GID/fsGroup 10001, a read-only Secret projection with mode `0440`,
-an 8 Mi memory `emptyDir`, and a 2 Gi temporary `emptyDir`. The kubelet
-confirmed the requested image digest; the Pod exited 0. The process printed
-only IDs, file type, mode, ownership, symlink target metadata, and whether a
-read-only open succeeded. It never read or logged Secret payload bytes.
+The archived Pod manifest (SHA-256
+`e37120b14ccbe94900eefedc87c133bd414ccd26ad6abc6ab3b50a82ec61a969`) specifies
+the restricted security profile, UID/GID/fsGroup 10001, a read-only Secret
+projection with mode `0440`, an 8 Mi memory `emptyDir`, and a 2 Gi temporary
+`emptyDir`. The kubelet confirmed the requested image digest; the Pod exited
+0. The process output observed UID/GID/groups 10001 and printed only file
+type, mode, ownership, symlink target metadata, and whether a read-only open
+succeeded. It never read or logged Secret payload bytes.
 
-The actual kubelet-mounted roots were group/world writable: Secret projection
-root `03777` (UID 0/GID 10001), projected `..data` target `02755`, memory
-`emptyDir` root `03777`, and temporary `emptyDir` root `02777`. The projected
-file was `0440` (UID 0/GID 10001), and UID/GID/group 10001 successfully opened
-it read-only. These observations are relevant to the Build Worker secret
+The actual kubelet mount modes included writable shared roots: Secret
+projection root `03777` (UID 0/GID 10001), memory `emptyDir` root `03777`,
+and temporary `emptyDir` root `02777`. The projected `..data` target was
+`02755` (UID 0/GID 10001): group/world readable and executable, but not
+writable. The projected file was `0440` (UID 0/GID 10001), and UID/GID/group
+10001 successfully opened it read-only. These observations are relevant to the Build Worker secret
 preparation path: validation that requires private modes on source mount
 directories cannot accept these raw Kubernetes mounts. This probe did not
 execute `prepare-runtime-secrets`, copy material into the private runtime

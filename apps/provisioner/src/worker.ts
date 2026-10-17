@@ -60,7 +60,7 @@ export interface ProvisionerWorkerOptions {
   readonly logger?: ProvisionerLogger;
   readonly metrics?: ProvisionerMetrics;
   readonly onReadyChange?: (ready: boolean) => void;
-  readonly onOperationSettled?: () => void;
+  readonly onOperationSettled?: (instanceId: string) => void;
 }
 
 const DEFAULT_LEASE_SECONDS = 30;
@@ -432,7 +432,7 @@ export class ProvisionerWorker {
             this.inFlight.delete(claim.operation.id);
             this.metrics.changeInFlight(-1);
             try {
-              this.options.onOperationSettled?.();
+              this.options.onOperationSettled?.(claim.operation.instanceId);
             } catch (error) {
               this.logger.warn("operation_settle_callback_error", { code: record(error) });
             }

@@ -139,6 +139,7 @@ describe("ProvisionerWorker observation reporting", () => {
     });
     expect(reports[1]?.observation).not.toHaveProperty("operationId");
     expect(onOperationSettled).toHaveBeenCalledOnce();
+    expect(onOperationSettled).toHaveBeenCalledWith(claim.operation.instanceId);
   });
 
   it("blocks terminal success when the completed assignment differs from the operation target", async () => {
@@ -274,6 +275,73 @@ describe("ProvisionerWorker observation reporting", () => {
       await running;
 
       expect(calls).toBe(7);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers a missed work notification through the bounded claim and refreshes its instance", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      let claim!: ClaimedProvisionerOperation;
+      const onOperationSettled = vi.fn();
+      let calls = 0;
+      let firstClaim!: () => void;
+      const firstClaimed = new Promise<void>((resolve) => {
+        firstClaim = resolve;
+      });
+      const operations = {
+        async claimNext(input: { readonly signal: AbortSignal }) {
+          calls += 1;
+          if (calls === 1) {
+            firstClaim();
+            return null;
+          }
+          if (calls === 2) {
+            claim = claimed();
+            return claim;
+          }
+          return new Promise<null>((resolve) => {
+            input.signal.addEventListener("abort", () => resolve(null), { once: true });
+          });
+        },
+        async heartbeat(input: {
+          readonly operationId: string;
+          readonly leaseEpoch: number;
+          readonly leaseToken: string;
+        }) {
+          return {
+            leaseExpiresAt: Date.now() + 60_000,
+            operation: { ...claim.operation, ...input, leaseExpiresAt: Date.now() + 60_000 },
+          };
+        },
+        async report(input: Record<string, unknown>) {
+          if (input.terminal !== undefined) controller.abort();
+          return { operation: claim.operation, applied: true, duplicate: false };
+        },
+      } as unknown as ProvisionerOperationService;
+      const worker = new ProvisionerWorker({
+        operations,
+        executor: {
+          async execute() {
+            return { status: "complete", observed: actualAssignment() } as LifecycleResult;
+          },
+        },
+        workerId: "worker-a",
+        clusterId: "cluster-a",
+        onOperationSettled,
+        recoveryIntervalMs: 300_000,
+      });
+
+      const running = worker.run(controller.signal);
+      await firstClaimed;
+      expect(calls).toBe(1);
+      await vi.advanceTimersByTimeAsync(300_000);
+      await running;
+
+      expect(calls).toBe(3);
+      expect(onOperationSettled).toHaveBeenCalledWith(claim.operation.instanceId);
     } finally {
       vi.useRealTimers();
     }

@@ -271,6 +271,29 @@ describe("OperationServiceHttpClient", () => {
     expect(page.nextCursor).toBeNull();
   });
 
+  it("uses the scoped candidate point route and accepts an absent current candidate", async () => {
+    let request: { path: string; body: Record<string, unknown> } | undefined;
+    const service = client(async (input, init) => {
+      request = {
+        path: new URL(String(input)).pathname,
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      };
+      return Response.json(null);
+    });
+
+    const result = await service.readIdleCandidate({
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      instanceId: "ins_01",
+    });
+
+    expect(request).toEqual({
+      path: "/internal/provisioner/idle-candidate",
+      body: { workerId: "worker-a", clusterId: "cluster-a", instanceId: "ins_01" },
+    });
+    expect(result).toBeNull();
+  });
+
   it("rejects malformed idle candidates and excessive page bounds", async () => {
     const service = client(async (input) => {
       if (String(input).endsWith("/idle-candidates")) {

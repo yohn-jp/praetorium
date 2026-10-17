@@ -161,6 +161,15 @@ export class IdleDeadlineJournal {
     return true;
   }
 
+  async removeByInstance(instanceId: string): Promise<boolean> {
+    if (!this.persistent || this.path === undefined) return false;
+    if (!this.records.has(instanceId)) return true;
+    const next = new Map(this.records);
+    next.delete(instanceId);
+    await this.replace(next);
+    return true;
+  }
+
   async prune(bindings: ReadonlyMap<string, IdleDeadlineBinding>): Promise<boolean> {
     if (!this.persistent || this.path === undefined) return false;
     const next = new Map(

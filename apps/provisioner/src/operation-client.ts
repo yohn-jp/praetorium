@@ -2,8 +2,10 @@ import type { LifecyclePhase, LifecycleReadinessEvidence } from "@praetorium/app
 import {
   RuntimeCanaryHealthDueRequestSchema,
   RuntimeCanaryHealthDueResponseSchema,
+  RuntimeIdleCandidateRequestSchema,
   type RuntimeCanaryHealthDueRequest,
   type RuntimeCanaryHealthDueResponse,
+  type RuntimeIdleCandidateRequest,
 } from "@praetorium/contracts";
 
 export type ProvisionerOperationKind = "start" | "stop" | "redeploy" | "update";
@@ -318,6 +320,9 @@ export interface HttpOperationServiceOptions {
 }
 
 export interface ProvisionerOperationService {
+  readIdleCandidate(
+    input: RuntimeIdleCandidateRequest & { readonly signal?: AbortSignal },
+  ): Promise<ProvisionerIdleCandidate | null>;
   listIdleCandidates(input: {
     readonly workerId: string;
     readonly clusterId: string;
@@ -1251,6 +1256,14 @@ export class OperationServiceHttpClient
     }
     if (/[\r\n]/u.test(options.credential))
       throw new TypeError("Operation Service credential is invalid");
+  }
+
+  async readIdleCandidate(
+    input: RuntimeIdleCandidateRequest & { readonly signal?: AbortSignal },
+  ): Promise<ProvisionerIdleCandidate | null> {
+    const body = RuntimeIdleCandidateRequestSchema.parse(withoutSignal(input));
+    const result = await this.post("/idle-candidate", body, input.signal);
+    return result === null ? null : parseIdleCandidate(result);
   }
 
   async listIdleCandidates(input: {

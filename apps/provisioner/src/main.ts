@@ -157,7 +157,9 @@ async function main(): Promise<void> {
   const health = new HealthServer({
     metrics,
     workAvailability,
-    onWorkAvailable: () => idleController?.notifyWorkAvailable(),
+    onWorkAvailable: (instanceId) => {
+      if (instanceId !== undefined) idleController?.notifyWorkAvailable(instanceId);
+    },
     ...(config.workNotificationToken === undefined
       ? {}
       : { workNotificationToken: config.workNotificationToken }),
@@ -201,7 +203,7 @@ async function main(): Promise<void> {
       workerId: config.workerId,
       clusterId: config.clusterId,
       workAvailability,
-      onOperationSettled: () => idleController?.notifyWorkAvailable(),
+      onOperationSettled: (instanceId) => idleController?.notifyWorkAvailable(instanceId),
       metrics,
       logger,
       onReadyChange: (value) => {

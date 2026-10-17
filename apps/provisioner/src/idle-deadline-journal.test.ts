@@ -74,6 +74,21 @@ describe("IdleDeadlineJournal", () => {
     expect(restored.get(record)).toBeUndefined();
   });
 
+  it("removes a scheduler hint by instance after a current-candidate lookup returns null", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "praetorium-idle-journal-"));
+    directories.push(directory);
+    const path = join(directory, "state.json");
+    const journal = new IdleDeadlineJournal(path);
+    await journal.load();
+    await journal.put(record);
+
+    expect(await journal.removeByInstance(record.instanceId)).toBe(true);
+    expect(journal.get(record)).toBeUndefined();
+    const restored = new IdleDeadlineJournal(path);
+    await restored.load();
+    expect(restored.get(record)).toBeUndefined();
+  });
+
   it("fails closed on a malformed durable file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "praetorium-idle-journal-"));
     directories.push(directory);

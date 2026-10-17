@@ -42,9 +42,11 @@ describe("HealthServer work notification receiver", () => {
   async function start(options: { readonly enabled?: boolean } = {}) {
     const workAvailability = new WorkAvailability();
     const notify = vi.spyOn(workAvailability, "notify");
+    const onWorkAvailable = vi.fn();
     server = new HealthServer({
       metrics: new ProvisionerMetrics(),
       ...(options.enabled === false ? {} : { workAvailability, workNotificationToken: token }),
+      onWorkAvailable,
       port: 0,
       host: "127.0.0.1",
       isLive: () => true,
@@ -55,6 +57,7 @@ describe("HealthServer work notification receiver", () => {
     if (address === null || typeof address === "string") throw new Error("server did not bind TCP");
     return {
       notify,
+      onWorkAvailable,
       post: (body: string, authorization = `Bearer ${token}`) =>
         fetch(`http://127.0.0.1:${address.port}/internal/work-available`, {
           method: "POST",
@@ -67,13 +70,26 @@ describe("HealthServer work notification receiver", () => {
     };
   }
 
-  it("accepts only an authenticated operation notification and signals the local worker", async () => {
+  it("accepts a scoped operation notification and queues only that instance", async () => {
+    const h = await start();
+
+    const response = await h.post(
+      '{"version":1,"kind":"operation","instanceId":"ins_01ARZ3NDEKTSV4RRFFQ69G5FAV"}',
+    );
+
+    expect(response.status).toBe(202);
+    expect(h.notify).toHaveBeenCalledOnce();
+    expect(h.onWorkAvailable).toHaveBeenCalledWith("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV");
+  });
+
+  it("keeps an unscoped operation hint on the claim signal only", async () => {
     const h = await start();
 
     const response = await h.post('{"version":1,"kind":"operation"}');
 
     expect(response.status).toBe(202);
     expect(h.notify).toHaveBeenCalledOnce();
+    expect(h.onWorkAvailable).not.toHaveBeenCalled();
   });
 
   it("rejects wrong credentials, other work kinds, and oversized bodies", async () => {
@@ -81,6 +97,9 @@ describe("HealthServer work notification receiver", () => {
 
     const wrongToken = await h.post('{"version":1,"kind":"operation"}', "Bearer wrong");
     const wrongKind = await h.post('{"version":1,"kind":"build"}');
+    const scopedBuild = await h.post(
+      '{"version":1,"kind":"build","instanceId":"ins_01ARZ3NDEKTSV4RRFFQ69G5FAV"}',
+    );
     const oversized = await h.post("x".repeat(1_025));
     const address = server?.address;
     if (address === null || address === undefined || typeof address === "string")
@@ -89,6 +108,7 @@ describe("HealthServer work notification receiver", () => {
 
     expect(wrongToken.status).toBe(401);
     expect(wrongKind.status).toBe(400);
+    expect(scopedBuild.status).toBe(400);
     expect(oversized.status).toBe(413);
     expect(oversizedChunked).toBe(413);
     expect(h.notify).not.toHaveBeenCalled();

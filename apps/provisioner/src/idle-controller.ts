@@ -273,9 +273,14 @@ export class ProvisionerIdleController {
   private readonly recordedHealthTriggers = new Set<string>();
   private journalLoadAttempted = false;
   private journalReady = false;
-  private discoveryPending = true;
-  private discoveryRetryAt: number | undefined;
-  private discoveryRetryMs = INITIAL_RETRY_INTERVAL_MS;
+  private startupDiscoveryPending = true;
+  private startupDiscoveryRetryAt: number | undefined;
+  private startupDiscoveryRetryMs = INITIAL_RETRY_INTERVAL_MS;
+  private readonly pendingRefreshes = new Set<string>();
+  private readonly refreshRetries = new Map<
+    string,
+    { retryAt: number | undefined; retryMs: number }
+  >();
   private readonly tracked = new Map<string, TrackedRuntime>();
   private readonly logger: ProvisionerLogger | undefined;
   private readonly metrics: ProvisionerMetrics | undefined;
@@ -343,31 +348,34 @@ export class ProvisionerIdleController {
       });
   }
 
-  notifyWorkAvailable(): void {
-    this.discoveryPending = true;
+  notifyWorkAvailable(instanceId?: string): void {
+    if (instanceId !== undefined) this.enqueueRefresh(instanceId);
     this.availability.notify();
   }
 
   async processDueOnce(signal?: AbortSignal): Promise<void> {
     await this.ensureJournalLoaded();
-    await this.processDue(signal ?? new AbortController().signal);
+    const actualSignal = signal ?? new AbortController().signal;
+    await this.processPendingRefreshes(actualSignal);
+    await this.processDue(actualSignal);
+    await this.processPendingRefreshes(actualSignal);
   }
 
   async run(signal: AbortSignal): Promise<void> {
     await this.ensureJournalLoaded();
     while (!signal.aborted) {
-      if (this.discoveryPending) {
-        this.discoveryPending = false;
-        this.discoveryRetryAt = undefined;
+      if (this.startupDiscoveryPending) {
+        this.startupDiscoveryPending = false;
+        this.startupDiscoveryRetryAt = undefined;
         try {
           await this.scanFullInventory(signal);
-          this.discoveryRetryMs = INITIAL_RETRY_INTERVAL_MS;
+          this.startupDiscoveryRetryMs = INITIAL_RETRY_INTERVAL_MS;
         } catch (error) {
           if (signal.aborted) break;
-          this.discoveryRetryAt = this.now() + this.discoveryRetryMs;
-          this.discoveryRetryMs = Math.min(
+          this.startupDiscoveryRetryAt = this.now() + this.startupDiscoveryRetryMs;
+          this.startupDiscoveryRetryMs = Math.min(
             MAX_RETRY_INTERVAL_MS,
-            Math.ceil(this.discoveryRetryMs * 1.8),
+            Math.ceil(this.startupDiscoveryRetryMs * 1.8),
           );
           this.metrics?.increment("idle_scan_retry");
           this.logger?.warn("idle_scan_retry", { code: errorCode(error) });
@@ -375,6 +383,8 @@ export class ProvisionerIdleController {
       }
       if (signal.aborted) break;
       try {
+        await this.processPendingRefreshes(signal);
+        if (signal.aborted) break;
         await this.processDue(signal);
       } catch (error) {
         if (signal.aborted) break;
@@ -388,10 +398,75 @@ export class ProvisionerIdleController {
           ? MAX_AVAILABILITY_WAIT_MS
           : Math.max(1, Math.min(MAX_AVAILABILITY_WAIT_MS, nextWakeAt - this.now()));
       await this.availability.wait(signal, waitMs);
-      if (this.discoveryRetryAt !== undefined && this.discoveryRetryAt <= this.now()) {
-        this.discoveryPending = true;
+      if (
+        this.startupDiscoveryRetryAt !== undefined &&
+        this.startupDiscoveryRetryAt <= this.now()
+      ) {
+        this.startupDiscoveryPending = true;
+        this.startupDiscoveryRetryAt = undefined;
       }
     }
+  }
+
+  private enqueueRefresh(instanceId: string): void {
+    try {
+      parseRuntimeInstanceId(instanceId);
+    } catch {
+      this.metrics?.increment("idle_refresh_invalid_instance");
+      return;
+    }
+    this.refreshRetries.delete(instanceId);
+    this.pendingRefreshes.add(instanceId);
+  }
+
+  private async processPendingRefreshes(signal: AbortSignal): Promise<void> {
+    for (const instanceId of [...this.pendingRefreshes]) {
+      if (signal.aborted) return;
+      this.pendingRefreshes.delete(instanceId);
+      try {
+        await this.refreshOneInstance(instanceId, signal);
+        this.refreshRetries.delete(instanceId);
+      } catch (error) {
+        if (signal.aborted) throw signal.reason ?? error;
+        const retry = this.refreshRetries.get(instanceId) ?? {
+          retryAt: undefined,
+          retryMs: INITIAL_RETRY_INTERVAL_MS,
+        };
+        retry.retryAt = this.now() + retry.retryMs;
+        retry.retryMs = Math.min(MAX_RETRY_INTERVAL_MS, Math.ceil(retry.retryMs * 1.8));
+        this.refreshRetries.set(instanceId, retry);
+        this.metrics?.increment("idle_refresh_retry");
+        this.logger?.warn("idle_refresh_retry", { code: errorCode(error) });
+      }
+    }
+  }
+
+  private async refreshOneInstance(instanceId: string, signal: AbortSignal): Promise<void> {
+    const candidate = await this.options.operations.readIdleCandidate({
+      workerId: this.options.workerId,
+      clusterId: this.options.clusterId,
+      instanceId,
+      signal,
+    });
+    if (candidate === null) {
+      this.tracked.delete(instanceId);
+      if (this.journalReady && !(await this.journal.removeByInstance(instanceId))) {
+        throw new Error("idle_journal_unavailable");
+      }
+      this.metrics?.increment("idle_candidate_absent");
+      return;
+    }
+    if (
+      candidate.instanceId !== instanceId ||
+      candidate.clusterId !== this.options.clusterId ||
+      !isCurrentRuntimeCandidate(candidate, this.options.clusterId)
+    ) {
+      throw new TypeError("idle candidate point lookup returned an unrelated binding");
+    }
+    const assignment = assignmentOf(candidate);
+    const inspector = this.createInspector(candidate);
+    await this.evaluateCandidate(candidate, assignment, inspector, signal, true);
+    this.metrics?.increment("idle_candidate_refreshed");
   }
 
   private async ensureJournalLoaded(): Promise<void> {
@@ -452,7 +527,12 @@ export class ProvisionerIdleController {
 
   private nextWakeAt(): number | undefined {
     const values: number[] = [];
-    if (this.discoveryRetryAt !== undefined) values.push(this.discoveryRetryAt);
+    if (this.startupDiscoveryPending) values.push(this.now());
+    if (this.startupDiscoveryRetryAt !== undefined) values.push(this.startupDiscoveryRetryAt);
+    if (this.pendingRefreshes.size > 0) values.push(this.now());
+    for (const retry of this.refreshRetries.values()) {
+      if (retry.retryAt !== undefined) values.push(retry.retryAt);
+    }
     for (const runtime of this.tracked.values()) {
       if (runtime.identityRefreshAt !== undefined) values.push(runtime.identityRefreshAt);
       if (runtime.idleCheckAt !== undefined) values.push(runtime.idleCheckAt);
@@ -467,9 +547,18 @@ export class ProvisionerIdleController {
 
   private async processDue(signal: AbortSignal): Promise<void> {
     const now = this.now();
-    if (this.discoveryRetryAt !== undefined && this.discoveryRetryAt <= now) {
-      this.discoveryPending = true;
-      this.discoveryRetryAt = undefined;
+    if (
+      this.startupDiscoveryRetryAt !== undefined &&
+      this.startupDiscoveryRetryAt <= now
+    ) {
+      this.startupDiscoveryPending = true;
+      this.startupDiscoveryRetryAt = undefined;
+    }
+    for (const [instanceId, retry] of this.refreshRetries) {
+      if (retry.retryAt !== undefined && retry.retryAt <= now) {
+        retry.retryAt = undefined;
+        this.pendingRefreshes.add(instanceId);
+      }
     }
     for (const tracked of [...this.tracked.values()]) {
       if (signal.aborted) return;

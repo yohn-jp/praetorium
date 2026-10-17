@@ -12,7 +12,7 @@ export interface HealthState {
 export interface HealthServerOptions extends HealthState {
   readonly metrics: ProvisionerMetrics;
   readonly workAvailability?: WorkAvailability;
-  readonly onWorkAvailable?: () => void;
+  readonly onWorkAvailable?: (instanceId?: string) => void;
   readonly workNotificationToken?: string;
   readonly host?: string;
   readonly port?: number;
@@ -167,7 +167,9 @@ async function handleWorkNotification(
     return;
   }
   options.workAvailability.notify();
-  options.onWorkAvailable?.();
+  if (notification.data.instanceId !== undefined) {
+    options.onWorkAvailable?.(notification.data.instanceId);
+  }
   send(response, 202, "application/json; charset=utf-8", '{"accepted":true}\n');
 }
 

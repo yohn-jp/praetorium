@@ -283,6 +283,7 @@ function harness(
     }>;
     readonly activityOffsetMs?: number;
     readonly candidates?: () => readonly ProvisionerIdleCandidate[];
+    readonly readCandidate?: (instanceId: string) => ProvisionerIdleCandidate | null;
     readonly listCandidatePage?: (cursor: string | null) => Promise<{
       readonly items: readonly ProvisionerIdleCandidate[];
       readonly nextCursor: string | null;
@@ -305,6 +306,16 @@ function harness(
       return { items: options.candidates?.() ?? [value], nextCursor: null };
     },
   );
+  const readIdleCandidate = vi.fn(
+    async (input: { readonly instanceId: string }) => {
+      if (options.readCandidate !== undefined) return options.readCandidate(input.instanceId);
+      const candidates = options.candidates?.();
+      if (candidates !== undefined) {
+        return candidates.find((item) => item.instanceId === input.instanceId) ?? null;
+      }
+      return input.instanceId === value.instanceId ? value : null;
+    },
+  );
   const issueObservationCredential = vi.fn(async () => ({
     token: "signed-observation-token",
     expiresAt: new Date(currentNow + 30_000).toISOString(),
@@ -320,6 +331,7 @@ function harness(
       },
   );
   const operations = {
+    readIdleCandidate,
     listIdleCandidates,
     createIdleStop,
     issueObservationCredential,
@@ -408,6 +420,7 @@ function harness(
     createIdleStop,
     issueObservationCredential,
     runtimeCanaryHealthDue,
+    readIdleCandidate,
     listIdleCandidates,
     runtimeCursors,
     journalPath,
@@ -545,24 +558,80 @@ describe("ProvisionerIdleController", () => {
     expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
   });
 
-  it("coalesces duplicate work signals into one idle discovery refresh", async () => {
+  it("targets one instance in a larger inventory without repeating the full scan", async () => {
+    const runtime = resolvedRuntime();
+    const inventory = [
+      candidate(),
+      ...Array.from({ length: 9 }, (_, index) => {
+        const otherInstanceId = `${instanceId.slice(0, -1)}${index}`;
+        return candidate({
+          instanceId: otherInstanceId,
+          currentRuntime: {
+            ...runtime,
+            assignment: { ...runtime.assignment, instanceId: otherInstanceId },
+          },
+        });
+      }),
+    ];
+    const h = harness({ candidates: () => inventory });
+    const abort = new AbortController();
+    const running = h.controller.run(abort.signal);
+
+    await vi.waitFor(() => expect(h.runtimeCursors).toHaveLength(1));
+    h.controller.notifyWorkAvailable(instanceId);
+    h.controller.notifyWorkAvailable(instanceId);
+    h.controller.notifyWorkAvailable(instanceId);
+    await vi.waitFor(() => expect(h.readIdleCandidate).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.listIdleCandidates).toHaveBeenCalledTimes(1);
+    expect(h.runtimeCursors).toHaveLength(1);
+
+    abort.abort();
+    await running;
+  });
+
+  it("does not refresh idle inventory for a generic work signal", async () => {
     const h = harness();
     const abort = new AbortController();
     const running = h.controller.run(abort.signal);
 
     await vi.waitFor(() => expect(h.runtimeCursors).toHaveLength(1));
     h.controller.notifyWorkAvailable();
-    h.controller.notifyWorkAvailable();
-    h.controller.notifyWorkAvailable();
-    await vi.waitFor(() => expect(h.runtimeCursors).toHaveLength(2));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(h.listIdleCandidates).toHaveBeenCalledTimes(2);
 
+    expect(h.listIdleCandidates).toHaveBeenCalledTimes(1);
+    expect(h.readIdleCandidate).not.toHaveBeenCalled();
+    expect(h.runtimeCursors).toHaveLength(1);
     abort.abort();
     await running;
   });
 
-  it("drops retired binding timers and hints on a complete snapshot, then rediscovers a restart", async () => {
+  it("retries a failed point refresh for only that instance after bounded backoff", async () => {
+    let attempts = 0;
+    const h = harness({
+      readCandidate: () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("control_plane_unavailable");
+        return candidate();
+      },
+    });
+
+    h.controller.notifyWorkAvailable(instanceId);
+    await h.controller.processDueOnce();
+    expect(attempts).toBe(1);
+    expect(h.listIdleCandidates).not.toHaveBeenCalled();
+
+    h.advance(4_999);
+    await h.controller.processDueOnce();
+    expect(attempts).toBe(1);
+
+    h.advance(1);
+    await h.controller.processDueOnce();
+    expect(attempts).toBe(2);
+    expect(h.listIdleCandidates).not.toHaveBeenCalled();
+  });
+
+  it("drops a retired binding hint on a point refresh, then rediscovers a restart", async () => {
     let present = true;
     const h = harness({
       activityOffsetMs: 0,
@@ -581,8 +650,8 @@ describe("ProvisionerIdleController", () => {
     });
 
     present = false;
-    h.controller.notifyWorkAvailable();
-    await vi.waitFor(() => expect(h.listIdleCandidates).toHaveBeenCalledTimes(2));
+    h.controller.notifyWorkAvailable(instanceId);
+    await vi.waitFor(() => expect(h.readIdleCandidate).toHaveBeenCalledTimes(1));
     await vi.waitFor(async () => {
       const journal = new IdleDeadlineJournal(h.journalPath);
       await journal.load();
@@ -597,10 +666,10 @@ describe("ProvisionerIdleController", () => {
 
     present = true;
     h.setActivityTimestamp(now + 120_000);
-    h.controller.notifyWorkAvailable();
-    await vi.waitFor(() => expect(h.listIdleCandidates).toHaveBeenCalledTimes(3));
+    h.controller.notifyWorkAvailable(instanceId);
+    await vi.waitFor(() => expect(h.readIdleCandidate).toHaveBeenCalledTimes(2));
     await vi.waitFor(async () => {
-      expect(h.runtimeCursors).toHaveLength(2);
+      expect(h.runtimeCursors).toHaveLength(1);
       const journal = new IdleDeadlineJournal(h.journalPath);
       await journal.load();
       expect(journal.get(binding)).toMatchObject({
@@ -624,8 +693,8 @@ describe("ProvisionerIdleController", () => {
       identityExpiry: (currentNow) => currentNow + 200_000,
       listCandidatePage: async (cursor) => {
         candidatePageCalls += 1;
-        if (candidatePageCalls === 1) return { items: [candidate()], nextCursor: null };
-        if (candidatePageCalls === 2 && cursor === null) return { items: [], nextCursor: "page-2" };
+        if (candidatePageCalls === 1 && cursor === null)
+          return { items: [candidate()], nextCursor: "page-2" };
         throw new Error("control_plane_unavailable");
       },
     });
@@ -641,8 +710,8 @@ describe("ProvisionerIdleController", () => {
       ).toBeDefined();
     });
     h.controller.notifyWorkAvailable();
-    await vi.waitFor(() => expect(h.listIdleCandidates).toHaveBeenCalledTimes(3));
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.listIdleCandidates).toHaveBeenCalledTimes(2);
     h.advance(120_000);
     await h.controller.processDueOnce();
     expect(h.refreshIdentity).toHaveBeenCalledOnce();

@@ -6,6 +6,7 @@ import {
   mkdtemp,
   open,
   readFile,
+  readdir,
   realpath,
   rm,
   stat,
@@ -31,6 +32,10 @@ const INVENTORY_ENV = "PRAETORIUM_T14_INVENTORY_PATH";
 const RESULT_ENV = "PRAETORIUM_T14_RESULT_PATH";
 const ACCESS_CONFIG_SUFFIX = ".github-access.json";
 const RUNTIME_CONFIG_SUFFIX = ".github-access-runtime.json";
+const RECOVERY_FILE_PREFIX = "praetorium-t14-github-recovery-";
+const MAX_RECOVERY_FILE_BYTES = 16 * 1024;
+const PARTIAL_RECOVERY_MARKER = "Preserve these sanitized repository/ref/commit records: ";
+let localGuardFailed = false;
 const RUNNER_REASON_CODES = Object.freeze({
   OWNER_INPUT_MISSING: "BLOCKED",
   OWNED_ENVIRONMENT_UNAVAILABLE: "BLOCKED",
@@ -240,120 +245,219 @@ function credentialsSeparated(primary, runtime) {
   return new Set(credentials).size === credentials.length;
 }
 
-test("fixed GitHub owner configuration rejects extra fields and unbound runtime inputs", () => {
-  const writer = {
-    expectedUserId: "10001",
-    sessionCookie:
-      "__Host-praetorium_session=session-value; __Host-praetorium_csrf=abcdefghijklmnop",
-    csrfToken: "abcdefghijklmnop",
-    accessToken: `gho_${"a".repeat(32)}`,
-  };
-  const primary = {
-    schemaVersion: 1,
-    inventoryPath: "/tmp/t14-inventory.json",
-    ownerIdentity: "owner uid=1000",
-    environment: {
-      name: "owned-disposable-github-test",
-      expiresAt: "2099-01-01T00:00:00Z",
-      cleanupProcedure: "Destroy the disposable test bindings after expiry.",
-      privateDisposable: true,
-      production: false,
-      resourceReference: "owned-app-and-test-repositories",
-    },
-    gateway: {
-      origin: "https://gateway.test.invalid",
-      writer,
-      reader: {
-        ...writer,
-        expectedUserId: "10002",
-        accessToken: `gho_${"b".repeat(32)}`,
+function trackedGuardTest(name, run) {
+  test(name, { concurrency: false }, async (context) => {
+    try {
+      await run(context);
+    } catch (error) {
+      localGuardFailed = true;
+      throw error;
+    }
+  });
+}
+
+trackedGuardTest(
+  "fixed GitHub owner configuration rejects extra fields and unbound runtime inputs",
+  () => {
+    const writer = {
+      expectedUserId: "10001",
+      sessionCookie:
+        "__Host-praetorium_session=session-value; __Host-praetorium_csrf=abcdefghijklmnop",
+      csrfToken: "abcdefghijklmnop",
+      accessToken: `gho_${"a".repeat(32)}`,
+    };
+    const primary = {
+      schemaVersion: 1,
+      inventoryPath: "/tmp/t14-inventory.json",
+      ownerIdentity: "owner uid=1000",
+      environment: {
+        name: "owned-disposable-github-test",
+        expiresAt: "2099-01-01T00:00:00Z",
+        cleanupProcedure: "Destroy the disposable test bindings after expiry.",
+        privateDisposable: true,
+        production: false,
+        resourceReference: "owned-app-and-test-repositories",
       },
-    },
-    controlPlane: {
-      origin: "https://control-plane.test.invalid",
-      gatewayAuth: "x".repeat(40),
-    },
-    github: {
-      appId: 1001,
-      installationId: 2001,
-      privateKeyPem: `-----BEGIN PRIVATE KEY-----\n${"A".repeat(100)}\n-----END PRIVATE KEY-----`,
-      repository: { id: 3001, owner: "owned-org", name: "target" },
-      unrelatedRepository: { id: 3002, owner: "owned-org", name: "sibling" },
-    },
-  };
-  const runtime = {
-    schemaVersion: 1,
-    inventoryPath: primary.inventoryPath,
-    ownerIdentity: primary.ownerIdentity,
-    environment: {
-      expiresAt: primary.environment.expiresAt,
-      resourceReference: primary.environment.resourceReference,
-    },
-    runtimeRepository: { id: 3003, owner: "owned-org", name: "runtime" },
-    runtime: {
-      runtimeId: "runtime-owned-01",
-      instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-      repositoryId: 3003,
-      installationId: 2001,
-      runtimeEpoch: 1,
-      leaseId: "lease-owned-01",
-      workerId: "worker-owned-01",
-      clusterId: "cluster-owned-01",
-    },
-    provisionerAuth: "p".repeat(40),
-  };
-  assert.equal(validPrimaryConfig(primary), true);
-  assert.equal(validRuntimeConfig(runtime), true);
-  assert.equal(credentialsSeparated(primary, runtime), true);
-  assert.equal(validPrimaryConfig({ ...primary, unexpected: true }), false);
-  assert.equal(validRuntimeConfig({ ...runtime, leaseToken: "unbound" }), false);
-  assert.equal(
-    validRuntimeConfig({ ...runtime, runtime: { ...runtime.runtime, repositoryId: 3001 } }),
-    true,
-    "the runtime config parser validates shape; cross-file repository binding is checked during load",
-  );
-  assert.equal(
-    credentialsSeparated(primary, {
-      ...runtime,
-      provisionerAuth: primary.controlPlane.gatewayAuth,
-    }),
-    false,
-    "Control Plane Gateway and provisioner service credentials are distinct authorities",
-  );
-});
-
-test("fixed GitHub owner file reads reject symlinks and writable private configs", async (t) => {
-  if (
-    typeof process.getuid !== "function" ||
-    !Number.isInteger(fsConstants.O_NOFOLLOW) ||
-    !Number.isInteger(fsConstants.O_NONBLOCK)
-  )
-    return t.skip("secure owner-file verification requires POSIX UID and O_NOFOLLOW support");
-
-  const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-github-fixed-owner-"));
-  try {
-    const configPath = path.join(directory, "owner.json");
-    await writeFile(configPath, '{"owned":true}', { mode: 0o600 });
-    await chmod(configPath, 0o600);
+      gateway: {
+        origin: "https://gateway.test.invalid",
+        writer,
+        reader: {
+          ...writer,
+          expectedUserId: "10002",
+          accessToken: `gho_${"b".repeat(32)}`,
+        },
+      },
+      controlPlane: {
+        origin: "https://control-plane.test.invalid",
+        gatewayAuth: "x".repeat(40),
+      },
+      github: {
+        appId: 1001,
+        installationId: 2001,
+        privateKeyPem: `-----BEGIN PRIVATE KEY-----\n${"A".repeat(100)}\n-----END PRIVATE KEY-----`,
+        repository: { id: 3001, owner: "owned-org", name: "target" },
+        unrelatedRepository: { id: 3002, owner: "owned-org", name: "sibling" },
+      },
+    };
+    const runtime = {
+      schemaVersion: 1,
+      inventoryPath: primary.inventoryPath,
+      ownerIdentity: primary.ownerIdentity,
+      environment: {
+        expiresAt: primary.environment.expiresAt,
+        resourceReference: primary.environment.resourceReference,
+      },
+      runtimeRepository: { id: 3003, owner: "owned-org", name: "runtime" },
+      runtime: {
+        runtimeId: "runtime-owned-01",
+        instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        repositoryId: 3003,
+        installationId: 2001,
+        runtimeEpoch: 1,
+        leaseId: "lease-owned-01",
+        workerId: "worker-owned-01",
+        clusterId: "cluster-owned-01",
+      },
+      provisionerAuth: "p".repeat(40),
+    };
+    assert.equal(validPrimaryConfig(primary), true);
+    assert.equal(validRuntimeConfig(runtime), true);
+    assert.equal(credentialsSeparated(primary, runtime), true);
+    assert.equal(validPrimaryConfig({ ...primary, unexpected: true }), false);
+    assert.equal(validRuntimeConfig({ ...runtime, leaseToken: "unbound" }), false);
     assert.equal(
-      (await readOwnedFile(configPath, { privateFile: true, maximumBytes: 64 })).toString("utf8"),
-      '{"owned":true}',
+      validRuntimeConfig({ ...runtime, runtime: { ...runtime.runtime, repositoryId: 3001 } }),
+      true,
+      "the runtime config parser validates shape; cross-file repository binding is checked during load",
     );
-    const alias = path.join(directory, "owner-link.json");
-    await (await import("node:fs/promises")).symlink(configPath, alias);
-    await assert.rejects(
-      readOwnedFile(alias, { privateFile: true, maximumBytes: 64 }),
-      (error) => error instanceof BlockedError,
+    assert.equal(
+      credentialsSeparated(primary, {
+        ...runtime,
+        provisionerAuth: primary.controlPlane.gatewayAuth,
+      }),
+      false,
+      "Control Plane Gateway and provisioner service credentials are distinct authorities",
     );
-    await chmod(configPath, 0o644);
-    await assert.rejects(
-      readOwnedFile(configPath, { privateFile: true, maximumBytes: 64 }),
-      (error) => error instanceof BlockedError,
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+  },
+);
+
+trackedGuardTest(
+  "fixed GitHub owner file reads reject symlinks and writable private configs",
+  async (t) => {
+    if (
+      typeof process.getuid !== "function" ||
+      !Number.isInteger(fsConstants.O_NOFOLLOW) ||
+      !Number.isInteger(fsConstants.O_NONBLOCK)
+    )
+      return t.skip("secure owner-file verification requires POSIX UID and O_NOFOLLOW support");
+
+    const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-github-fixed-owner-"));
+    try {
+      const configPath = path.join(directory, "owner.json");
+      await writeFile(configPath, '{"owned":true}', { mode: 0o600 });
+      await chmod(configPath, 0o600);
+      assert.equal(
+        (await readOwnedFile(configPath, { privateFile: true, maximumBytes: 64 })).toString("utf8"),
+        '{"owned":true}',
+      );
+      const alias = path.join(directory, "owner-link.json");
+      await (await import("node:fs/promises")).symlink(configPath, alias);
+      await assert.rejects(
+        readOwnedFile(alias, { privateFile: true, maximumBytes: 64 }),
+        (error) => error instanceof BlockedError,
+      );
+      await chmod(configPath, 0o644);
+      await assert.rejects(
+        readOwnedFile(configPath, { privateFile: true, maximumBytes: 64 }),
+        (error) => error instanceof BlockedError,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+trackedGuardTest(
+  "fixed GitHub recovery artifacts preserve only validated owner ref tuples",
+  async (t) => {
+    if (
+      typeof process.getuid !== "function" ||
+      !Number.isInteger(fsConstants.O_NOFOLLOW) ||
+      !Number.isInteger(fsConstants.O_APPEND)
+    )
+      return t.skip("owner-only recovery artifacts require POSIX UID and no-follow support");
+
+    const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-github-recovery-test-"));
+    const target = { id: 3001, owner: "owned-org", name: "target" };
+    const sibling = { id: 3002, owner: "owned-org", name: "sibling" };
+    const runtime = { id: 3003, owner: "owned-org", name: "runtime" };
+    const inputs = {
+      inventoryPath: path.join(directory, "inventory.json"),
+      primary: {
+        github: { repository: target, unrelatedRepository: sibling },
+      },
+      runtime: { runtimeRepository: runtime },
+    };
+    const records = [
+      {
+        repositoryId: target.id,
+        repository: `${target.owner}/${target.name}`,
+        ref: "refs/heads/praetorium-t14/12345678-1234-1234-1234-123456789abc",
+        expectedCommit: "a".repeat(40),
+      },
+    ];
+    try {
+      const report = `${PARTIAL_RECOVERY_MARKER}${JSON.stringify(records)}`;
+      assert.equal(await persistPartialRecoveryIfPresent(inputs, report), true);
+      assert.equal(
+        await persistPartialRecoveryIfPresent(
+          inputs,
+          "partial probe failed without a recovery tuple",
+        ),
+        false,
+      );
+      const files = (await readdir(directory)).filter((name) =>
+        name.startsWith(RECOVERY_FILE_PREFIX),
+      );
+      assert.equal(files.length, 1);
+      const recoveryPath = path.join(directory, files[0]);
+      const info = await stat(recoveryPath);
+      assert.equal(info.uid, process.getuid());
+      assert.equal(info.mode & 0o777, 0o600);
+      const pendingLines = (await readFile(recoveryPath, "utf8")).trim().split("\n");
+      const pendingRecord = JSON.parse(pendingLines[0]);
+      assert.deepEqual(Object.keys(pendingRecord).sort(), [
+        "category",
+        "recordVersion",
+        "records",
+        "status",
+      ]);
+      assert.equal(pendingRecord.status, "PENDING");
+      assert.deepEqual(pendingRecord.records, records);
+      assert.doesNotMatch(pendingLines[0], /token|secret|https?:\/\//iu);
+
+      const artifact = {
+        path: recoveryPath,
+        pendingLine: `${JSON.stringify(pendingRecord)}\n`,
+        pendingRecord,
+      };
+      await markRecoveryArtifactCleaned(artifact);
+      const resolvedLines = (await readFile(recoveryPath, "utf8")).trim().split("\n");
+      assert.deepEqual(
+        resolvedLines.map((line) => JSON.parse(line).status),
+        ["PENDING", "CLEANED"],
+      );
+
+      assert.equal(
+        normalizeRecoveryRecords(inputs, [{ ...records[0], token: "must-not-be-preserved" }]),
+        null,
+      );
+      assert.equal(normalizeRecoveryRecords(inputs, [{ ...records[0], repositoryId: 9001 }]), null);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 async function readOwnedFile(filePath, { privateFile, maximumBytes }) {
   if (
@@ -500,6 +604,174 @@ async function loadOwnedInputs() {
   return { inventoryPath, primary, runtime, effectiveExpiresAt };
 }
 
+function normalizeRecoveryRecords(inputs, records) {
+  if (!Array.isArray(records) || records.length < 1 || records.length > 3) return null;
+  const allowedRepositories = new Map(
+    [
+      inputs.primary.github.repository,
+      inputs.primary.github.unrelatedRepository,
+      inputs.runtime.runtimeRepository,
+    ].map((repository) => [repository.id, `${repository.owner}/${repository.name}`]),
+  );
+  const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  const allowedRef = new RegExp(
+    `^refs/heads/praetorium-t14(?:-(?:read-deny|scope-deny|broker))?/${uuid}$`,
+  );
+  const normalized = [];
+  const seenRefs = new Set();
+  for (const record of records) {
+    if (
+      !hasOnlyKeys(record, [
+        "repositoryId",
+        "repository",
+        "ref",
+        "expectedCommit",
+        "observedCommit",
+      ]) ||
+      !allowedRepositories.has(record.repositoryId) ||
+      record.repository !== allowedRepositories.get(record.repositoryId) ||
+      typeof record.ref !== "string" ||
+      !allowedRef.test(record.ref) ||
+      (record.expectedCommit !== null &&
+        (typeof record.expectedCommit !== "string" ||
+          !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(record.expectedCommit))) ||
+      (record.observedCommit !== undefined &&
+        record.observedCommit !== null &&
+        (typeof record.observedCommit !== "string" ||
+          !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(record.observedCommit))) ||
+      seenRefs.has(`${record.repositoryId}:${record.ref}`)
+    )
+      return null;
+    seenRefs.add(`${record.repositoryId}:${record.ref}`);
+    normalized.push({
+      repositoryId: record.repositoryId,
+      repository: record.repository,
+      ref: record.ref,
+      expectedCommit: record.expectedCommit,
+      ...(record.observedCommit ? { observedCommit: record.observedCommit } : {}),
+    });
+  }
+  return normalized;
+}
+
+async function syncRecoveryDirectory(directoryPath) {
+  let handle;
+  try {
+    handle = await open(directoryPath, fsConstants.O_RDONLY);
+    await handle.sync();
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function createRecoveryArtifact(inputs, records) {
+  const normalized = normalizeRecoveryRecords(inputs, records);
+  if (!normalized) throw new Error("unsafe GitHub ref recovery details were withheld");
+  const recoveryPath = path.join(
+    path.dirname(inputs.inventoryPath),
+    `${RECOVERY_FILE_PREFIX}${crypto.randomUUID()}.ndjson`,
+  );
+  const pendingRecord = {
+    recordVersion: 1,
+    category: "github-access",
+    status: "PENDING",
+    records: normalized,
+  };
+  const pendingLine = `${JSON.stringify(pendingRecord)}\n`;
+  let handle;
+  try {
+    handle = await open(
+      recoveryPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    await handle.writeFile(pendingLine, "utf8");
+    await handle.sync();
+    await syncRecoveryDirectory(path.dirname(recoveryPath));
+    return { path: recoveryPath, pendingLine, pendingRecord };
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function markRecoveryArtifactCleaned(artifact) {
+  const recoveryPath = artifact.path;
+  let handle;
+  try {
+    handle = await open(
+      recoveryPath,
+      fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_NOFOLLOW,
+    );
+    const before = await handle.stat();
+    if (
+      !before.isFile() ||
+      before.uid !== process.getuid() ||
+      (before.mode & 0o077) !== 0 ||
+      before.nlink !== 1 ||
+      before.size !== Buffer.byteLength(artifact.pendingLine) ||
+      before.size > MAX_RECOVERY_FILE_BYTES
+    )
+      throw new Error("owned GitHub recovery artifact changed unexpectedly");
+    const bytes = Buffer.alloc(MAX_RECOVERY_FILE_BYTES + 1);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, 0);
+    const afterRead = await handle.stat();
+    if (
+      bytesRead !== Buffer.byteLength(artifact.pendingLine) ||
+      bytes.subarray(0, bytesRead).toString("utf8") !== artifact.pendingLine ||
+      afterRead.dev !== before.dev ||
+      afterRead.ino !== before.ino ||
+      afterRead.size !== before.size ||
+      afterRead.uid !== process.getuid()
+    )
+      throw new Error("owned GitHub recovery artifact changed unexpectedly");
+    const cleanedRecord = { ...artifact.pendingRecord, status: "CLEANED" };
+    await handle.writeFile(`${JSON.stringify(cleanedRecord)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function persistPartialRecoveryIfPresent(inputs, childReport) {
+  const markerIndex = childReport.indexOf(PARTIAL_RECOVERY_MARKER);
+  if (markerIndex < 0) return false;
+  const start = childReport.indexOf("[", markerIndex + PARTIAL_RECOVERY_MARKER.length);
+  const end = childReport.indexOf("]", start);
+  if (start < 0 || end < 0 || end - start > 8192)
+    throw new Error("partial-probe recovery details were not safely parseable");
+  let records;
+  try {
+    records = JSON.parse(childReport.slice(start, end + 1));
+  } catch {
+    throw new Error("partial-probe recovery details were not safely parseable");
+  }
+  await createRecoveryArtifact(inputs, records);
+  return true;
+}
+
+async function persistPartialCleanupRefsIfPresent(inputs, childReport) {
+  if (!childReport.includes("owned test branch or installation token cleanup failed")) return false;
+  const match = childReport.match(
+    /verify only this run's refs before cleanup: (refs\/heads\/praetorium-t14(?:-(?:read-deny|scope-deny))?\/[0-9a-f-]{36}(?:, refs\/heads\/praetorium-t14(?:-(?:read-deny|scope-deny))?\/[0-9a-f-]{36}){0,2})/u,
+  );
+  if (!match) return false;
+  const repositoryForRef = (ref) =>
+    ref.includes("-scope-deny/")
+      ? inputs.primary.github.unrelatedRepository
+      : inputs.primary.github.repository;
+  const records = match[1].split(", ").map((ref) => {
+    const repository = repositoryForRef(ref);
+    return {
+      repositoryId: repository.id,
+      repository: `${repository.owner}/${repository.name}`,
+      ref,
+      expectedCommit: null,
+    };
+  });
+  await createRecoveryArtifact(inputs, records);
+  return true;
+}
+
 async function writeRunnerResult(status, reasonCode) {
   if (!Object.hasOwn(RUNNER_REASON_CODES, reasonCode) || RUNNER_REASON_CODES[reasonCode] !== status)
     throw new Error("invalid fixed-runner outcome code");
@@ -527,12 +799,6 @@ async function writeRunnerResult(status, reasonCode) {
   } finally {
     await handle?.close();
   }
-}
-
-function blockedTest(reasonCode) {
-  test("T14 GitHub access acceptance is BLOCKED by an unverified prerequisite", () => {
-    assert.fail(`BLOCKED: ${reasonCode}`);
-  });
 }
 
 async function boundedJson(response, message) {
@@ -571,7 +837,7 @@ function ensureBeforeExpiry(expiresAt) {
 }
 
 async function requestJson(url, init, { expiresAt, publicPrerequisite = false } = {}) {
-  if (expiresAt !== undefined) ensureBeforeExpiry(expiresAt);
+  ensureBeforeExpiry(expiresAt);
   let response;
   try {
     response = await fetch(url, {
@@ -773,7 +1039,46 @@ function gitEnvironment(home, globalConfig, askpass, token) {
   };
 }
 
-function runGit(cwd, args, env, { allowExitCodes = [0], timeout = GIT_TIMEOUT_MS } = {}) {
+function exactCleanupLease(args, remote, lease) {
+  if (
+    !lease ||
+    typeof lease.owner !== "string" ||
+    typeof lease.name !== "string" ||
+    typeof lease.ref !== "string" ||
+    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(lease.expectedCommit)
+  )
+    return false;
+  const expectedRemote = `https://github.com/${lease.owner}/${lease.name}.git`;
+  if (remote !== expectedRemote) return false;
+  if (args[0] === "push")
+    return (
+      args.length === 5 &&
+      args[1] === "--porcelain" &&
+      args[2] === `--force-with-lease=${lease.ref}:${lease.expectedCommit}` &&
+      args[3] === "origin" &&
+      args[4] === `:${lease.ref}`
+    );
+  return (
+    args.length === 4 &&
+    args[0] === "ls-remote" &&
+    args[1] === "--refs" &&
+    args[2] === expectedRemote &&
+    args[3] === lease.ref
+  );
+}
+
+function runGit(
+  cwd,
+  args,
+  env,
+  { allowExitCodes = [0], timeout = GIT_TIMEOUT_MS, expiresAt, cleanupLease, remote } = {},
+) {
+  if (cleanupLease) {
+    if (!exactCleanupLease(args, remote, cleanupLease))
+      throw new Error("GitHub cleanup did not match the exact owned ref lease");
+  } else if (expiresAt !== undefined) {
+    ensureBeforeExpiry(expiresAt);
+  }
   const result = spawnSync("git", args, {
     cwd,
     env,
@@ -787,8 +1092,13 @@ function runGit(cwd, args, env, { allowExitCodes = [0], timeout = GIT_TIMEOUT_MS
   return { status: result.status, stdout: result.stdout ?? "" };
 }
 
-function gitRefHash(cwd, remote, ref, env) {
-  const result = runGit(cwd, ["ls-remote", "--refs", remote, ref], env);
+function gitRefHash(cwd, remote, ref, env, { expiresAt, cleanupLease } = {}) {
+  if (expiresAt === undefined && !cleanupLease)
+    throw new Error("GitHub ref reads require an owner expiry gate");
+  const result = runGit(cwd, ["ls-remote", "--refs", remote, ref], env, {
+    expiresAt,
+    ...(cleanupLease ? { cleanupLease, remote } : {}),
+  });
   const line = result.stdout.trim();
   if (!line) return null;
   const fields = line.split(/\s+/u);
@@ -823,6 +1133,7 @@ async function runBrokerGitProbe(
   let recoveryRequired = false;
   let cleanupError = false;
   let probeError;
+  let recoveryArtifact;
   try {
     await mkdir(home, { mode: 0o700 });
     await mkdir(repo, { mode: 0o700 });
@@ -843,41 +1154,65 @@ async function runBrokerGitProbe(
     assert.match(expectedCommit, /^[a-f0-9]{40,64}$/u);
     runGit(repo, ["remote", "add", "origin", remoteUrl], readerEnv);
     assert.equal(
-      gitRefHash(repo, "origin", ref, writerEnv),
+      gitRefHash(repo, "origin", ref, writerEnv, {
+        expiresAt: inputs.effectiveExpiresAt,
+      }),
       null,
       "generated Git ref already exists",
     );
 
     ensureBeforeExpiry(inputs.effectiveExpiresAt);
+    recoveryArtifact = await createRecoveryArtifact(inputs, [
+      {
+        repositoryId: repository.id,
+        repository: `${repository.owner}/${repository.name}`,
+        ref,
+        expectedCommit,
+      },
+    ]);
+    ensureBeforeExpiry(inputs.effectiveExpiresAt);
     pushAttempted = true;
-    const push = runGit(repo, ["push", "--porcelain", "origin", `HEAD:${ref}`], writerEnv);
+    const push = runGit(repo, ["push", "--porcelain", "origin", `HEAD:${ref}`], writerEnv, {
+      expiresAt: inputs.effectiveExpiresAt,
+    });
     pushCompleted = push.status === 0;
     if (!pushCompleted) recoveryRequired = true;
 
-    const observed = gitRefHash(repo, "origin", ref, readerEnv);
+    const observed = gitRefHash(repo, "origin", ref, readerEnv, {
+      expiresAt: inputs.effectiveExpiresAt,
+    });
     if (observed !== expectedCommit) {
       recoveryRequired = true;
       throw new Error("owned GitHub push did not produce the exact run-owned commit");
     }
     recoveryRequired = true;
-    runGit(repo, ["fetch", "--quiet", "--no-tags", "origin", ref], readerEnv);
+    runGit(repo, ["fetch", "--quiet", "--no-tags", "origin", ref], readerEnv, {
+      expiresAt: inputs.effectiveExpiresAt,
+    });
     assert.equal(
       runGit(repo, ["rev-parse", "FETCH_HEAD"], readerEnv).stdout.trim(),
       expectedCommit,
       "read-scoped runtime broker token could not fetch the write-scoped runtime broker ref",
     );
 
-    ensureBeforeExpiry(inputs.effectiveExpiresAt);
+    const cleanupLease = {
+      owner: repository.owner,
+      name: repository.name,
+      ref,
+      expectedCommit,
+    };
     runGit(
       repo,
       ["push", "--porcelain", `--force-with-lease=${ref}:${expectedCommit}`, "origin", `:${ref}`],
       writerEnv,
+      { cleanupLease, remote: remoteUrl },
     );
     assert.equal(
-      gitRefHash(repo, "origin", ref, readerEnv),
+      gitRefHash(repo, remoteUrl, ref, readerEnv, { cleanupLease }),
       null,
       "run-owned ref cleanup was not observed",
     );
+    await markRecoveryArtifactCleaned(recoveryArtifact);
     recoveryRequired = false;
   } catch (error) {
     if (expectedCommit && pushAttempted && !pushCompleted) recoveryRequired = true;
@@ -924,10 +1259,19 @@ async function runPartialProbe(inputs) {
   const passed = Number(report.match(/^# pass (\d+)$/mu)?.[1]);
   const failed = Number(report.match(/^# fail (\d+)$/mu)?.[1]);
   const skipped = Number(report.match(/^# skipped (\d+)$/mu)?.[1]);
+  if (result.error || result.signal || result.status !== 0) {
+    const childReport = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    try {
+      await persistPartialRecoveryIfPresent(inputs, childReport);
+      await persistPartialCleanupRefsIfPresent(inputs, childReport);
+    } catch {
+      throw new Error(
+        "partial-probe failure details could not be safely preserved for owner review",
+      );
+    }
+    throw new Error("reviewed partial access and Git probe failed; inspect owner recovery records");
+  }
   if (
-    result.error ||
-    result.signal ||
-    result.status !== 0 ||
     !Number.isSafeInteger(tests) ||
     tests < 1 ||
     passed !== tests ||
@@ -950,6 +1294,7 @@ async function runLiveAcceptance(inputs) {
 
   await runPartialProbe(inputs);
 
+  ensureBeforeExpiry(effectiveExpiresAt);
   const writerLive = await githubRest.request(
     `/repos/${runtime.runtimeRepository.owner}/${runtime.runtimeRepository.name}`,
     primary.gateway.writer.accessToken,
@@ -1069,7 +1414,9 @@ async function runLiveAcceptance(inputs) {
       ],
       env,
     );
-    runGit(repoPath, ["fetch", "--quiet", "--no-tags", "--depth=1", "origin", "HEAD"], env);
+    runGit(repoPath, ["fetch", "--quiet", "--no-tags", "--depth=1", "origin", "HEAD"], env, {
+      expiresAt: effectiveExpiresAt,
+    });
     assert.match(
       runGit(repoPath, ["rev-parse", "FETCH_HEAD"], env).stdout.trim(),
       /^[a-f0-9]{40,64}$/u,
@@ -1096,30 +1443,34 @@ try {
   ownerInputs = await loadOwnedInputs();
 } catch (error) {
   preflightBlock = error instanceof BlockedError ? error : new BlockedError("OWNER_INPUT_MISSING");
-  await writeRunnerResult("BLOCKED", preflightBlock.reasonCode);
 }
 
-if (preflightBlock) {
-  blockedTest(preflightBlock.reasonCode);
-} else {
-  test(
-    "T14 owned GitHub App, user, runtime broker, and expiry-backed credential acceptance",
-    {
-      timeout: RUNNER_TIMEOUT_MS,
-    },
-    async () => {
-      try {
-        await runLiveAcceptance(ownerInputs);
-      } catch (error) {
-        if (error instanceof BlockedError) {
-          await writeRunnerResult("BLOCKED", error.reasonCode);
-          assert.fail(`BLOCKED: ${error.reasonCode}`);
-        }
-        await writeRunnerResult("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
-        assert.fail(
-          "T14 GitHub acceptance assertion failed; credentials and private endpoint details are withheld",
-        );
+test(
+  "T14 owned GitHub App, user, runtime broker, and expiry-backed credential acceptance",
+  {
+    timeout: RUNNER_TIMEOUT_MS,
+    concurrency: false,
+  },
+  async () => {
+    if (localGuardFailed) {
+      await writeRunnerResult("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
+      assert.fail("local GitHub acceptance guard failed; external effects were withheld");
+    }
+    if (preflightBlock) {
+      await writeRunnerResult("BLOCKED", preflightBlock.reasonCode);
+      assert.fail(`BLOCKED: ${preflightBlock.reasonCode}`);
+    }
+    try {
+      await runLiveAcceptance(ownerInputs);
+    } catch (error) {
+      if (error instanceof BlockedError) {
+        await writeRunnerResult("BLOCKED", error.reasonCode);
+        assert.fail(`BLOCKED: ${error.reasonCode}`);
       }
-    },
-  );
-}
+      await writeRunnerResult("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
+      assert.fail(
+        "T14 GitHub acceptance assertion failed; credentials and private endpoint details are withheld",
+      );
+    }
+  },
+);

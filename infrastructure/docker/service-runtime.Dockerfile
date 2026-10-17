@@ -17,7 +17,7 @@ COPY packages/ ./packages/
 COPY plugins/ ./plugins/
 RUN pnpm install --frozen-lockfile \
   && pnpm --filter "${SERVICE_PACKAGE}..." build \
-  && pnpm --filter "$SERVICE_PACKAGE" deploy --prod /runtime
+  && pnpm --filter "$SERVICE_PACKAGE" deploy --prod --legacy /runtime
 
 FROM ${NODE_RUNTIME_IMAGE} AS runtime
 ENV NODE_ENV=production

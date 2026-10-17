@@ -82,12 +82,16 @@ test("additive rules cannot reopen metadata, local host, multicast or broad netw
     "127.0.0.1",
     "169.254.169.254",
     "168.63.129.16",
+    "100.100.100.200",
     "224.0.0.1",
     "::",
     "::1",
     "fe80::1",
     "ff02::1",
     "::ffff:169.254.169.254",
+    "::169.254.169.254",
+    "0:0:0:0:0:0:a9fe:a9fe",
+    "fe80::1%lo",
     null,
     123,
   ]) {
@@ -101,6 +105,8 @@ test("additive rules cannot reopen metadata, local host, multicast or broad netw
     "10.0.0.0/8",
     "169.254.169.254/32",
     "168.63.129.16/32",
+    "100.100.100.200/32",
+    "::169.254.169.254/128",
     "fe80::1/128",
     "::/0",
     "10.0.1.3/32\n  - bad:",
@@ -126,4 +132,20 @@ test("duplicate endpoints, unsafe ports, unknown keys and mismatched literal ori
   delete input.network.allowAll;
   input.domains.controlPlaneUrl = "https://10.0.1.9";
   assert.match(validateSystemNetwork(input.network, input.domains).errors.join(";"), /literal/);
+});
+
+test("deprecated IPv6 site-local origins require explicit host destinations", () => {
+  const input = fixture();
+  input.domains.controlPlaneUrl = "https://[fec0::1]";
+  input.network.controlPlaneCidrs = [];
+  assert.ok(
+    validateSystemNetwork(input.network, input.domains).blockers.some((item) =>
+      item.includes("controlPlaneCidrs"),
+    ),
+  );
+  input.network.controlPlaneCidrs = ["fec0::1/128"];
+  assert.deepEqual(validateSystemNetwork(input.network, input.domains), {
+    errors: [],
+    blockers: [],
+  });
 });

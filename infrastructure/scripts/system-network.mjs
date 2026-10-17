@@ -8,7 +8,7 @@ function safeEndpoint(address) {
   if (typeof address !== "string" || address.includes("%") || !isIP(address)) return false;
   const key = addressKey(address);
   if (isIP(key) === 6) {
-    return !/^(?:ff|fe[89ab]|::ffff:)/i.test(key) && key !== "::" && key !== "::1";
+    return !/^(?:ff|fe[89ab]|::)/i.test(key) && key !== "::" && key !== "::1";
   }
   const [first, second] = key.split(".").map(Number);
   return (
@@ -16,7 +16,8 @@ function safeEndpoint(address) {
     first !== 127 &&
     first < 224 &&
     !(first === 169 && second === 254) &&
-    key !== "168.63.129.16"
+    key !== "168.63.129.16" &&
+    key !== "100.100.100.200"
   );
 }
 
@@ -42,7 +43,7 @@ function hostCidr(value) {
 function needsExplicitEndpoint(url) {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   if (url.protocol !== "https:" || (url.port && url.port !== "443")) return true;
-  if (isIP(host) === 6) return /^(?:f[cd]|fe[89ab]|::)/i.test(addressKey(host));
+  if (isIP(host) === 6) return /^(?:f[cd]|fe[89abcdef]|::)/i.test(addressKey(host));
   if (isIP(host) === 4) {
     const [a, b] = host.split(".").map(Number);
     return (

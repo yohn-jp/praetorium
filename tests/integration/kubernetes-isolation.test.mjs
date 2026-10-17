@@ -1764,22 +1764,34 @@ async function verifyControllerIdentityAndPermissions(
   }
 }
 
-function assertAdmissionPolicyDenial(response, policyName, bindingName, description) {
+function assertAdmissionPolicyDenial(
+  response,
+  policyName,
+  bindingName,
+  expectedValidationMessage,
+  description,
+) {
   assert.equal(
     response.statusCode,
-    403,
-    `${description} must be denied by the active ValidatingAdmissionPolicy, got HTTP ${response.statusCode}`,
+    422,
+    `${description} must be denied by the active ValidatingAdmissionPolicy as HTTP 422 Invalid, got HTTP ${response.statusCode}`,
   );
   const body = response.body;
   assert.ok(isRecord(body), `${description} returned no Kubernetes Status response`);
   assert.equal(body.kind, "Status", `${description} did not return a Kubernetes Status response`);
   assert.equal(body.status, "Failure", `${description} did not return a failed API response`);
-  assert.equal(body.reason, "Forbidden", `${description} was not denied as Forbidden`);
-  assert.equal(body.code, 403, `${description} response code did not match HTTP 403`);
+  assert.equal(body.reason, "Invalid", `${description} was not denied as Invalid`);
+  assert.equal(body.code, 422, `${description} response code did not match HTTP 422`);
   assert.ok(typeof body.message === "string", `${description} denial omitted its message`);
+  const attributionPrefix = `ValidatingAdmissionPolicy '${policyName}' with binding '${bindingName}' denied request: `;
   assert.ok(
-    body.message.includes(policyName) && body.message.includes(bindingName),
-    `${description} was not attributed to ValidatingAdmissionPolicy ${policyName} and binding ${bindingName}`,
+    body.message.startsWith(attributionPrefix),
+    `${description} was not attributed to the exact ValidatingAdmissionPolicy and binding`,
+  );
+  assert.equal(
+    body.message.slice(attributionPrefix.length),
+    expectedValidationMessage,
+    `${description} did not report the expected validation denial (policy configuration/evaluation failures are not acceptance)`,
   );
 }
 
@@ -1832,6 +1844,7 @@ async function verifyProvisionerAdmissionGuards(
     namespaceResponse,
     "praetorium-provisioner-instance-namespaces",
     "praetorium-provisioner-instance-namespaces",
+    "The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.",
     "unowned run-unique Namespace server-side dry run",
   );
   await requireNotFound(controllerTransport, namespacePath, "dry-run namespace", requestMs);
@@ -1864,6 +1877,7 @@ async function verifyProvisionerAdmissionGuards(
     roleBindingResponse,
     "praetorium-provisioner-instance-rolebindings",
     "praetorium-provisioner-instance-rolebindings",
+    "The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.",
     "run-unique system RoleBinding server-side dry run with the exact tenant role and Provisioner subject",
   );
   await requireNotFound(controllerTransport, roleBindingPath, "dry-run RoleBinding", requestMs);
@@ -3142,25 +3156,65 @@ test("Kubernetes identity and access reviews use their actual API resources", as
   );
 });
 
-test("T14 admission proof accepts only denials attributed to the expected policy and binding", () => {
+test("T14 admission proof requires the exact VAP and binding Invalid denial", () => {
   const expected = {
-    statusCode: 403,
+    statusCode: 422,
     body: {
       kind: "Status",
       status: "Failure",
-      reason: "Forbidden",
-      code: 403,
+      reason: "Invalid",
+      code: 422,
       message:
-        "ValidatingAdmissionPolicy 'praetorium-provisioner-instance-namespaces' with binding 'praetorium-provisioner-instance-namespaces' denied request: invalid namespace ownership",
+        "ValidatingAdmissionPolicy 'praetorium-provisioner-instance-namespaces' with binding 'praetorium-provisioner-instance-namespaces' denied request: The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.",
     },
   };
+  const expectedMessage =
+    "The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.";
   assert.doesNotThrow(() =>
     assertAdmissionPolicyDenial(
       expected,
       "praetorium-provisioner-instance-namespaces",
       "praetorium-provisioner-instance-namespaces",
+      expectedMessage,
       "test Namespace request",
     ),
+  );
+  const roleBindingValidationMessage =
+    "The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.";
+  assert.doesNotThrow(() =>
+    assertAdmissionPolicyDenial(
+      {
+        statusCode: 422,
+        body: {
+          kind: "Status",
+          status: "Failure",
+          reason: "Invalid",
+          code: 422,
+          message:
+            "ValidatingAdmissionPolicy 'praetorium-provisioner-instance-rolebindings' with binding 'praetorium-provisioner-instance-rolebindings' denied request: The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.",
+        },
+      },
+      "praetorium-provisioner-instance-rolebindings",
+      "praetorium-provisioner-instance-rolebindings",
+      roleBindingValidationMessage,
+      "test system RoleBinding request",
+    ),
+  );
+  assert.throws(
+    () =>
+      assertAdmissionPolicyDenial(
+        {
+          ...expected,
+          statusCode: 403,
+          body: { ...expected.body, reason: "Forbidden", code: 403 },
+        },
+        "praetorium-provisioner-instance-namespaces",
+        "praetorium-provisioner-instance-namespaces",
+        expectedMessage,
+        "test Namespace request",
+      ),
+    /HTTP 422 Invalid/u,
+    "generic RBAC Forbidden must not count as proof that the VAP is enforcing",
   );
   assert.throws(
     () =>
@@ -3174,22 +3228,50 @@ test("T14 admission proof accepts only denials attributed to the expected policy
         },
         "praetorium-provisioner-instance-namespaces",
         "praetorium-provisioner-instance-namespaces",
+        expectedMessage,
         "test Namespace request",
       ),
-    /not attributed to ValidatingAdmissionPolicy/u,
+    /not attributed to the exact ValidatingAdmissionPolicy and binding/u,
   );
   assert.throws(
     () =>
       assertAdmissionPolicyDenial(
         {
           ...expected,
-          body: { ...expected.body, message: "ValidatingAdmissionPolicy 'other' denied request" },
+          body: {
+            ...expected.body,
+            message:
+              "ValidatingAdmissionPolicy 'praetorium-provisioner-instance-namespaces' denied request",
+          },
         },
         "praetorium-provisioner-instance-namespaces",
         "praetorium-provisioner-instance-namespaces",
+        expectedMessage,
         "test Namespace request",
       ),
-    /not attributed to ValidatingAdmissionPolicy/u,
+    /not attributed to the exact ValidatingAdmissionPolicy and binding/u,
+    "a message without the exact binding attribution must fail",
+  );
+  assert.throws(
+    () =>
+      assertAdmissionPolicyDenial(
+        {
+          ...expected,
+          body: {
+            ...expected.body,
+            message: expected.body.message.replace(
+              expectedMessage,
+              "failed to configure binding: CEL error",
+            ),
+          },
+        },
+        "praetorium-provisioner-instance-namespaces",
+        "praetorium-provisioner-instance-namespaces",
+        expectedMessage,
+        "test Namespace request",
+      ),
+    /expected validation denial/u,
+    "policy configuration/evaluation failures must not count as an enforced validation",
   );
 });
 

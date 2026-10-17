@@ -5,10 +5,7 @@ import {
 } from "@praetorium/contracts";
 import type { TokenVault } from "@praetorium/auth";
 import type { RuntimeIdentity } from "@praetorium/github";
-import type {
-  GitHubInstallationTokenRevoker,
-  InstallationToken,
-} from "@praetorium/github";
+import type { GitHubInstallationTokenRevoker, InstallationToken } from "@praetorium/github";
 import { z } from "zod";
 
 const CONTROL_PLANE_ORIGIN = "https://control-plane.internal";
@@ -62,7 +59,9 @@ function validGatewayAuth(value: string): boolean {
 function timeoutValue(value: number | undefined): number {
   const timeout = value ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > MAX_TIMEOUT_MS)
-    throw new TypeError(`Control Plane timeout must be between 1 and ${MAX_TIMEOUT_MS} milliseconds`);
+    throw new TypeError(
+      `Control Plane timeout must be between 1 and ${MAX_TIMEOUT_MS} milliseconds`,
+    );
   return timeout;
 }
 
@@ -70,7 +69,11 @@ function abortError(): DOMException {
   return new DOMException("Control Plane request timed out", "AbortError");
 }
 
-async function boundedJson(response: Response, maximumBytes: number, signal: AbortSignal): Promise<unknown> {
+async function boundedJson(
+  response: Response,
+  maximumBytes: number,
+  signal: AbortSignal,
+): Promise<unknown> {
   const contentLength = response.headers.get("Content-Length");
   if (contentLength !== null) {
     if (!/^(0|[1-9][0-9]*)$/u.test(contentLength) || Number(contentLength) > maximumBytes)
@@ -124,7 +127,9 @@ async function boundedJson(response: Response, maximumBytes: number, signal: Abo
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes)) as unknown;
+  return JSON.parse(
+    new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes),
+  ) as unknown;
 }
 
 function credentialVaultContext(metadata: {
@@ -235,7 +240,9 @@ export function createRuntimeCredentialRegistry(
       }
       if (!response.ok) {
         void response.body?.cancel().catch(() => undefined);
-        throw new TypeError(`Control Plane credential request failed with status ${response.status}`);
+        throw new TypeError(
+          `Control Plane credential request failed with status ${response.status}`,
+        );
       }
       return await boundedJson(response, maximumResponseBytes, controller.signal);
     })();
@@ -248,13 +255,10 @@ export function createRuntimeCredentialRegistry(
 
   async function acknowledgeRevoked(tokenId: string): Promise<void> {
     const response = RevocationAcknowledgementSchema.parse(
-      await postJson(
-        `/internal/runtime-credentials/${tokenId}/revoked`,
-        {},
-        SMALL_RESPONSE_BYTES,
-      ),
+      await postJson(`/internal/runtime-credentials/${tokenId}/revoked`, {}, SMALL_RESPONSE_BYTES),
     );
-    if (!response.revoked) throw new TypeError("Control Plane did not confirm credential revocation");
+    if (!response.revoked)
+      throw new TypeError("Control Plane did not confirm credential revocation");
   }
 
   async function revokeIssued(credential: InstallationToken, tokenId?: string): Promise<void> {
@@ -281,10 +285,11 @@ export function createRuntimeCredentialRegistry(
 
   async function revokePending(record: RuntimeGitCredentialRecord): Promise<void> {
     if (record.status === "revoked") return;
-    if (record.status !== "revocation_pending") throw new TypeError("credential is not pending revocation");
+    if (record.status !== "revocation_pending")
+      throw new TypeError("credential is not pending revocation");
     const context = credentialVaultContext(record);
     const token = await config.tokenVault.open(record.encryptedSecret, context);
-    if (await sha256Hex(token) !== record.tokenId)
+    if ((await sha256Hex(token)) !== record.tokenId)
       throw new TypeError("decrypted credential does not match its registry identifier");
     const credential: InstallationToken = {
       token,
@@ -373,13 +378,19 @@ export function createRuntimeCredentialRegistry(
       let allRevoked = true;
       const seen = new Set<string>();
       const records = batch.credentials;
-      if (records.some((record) => {
-        if (record.repositoryId !== input.repositoryId || record.runtimeEpoch !== input.runtimeEpoch)
-          return true;
-        if (seen.has(record.tokenId)) return true;
-        seen.add(record.tokenId);
-        return false;
-      })) allRevoked = false;
+      if (
+        records.some((record) => {
+          if (
+            record.repositoryId !== input.repositoryId ||
+            record.runtimeEpoch !== input.runtimeEpoch
+          )
+            return true;
+          if (seen.has(record.tokenId)) return true;
+          seen.add(record.tokenId);
+          return false;
+        })
+      )
+        allRevoked = false;
 
       if (allRevoked) {
         let next = 0;
@@ -395,9 +406,8 @@ export function createRuntimeCredentialRegistry(
           }
         };
         await Promise.all(
-          Array.from(
-            { length: Math.min(MAX_REVOCATION_CONCURRENCY, records.length) },
-            () => worker(),
+          Array.from({ length: Math.min(MAX_REVOCATION_CONCURRENCY, records.length) }, () =>
+            worker(),
           ),
         );
       }
@@ -409,11 +419,7 @@ export function createRuntimeCredentialRegistry(
         return { complete: false };
       }
       return {
-        complete:
-          allRevoked &&
-          batch.remaining === 0 &&
-          after.credentials.length === 0 &&
-          after.remaining === 0,
+        complete: allRevoked && after.credentials.length === 0 && after.remaining === 0,
       };
     },
   };

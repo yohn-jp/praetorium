@@ -102,7 +102,8 @@ describe("runtime Git credential registry", () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       paths.push(url);
-      if (url.endsWith("/internal/runtime-credentials")) return json({ status: "revocation_pending" });
+      if (url.endsWith("/internal/runtime-credentials"))
+        return json({ status: "revocation_pending" });
       if (url.endsWith("/revoked")) return json({ revoked: true });
       throw new Error("unexpected endpoint");
     });
@@ -155,7 +156,7 @@ describe("runtime Git credential registry", () => {
         pendingReads += 1;
         if (pendingReads === 1 && record) {
           record = { ...record, status: "revocation_pending" };
-          return json({ credentials: [record], remaining: 0 });
+          return json({ credentials: [record], remaining: 1 });
         }
         return json({ credentials: [], remaining: 0 });
       }
@@ -192,7 +193,7 @@ describe("runtime Git credential registry", () => {
       if (url.endsWith("/pending")) {
         pendingReads += 1;
         return pendingReads === 1
-          ? json({ credentials: [record], remaining: 0 })
+          ? json({ credentials: [record], remaining: 1 })
           : json({ credentials: [], remaining: 0 });
       }
       throw new Error("unexpected endpoint");
@@ -218,7 +219,7 @@ describe("runtime Git credential registry", () => {
         record = { ...posted, status: "revocation_pending", createdAt: 1, updatedAt: 1 };
         return json({ status: "active" });
       }
-      if (url.endsWith("/pending")) return json({ credentials: [record], remaining: 0 });
+      if (url.endsWith("/pending")) return json({ credentials: [record], remaining: 1 });
       if (url.endsWith("/revoked")) {
         acknowledgements += 1;
         return json({ revoked: true });
@@ -256,7 +257,7 @@ describe("runtime Git credential registry", () => {
       if (url.endsWith("/pending")) {
         pendingReads += 1;
         return pendingReads === 1
-          ? json({ credentials: [...records.values()], remaining: 0 })
+          ? json({ credentials: [...records.values()], remaining: records.size })
           : json({ credentials: [], remaining: 0 });
       }
       if (url.endsWith("/revoked")) {
@@ -317,7 +318,7 @@ describe("runtime Git credential registry", () => {
         return json({ status: "active" });
       }
       if (url.endsWith("/pending")) {
-        return json({ credentials: record ? [record] : [], remaining: 0 });
+        return json({ credentials: record ? [record] : [], remaining: record ? 1 : 0 });
       }
       if (url.endsWith("/revoked")) {
         if (!ack) return json({ revoked: false });
@@ -392,10 +393,11 @@ describe("runtime Git credential registry", () => {
   });
 
   it("rejects oversized Control Plane response metadata before parsing it", async () => {
-    const fetch = vi.fn(async () =>
-      new Response("{}", {
-        headers: { "Content-Type": "application/json", "Content-Length": "4097" },
-      }),
+    const fetch = vi.fn(
+      async () =>
+        new Response("{}", {
+          headers: { "Content-Type": "application/json", "Content-Length": "4097" },
+        }),
     );
     const revoke = vi.fn(async () => undefined);
     const registry = await makeRegistry(binding(fetch), { revoke });

@@ -1,0 +1,1 @@
+running user=10001:10001 readonly=true capdrop=["CAP_CHOWN","CAP_DAC_OVERRIDE","CAP_FOWNER","CAP_FSETID","CAP_KILL","CAP_NET_BIND_SERVICE","CAP_SETFCAP","CAP_SETGID","CAP_SETPCAP","CAP_SETUID","CAP_SYS_CHROOT"] security=["no-new-privileges"] network=none cmd=["node","dist/server.js"]

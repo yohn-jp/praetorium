@@ -18,6 +18,12 @@ probe. It does not exercise the existing-namespace Pod census path, capacity,
 provisioning writes, application startup, a full Provisioner process, Scriptorium,
 or end-to-end T07/T14 acceptance.
 
+Before importing the image or writing resources, the runner checks the actual
+cluster-scoped Deployment selector used by `listManagedInstances()` and
+requires an empty, complete result page. It also requires the four canonical
+bootstrap resources, the generated instance namespace, and the unique probe Pod
+name to be absent. No preexisting object is adopted.
+
 ## Exact image and runtime configuration
 
 The only image input is
@@ -54,19 +60,33 @@ namespace, and unique probe Pod must all return HTTP 404 before the image load
 or any Kubernetes create. Existing resources are never adopted.
 
 The canonical Namespace, ServiceAccount, ClusterRole, and ClusterRoleBinding
-are created from their exact source YAML documents. The unique probe Pod runs
+are converted locally from their source YAML documents and created through the
+actual Kubernetes API. The runner adds a random `praetorium.io/t07-run-id`
+ownership label to each bootstrap object and the probe Pod. It captures each
+successful API response's UID and requires both that UID and the run label to
+match before deleting the object. The unique probe Pod runs
 as UID/GID 10001 with a read-only root filesystem, no privilege escalation,
 all Linux capabilities dropped, and `RuntimeDefault` seccomp. Its only
 credential is Kubernetes' projected ServiceAccount token; the test confirms
 the token and CA files are present without printing their contents. The Pod
 does not run the Provisioner service or receive its Control Plane credential.
 
-Cleanup runs in reverse order. The runner re-reads each resource and sends an
-HTTP `DeleteOptions` request with that resource's UID precondition, then waits
-for a 404. It does not use unsupported kubectl UID-precondition flags. If a
-create or delete result is uncertain, the runner reports failure and does not
-guess ownership or claim cleanup complete; reconcile the exact resource before
-retrying.
+Cleanup runs in reverse order. The runner re-reads each resource and checks
+both its random run label and UID, sends an HTTP `DeleteOptions` request with
+that UID precondition, then waits for a 404. It does not use unsupported
+kubectl UID-precondition flags. If a create request times out or returns a
+server error, a single 404 lookup is treated as uncertain because the server
+may still be processing it; all automatic cleanup is withheld for
+reconciliation. If a lookup finds the exact random run label, the runner
+captures that object's UID, aborts acceptance, and uses the UID/label-guarded
+cleanup. A definitive client-side rejection does not create an ownership
+record, so cleanup proceeds only for earlier resources whose UIDs were
+captured. Delete uncertainty stops cleanup at that resource and preserves the
+remaining ledger. Bounded external commands terminate their process group,
+escalate from TERM to KILL if needed, and wait for process closure before
+cleanup proceeds; a local regression covers a TERM-ignoring descendant. The
+image import remains in the disposable cluster cache; the test removes only
+the UID-owned API resources it created.
 
 ## Run procedure
 
@@ -89,7 +109,9 @@ The runner invokes the private Podman wrapper to import the exact archive into
 the owned cluster. It then creates only the four absent canonical bootstrap
 resources and one unique read-only probe Pod. The result is successful only if
 the actual image starts, reads the projected token, completes both production
-provider reads, reports the absent census, and all UID-guarded cleanup reaches 404.
+provider reads, reports the absent census, and all UID-guarded cleanup reaches 404. On success, Node prints a small JSON proof with the source commit, archive
+hash, original manifest/config digests, observed runtime `imageID`, cluster
+identity, and probe run ID after cleanup completes.
 
 ## Result
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import https from "node:https";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -29,6 +29,14 @@ const SYSTEM_NAMESPACE = "praetorium-system";
 const TEST_TIMEOUT_MS = 420_000;
 const PROCESS_TIMEOUT_MS = 30_000;
 const RESPONSE_LIMIT_BYTES = 512 * 1024;
+
+class KubernetesApiStatusError extends Error {
+  constructor(statusCode) {
+    super(`Kubernetes API returned HTTP ${statusCode}`);
+    this.name = "KubernetesApiStatusError";
+    this.statusCode = statusCode;
+  }
+}
 
 function assertExactFile(filePath, expectedMode) {
   return lstat(filePath).then((details) => {
@@ -109,36 +117,58 @@ async function runBounded(command, args, { input, timeoutMs = PROCESS_TIMEOUT_MS
         TMPDIR: path.join(EXPECTED_ROOT, "t"),
         LANG: "C.UTF-8",
       },
+      detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const stdout = [];
     const stderr = [];
     let outputBytes = 0;
     let settled = false;
+    let stopReason;
+    let escalationTimer;
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(escalationTimer);
       if (error) reject(error);
       else resolve(value);
     };
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish(new Error("bounded external command timed out"));
-    }, timeoutMs);
+    const signalProcessGroup = (signal) => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch (error) {
+        if (error instanceof Error && error.code === "ESRCH") return;
+        try {
+          child.kill(signal);
+        } catch {}
+      }
+    };
+    const stop = (reason) => {
+      if (stopReason !== undefined) return;
+      stopReason = reason;
+      signalProcessGroup("SIGTERM");
+      escalationTimer = setTimeout(() => signalProcessGroup("SIGKILL"), 2_000);
+    };
+    const timer = setTimeout(() => stop("bounded external command timed out"), timeoutMs);
     const collect = (target, chunk) => {
+      if (stopReason !== undefined) return;
       outputBytes += chunk.length;
       if (outputBytes > RESPONSE_LIMIT_BYTES) {
-        child.kill("SIGTERM");
-        finish(new Error("external command output exceeded limit"));
+        stop("external command output exceeded limit");
         return;
       }
       target.push(chunk);
     };
     child.stdout.on("data", (chunk) => collect(stdout, chunk));
     child.stderr.on("data", (chunk) => collect(stderr, chunk));
-    child.on("error", () => finish(new Error("external command could not start")));
+    child.on("error", () => stop("external command could not start"));
     child.on("close", (code, signal) => {
+      if (stopReason !== undefined) {
+        finish(new Error(stopReason));
+        return;
+      }
       if (code !== 0) {
         finish(new Error(`external command failed (${signal ?? code ?? "unknown"})`));
         return;
@@ -261,7 +291,7 @@ async function apiRequest(client, method, apiPath, body, expectedStatuses = [200
         response.on("end", () => {
           const responseBody = Buffer.concat(chunks).toString("utf8");
           if (!expectedStatuses.includes(response.statusCode)) {
-            reject(new Error(`Kubernetes API returned HTTP ${response.statusCode ?? 0}`));
+            reject(new KubernetesApiStatusError(response.statusCode ?? 0));
             return;
           }
           if (responseBody.length === 0) {
@@ -287,8 +317,7 @@ async function getOptional(client, apiPath) {
   try {
     return await apiRequest(client, "GET", apiPath);
   } catch (error) {
-    if (error instanceof Error && error.message === "Kubernetes API returned HTTP 404")
-      return undefined;
+    if (error instanceof KubernetesApiStatusError && error.statusCode === 404) return undefined;
     throw error;
   }
 }
@@ -318,49 +347,98 @@ async function canonicalDoc(repo, relativePath, kind, name) {
   return yamlDocument(source, kind, name);
 }
 
-async function createFromSource(client, kubectl, kubeconfig, yaml, kind, name) {
-  const target = {
-    kind,
-    metadata: {
-      name,
-      ...(kind === "ServiceAccount" ? { namespace: SYSTEM_NAMESPACE } : {}),
-    },
+class UncertainCreateOutcomeError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UncertainCreateOutcomeError";
+  }
+}
+
+class RecoveredCreateOutcomeError extends Error {
+  constructor(resource) {
+    super(`create response was uncertain; recovered the owned ${resource.kind} UID`);
+    this.name = "RecoveredCreateOutcomeError";
+    this.resource = resource;
+  }
+}
+
+function resourceCollectionPath(resource) {
+  const namespace = encodeURIComponent(resource.metadata.namespace);
+  switch (resource.kind) {
+    case "Namespace":
+      return "/api/v1/namespaces";
+    case "ServiceAccount":
+      return `/api/v1/namespaces/${namespace}/serviceaccounts`;
+    case "ClusterRole":
+      return "/apis/rbac.authorization.k8s.io/v1/clusterroles";
+    case "ClusterRoleBinding":
+      return "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings";
+    default:
+      throw new Error("unsupported bootstrap resource kind");
+  }
+}
+
+async function createFromSource(client, kubectl, kubeconfig, yaml, kind, name, runId) {
+  const { stdout } = await runBounded(
+    kubectl,
+    [
+      "--kubeconfig",
+      kubeconfig,
+      "--context",
+      EXPECTED_CONTEXT,
+      "create",
+      "--dry-run=client",
+      "--filename",
+      "-",
+      "--output",
+      "json",
+    ],
+    { input: yaml, timeoutMs: PROCESS_TIMEOUT_MS },
+  );
+  const resource = JSON.parse(stdout);
+  assert.equal(resource.kind, kind);
+  assert.equal(resource.metadata?.name, name);
+  resource.metadata.labels = {
+    ...resource.metadata.labels,
+    "praetorium.io/t07-run-id": runId,
   };
+
   try {
-    const { stdout } = await runBounded(
-      kubectl,
-      [
-        "--kubeconfig",
-        kubeconfig,
-        "--context",
-        EXPECTED_CONTEXT,
-        "--request-timeout=10s",
-        "create",
-        "--filename",
-        "-",
-        "--output",
-        "json",
-      ],
-      { input: yaml, timeoutMs: PROCESS_TIMEOUT_MS },
-    );
-    const resource = JSON.parse(stdout);
-    assert.match(resource.metadata?.uid ?? "", /^[0-9a-f-]{36}$/u);
-    return resource;
-  } catch {
-    let current;
+    const created = await apiRequest(client, "POST", resourceCollectionPath(resource), resource, [
+      201,
+    ]);
+    assert.match(created.metadata?.uid ?? "", /^[0-9a-f-]{36}$/u);
+    assert.equal(created.metadata?.labels?.["praetorium.io/t07-run-id"], runId);
+    return created;
+  } catch (error) {
+    if (
+      error instanceof KubernetesApiStatusError &&
+      error.statusCode >= 400 &&
+      error.statusCode < 500
+    ) {
+      throw error;
+    }
+    let observed;
     try {
-      current = await getOptional(client, resourcePath(target));
+      observed = await getOptional(
+        client,
+        `${resourceCollectionPath(resource)}/${encodeURIComponent(name)}`,
+      );
     } catch {
-      throw new Error(
-        `source create outcome is uncertain for ${kind}/${name}; target lookup failed`,
+      throw new UncertainCreateOutcomeError(
+        `source create outcome is uncertain for ${kind}/${name}; preserve resources for manual reconciliation`,
       );
     }
-    if (current !== undefined) {
-      throw new Error(
-        `source create outcome is uncertain for ${kind}/${name}; target exists without a captured create UID`,
-      );
+    if (
+      observed !== undefined &&
+      observed.metadata?.labels?.["praetorium.io/t07-run-id"] === runId
+    ) {
+      assert.match(observed.metadata?.uid ?? "", /^[0-9a-f-]{36}$/u);
+      throw new RecoveredCreateOutcomeError(observed);
     }
-    throw new Error(`source create failed for ${kind}/${name}; target is confirmed absent`);
+    throw new UncertainCreateOutcomeError(
+      `source create outcome is uncertain for ${kind}/${name}; preserve resources for manual reconciliation (${error instanceof Error ? error.message : "request failed"})`,
+    );
   }
 }
 
@@ -414,7 +492,7 @@ async function readPodLogs(kubectl, kubeconfig, podName) {
   return stdout.trim();
 }
 
-async function removeByUid(client, resource) {
+async function removeByUid(client, resource, runId) {
   const pathname = resourcePath(resource);
   const current = await getOptional(client, pathname);
   if (current === undefined) return;
@@ -422,6 +500,11 @@ async function removeByUid(client, resource) {
     current.metadata?.uid,
     resource.metadata.uid,
     "cleanup UID precondition no longer matches",
+  );
+  assert.equal(
+    current.metadata?.labels?.["praetorium.io/t07-run-id"],
+    runId,
+    "cleanup ownership marker no longer matches",
   );
   await apiRequest(
     client,
@@ -443,16 +526,16 @@ async function removeByUid(client, resource) {
   throw new Error(`UID-preconditioned cleanup did not finish for ${resource.kind}`);
 }
 
-async function cleanup(client, created) {
-  const problems = [];
+async function cleanup(client, created, runId) {
   for (const resource of [...created].reverse()) {
     try {
-      await removeByUid(client, resource);
+      await removeByUid(client, resource, runId);
     } catch (error) {
-      problems.push(error instanceof Error ? error.message : "cleanup failed");
+      throw new Error(
+        `cleanup stopped at ${resource.kind}; preserve remaining resources for reconciliation: ${error instanceof Error ? error.message : "cleanup failed"}`,
+      );
     }
   }
-  if (problems.length > 0) throw new Error(`cleanup incomplete (${problems.join("; ")})`);
 }
 
 function safeRunId() {
@@ -537,6 +620,21 @@ async function assertNoPreexistingResources(client, identity, podName) {
     results.every((value) => value === undefined),
     "a canonical or test resource already exists; refusing adoption",
   );
+}
+
+async function assertNoManagedDeployments(client, clusterId) {
+  const selector = [
+    "arcadia.io/platform=arcadia-platform",
+    "arcadia.io/ownership-version=v1",
+    `arcadia.io/runtime-cluster-id=${clusterId}`,
+  ].join(",");
+  const result = await apiRequest(
+    client,
+    "GET",
+    `/apis/apps/v1/deployments?labelSelector=${encodeURIComponent(selector)}`,
+  );
+  assert.deepEqual(result.items, [], "owned cluster already has managed runtime Deployments");
+  assert.equal(result.metadata?.continue ?? "", "", "managed Deployment census is incomplete");
 }
 
 async function assertOwnedCluster(client, clusterId) {
@@ -678,6 +776,40 @@ test("local preflight binds the probe to production provider settings and canoni
   );
 });
 
+test(
+  "bounded command timeout kills descendants and waits for process-group exit",
+  { timeout: 10_000 },
+  async () => {
+    const directory = await mkdtemp(path.join(EXPECTED_ROOT, "t/provider-read-runner-"));
+    const markerPath = path.join(directory, "late-child-write");
+    const childScript = [
+      'import { writeFileSync } from "node:fs";',
+      'process.on("SIGTERM", () => {});',
+      `setTimeout(() => writeFileSync(${JSON.stringify(markerPath)}, "late"), 2_600);`,
+    ].join(" ");
+    const parentScript = [
+      'import { spawn } from "node:child_process";',
+      'process.on("SIGTERM", () => {});',
+      `spawn(process.execPath, ["--input-type=module", "--eval", ${JSON.stringify(childScript)}], { stdio: "inherit" });`,
+      "await new Promise(() => {});",
+    ].join(" ");
+    try {
+      const startedAt = Date.now();
+      await assert.rejects(
+        runBounded(process.execPath, ["--input-type=module", "--eval", parentScript], {
+          timeoutMs: 300,
+        }),
+        /bounded external command timed out/u,
+      );
+      assert.ok(Date.now() - startedAt >= 1_800, "runner returned before the process group exited");
+      await delay(900);
+      await assert.rejects(readFile(markerPath), { code: "ENOENT" });
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  },
+);
+
 const armed = Boolean(
   process.env[ROOT_ENV] &&
     process.env[CLUSTER_CONFIRM_ENV] &&
@@ -717,6 +849,7 @@ test(
     assert.equal(wrapper.uid, EXPECTED_UID);
     const client = await loadKubeconfig(kubectl, owner.kubeconfig);
     const clusterProof = await assertOwnedCluster(client, owner.clusterId);
+    await assertNoManagedDeployments(client, runtimeConfig.clusterId);
 
     const runId = safeRunId();
     const instanceId = `ins_${runId.toUpperCase().padEnd(26, "A")}`;
@@ -726,6 +859,8 @@ test(
     const archive = await verifyImageArchive();
     const created = [];
     let imageLoadCompleted = false;
+    let uncertainCreateOutcome = false;
+    let acceptanceProof;
     try {
       const namespaceYaml = await canonicalDoc(
         repo,
@@ -774,6 +909,7 @@ test(
         namespaceYaml,
         "Namespace",
         SYSTEM_NAMESPACE,
+        runId,
       );
       created.push(namespace);
       assert.equal(namespace.metadata.name, SYSTEM_NAMESPACE);
@@ -784,6 +920,7 @@ test(
         serviceAccountYaml,
         "ServiceAccount",
         "praetorium-provisioner",
+        runId,
       );
       created.push(serviceAccount);
       assert.equal(serviceAccount.metadata.name, "praetorium-provisioner");
@@ -796,6 +933,7 @@ test(
         clusterRoleYaml,
         "ClusterRole",
         "praetorium-provisioner-bootstrap",
+        runId,
       );
       created.push(role);
       assert.equal(role.metadata.name, "praetorium-provisioner-bootstrap");
@@ -806,6 +944,7 @@ test(
         clusterRoleBindingYaml,
         "ClusterRoleBinding",
         "praetorium-provisioner-bootstrap",
+        runId,
       );
       created.push(binding);
       assert.equal(binding.metadata.name, "praetorium-provisioner-bootstrap");
@@ -895,23 +1034,36 @@ test(
       let createdPod;
       try {
         createdPod = await createPod(client, pod);
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof KubernetesApiStatusError &&
+          error.statusCode >= 400 &&
+          error.statusCode < 500
+        ) {
+          throw error;
+        }
         let observed;
         try {
           observed = await getOptional(client, resourcePath(pod));
         } catch {
-          throw new Error("probe Pod create result is uncertain; target lookup failed");
+          throw new UncertainCreateOutcomeError(
+            "probe Pod create result is uncertain; target lookup failed",
+          );
         }
         if (observed !== undefined) {
           if (observed.metadata?.labels?.["praetorium.io/t07-run-id"] !== runId) {
-            throw new Error("probe Pod create result is uncertain; existing target is not owned");
+            throw new UncertainCreateOutcomeError(
+              `probe Pod ${podName} create result is uncertain; existing target is not owned`,
+            );
           }
           created.push(observed);
           throw new Error(
-            "probe Pod create result is uncertain; recovered UID for guarded cleanup",
+            `probe Pod ${podName} create response was uncertain; recovered its owned UID and will stop acceptance`,
           );
         }
-        throw new Error("probe Pod create failed; target is confirmed absent");
+        throw new UncertainCreateOutcomeError(
+          `probe Pod ${podName} create result is uncertain after one 404; preserve resources for manual reconciliation`,
+        );
       }
       created.push(createdPod);
       assert.equal(createdPod.metadata?.uid?.length, 36);
@@ -927,9 +1079,10 @@ test(
       );
       assert.equal(containerStatus?.state?.terminated?.exitCode, 0);
       const imageId = containerStatus?.imageID ?? "";
+      assert.ok(imageId, "runtime did not report the provider image identity");
       assert.ok(
         [EXPECTED_CONFIG, EXPECTED_MANIFEST].some((digest) => imageId.endsWith(digest)),
-        "runtime imageID did not resolve to the preserved image manifest or config digest",
+        `runtime imageID ${imageId} did not resolve to the preserved image manifest or config digest`,
       );
       const log = await readPodLogs(kubectl, owner.kubeconfig, podName);
       const result = JSON.parse(log);
@@ -952,10 +1105,36 @@ test(
       );
       assert.match(clusterProof.version, /^v1\.35\./u);
       assert.equal(clusterProof.nodeCount, 1);
+      acceptanceProof = {
+        marker: "praetorium-t07-provider-read-acceptance-v1",
+        clusterId: owner.clusterId,
+        clusterVersion: clusterProof.version,
+        nodeCount: clusterProof.nodeCount,
+        sourceCommit: "431dbe1c7c86251894efea3de2cf0ec94499ca10",
+        archiveSha256: EXPECTED_ARCHIVE_SHA256,
+        manifestDigest: EXPECTED_MANIFEST,
+        configDigest: EXPECTED_CONFIG,
+        runtimeImageID: imageId,
+        managedDeploymentCountBefore: 0,
+        probeRunId: runId,
+      };
+    } catch (error) {
+      if (error instanceof RecoveredCreateOutcomeError) {
+        created.push(error.resource);
+        throw new Error(`${error.message}; automatic cleanup will use its ownership label and UID`);
+      }
+      if (error instanceof UncertainCreateOutcomeError) uncertainCreateOutcome = true;
+      throw error;
     } finally {
+      if (uncertainCreateOutcome) {
+        client.agent.destroy();
+        throw new Error(
+          "uncertain create outcome; automatic cleanup was withheld for reconciliation",
+        );
+      }
       let cleanupFailure;
       try {
-        await cleanup(client, created);
+        await cleanup(client, created, runId);
       } catch (error) {
         cleanupFailure = error;
       }
@@ -968,5 +1147,6 @@ test(
       true,
       "exact production image was not loaded into the owned cluster",
     );
+    console.log(JSON.stringify({ ...acceptanceProof, resourceCleanup: "complete" }));
   },
 );

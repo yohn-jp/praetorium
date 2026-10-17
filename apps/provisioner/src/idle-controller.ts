@@ -1,10 +1,11 @@
-import { setTimeout as delay } from "node:timers/promises";
+import { WorkAvailability } from "@praetorium/application";
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   IdleLifecycle,
   type IdleObservation,
   type RuntimeAssignment,
   type LifecycleReadinessEvidence,
+  type ProducerStatus,
   type RuntimePersistenceObservation,
 } from "@praetorium/application/lifecycle";
 import {
@@ -28,12 +29,18 @@ import {
   type RuntimeAuthAcceptanceProbe,
 } from "./scriptorium-control-client.js";
 import type { RuntimeIdentityAssignmentTransport } from "./runtime-identity.js";
+import { IdleDeadlineJournal, type IdleDeadlineRecord } from "./idle-deadline-journal.js";
 
 const CONTROL_PAGE_SIZE = 25;
-const DEFAULT_SCAN_INTERVAL_MS = 60_000;
 const MAX_CONTROL_PAGES_PER_CYCLE = 4_096;
 const MAX_RUNTIME_PAGES_PER_CANDIDATE_PAGE = 4_096;
 const MAX_PRODUCER_STATUS_AGE_MS = 30_000;
+const IDLE_RECHECK_INTERVAL_MS = 300_000;
+const MAX_AVAILABILITY_WAIT_MS = 3_600_000;
+const INITIAL_RETRY_INTERVAL_MS = 5_000;
+const MAX_RETRY_INTERVAL_MS = 300_000;
+const IDENTITY_REFRESH_MARGIN_MS = 90_000;
+const MAX_RECORDED_HEALTH_TRIGGERS = 10_000;
 
 export interface IdleRuntimeInspector {
   listManagedInstances(
@@ -42,10 +49,8 @@ export interface IdleRuntimeInspector {
   ): Promise<RuntimePage<ManagedRuntimeSummary>>;
   inspect(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<RuntimeObservation>;
   controlEndpoint(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<string>;
-  refreshRuntimeIdentity?(
-    assignment: RuntimeAssignment,
-    signal?: AbortSignal,
-  ): Promise<boolean>;
+  refreshRuntimeIdentity?(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<boolean>;
+  runtimeIdentityExpiresAt?(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<number>;
 }
 
 export interface ProvisionerIdleControllerOptions {
@@ -54,8 +59,9 @@ export interface ProvisionerIdleControllerOptions {
   readonly clusterId: string;
   readonly runtime: LifecycleProvisionerExecutorOptions["runtime"];
   readonly idleTimeoutMs?: number;
-  readonly scanIntervalMs?: number;
   readonly statusMaxAgeMs?: number;
+  readonly idleJournalPath?: string;
+  readonly idleJournal?: IdleDeadlineJournal;
   readonly now?: () => number;
   readonly logger?: ProvisionerLogger;
   readonly metrics?: ProvisionerMetrics;
@@ -64,6 +70,16 @@ export interface ProvisionerIdleControllerOptions {
   readonly authProbe?: RuntimeAuthAcceptanceProbe;
   /** Narrow seam for deterministic unit tests; production uses the T07 adapter. */
   readonly createInspector?: (candidate: ProvisionerIdleCandidate) => IdleRuntimeInspector;
+}
+
+interface TrackedRuntime {
+  readonly candidate: ProvisionerIdleCandidate;
+  readonly assignment: RuntimeAssignment;
+  readonly inspector: IdleRuntimeInspector;
+  identityRefreshAt: number | undefined;
+  idleCheckAt: number | undefined;
+  retryAt: number | undefined;
+  retryMs: number;
 }
 
 function isCurrentRuntimeCandidate(
@@ -167,14 +183,43 @@ function sameModuleSet(left: readonly string[], right: readonly string[]): boole
   return left.length === expected.size && left.every((moduleId) => expected.has(moduleId));
 }
 
+function sameIdleBinding(left: RuntimeAssignment, right: RuntimeAssignment): boolean {
+  return (
+    left.instanceId === right.instanceId &&
+    left.repositoryId === right.repositoryId &&
+    left.generation === right.generation &&
+    left.runtimeEpoch === right.runtimeEpoch &&
+    left.clusterId === right.clusterId
+  );
+}
+
+function validActivityCounts(activity: ProducerStatus["activity"]): boolean {
+  return [
+    activity.activeApiRequests,
+    activity.activeMcpRequests,
+    activity.activeMutations,
+    activity.activeJobs,
+    activity.restartableJobs,
+    activity.pendingCheckpoints,
+  ].every((value) => Number.isSafeInteger(value) && value >= 0);
+}
+
 export class ProvisionerIdleController {
   private readonly now: () => number;
-  private readonly scanIntervalMs: number;
   private readonly statusMaxAgeMs: number;
+  private readonly idleTimeoutMs: number;
+  private readonly availability = new WorkAvailability();
+  private readonly journal: IdleDeadlineJournal;
+  private readonly recordedHealthTriggers = new Set<string>();
+  private journalLoadAttempted = false;
+  private journalReady = false;
+  private discoveryPending = true;
+  private discoveryRetryAt: number | undefined;
+  private discoveryRetryMs = INITIAL_RETRY_INTERVAL_MS;
+  private readonly tracked = new Map<string, TrackedRuntime>();
   private readonly logger: ProvisionerLogger | undefined;
   private readonly metrics: ProvisionerMetrics | undefined;
   private readonly createInspector: (candidate: ProvisionerIdleCandidate) => IdleRuntimeInspector;
-  private readonly idleTimeoutMs: number | undefined;
   private controlCursor: string | null = null;
   private candidatePage: Awaited<
     ReturnType<ProvisionerOperationService["listIdleCandidates"]>
@@ -187,14 +232,13 @@ export class ProvisionerIdleController {
 
   constructor(private readonly options: ProvisionerIdleControllerOptions) {
     this.now = options.now ?? Date.now;
-    this.scanIntervalMs = options.scanIntervalMs ?? DEFAULT_SCAN_INTERVAL_MS;
     this.statusMaxAgeMs = options.statusMaxAgeMs ?? MAX_PRODUCER_STATUS_AGE_MS;
     this.logger = options.logger;
     this.metrics = options.metrics;
-    this.idleTimeoutMs = options.idleTimeoutMs;
-    if (!Number.isSafeInteger(this.scanIntervalMs) || this.scanIntervalMs < 1) {
-      throw new RangeError("idle scan interval must be a positive integer");
-    }
+    this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.journal = options.idleJournal ?? new IdleDeadlineJournal(options.idleJournalPath);
+    if (!Number.isSafeInteger(this.idleTimeoutMs) || this.idleTimeoutMs < 1)
+      throw new RangeError("idle timeout must be a positive integer");
     if (!Number.isSafeInteger(this.statusMaxAgeMs) || this.statusMaxAgeMs < 1) {
       throw new RangeError("idle producer status age must be a positive integer");
     }
@@ -233,26 +277,165 @@ export class ProvisionerIdleController {
           controlEndpoint: (assignment, signal) => adapter.controlEndpoint(assignment, signal),
           refreshRuntimeIdentity: (assignment, signal) =>
             adapter.refreshRuntimeIdentity(assignment, async () => undefined, signal),
+          runtimeIdentityExpiresAt: (assignment, signal) =>
+            adapter.runtimeIdentityExpiresAt(assignment, signal),
         };
       });
   }
 
+  notifyWorkAvailable(): void {
+    this.discoveryPending = true;
+    this.availability.notify();
+  }
+
+  async processDueOnce(signal?: AbortSignal): Promise<void> {
+    await this.ensureJournalLoaded();
+    await this.processDue(signal ?? new AbortController().signal);
+  }
+
   async run(signal: AbortSignal): Promise<void> {
+    await this.ensureJournalLoaded();
     while (!signal.aborted) {
-      try {
-        await this.scanOnce(signal);
-      } catch (error) {
-        if (signal.aborted) break;
-        this.metrics?.increment("idle_scan_retry");
-        this.logger?.warn("idle_scan_retry", { code: errorCode(error) });
+      if (this.discoveryPending) {
+        this.discoveryPending = false;
+        this.discoveryRetryAt = undefined;
+        try {
+          await this.scanFullInventory(signal);
+          this.discoveryRetryMs = INITIAL_RETRY_INTERVAL_MS;
+        } catch (error) {
+          if (signal.aborted) break;
+          this.discoveryRetryAt = this.now() + this.discoveryRetryMs;
+          this.discoveryRetryMs = Math.min(
+            MAX_RETRY_INTERVAL_MS,
+            Math.ceil(this.discoveryRetryMs * 1.8),
+          );
+          this.metrics?.increment("idle_scan_retry");
+          this.logger?.warn("idle_scan_retry", { code: errorCode(error) });
+        }
       }
       if (signal.aborted) break;
-      await delay(this.scanIntervalMs, undefined, { signal }).catch(() => undefined);
+      try {
+        await this.processDue(signal);
+      } catch (error) {
+        if (signal.aborted) break;
+        this.metrics?.increment("idle_timer_retry");
+        this.logger?.warn("idle_timer_retry", { code: errorCode(error) });
+      }
+      if (signal.aborted) break;
+      const nextWakeAt = this.nextWakeAt();
+      const waitMs =
+        nextWakeAt === undefined
+          ? MAX_AVAILABILITY_WAIT_MS
+          : Math.max(1, Math.min(MAX_AVAILABILITY_WAIT_MS, nextWakeAt - this.now()));
+      await this.availability.wait(signal, waitMs);
+      if (this.discoveryRetryAt !== undefined && this.discoveryRetryAt <= this.now()) {
+        this.discoveryPending = true;
+      }
+    }
+  }
+
+  private async ensureJournalLoaded(): Promise<void> {
+    if (this.journalLoadAttempted) return;
+    this.journalLoadAttempted = true;
+    try {
+      await this.journal.load();
+      this.journalReady = this.journal.persistent;
+      if (!this.journalReady) this.metrics?.increment("idle_journal_unconfigured");
+    } catch (error) {
+      this.journalReady = false;
+      this.metrics?.increment("idle_journal_unavailable");
+      this.logger?.warn("idle_journal_unavailable", { code: errorCode(error) });
+    }
+  }
+
+  private async scanFullInventory(signal?: AbortSignal): Promise<void> {
+    let pages = 0;
+    do {
+      if (signal?.aborted) return;
+      await this.scanOnce(signal);
+      pages += 1;
+      if (pages > MAX_CONTROL_PAGES_PER_CYCLE * MAX_RUNTIME_PAGES_PER_CANDIDATE_PAGE) {
+        throw new Error("idle_inventory_page_limit");
+      }
+    } while (this.candidatePage !== null || this.controlCursor !== null);
+  }
+
+  private nextWakeAt(): number | undefined {
+    const values: number[] = [];
+    if (this.discoveryRetryAt !== undefined) values.push(this.discoveryRetryAt);
+    for (const runtime of this.tracked.values()) {
+      if (runtime.identityRefreshAt !== undefined) values.push(runtime.identityRefreshAt);
+      if (runtime.idleCheckAt !== undefined) values.push(runtime.idleCheckAt);
+      if (runtime.retryAt !== undefined) values.push(runtime.retryAt);
+    }
+    return values.length === 0 ? undefined : Math.min(...values);
+  }
+
+  private async processDue(signal: AbortSignal): Promise<void> {
+    const now = this.now();
+    if (this.discoveryRetryAt !== undefined && this.discoveryRetryAt <= now) {
+      this.discoveryPending = true;
+      this.discoveryRetryAt = undefined;
+    }
+    for (const tracked of [...this.tracked.values()]) {
+      if (signal.aborted) return;
+      if (tracked.identityRefreshAt !== undefined && tracked.identityRefreshAt <= this.now()) {
+        if (!(await this.refreshIdentity(tracked, signal))) {
+          if (tracked.idleCheckAt !== undefined && tracked.idleCheckAt <= this.now())
+            tracked.idleCheckAt = tracked.identityRefreshAt;
+          continue;
+        }
+      }
+      if (signal.aborted) return;
+      const dueAt = tracked.retryAt ?? tracked.idleCheckAt;
+      if (dueAt !== undefined && dueAt <= this.now()) {
+        tracked.retryAt = undefined;
+        tracked.idleCheckAt = undefined;
+        if (tracked.candidate.hasActiveOperation) continue;
+        await this.evaluateCandidate(
+          tracked.candidate,
+          tracked.assignment,
+          tracked.inspector,
+          signal,
+          false,
+        );
+      }
+    }
+  }
+
+  private async refreshIdentity(tracked: TrackedRuntime, signal: AbortSignal): Promise<boolean> {
+    const inspector = tracked.inspector;
+    if (
+      inspector.refreshRuntimeIdentity === undefined ||
+      inspector.runtimeIdentityExpiresAt === undefined
+    ) {
+      tracked.identityRefreshAt = undefined;
+      return true;
+    }
+    try {
+      if (await inspector.refreshRuntimeIdentity(tracked.assignment, signal))
+        this.metrics?.increment("runtime_identity_refreshed");
+      const expiresAt = await inspector.runtimeIdentityExpiresAt(tracked.assignment, signal);
+      if (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now())
+        throw new Error("runtime_identity_expiry_invalid");
+      tracked.identityRefreshAt = expiresAt - IDENTITY_REFRESH_MARGIN_MS;
+      if (tracked.identityRefreshAt <= this.now())
+        tracked.identityRefreshAt = this.now() + INITIAL_RETRY_INTERVAL_MS;
+      tracked.retryMs = INITIAL_RETRY_INTERVAL_MS;
+      return true;
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
+      this.metrics?.increment("runtime_identity_refresh_failed");
+      this.logger?.warn("runtime_identity_refresh_failed", { code: errorCode(error) });
+      tracked.identityRefreshAt = this.now() + tracked.retryMs;
+      tracked.retryMs = Math.min(MAX_RETRY_INTERVAL_MS, Math.ceil(tracked.retryMs * 1.8));
+      return false;
     }
   }
 
   /** Processes at most one bounded Control Plane page and one Kubernetes page. */
   async scanOnce(signal?: AbortSignal): Promise<void> {
+    await this.ensureJournalLoaded();
     if (this.candidatePage === null) {
       this.candidatePage = await this.options.operations.listIdleCandidates({
         workerId: this.options.workerId,
@@ -297,7 +480,7 @@ export class ProvisionerIdleController {
       }
       if (this.evaluatedCandidates.has(candidate.instanceId)) continue;
       this.evaluatedCandidates.add(candidate.instanceId);
-      await this.evaluateCandidate(candidate, assignment, signal);
+      await this.evaluateCandidate(candidate, assignment, this.inspector, signal, true);
     }
 
     if (page.nextCursor === null) {
@@ -315,10 +498,26 @@ export class ProvisionerIdleController {
   private async evaluateCandidate(
     candidate: ProvisionerIdleCandidate,
     assignment: RuntimeAssignment,
+    inspector: IdleRuntimeInspector | undefined,
     signal?: AbortSignal,
+    allowHealthProbe = false,
   ): Promise<void> {
-    const inspector = this.inspector;
     if (inspector === undefined) return;
+    let tracked = this.tracked.get(candidate.instanceId);
+    if (tracked === undefined || !sameIdleBinding(tracked.assignment, assignment)) {
+      tracked = {
+        candidate,
+        assignment,
+        inspector,
+        identityRefreshAt: undefined,
+        idleCheckAt: undefined,
+        retryAt: undefined,
+        retryMs: INITIAL_RETRY_INTERVAL_MS,
+      };
+    } else {
+      tracked = { ...tracked, candidate, assignment, inspector };
+    }
+    this.tracked.set(candidate.instanceId, tracked);
     try {
       const runtimeObservation = await inspector.inspect(assignment, signal);
       const providerObservedAt = this.now();
@@ -331,18 +530,27 @@ export class ProvisionerIdleController {
       );
       if (!providerReady) {
         this.metrics?.increment("idle_runtime_not_ready");
+        this.scheduleRetry(tracked);
         return;
       }
 
-      if (inspector.refreshRuntimeIdentity !== undefined) {
-        try {
-          if (await inspector.refreshRuntimeIdentity(assignment, signal))
-            this.metrics?.increment("runtime_identity_refreshed");
-        } catch (error) {
-          if (signal?.aborted) throw signal.reason ?? error;
-          this.metrics?.increment("runtime_identity_refresh_failed");
-          this.logger?.warn("runtime_identity_refresh_failed", { code: errorCode(error) });
-          return;
+      if (
+        tracked.identityRefreshAt === undefined &&
+        inspector.runtimeIdentityExpiresAt !== undefined &&
+        inspector.refreshRuntimeIdentity !== undefined
+      ) {
+        const expiresAt = await inspector.runtimeIdentityExpiresAt(assignment, signal);
+        if (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now())
+          throw new Error("runtime_identity_expiry_invalid");
+        tracked.identityRefreshAt = Math.max(
+          this.now() + 1_000,
+          expiresAt - IDENTITY_REFRESH_MARGIN_MS,
+        );
+        if (expiresAt - this.now() <= IDENTITY_REFRESH_MARGIN_MS) {
+          if (!(await this.refreshIdentity(tracked, signal ?? new AbortController().signal))) {
+            tracked.idleCheckAt = tracked.identityRefreshAt;
+            return;
+          }
         }
       }
 
@@ -373,30 +581,102 @@ export class ProvisionerIdleController {
         now - statusObservedAt > this.statusMaxAgeMs
       ) {
         this.metrics?.increment("idle_producer_status_stale_or_mismatched");
+        this.scheduleRetry(tracked);
         return;
       }
 
       if (
+        allowHealthProbe &&
         !candidate.hasActiveOperation &&
         candidate.healthOperationId !== null &&
         this.options.authProbe !== undefined &&
         this.options.operations.recordRuntimeHealth !== undefined
       ) {
-        await this.recordHealthSample(
-          candidate,
-          assignment,
-          runtimeObservation,
-          status,
-          this.options.authProbe.withEndpointResolver((runtimeAssignment, endpointSignal) =>
-            inspector.controlEndpoint(runtimeAssignment, endpointSignal),
-          ),
-          signal,
-        );
+        const trigger = JSON.stringify([
+          candidate.instanceId,
+          candidate.runtimeEpoch,
+          candidate.healthOperationId,
+        ]);
+        if (!this.recordedHealthTriggers.has(trigger)) {
+          this.recordedHealthTriggers.add(trigger);
+          if (this.recordedHealthTriggers.size > MAX_RECORDED_HEALTH_TRIGGERS) {
+            const oldest = this.recordedHealthTriggers.values().next().value;
+            if (oldest !== undefined) this.recordedHealthTriggers.delete(oldest);
+          }
+          await this.recordHealthSample(
+            candidate,
+            assignment,
+            runtimeObservation,
+            status,
+            this.options.authProbe.withEndpointResolver((runtimeAssignment, endpointSignal) =>
+              inspector.controlEndpoint(runtimeAssignment, endpointSignal),
+            ),
+            signal,
+          );
+        }
       }
 
-      if (candidate.hasActiveOperation) return;
+      if (candidate.hasActiveOperation) {
+        tracked.retryAt = undefined;
+        return;
+      }
 
       const activity = status.activity;
+      if (!validActivityCounts(activity)) {
+        this.metrics?.increment("idle_activity_counts_invalid");
+        tracked.idleCheckAt = this.now() + IDLE_RECHECK_INTERVAL_MS;
+        return;
+      }
+      const activityAt =
+        activity.lastMeaningfulActivityAt === null
+          ? Number.NaN
+          : Date.parse(activity.lastMeaningfulActivityAt);
+      if (!Number.isSafeInteger(activityAt) || activityAt < 0 || activityAt > this.now()) {
+        this.metrics?.increment("idle_activity_time_unknown");
+        tracked.idleCheckAt = this.now() + IDLE_RECHECK_INTERVAL_MS;
+        return;
+      }
+      if (
+        activity.activeApiRequests > 0 ||
+        activity.activeMcpRequests > 0 ||
+        activity.activeJobs > 0 ||
+        activity.activeMutations > 0 ||
+        activity.pendingCheckpoints > 0 ||
+        activity.uncertainPublication
+      ) {
+        tracked.idleCheckAt = this.now() + IDLE_RECHECK_INTERVAL_MS;
+        return;
+      }
+      if (!this.journalReady) {
+        this.metrics?.increment("idle_journal_unavailable");
+        tracked.idleCheckAt = undefined;
+        return;
+      }
+      let deadline: IdleDeadlineRecord | undefined = this.journal.get(assignment);
+      if (deadline === undefined || deadline.lastMeaningfulActivityAt !== activityAt) {
+        deadline = {
+          instanceId: candidate.instanceId,
+          repositoryId: candidate.repositoryId,
+          generation: candidate.generation,
+          runtimeEpoch: candidate.runtimeEpoch,
+          clusterId: candidate.clusterId,
+          lastMeaningfulActivityAt: activityAt,
+          deadlineAt: activityAt + this.idleTimeoutMs,
+          updatedAt: this.now(),
+        };
+        if (!(await this.journal.put(deadline))) {
+          this.metrics?.increment("idle_journal_unavailable");
+          tracked.idleCheckAt = undefined;
+          return;
+        }
+      }
+      if (deadline.deadlineAt > this.now()) {
+        tracked.idleCheckAt = deadline.deadlineAt;
+        tracked.retryAt = undefined;
+        tracked.retryMs = INITIAL_RETRY_INTERVAL_MS;
+        return;
+      }
+
       const observation: IdleObservation = {
         instanceId: candidate.instanceId,
         repositoryId: candidate.repositoryId,
@@ -439,21 +719,30 @@ export class ProvisionerIdleController {
             });
           },
         },
-        idleTimeoutMs: this.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
+        idleTimeoutMs: this.idleTimeoutMs,
         now: this.now,
       });
       const decision = await lifecycle.evaluate(candidate.instanceId, signal);
       if (decision.status === "scheduled") {
+        tracked.idleCheckAt = undefined;
+        tracked.retryAt = undefined;
         this.metrics?.increment("idle_stop_requested");
         this.logger?.info("idle_stop_requested", { code: "producer_activity_timeout" });
       } else {
         this.metrics?.increment("idle_runtime_retained");
+        tracked.idleCheckAt = this.now() + IDLE_RECHECK_INTERVAL_MS;
       }
     } catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
       this.metrics?.increment("idle_observation_unavailable");
       this.logger?.warn("idle_observation_unavailable", { code: errorCode(error) });
+      this.scheduleRetry(tracked);
     }
+  }
+
+  private scheduleRetry(tracked: TrackedRuntime): void {
+    tracked.retryAt = this.now() + tracked.retryMs;
+    tracked.retryMs = Math.min(MAX_RETRY_INTERVAL_MS, Math.ceil(tracked.retryMs * 1.8));
   }
 
   private async recordHealthSample(

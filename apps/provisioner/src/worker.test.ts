@@ -71,6 +71,7 @@ describe("ProvisionerWorker observation reporting", () => {
   it("sends null for progress and only reports a successful exact target observation", async () => {
     const controller = new AbortController();
     const reports: Array<Record<string, unknown>> = [];
+    const onOperationSettled = vi.fn();
     let firstClaim = true;
     const claim = claimed();
     const operations = {
@@ -114,6 +115,7 @@ describe("ProvisionerWorker observation reporting", () => {
       executor,
       workerId: "worker-a",
       clusterId: "cluster-a",
+      onOperationSettled,
       recoveryIntervalMs: 100,
       retryIntervalMs: 100,
     });
@@ -136,6 +138,7 @@ describe("ProvisionerWorker observation reporting", () => {
       },
     });
     expect(reports[1]?.observation).not.toHaveProperty("operationId");
+    expect(onOperationSettled).toHaveBeenCalledOnce();
   });
 
   it("blocks terminal success when the completed assignment differs from the operation target", async () => {
@@ -212,7 +215,11 @@ describe("ProvisionerWorker observation reporting", () => {
       } as unknown as ProvisionerOperationService;
       const worker = new ProvisionerWorker({
         operations,
-        executor: { async execute() { return { status: "blocked", code: "test", reason: "test" }; } },
+        executor: {
+          async execute() {
+            return { status: "blocked", code: "test", reason: "test" };
+          },
+        },
         workerId: "worker-a",
         clusterId: "cluster-a",
         workAvailability,
@@ -231,6 +238,42 @@ describe("ProvisionerWorker observation reporting", () => {
       await vi.advanceTimersByTimeAsync(300_000);
       await running;
       expect(calls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("backs claim failures off to the bounded recovery interval", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      let calls = 0;
+      const operations = {
+        async claimNext() {
+          calls += 1;
+          throw new Error("control_plane_unavailable");
+        },
+      } as unknown as ProvisionerOperationService;
+      const worker = new ProvisionerWorker({
+        operations,
+        executor: {
+          async execute() {
+            return { status: "blocked", code: "test", reason: "test" };
+          },
+        },
+        workerId: "worker-a",
+        clusterId: "cluster-a",
+        retryIntervalMs: 5_000,
+        recoveryIntervalMs: 300_000,
+      });
+
+      const running = worker.run(controller.signal);
+      await vi.waitFor(() => expect(calls).toBe(1));
+      await vi.advanceTimersByTimeAsync(300_000);
+      controller.abort();
+      await running;
+
+      expect(calls).toBe(7);
     } finally {
       vi.useRealTimers();
     }

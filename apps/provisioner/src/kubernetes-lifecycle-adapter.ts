@@ -385,6 +385,26 @@ export class KubernetesLifecycleRuntimeAdapter
     return true;
   }
 
+  async runtimeIdentityExpiresAt(
+    assignment: RuntimeAssignment,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const identity = parseIdentity(assignment);
+    const existing = await this.provider.readRuntimeIdentityProjection(identity, signal);
+    if (existing === null) throw new Error("hosted_runtime_identity_projection_missing");
+    const expectedAssignment = this.identityTransport?.canonicalAssignment(assignment);
+    if (
+      expectedAssignment !== undefined &&
+      JSON.stringify(existing.assignment) !== JSON.stringify(expectedAssignment)
+    ) {
+      throw new Error("hosted_runtime_identity_assignment_mismatch");
+    }
+    const expiresAt = Date.parse(existing.expiresAt);
+    if (!Number.isFinite(expiresAt))
+      throw new Error("hosted_runtime_identity_proof_expiry_invalid");
+    return expiresAt;
+  }
+
   private async projectedRuntimeSpec(
     assignment: RuntimeAssignment,
     signal?: AbortSignal,

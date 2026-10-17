@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ProducerStatus } from "@praetorium/application/lifecycle";
 import {
   parseRuntimeInstanceId,
@@ -17,6 +21,8 @@ import type {
   ProvisionerResolvedRuntime,
 } from "./operation-client.js";
 import { ProvisionerIdleController, type IdleRuntimeInspector } from "./idle-controller.js";
+import { IdleDeadlineJournal } from "./idle-deadline-journal.js";
+import type { RuntimeAuthAcceptanceProbe } from "./scriptorium-control-client.js";
 
 const now = Date.parse("2026-10-17T12:00:00.000Z");
 const instanceId = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -25,6 +31,15 @@ const clusterId = "clu_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const imageDigest = "sha256:" + "a".repeat(64);
 const platformDigest = "sha256:" + "b".repeat(64);
 const compositionDigest = "sha256:" + "c".repeat(64);
+const journalDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    journalDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
 
 function resolvedRuntime(): ProvisionerResolvedRuntime {
   return {
@@ -164,8 +179,9 @@ function providerObservation(
     readonly writerCount?: number;
     readonly imageDigest?: string;
   } = {},
+  timestamp = now,
 ): RuntimeObservation {
-  const observedAt = overrides.observedAt ?? now;
+  const observedAt = overrides.observedAt ?? timestamp;
   return {
     identity: {
       instanceId: parseRuntimeInstanceId(instanceId),
@@ -223,8 +239,17 @@ function harness(
     readonly managed?: ReturnType<typeof managedRuntime>;
     readonly runtimeObservation?: RuntimeObservation;
     readonly runtimePages?: readonly RuntimePage<ManagedRuntimeSummary>[];
+    readonly identityExpiry?: number;
+    readonly journalConfigured?: boolean;
+    readonly authProbe?: RuntimeAuthAcceptanceProbe;
+    readonly activityOffsetMs?: number;
   } = {},
 ) {
+  let currentNow = now;
+  const activityAt = now - (options.activityOffsetMs ?? 16 * 60_000);
+  const journalDirectory = join(tmpdir(), `praetorium-idle-${randomUUID()}`);
+  journalDirectories.push(journalDirectory);
+  const journalPath = join(journalDirectory, "state.json");
   const value = options.candidate ?? candidate();
   const createIdleStop = vi.fn(async () => "op_idle");
   const runtimeCursors: (string | undefined)[] = [];
@@ -238,13 +263,16 @@ function harness(
   );
   const issueObservationCredential = vi.fn(async () => ({
     token: "signed-observation-token",
-    expiresAt: new Date(now + 30_000).toISOString(),
+    expiresAt: new Date(currentNow + 30_000).toISOString(),
     operationId: "op_observation",
   }));
   const operations = {
     listIdleCandidates,
     createIdleStop,
     issueObservationCredential,
+    async recordRuntimeHealth() {
+      return { recorded: false };
+    },
   } as unknown as ProvisionerOperationService;
   const endpointId = parseRuntimeInstanceId(instanceId);
   const endpoint =
@@ -253,6 +281,7 @@ function harness(
     "." +
     runtimeNamespaceName("tenant", endpointId) +
     ".svc.cluster.local:3000";
+  const refreshIdentity = vi.fn(async () => true);
   const inspector: IdleRuntimeInspector = {
     async listManagedInstances(cursor) {
       runtimeCursors.push(cursor);
@@ -267,11 +296,19 @@ function harness(
       return { items: [options.managed ?? managedRuntime()], nextCursor: null };
     },
     async inspect() {
-      return options.runtimeObservation ?? providerObservation();
+      return options.runtimeObservation ?? providerObservation({}, currentNow);
     },
     async controlEndpoint() {
       return endpoint;
     },
+    ...(options.identityExpiry === undefined
+      ? {}
+      : {
+          async runtimeIdentityExpiresAt() {
+            return options.identityExpiry!;
+          },
+          refreshRuntimeIdentity: refreshIdentity,
+        }),
   };
   const controller = new ProvisionerIdleController({
     operations,
@@ -288,15 +325,26 @@ function harness(
       maximumResources: { cpuMilli: 10_000, memoryMiB: 10_000, ephemeralStorageMiB: 10_000 },
       maxCapacityAgeMs: 60_000,
     },
-    now: () => now,
+    now: () => currentNow,
     idleTimeoutMs: 15 * 60_000,
+    ...(options.authProbe === undefined ? {} : { authProbe: options.authProbe }),
+    ...(options.journalConfigured === false ? {} : { idleJournalPath: journalPath }),
     createInspector: () => inspector,
     fetch: async (_input, init) => {
       expect(init?.method).toBe("GET");
       expect(new Headers(init?.headers).get("authorization")).toBe(
         "Bearer signed-observation-token",
       );
-      return Response.json(options.status ?? status());
+      const value =
+        options.status ??
+        status({
+          activity: { lastMeaningfulActivityAt: new Date(activityAt).toISOString() },
+        });
+      return Response.json(
+        options.status === undefined
+          ? { ...value, observedAt: new Date(currentNow).toISOString() }
+          : value,
+      );
     },
   });
   return {
@@ -305,7 +353,28 @@ function harness(
     issueObservationCredential,
     listIdleCandidates,
     runtimeCursors,
+    journalPath,
+    inspector,
+    refreshIdentity,
+    advance(ms: number) {
+      currentNow += ms;
+    },
   };
+}
+
+async function persistDueDeadline(h: ReturnType<typeof harness>): Promise<void> {
+  const journal = new IdleDeadlineJournal(h.journalPath);
+  await journal.load();
+  await journal.put({
+    instanceId,
+    repositoryId,
+    generation: 7,
+    runtimeEpoch: 9,
+    clusterId,
+    lastMeaningfulActivityAt: now - 16 * 60_000,
+    deadlineAt: now - 1,
+    updatedAt: now,
+  });
 }
 
 describe("ProvisionerIdleController", () => {
@@ -315,6 +384,7 @@ describe("ProvisionerIdleController", () => {
         enabledModuleIds: ["search", "core"],
       }),
     });
+    await persistDueDeadline(h);
 
     await h.controller.scanOnce();
 
@@ -343,6 +413,7 @@ describe("ProvisionerIdleController", () => {
         { items: [managedRuntime()], nextCursor: null },
       ],
     });
+    await persistDueDeadline(h);
 
     await h.controller.scanOnce();
     expect(h.createIdleStop).not.toHaveBeenCalled();
@@ -351,6 +422,105 @@ describe("ProvisionerIdleController", () => {
     expect(h.listIdleCandidates).toHaveBeenCalledTimes(1);
     expect(h.runtimeCursors).toEqual([undefined, "kube-next"]);
     expect(h.createIdleStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists the producer-derived 15-minute deadline and inspects due state without a D1 rescan", async () => {
+    const h = harness({ activityOffsetMs: 0 });
+
+    await h.controller.scanOnce();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+    expect(h.listIdleCandidates).toHaveBeenCalledTimes(1);
+    const journal = new IdleDeadlineJournal(h.journalPath);
+    await journal.load();
+    expect(
+      journal.get({
+        instanceId,
+        repositoryId,
+        generation: 7,
+        runtimeEpoch: 9,
+        clusterId,
+      })?.deadlineAt,
+    ).toBe(now + 15 * 60_000);
+
+    h.advance(15 * 60_000);
+    await h.controller.processDueOnce();
+
+    expect(h.issueObservationCredential).toHaveBeenCalledTimes(2);
+    expect(h.createIdleStop).toHaveBeenCalledOnce();
+    expect(h.listIdleCandidates).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews the current identity on its own expiry timer, independently of idle discovery", async () => {
+    const h = harness({ identityExpiry: now + 200_000 });
+
+    await h.controller.scanOnce();
+    expect(h.refreshIdentity).not.toHaveBeenCalled();
+    expect(h.listIdleCandidates).toHaveBeenCalledTimes(1);
+
+    h.advance(110_000);
+    await h.controller.processDueOnce();
+
+    expect(h.refreshIdentity).toHaveBeenCalledOnce();
+    expect(h.listIdleCandidates).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps idle retirement disabled when no durable journal is configured", async () => {
+    const h = harness({ journalConfigured: false });
+
+    await h.controller.scanOnce();
+    h.advance(24 * 60 * 60_000);
+    await h.controller.processDueOnce();
+
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat full inventory discovery for an active operation on the empty timeout", async () => {
+    const h = harness({ candidate: candidate({ hasActiveOperation: true }) });
+
+    await h.controller.scanOnce();
+    h.advance(5 * 60_000);
+    await h.controller.processDueOnce();
+
+    expect(h.listIdleCandidates).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces duplicate work signals into one idle discovery refresh", async () => {
+    const h = harness();
+    const abort = new AbortController();
+    const running = h.controller.run(abort.signal);
+
+    await vi.waitFor(() => expect(h.runtimeCursors).toHaveLength(1));
+    h.controller.notifyWorkAvailable();
+    h.controller.notifyWorkAvailable();
+    h.controller.notifyWorkAvailable();
+    await vi.waitFor(() => expect(h.runtimeCursors).toHaveLength(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.listIdleCandidates).toHaveBeenCalledTimes(2);
+
+    abort.abort();
+    await running;
+  });
+
+  it("runs a full health acceptance probe once per exact health operation trigger", async () => {
+    const verifyObserved = vi.fn(async () => ({}) as never);
+    const authProbe = {
+      available: true,
+      withEndpointResolver: () => authProbe,
+      verify: async () => ({}) as never,
+      verifyObserved,
+      forLease: () => ({}) as never,
+    } as unknown as RuntimeAuthAcceptanceProbe;
+    const h = harness({
+      candidate: candidate({ healthOperationId: "op_health_01" }),
+      runtimeObservation: providerObservation({ imageDigest: platformDigest }),
+      authProbe,
+    });
+
+    await h.controller.scanOnce();
+    await h.controller.scanOnce();
+
+    expect(verifyObserved).toHaveBeenCalledOnce();
+    expect(verifyObserved).toHaveBeenCalledWith(expect.anything(), "op_health_01", undefined);
   });
 
   it.each([

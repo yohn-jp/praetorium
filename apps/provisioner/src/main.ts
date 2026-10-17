@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { isAbsolute } from "node:path";
 import { WorkAvailability } from "@praetorium/application";
 import { OperationServiceHttpClient } from "./operation-client.js";
 import { ProvisionerMetrics } from "./metrics.js";
@@ -21,6 +22,7 @@ interface ProvisionerConfig {
   readonly healthPort: number;
   readonly idleTimeoutMs: number;
   readonly workNotificationToken?: string;
+  readonly idleJournalPath?: string;
 }
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -74,6 +76,13 @@ export function loadProvisionerConfig(env: NodeJS.ProcessEnv = process.env): Pro
   ) {
     throw new TypeError("invalid provisioner work notification token");
   }
+  const idleJournalPath = env.PROVISIONER_IDLE_JOURNAL_PATH;
+  if (
+    idleJournalPath !== undefined &&
+    (idleJournalPath.length === 0 || idleJournalPath.length > 1_024 || !isAbsolute(idleJournalPath))
+  ) {
+    throw new TypeError("invalid provisioner idle journal path");
+  }
   return {
     controlPlaneUrl: controlPlaneUrl.replace(/\/+$/u, ""),
     credentialPath: required(env, "PROVISIONER_CREDENTIAL_PATH"),
@@ -84,6 +93,7 @@ export function loadProvisionerConfig(env: NodeJS.ProcessEnv = process.env): Pro
     ...(workNotificationToken === undefined || workNotificationToken.length === 0
       ? {}
       : { workNotificationToken }),
+    ...(idleJournalPath === undefined ? {} : { idleJournalPath }),
     runtime: {
       namespacePrefix,
       clusterId,
@@ -111,7 +121,9 @@ async function main(): Promise<void> {
   const config = loadProvisionerConfig();
   const credential = await readProvisionerCredential(config.credentialPath);
   if (config.workNotificationToken === credential) {
-    throw new TypeError("work notification token must be distinct from the provisioner service token");
+    throw new TypeError(
+      "work notification token must be distinct from the provisioner service token",
+    );
   }
   const metrics = new ProvisionerMetrics();
   const logger = new JsonLogger();
@@ -141,9 +153,11 @@ async function main(): Promise<void> {
   const shutdown = new AbortController();
   let live = true;
   let ready = false;
+  let idleController: ProvisionerIdleController | undefined;
   const health = new HealthServer({
     metrics,
     workAvailability,
+    onWorkAvailable: () => idleController?.notifyWorkAvailable(),
     ...(config.workNotificationToken === undefined
       ? {}
       : { workNotificationToken: config.workNotificationToken }),
@@ -169,28 +183,30 @@ async function main(): Promise<void> {
       await waitForAbort(shutdown.signal);
       return;
     }
+    idleController = new ProvisionerIdleController({
+      operations,
+      workerId: config.workerId,
+      clusterId: config.clusterId,
+      runtime: config.runtime,
+      idleTimeoutMs: config.idleTimeoutMs,
+      ...(config.idleJournalPath === undefined ? {} : { idleJournalPath: config.idleJournalPath }),
+      identityTransport: assignmentTransport,
+      authProbe,
+      metrics,
+      logger,
+    });
     const worker = new ProvisionerWorker({
       operations,
       executor,
       workerId: config.workerId,
       clusterId: config.clusterId,
       workAvailability,
+      onOperationSettled: () => idleController?.notifyWorkAvailable(),
       metrics,
       logger,
       onReadyChange: (value) => {
         ready = value;
       },
-    });
-    const idleController = new ProvisionerIdleController({
-      operations,
-      workerId: config.workerId,
-      clusterId: config.clusterId,
-      runtime: config.runtime,
-      idleTimeoutMs: config.idleTimeoutMs,
-      identityTransport: assignmentTransport,
-      authProbe,
-      metrics,
-      logger,
     });
     try {
       await Promise.all([worker.run(shutdown.signal), idleController.run(shutdown.signal)]);

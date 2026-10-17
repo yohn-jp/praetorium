@@ -12,6 +12,7 @@ export interface HealthState {
 export interface HealthServerOptions extends HealthState {
   readonly metrics: ProvisionerMetrics;
   readonly workAvailability?: WorkAvailability;
+  readonly onWorkAvailable?: () => void;
   readonly workNotificationToken?: string;
   readonly host?: string;
   readonly port?: number;
@@ -27,7 +28,7 @@ class WorkNotificationBodyError extends Error {
 
 type WorkNotificationTarget = Pick<
   HealthServerOptions,
-  "workAvailability" | "workNotificationToken"
+  "workAvailability" | "workNotificationToken" | "onWorkAvailable"
 >;
 
 function send(response: ServerResponse, status: number, contentType: string, body: string): void {
@@ -39,9 +40,10 @@ function send(response: ServerResponse, status: number, contentType: string, bod
 
 function authorizedNotification(request: IncomingMessage, expectedToken: string): boolean {
   const authorization = request.headers.authorization;
-  const match = typeof authorization === "string"
-    ? /^Bearer ([\x21-\x7e]{1,4096})$/u.exec(authorization)
-    : null;
+  const match =
+    typeof authorization === "string"
+      ? /^Bearer ([\x21-\x7e]{1,4096})$/u.exec(authorization)
+      : null;
   const received = match?.[1] ?? "";
   const expectedDigest = createHash("sha256").update(expectedToken, "utf8").digest();
   const receivedDigest = createHash("sha256").update(received, "utf8").digest();
@@ -52,29 +54,45 @@ function authorizedNotification(request: IncomingMessage, expectedToken: string)
 async function readNotificationBody(request: IncomingMessage): Promise<unknown> {
   const contentLength = request.headers["content-length"];
   if (contentLength !== undefined && Number(contentLength) > MAX_WORK_NOTIFICATION_BYTES) {
-    request.resume();
     throw new WorkNotificationBodyError(413);
   }
   const chunks: Buffer[] = [];
   let size = 0;
-  let oversized = false;
   await new Promise<void>((resolve, reject) => {
-    request.on("data", (chunk: Buffer | string) => {
+    const onEnd = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new WorkNotificationBodyError(400));
+    };
+    const onData = (chunk: Buffer | string) => {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += bytes.byteLength;
       if (size > MAX_WORK_NOTIFICATION_BYTES) {
-        oversized = true;
-        chunks.length = 0;
-      } else if (!oversized) {
-        chunks.push(bytes);
+        cleanup();
+        request.pause();
+        // A one-shot error listener prevents a late socket error from becoming
+        // an unhandled EventEmitter error while the 413 response is flushed.
+        request.once("error", () => undefined);
+        reject(new WorkNotificationBodyError(413));
+        return;
       }
-    });
-    request.once("end", resolve);
-    request.once("error", reject);
-  }).catch(() => {
+      chunks.push(bytes);
+    };
+    const cleanup = () => {
+      request.off("data", onData);
+      request.off("end", onEnd);
+      request.off("error", onError);
+    };
+    request.on("data", onData);
+    request.once("end", onEnd);
+    request.once("error", onError);
+  }).catch((error: unknown) => {
+    if (error instanceof WorkNotificationBodyError) throw error;
     throw new WorkNotificationBodyError(400);
   });
-  if (oversized) throw new WorkNotificationBodyError(413);
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
   } catch {
@@ -130,6 +148,11 @@ async function handleWorkNotification(
     body = await readNotificationBody(request);
   } catch (error) {
     const status = error instanceof WorkNotificationBodyError ? error.status : 400;
+    if (status === 413) {
+      response.shouldKeepAlive = false;
+      response.setHeader("connection", "close");
+      response.once("finish", () => request.socket.destroy());
+    }
     send(
       response,
       status,
@@ -144,7 +167,8 @@ async function handleWorkNotification(
     return;
   }
   options.workAvailability.notify();
-  send(response, 202, "application/json; charset=utf-8", "{\"accepted\":true}\n");
+  options.onWorkAvailable?.();
+  send(response, 202, "application/json; charset=utf-8", '{"accepted":true}\n');
 }
 
 export function handleHealthRequest(
@@ -167,12 +191,22 @@ export function handleHealthRequest(
   }
   if (path === "/healthz") {
     const live = state.isLive();
-    send(response, live ? 200 : 503, "application/json; charset=utf-8", JSON.stringify({ status: live ? "ok" : "stopping" }));
+    send(
+      response,
+      live ? 200 : 503,
+      "application/json; charset=utf-8",
+      JSON.stringify({ status: live ? "ok" : "stopping" }),
+    );
     return;
   }
   if (path === "/readyz") {
     const ready = state.isReady();
-    send(response, ready ? 200 : 503, "application/json; charset=utf-8", JSON.stringify({ status: ready ? "ready" : "not_ready" }));
+    send(
+      response,
+      ready ? 200 : 503,
+      "application/json; charset=utf-8",
+      JSON.stringify({ status: ready ? "ready" : "not_ready" }),
+    );
     return;
   }
   if (path === "/metrics") {
@@ -190,6 +224,13 @@ export class HealthServer {
     this.server = createServer((request, response) =>
       handleHealthRequest(request, response, options, options.metrics),
     );
+    this.server.headersTimeout = 5_000;
+    this.server.requestTimeout = 10_000;
+    this.server.timeout = 15_000;
+    this.server.keepAliveTimeout = 1_000;
+    this.server.maxConnections = 64;
+    this.server.maxRequestsPerSocket = 64;
+    this.server.setTimeout(15_000, (socket) => socket.destroy());
   }
 
   get address(): ReturnType<Server["address"]> {
@@ -216,6 +257,7 @@ export class HealthServer {
 
   async close(): Promise<void> {
     if (!this.started) return;
+    this.server.closeIdleConnections();
     await new Promise<void>((resolve, reject) => {
       this.server.close((error) => (error ? reject(error) : resolve()));
     });

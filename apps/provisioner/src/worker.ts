@@ -60,6 +60,7 @@ export interface ProvisionerWorkerOptions {
   readonly logger?: ProvisionerLogger;
   readonly metrics?: ProvisionerMetrics;
   readonly onReadyChange?: (ready: boolean) => void;
+  readonly onOperationSettled?: () => void;
 }
 
 const DEFAULT_LEASE_SECONDS = 30;
@@ -399,7 +400,7 @@ export class ProvisionerWorker {
   }
 
   async run(signal: AbortSignal): Promise<void> {
-    let retryMs = DEFAULT_RETRY_INTERVAL_MS;
+    let retryMs = Math.min(this.retryIntervalMs, this.recoveryIntervalMs);
     while (!signal.aborted) {
       if (this.inFlight.size >= this.maxConcurrency) {
         await this.workAvailability.wait(signal, this.recoveryIntervalMs);
@@ -412,7 +413,7 @@ export class ProvisionerWorker {
           leaseSeconds: this.leaseSeconds,
           signal,
         });
-        retryMs = DEFAULT_RETRY_INTERVAL_MS;
+        retryMs = Math.min(this.retryIntervalMs, this.recoveryIntervalMs);
         this.setReady(true);
         if (claim === null) {
           await this.workAvailability.wait(signal, this.recoveryIntervalMs);
@@ -430,6 +431,11 @@ export class ProvisionerWorker {
           .finally(() => {
             this.inFlight.delete(claim.operation.id);
             this.metrics.changeInFlight(-1);
+            try {
+              this.options.onOperationSettled?.();
+            } catch (error) {
+              this.logger.warn("operation_settle_callback_error", { code: record(error) });
+            }
             this.workAvailability.notify();
           });
         this.inFlight.set(claim.operation.id, task);
@@ -440,7 +446,7 @@ export class ProvisionerWorker {
         this.metrics.increment("operation_service_error");
         this.logger.warn("operation_claim_failed", { code: record(error) });
         await this.workAvailability.wait(signal, retryMs);
-        retryMs = Math.min(30_000, Math.ceil(retryMs * 1.8));
+        retryMs = Math.min(this.recoveryIntervalMs, Math.ceil(retryMs * 1.8));
       }
     }
     this.setReady(false);

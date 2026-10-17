@@ -23,6 +23,12 @@
       }
     ]
   },
+  "services": [
+    {
+      "binding": "GATEWAY_SERVICE",
+      "service": "praetorium-gateway"
+    }
+  ],
   "migrations": [
     {
       "tag": "v1",

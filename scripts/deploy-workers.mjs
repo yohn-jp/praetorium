@@ -14,6 +14,7 @@ const requiredMigrations = [
   "0001_repository_platform.sql",
   "0002_stable_release_rollouts.sql",
   "0003_staged_configurations.sql",
+  "0004_runtime_git_credentials.sql",
 ];
 
 function usage() {
@@ -240,6 +241,13 @@ function inspectTemplates() {
       "Control Plane template must register its RepositoryCoordinator Durable Object migration",
     );
   }
+  if (
+    controlPlane.services?.length !== 1 ||
+    controlPlane.services[0]?.binding !== "GATEWAY_SERVICE" ||
+    controlPlane.services[0]?.service !== "praetorium-gateway"
+  ) {
+    problems.push("Control Plane template must bind the Gateway retirement service");
+  }
   const expectedControlVariables = [
     "BUILD_POLICY_JSON",
     "BUILD_WORKER_ID",
@@ -381,12 +389,17 @@ try {
     ],
   };
   const workerSecrets = {
-    controlPlane: ["CONTROL_PLANE_GATEWAY_AUTH", "RUNTIME_IDENTITY_SIGNING_KEY"],
+    controlPlane: [
+      "CONTROL_PLANE_GATEWAY_AUTH",
+      "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
+      "RUNTIME_IDENTITY_SIGNING_KEY",
+    ],
     gateway: [
       "GITHUB_OAUTH_CLIENT_SECRET",
       "GATEWAY_GITHUB_WEBHOOK_SECRET",
       "GITHUB_APP_PRIVATE_KEY",
       "CONTROL_PLANE_GATEWAY_AUTH",
+      "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
       "INSTANCE_ACCESS_SERVICE_AUTH_TOKEN",
       "GATEWAY_SESSION_DIGEST_PEPPER",
       "GATEWAY_CREDENTIAL_DIGEST_PEPPER",
@@ -395,6 +408,24 @@ try {
       "GATEWAY_SIGNING_KEY",
     ],
   };
+  const runtimeCredentialRetirement = {
+    secret: "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
+    requiredBy: ["controlPlane", "gateway"],
+    valueSharedBetweenWorkers: true,
+    format: "32-4096 non-space printable ASCII characters",
+    distinctFrom: [
+      "CONTROL_PLANE_GATEWAY_AUTH",
+      "PROVISIONER_AUTH_TOKEN",
+      "BUILD_WORKER_AUTH_TOKEN",
+      "RELEASE_OPERATOR_TOKEN",
+    ],
+    nodeProvisionerSecretRequired: false,
+    secretValuesInspected: false,
+  };
+  const serviceBindings = [
+    "Control Plane GATEWAY_SERVICE -> praetorium-gateway",
+    "Gateway CONTROL_PLANE -> praetorium-control-plane",
+  ];
   const workerBlockers = [...inventoryResult.blockers, ...templateProblems];
 
   if (args.action === "plan") {
@@ -407,9 +438,10 @@ try {
           databaseBindings: ["CONTROL_PLANE_DB"],
           gatewayKvBinding: "GATEWAY_KV",
           durableObjectBindings: ["REPOSITORY_COORDINATOR", "USER_AUTH_STATE", "EPHEMERAL_CODES"],
-          serviceBinding: "GATEWAY.CONTROL_PLANE -> praetorium-control-plane",
+          serviceBindings,
           workerVariables,
           requiredWorkerSecrets: workerSecrets,
+          runtimeCredentialRetirement,
           optionalControlPlaneSecrets: [
             "REGISTRY_PULL_CREDENTIAL (separate JSON username/password credential for Control Plane OCI reads)",
             "BUILD_WORKER_AUTH_TOKEN (enables build routes only with BUILD_POLICY_JSON; same token as the Build Worker mounted file)",
@@ -471,7 +503,7 @@ try {
           migrations: requiredMigrations,
           discoveredMigrations: paths.migrationFiles,
           actions: [
-            "apply only the three Control Plane local D1 migrations",
+            "apply only the four Control Plane local D1 migrations",
             "keep all local D1 state under the disposable inventory directory",
           ],
           remoteCalls: false,
@@ -501,8 +533,10 @@ try {
           discoveredMigrations: paths.migrationFiles,
           templateProblems,
           expectedMigrations: requiredMigrations,
+          serviceBindings,
           workerVariables,
           requiredWorkerSecrets: workerSecrets,
+          runtimeCredentialRetirement,
           optionalControlPlaneSecrets: [
             "REGISTRY_PULL_CREDENTIAL",
             "BUILD_WORKER_AUTH_TOKEN",

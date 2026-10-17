@@ -58,7 +58,30 @@ test("Worker plan reports exact secret surfaces and producer-blocked release gat
     "0001_repository_platform.sql",
     "0002_stable_release_rollouts.sql",
     "0003_staged_configurations.sql",
+    "0004_runtime_git_credentials.sql",
   ]);
+  assert.ok(plan.discoveredMigrations.includes("0004_runtime_git_credentials.sql"));
+  assert.deepEqual(plan.serviceBindings, [
+    "Control Plane GATEWAY_SERVICE -> praetorium-gateway",
+    "Gateway CONTROL_PLANE -> praetorium-control-plane",
+  ]);
+  assert.ok(plan.requiredWorkerSecrets.controlPlane.includes("RUNTIME_CREDENTIAL_RETIREMENT_AUTH"));
+  assert.ok(plan.requiredWorkerSecrets.gateway.includes("RUNTIME_CREDENTIAL_RETIREMENT_AUTH"));
+  assert.deepEqual(plan.runtimeCredentialRetirement, {
+    secret: "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
+    requiredBy: ["controlPlane", "gateway"],
+    valueSharedBetweenWorkers: true,
+    format: "32-4096 non-space printable ASCII characters",
+    distinctFrom: [
+      "CONTROL_PLANE_GATEWAY_AUTH",
+      "PROVISIONER_AUTH_TOKEN",
+      "BUILD_WORKER_AUTH_TOKEN",
+      "RELEASE_OPERATOR_TOKEN",
+    ],
+    nodeProvisionerSecretRequired: false,
+    secretValuesInspected: false,
+  });
+  assert.ok(!plan.optionalProvisionerRoute.secrets.includes("RUNTIME_CREDENTIAL_RETIREMENT_AUTH"));
   assert.equal(plan.releasePolicy.configured, false);
   assert.equal(plan.releaseGates.scheduledCron, "*/5 * * * *");
   assert.match(plan.releaseGates.admission, /S01/u);
@@ -74,4 +97,38 @@ test("Worker plan reports exact secret surfaces and producer-blocked release gat
   assert.ok(plan.workerVariables.controlPlane.includes("RELEASE_POLICY_JSON"));
   assert.ok(plan.workerVariables.gateway.includes("CONTROL_PLANE_ORIGIN"));
   assert.deepEqual(plan.templateProblems, []);
+});
+
+test("Worker preflight recognizes credential retirement wiring without inspecting secret values", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["scripts/deploy-workers.mjs", "preflight", "--inventory", inventoryPath],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(result.status, 2, result.stderr);
+  const preflight = JSON.parse(result.stdout);
+
+  assert.deepEqual(preflight.expectedMigrations, [
+    "0001_repository_platform.sql",
+    "0002_stable_release_rollouts.sql",
+    "0003_staged_configurations.sql",
+    "0004_runtime_git_credentials.sql",
+  ]);
+  assert.ok(preflight.discoveredMigrations.includes("0004_runtime_git_credentials.sql"));
+  assert.deepEqual(preflight.serviceBindings, [
+    "Control Plane GATEWAY_SERVICE -> praetorium-gateway",
+    "Gateway CONTROL_PLANE -> praetorium-control-plane",
+  ]);
+  assert.deepEqual(preflight.templateProblems, []);
+  assert.ok(
+    preflight.requiredWorkerSecrets.controlPlane.includes("RUNTIME_CREDENTIAL_RETIREMENT_AUTH"),
+  );
+  assert.ok(preflight.requiredWorkerSecrets.gateway.includes("RUNTIME_CREDENTIAL_RETIREMENT_AUTH"));
+  assert.equal(preflight.runtimeCredentialRetirement.secretValuesInspected, false);
+  assert.equal(preflight.secretValuesInspected, false);
+  assert.equal(preflight.remoteCalls, false);
+  assert.ok(
+    preflight.blocked.length > 0,
+    "canonical disposable infrastructure inputs stay blocked",
+  );
 });

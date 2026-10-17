@@ -1,0 +1,14 @@
+file:///app/dist/handler.js:9
+    throw new Error(`Instance Access configuration: ${message}`);
+          ^
+
+Error: Instance Access configuration: a strong Gateway service token is required
+    at fail (file:///app/dist/handler.js:9:11)
+    at loadConfig (file:///app/dist/handler.js:21:16)
+    at createInstanceAccessHandler (file:///app/dist/handler.js:293:20)
+    at file:///app/dist/server.js:4:16
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.22.0

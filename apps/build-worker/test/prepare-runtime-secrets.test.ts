@@ -114,6 +114,8 @@ async function fixture(): Promise<Fixture> {
   const temporaryMount = path.join(root, "temporary-mount");
   await mkdir(destinationMount, { mode: 0o770 });
   await mkdir(temporaryMount, { mode: 0o770 });
+  await chmod(destinationMount, 0o2777);
+  await chmod(temporaryMount, 0o2777);
   return {
     root,
     sourceMounts,
@@ -235,6 +237,20 @@ describe("Build Worker projected runtime secrets", () => {
     await expect(readFile(destination(f, "control-plane", "token"), "utf8")).resolves.toBe(
       originalToken,
     );
+  });
+
+  it("copies a public certificate bundle above 64 KiB within Kubernetes Secret bounds", async () => {
+    const f = await fixture();
+    const bundle = "x".repeat(256 * 1024);
+    await rotateProjection(f.sourceMounts.buildkit!, "000000001", {
+      ...PROJECTED_FILES.buildkit,
+      "ca.crt": bundle,
+    });
+
+    await prepareRuntimeSecrets(f.layout);
+    const copiedBundle = await readFile(destination(f, "buildkit", "ca.crt"));
+    expect(copiedBundle.byteLength).toBe(Buffer.byteLength(bundle));
+    await expect(validateBuildKitFiles(buildKitConfig(f))).resolves.toBeUndefined();
   });
 
   it("rejects ambiguous existing targets without following or changing their referent", async () => {

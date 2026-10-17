@@ -30,8 +30,8 @@ const VOLUMES: readonly SecretVolume[] = [
   {
     name: "buildkit",
     files: [
-      { name: "ca.crt", maxBytes: 64 * 1024 },
-      { name: "tls.crt", maxBytes: 64 * 1024 },
+      { name: "ca.crt", maxBytes: 1024 * 1024 },
+      { name: "tls.crt", maxBytes: 1024 * 1024 },
       { name: "tls.key", maxBytes: 16 * 1024 },
     ],
   },
@@ -85,7 +85,10 @@ function currentUid(): number {
 
 async function requireMountDirectory(directory: string): Promise<void> {
   const info = await lstat(directory);
-  if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o002) !== 0) {
+  // Kubernetes v1.35 emptyDir roots can be root-owned mode 2777 after fsGroup
+  // applies. These are fixed Pod volume mounts; the child private directories
+  // created below are the security boundary and are checked at 0700/current UID.
+  if (!info.isDirectory() || info.isSymbolicLink()) {
     fail();
   }
 }

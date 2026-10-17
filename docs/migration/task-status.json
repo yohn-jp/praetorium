@@ -458,7 +458,7 @@
         "docs/migration/PRODUCER-STATUS.json",
         "tests/integration/verify-integration.test.mjs"
       ],
-      "recordStatus": "At 4f52afd required install/check and actual owned local Worker/D1/DO pass; aggregate exit 2, six categories BLOCKED/NOT_CHECKED and errors=[]. Infra/mapping 56/56, Kubernetes local 4/4, GitHub local 6/6 pass; live App probe skips for missing owner config. Five fixed category runners remain absent. No live GitHub/cluster/producer acceptance. See docs/verification/DELIVERY-4f52afd.md."
+      "recordStatus": "Fresh owned local Worker/D1/DO fixed acceptance passed at 5e8d2ad; aggregate exit 2, six categories BLOCKED/NOT_CHECKED and errors=[]. Required install/check passed at 79100a0 with infra/verifier 57/57 and only ledger/evidence-document changes through 5e8d2ad. Four fixed runner paths exist; BuildKit, producer recovery and stable rollout remain absent. Owned Kind API and service-image component evidence does not establish full cluster/producer acceptance. See docs/verification/DELIVERY-5e8d2ad.md."
     },
     "T15": {
       "implementation": "partial",

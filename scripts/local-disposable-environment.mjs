@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   open,
+  readdir,
   readlink,
   readFile,
   realpath,
@@ -30,6 +31,7 @@ const TOOL = Object.freeze({
   runc: "/nix/store/hyq7l7806idfdy8jg0nl8ffhx5dz696z-docker-runc-29.5.3/bin/runc",
   slirp4netns: "/nix/store/458z7r5nixqv9c3k4dq88x6x90il48jh-slirp4netns-1.3.3/bin/slirp4netns",
   netavark: "/nix/store/49ans93h0nqrcwci50hgix54qq1q4qk3-netavark-1.17.2/bin/netavark",
+  rm: "/run/current-system/sw/bin/rm",
   unshare: "/run/current-system/sw/bin/unshare",
 });
 const USERNS_HELPERS = Object.freeze({
@@ -40,7 +42,8 @@ const USERNS_HELPERS = Object.freeze({
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:5b12b22f21522fe69443079df04c0f3f42cb9977857f3c20404386652a6c6d8e";
 const REGISTRY_CONTAINER = "praetorium-owned-registry";
-const OWNER_SCHEMA = "praetorium.local-disposable-owner/v1";
+const OWNER_SCHEMA_V1 = "praetorium.local-disposable-owner/v1";
+const OWNER_SCHEMA = "praetorium.local-disposable-owner/v2";
 
 function cli(argv) {
   if (argv.length === 1 && argv[0] === "--plan") return { mode: "plan", keep: false };
@@ -111,6 +114,11 @@ async function ensureUsernsHelpers(root) {
     throw new Error("refusing userns helper setup in a non-private or unowned directory");
   }
 
+  const helperEntries = (await readdir(helperDirectory)).sort();
+  if (helperEntries.some((name) => !Object.hasOwn(USERNS_HELPERS, name))) {
+    throw new Error("refusing unexpected entries in the private userns helper directory");
+  }
+
   for (const [name, target] of Object.entries(USERNS_HELPERS)) {
     const targetInfo = await stat(target);
     if (targetInfo.uid !== 0 || (targetInfo.mode & 0o4000) === 0 || (targetInfo.mode & 0o111) === 0)
@@ -126,6 +134,9 @@ async function ensureUsernsHelpers(root) {
       await symlink(target, helperPath);
     }
   }
+  const configuredEntries = (await readdir(helperDirectory)).sort();
+  if (configuredEntries.join("\0") !== Object.keys(USERNS_HELPERS).sort().join("\0"))
+    throw new Error("private userns helper directory does not contain the exact approved helpers");
 }
 
 function podmanArgs(root) {
@@ -328,6 +339,7 @@ async function startBuildkit(root, env, registryUrl, recordProcessGroupId) {
       [
         "--user",
         "--map-root-user",
+        "--map-auto",
         "--mount",
         "--propagation",
         "private",
@@ -349,6 +361,14 @@ async function startBuildkit(root, env, registryUrl, recordProcessGroupId) {
   if (!child.pid) throw new Error("BuildKit namespace process did not start");
   await recordProcessGroupId(child.pid);
   child.unref();
+  await waitFor(async () => {
+    const commandLine = (await readFile(`/proc/${child.pid}/cmdline`)).toString("utf8");
+    return commandLine.includes(socket);
+  }, "mapped BuildKit namespace process");
+  const uidMap = await readNamespaceMap(child.pid, "uid");
+  const gidMap = await readNamespaceMap(child.pid, "gid");
+  await validateNamespaceMaps(uidMap, gidMap, process.getuid(), process.getgid());
+  await recordProcessGroupId(child.pid, { uidMap, gidMap });
   try {
     await waitFor(async () => {
       try {
@@ -371,6 +391,83 @@ async function startBuildkit(root, env, registryUrl, recordProcessGroupId) {
     );
   }
   return { socket, processGroupId: child.pid };
+}
+
+async function readNamespaceMap(processId, kind) {
+  const contents = await readFile(`/proc/${processId}/${kind}_map`, "utf8");
+  return contents
+    .trim()
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/u).map(Number));
+}
+
+async function localUsernameForUid(ownerUid) {
+  const passwd = await readFile("/etc/passwd", "utf8");
+  const username = passwd
+    .split("\n")
+    .map((line) => line.split(":"))
+    .find((fields) => fields.length >= 4 && Number(fields[2]) === ownerUid)?.[0];
+  if (!username) throw new Error(`could not resolve local username for uid ${ownerUid}`);
+  return username;
+}
+
+async function subordinateIdRanges(filename, username, ownerId) {
+  const contents = await readFile(filename, "utf8");
+  return contents
+    .split("\n")
+    .map((line) => line.split(":"))
+    .filter((fields) => fields.length === 3 && [username, String(ownerId)].includes(fields[0]))
+    .map((fields) => ({ start: Number(fields[1]), count: Number(fields[2]) }))
+    .filter(({ start, count }) =>
+      Number.isSafeInteger(start) && Number.isSafeInteger(count) && start > 0 && count > 0,
+    );
+}
+
+async function validateNamespaceMaps(uidMap, gidMap, ownerUid, ownerGid) {
+  if (
+    !Array.isArray(uidMap) ||
+    uidMap.length !== 2 ||
+    !Array.isArray(gidMap) ||
+    gidMap.length !== 2
+  ) {
+    throw new Error("BuildKit must have one owner ID and one subordinate ID range mapped");
+  }
+  const validEntries = (entries) =>
+    entries.every(
+      (entry) =>
+        Array.isArray(entry) &&
+        entry.length === 3 &&
+        entry.every((value) => Number.isSafeInteger(value) && value >= 0) &&
+        entry[2] > 0 &&
+        Number.isSafeInteger(entry[1] + entry[2]),
+    );
+  if (!validEntries(uidMap) || !validEntries(gidMap))
+    throw new Error("BuildKit namespace ID maps are malformed");
+  if (
+    uidMap[0][0] !== 0 ||
+    uidMap[0][1] !== ownerUid ||
+    uidMap[0][2] !== 1 ||
+    gidMap[0][0] !== 0 ||
+    gidMap[0][1] !== ownerGid ||
+    gidMap[0][2] !== 1 ||
+    uidMap[1][0] !== 1 ||
+    gidMap[1][0] !== 1
+  ) {
+    throw new Error("BuildKit namespace must map container root to only the current local user/group");
+  }
+  const username = await localUsernameForUid(ownerUid);
+  const uidRanges = await subordinateIdRanges("/etc/subuid", username, ownerUid);
+  const gidRanges = await subordinateIdRanges("/etc/subgid", username, ownerUid);
+  const inRange = (entry, ranges) =>
+    ranges.some(
+      ({ start, count }) =>
+        entry[1] >= start &&
+        Number.isSafeInteger(start + count) &&
+        entry[1] + entry[2] <= start + count,
+    );
+  if (!inRange(uidMap[1], uidRanges) || !inRange(gidMap[1], gidRanges))
+    throw new Error("BuildKit namespace maps do not match the current user's subordinate ID grants");
+  return { uidMap, gidMap };
 }
 
 async function verifyBuild(root, env, registryUrl, socket) {
@@ -450,11 +547,14 @@ async function verifyBuild(root, env, registryUrl, socket) {
 
 async function readOwnerRecord(root) {
   const tempRoot = await realpath(os.tmpdir());
-  const actualRoot = await realpath(root);
-  const rootStat = await stat(actualRoot);
+  const requestedRoot = path.resolve(root);
+  const actualRoot = await realpath(requestedRoot);
+  const rootStat = await lstat(requestedRoot);
   if (
+    actualRoot !== requestedRoot ||
     path.dirname(actualRoot) !== tempRoot ||
     !path.basename(actualRoot).startsWith("praetorium-owned-") ||
+    !rootStat.isDirectory() ||
     rootStat.uid !== process.getuid() ||
     (rootStat.mode & 0o077) !== 0
   ) {
@@ -465,9 +565,10 @@ async function readOwnerRecord(root) {
   const ownerPath = path.join(actualRoot, "owner.json");
   const owner = JSON.parse(await readFile(ownerPath, "utf8"));
   if (
-    owner.schema !== OWNER_SCHEMA ||
+    ![OWNER_SCHEMA_V1, OWNER_SCHEMA].includes(owner.schema) ||
     owner.root !== actualRoot ||
     owner.ownerUid !== process.getuid() ||
+    (owner.schema === OWNER_SCHEMA && owner.ownerGid !== process.getgid()) ||
     owner.disposable !== true ||
     owner.production !== false ||
     typeof owner.registryStarted !== "boolean" ||
@@ -477,10 +578,39 @@ async function readOwnerRecord(root) {
   ) {
     throw new Error("refusing cleanup: ownership record does not match this process and temp root");
   }
+  if (owner.schema === OWNER_SCHEMA_V1) {
+    if (rootStat.gid !== process.getgid())
+      throw new Error("refusing cleanup: legacy disposable root has an unexpected group owner");
+    owner.ownerGid = rootStat.gid;
+    owner.buildkitUidMap = null;
+    owner.buildkitGidMap = null;
+  }
+  if (owner.schema === OWNER_SCHEMA) {
+    const hasUidMap = Array.isArray(owner.buildkitUidMap);
+    const hasGidMap = Array.isArray(owner.buildkitGidMap);
+    if (
+      hasUidMap !== hasGidMap ||
+      (!hasUidMap && (owner.buildkitUidMap !== null || owner.buildkitGidMap !== null)) ||
+      (owner.buildkitProcessGroupId === null && hasUidMap)
+    )
+      throw new Error("refusing cleanup: incomplete BuildKit namespace ownership record");
+    if (
+      owner.buildkitSocket !== path.join(actualRoot, "runtime", "buildkit.sock") ||
+      (owner.buildkitProcessGroupId === null && (hasUidMap || owner.buildkitUidMap !== null))
+    )
+      throw new Error("refusing cleanup: BuildKit socket or namespace ownership record is invalid");
+    if (hasUidMap)
+      await validateNamespaceMaps(
+        owner.buildkitUidMap,
+        owner.buildkitGidMap,
+        owner.ownerUid,
+        owner.ownerGid,
+      );
+  }
   return { root: actualRoot, owner };
 }
 
-async function stopBuildkitProcessGroup(root, processGroupId) {
+async function stopBuildkitProcessGroup(root, socket, processGroupId) {
   let commandLine;
   try {
     commandLine = (await readFile(`/proc/${processGroupId}/cmdline`)).toString("utf8");
@@ -496,7 +626,7 @@ async function stopBuildkitProcessGroup(root, processGroupId) {
       "refusing cleanup: BuildKit process group remains but its recorded leader is gone",
     );
   }
-  if (!commandLine.includes(path.join(root, "runtime", "buildkit.sock"))) {
+  if (!commandLine.includes(socket)) {
     throw new Error(
       "refusing to stop BuildKit: recorded process no longer matches the owned socket",
     );
@@ -531,7 +661,8 @@ async function stopBuildkitProcessGroup(root, processGroupId) {
 
 async function stopOwnedServices(root, owner) {
   if (owner.buildkitProcessGroupId !== null) {
-    await stopBuildkitProcessGroup(root, owner.buildkitProcessGroupId);
+    const socket = owner.buildkitSocket ?? path.join(root, "runtime", "buildkit.sock");
+    await stopBuildkitProcessGroup(root, socket, owner.buildkitProcessGroupId);
   }
   if (owner.registryStarted) {
     const env = privateEnvironment(root);
@@ -557,8 +688,81 @@ async function cleanup(root) {
   const { root: actualRoot, owner } = await readOwnerRecord(root);
   if (owner.podmanInitialized) await ensureUsernsHelpers(actualRoot);
   await stopOwnedServices(actualRoot, owner);
-  await rm(actualRoot, { recursive: true, force: true });
+  await removeOwnedRoot(actualRoot, owner);
   return actualRoot;
+}
+
+function outerIdIsMapped(id, ownerId, mapping) {
+  if (id === ownerId) return true;
+  return (
+    Array.isArray(mapping) &&
+    mapping.some(
+      (entry) => Array.isArray(entry) && id >= entry[1] && id < entry[1] + entry[2],
+    )
+  );
+}
+
+async function verifyOwnedTree(root, owner) {
+  const rootInfo = await lstat(root);
+  if (
+    !rootInfo.isDirectory() ||
+    rootInfo.uid !== owner.ownerUid ||
+    rootInfo.gid !== owner.ownerGid ||
+    (rootInfo.mode & 0o077) !== 0
+  ) {
+    throw new Error("refusing cleanup: disposable root ownership or permissions changed");
+  }
+  const pending = [root];
+  const rootDevice = rootInfo.dev;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    const info = await lstat(current);
+    if (info.dev !== rootDevice)
+      throw new Error(`refusing cleanup: mount or filesystem boundary under owned root: ${current}`);
+    if (
+      !outerIdIsMapped(info.uid, owner.ownerUid, owner.buildkitUidMap) ||
+      !outerIdIsMapped(info.gid, owner.ownerGid, owner.buildkitGidMap)
+    ) {
+      throw new Error(`refusing cleanup: unmapped owner inside disposable root: ${current}`);
+    }
+    if (info.isDirectory()) {
+      const children = await readdir(current);
+      for (const child of children) pending.push(path.join(current, child));
+    }
+  }
+}
+
+async function removeOwnedRoot(root, owner) {
+  await verifyOwnedTree(root, owner);
+  if (owner.schema === OWNER_SCHEMA && owner.buildkitUidMap !== null) {
+    const args = ["--user"];
+    for (const [inner, outer, count] of owner.buildkitUidMap)
+      args.push(`--map-users=${inner}:${outer}:${count}`);
+    for (const [inner, outer, count] of owner.buildkitGidMap)
+      args.push(`--map-groups=${inner}:${outer}:${count}`);
+    args.push(
+      "--setuid=0",
+      "--setgid=0",
+      "--mount",
+      "--propagation",
+      "private",
+      TOOL.rm,
+      "--recursive",
+      "--force",
+      "--",
+      root,
+    );
+    await run(TOOL.unshare, args, { env: privateEnvironment(root) });
+  } else {
+    await rm(root, { recursive: true, force: true });
+  }
+  try {
+    await lstat(root);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error("owned disposable root still exists after cleanup");
 }
 
 function expiryIso() {
@@ -583,7 +787,7 @@ function inventory(root, ownerIdentity, registryUrl, socket) {
       disposable: true,
       production: false,
       expiresAt: expiryIso(),
-      cleanupProcedure: `Run node scripts/local-disposable-environment.mjs --cleanup ${root}; it verifies the current UID, private /tmp root, ownership marker, and exact BuildKit socket before cleanup.`,
+      cleanupProcedure: `Run node scripts/local-disposable-environment.mjs --cleanup ${root}; it verifies the current UID/GID, private /tmp root, ownership marker, exact BuildKit process/socket, and any subordinate ID maps before cleanup.`,
     },
     resources: {
       "workers-d1-do": missing(),
@@ -611,11 +815,15 @@ async function launch(keep) {
     schema: OWNER_SCHEMA,
     root,
     ownerUid: process.getuid(),
+    ownerGid: process.getgid(),
     disposable: true,
     production: false,
     registryStarted: false,
     podmanInitialized: false,
     buildkitProcessGroupId: null,
+    buildkitSocket: path.join(root, "runtime", "buildkit.sock"),
+    buildkitUidMap: null,
+    buildkitGidMap: null,
   };
   const ownerPath = path.join(root, "owner.json");
   const persistOwner = async () =>
@@ -641,8 +849,12 @@ async function launch(keep) {
       root,
       env,
       registry.registryUrl,
-      async (processGroupId) => {
+      async (processGroupId, namespaceMaps) => {
         owner.buildkitProcessGroupId = processGroupId;
+        if (namespaceMaps) {
+          owner.buildkitUidMap = namespaceMaps.uidMap;
+          owner.buildkitGidMap = namespaceMaps.gidMap;
+        }
         await persistOwner();
       },
     );
@@ -695,9 +907,9 @@ function plan() {
         intendedEffects: [
           "Create a private mkdtemp root below the operating-system temp directory.",
           "Use rootless Podman with isolated XDG paths, explicit vfs graph/run roots, and a loopback-only anonymous OCI registry.",
-          "Start rootless BuildKit inside user and private mount namespaces with a socket and root below the owned temp directory.",
+          "Start rootless BuildKit inside user and private mount namespaces with validated current-user and subordinate UID/GID mappings, a socket, and a root below the owned temp directory.",
           "Build an uncached scratch-only recipe, push it to the local registry, and independently verify the manifest, config, and layer digests.",
-          "By default stop both services and remove only the marked owned temp root; --keep leaves them available with a strict T14 resource inventory.",
+          "By default stop both services and remove only the marked owned temp root, using the validated namespace maps to remove BuildKit-owned files; --keep leaves them available with a strict T14 resource inventory.",
         ],
         exclusions: [
           "No host daemon, existing container store, Docker context, kubeconfig, sysctl, production account, or production resource is read or modified.",

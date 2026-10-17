@@ -12,7 +12,7 @@ The Kubernetes renderer receives structured assignment identity and release data
 
 There is a real Platform HTTP client for the producer's proposed control endpoints. [`ScriptoriumControlHttpClient`](../../apps/provisioner/src/scriptorium-control-client.ts#L381) validates status and quiesce response binding, and [`request()`](../../apps/provisioner/src/scriptorium-control-client.ts#L500) mints an operation-bound service credential for each exact payload and restricts the endpoint to the assignment's Kubernetes Service. It can run only after the assignment is bound and the Control Plane can issue the credential. It cannot create an assignment or prove the producer implements those routes.
 
-At the recorded producer cut, [`PRODUCER-STATUS.json`](../../docs/migration/PRODUCER-STATUS.json) still marks S01–S05 `missing` / `BLOCKED` and `artifactDigest` is `null`. The latest producer audit is [`PRODUCER-eab0fad.md`](PRODUCER-eab0fad.md): it records local component OCI digests, not an accepted composition artifact, hosted assignment, or S05 reconstruction. No live producer runtime, recovery API, or owner-provided cluster/browser environment was supplied for this task.
+At Praetorium checkpoint `ebb9f23a`, canonical [`PRODUCER-STATUS.json`](../../docs/migration/PRODUCER-STATUS.json) still reports S01–S05 as `missing` / `BLOCKED` and `artifactDigest` as `null`. The later read-only [`PRODUCER-3f7b174.md`](PRODUCER-3f7b174.md) audit verifies public Core (`sha256:e6c024378f5d09efc24f9b771382ebba0b4cc25e11ec17e61640553663bea3b1`) and Full (`sha256:12737394de690dfeef541fb614e9595c057ae7aed1b41c693e3ba48657d07684`) preset images. Those published presets improve image availability, but have no hosted assignment/composition binding and are not an accepted configuration-specific artifact; S01–S04 and S05 stable-origin recovery remain incomplete. No owner-provided cluster/browser inventory was available for an integrated recovery run.
 
 ## Acceptance scenarios that remain unimplemented
 
@@ -28,7 +28,7 @@ Existing unit tests and producer-local container recovery runs are component evi
 
 The existing Scriptorium coordinator must publish and demonstrate the missing versioned S01–S05 inputs recorded in [`SCRIPTORIUM-CONTRACT.md`](../../docs/architecture/SCRIPTORIUM-CONTRACT.md#6-exact-producer-acceptance-handoff):
 
-1. An immutable current-main image and composition artifact, with a versioned assignment delivery method and observed producer metadata bound to repository, image, composition, modules and runtime epoch.
+1. An immutable artifact built from an accepted arbitrary composition, with a versioned assignment delivery method and observed producer metadata bound to repository, image digest, composition digest, modules and runtime epoch. The published Core/Full preset images do not satisfy this requirement.
 2. Hosted grant verification and a callable positive/negative authorization probe; assignment-bound renewable repository credentials for clone/fetch and recovery.
 3. Authenticated status/activity plus operation-and-epoch-bound quiesce/resume behavior, with actual pending checkpoint, job, uncertain publication, duplicate request and stale request evidence.
 4. A disposable stable-origin replacement run that re-clones confirmed repository state and reconciles the browser journal for that exact artifact.

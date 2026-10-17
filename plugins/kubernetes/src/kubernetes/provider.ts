@@ -262,7 +262,7 @@ function resourceLabels(
   };
 }
 
-function namespaceLabels(identity: InstanceIdentity): Readonly<Record<string, string>> {
+function namespaceOwnershipLabels(identity: InstanceIdentity): Readonly<Record<string, string>> {
   return {
     [PLATFORM_LABEL_KEY]: PLATFORM_LABEL_VALUE,
     [MANAGED_BY_LABEL_KEY]: MANAGED_BY_LABEL_VALUE,
@@ -270,6 +270,19 @@ function namespaceLabels(identity: InstanceIdentity): Readonly<Record<string, st
     [REPOSITORY_LABEL_KEY]: String(identity.repositoryId),
     [OWNERSHIP_LABEL_KEY]: OWNERSHIP_VERSION,
     [CLUSTER_LABEL_KEY]: identity.clusterId,
+  };
+}
+
+const RESTRICTED_POD_SECURITY_LABELS = {
+  "pod-security.kubernetes.io/enforce": "restricted",
+  "pod-security.kubernetes.io/audit": "restricted",
+  "pod-security.kubernetes.io/warn": "restricted",
+} as const;
+
+function namespaceLabels(identity: InstanceIdentity): Readonly<Record<string, string>> {
+  return {
+    ...namespaceOwnershipLabels(identity),
+    ...RESTRICTED_POD_SECURITY_LABELS,
   };
 }
 
@@ -300,7 +313,7 @@ function assertObjectOwned(
   expectedName?: string,
 ): ObjectMetadata {
   const metadata = objectMetadata(value);
-  const expected = namespaceLabels(identity);
+  const expected = namespaceOwnershipLabels(identity);
   if (
     metadata.namespace !== namespaceName ||
     (expectedName !== undefined && metadata.name !== expectedName) ||

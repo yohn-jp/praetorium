@@ -41,6 +41,11 @@ const DEPLOYMENT = runtimeResourceName(INSTANCE_ID);
 const INDEX_DIGEST = `sha256:${"a".repeat(64)}`;
 const CHILD_DIGEST = `sha256:${"b".repeat(64)}`;
 const HOST = "i-00000000000000000000000001.praetorium.example.test";
+const RESTRICTED_POD_SECURITY_LABELS = {
+  "pod-security.kubernetes.io/enforce": "restricted",
+  "pod-security.kubernetes.io/audit": "restricted",
+  "pod-security.kubernetes.io/warn": "restricted",
+} as const;
 const RESOURCE: RuntimeResourceQuantities = {
   cpuMilli: 500,
   memoryMiB: 512,
@@ -569,6 +574,7 @@ describe("Kubernetes runtime provider", () => {
             releaseId: RELEASE_ID,
           }),
           "arcadia.io/runtime-cluster-id": CLUSTER_ID,
+          ...RESTRICTED_POD_SECURITY_LABELS,
         },
       },
     });
@@ -636,6 +642,9 @@ describe("Kubernetes runtime provider", () => {
     );
     expect(result.status).toBe("pending");
     expect(api.writes).toContain("create:Namespace");
+    expect(record(record(api.namespaces.get(NAMESPACE)).metadata).labels).toMatchObject(
+      RESTRICTED_POD_SECURITY_LABELS,
+    );
   });
 
   it("censuses all namespace Pods without an epoch selector and blocks replacement until old Pods are absent", async () => {
@@ -798,6 +807,7 @@ describe("Kubernetes runtime provider", () => {
             releaseId: RELEASE_ID,
           }),
           "arcadia.io/runtime-cluster-id": CLUSTER_ID,
+          ...RESTRICTED_POD_SECURITY_LABELS,
         },
       },
     });
@@ -806,6 +816,50 @@ describe("Kubernetes runtime provider", () => {
       runtime.ensureRunning(spec(), new AbortController().signal, () => undefined),
     ).rejects.toMatchObject({ code: "conflict" });
     expect(api.writes).toHaveLength(0);
+  });
+
+  it("rejects an existing tenant namespace missing or weakening any restricted PSA label without mutation", async () => {
+    for (const label of Object.keys(RESTRICTED_POD_SECURITY_LABELS)) {
+      for (const change of ["missing", "weakened"] as const) {
+        const api = new FakeKubernetesApi();
+        api.addNode();
+        const labels: Record<string, string> = {
+          ...managedLabels({
+            instanceId: INSTANCE_ID,
+            repositoryId: REPOSITORY_ID,
+            runtimeEpoch: 1,
+            generation: 1,
+            releaseId: RELEASE_ID,
+          }),
+          "arcadia.io/runtime-cluster-id": CLUSTER_ID,
+          ...RESTRICTED_POD_SECURITY_LABELS,
+        };
+        if (change === "missing") delete labels[label];
+        else labels[label] = "baseline";
+        const namespace = {
+          apiVersion: "v1",
+          kind: "Namespace",
+          metadata: {
+            name: NAMESPACE,
+            uid: "owned-namespace",
+            resourceVersion: "5",
+            labels,
+          },
+        };
+        const originalNamespace = structuredClone(namespace);
+        api.namespaces.set(NAMESPACE, namespace);
+
+        await expect(
+          provider(api, targetReservations(), () => 100_000).ensureRunning(
+            spec(),
+            new AbortController().signal,
+            () => undefined,
+          ),
+        ).rejects.toMatchObject({ code: "conflict" });
+        expect(api.writes).toEqual([]);
+        expect(api.namespaces.get(NAMESPACE)).toEqual(originalNamespace);
+      }
+    }
   });
 
   it("grants tenant runtimes to the checked-in Praetorium provisioner service account", async () => {

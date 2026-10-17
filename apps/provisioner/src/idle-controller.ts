@@ -349,15 +349,45 @@ export class ProvisionerIdleController {
   }
 
   private async scanFullInventory(signal?: AbortSignal): Promise<void> {
+    this.resetScanState();
+    const bindings = new Map<string, RuntimeAssignment>();
     let pages = 0;
-    do {
+    try {
+      do {
+        if (signal?.aborted) {
+          this.resetScanState();
+          return;
+        }
+        if (!(await this.scanOnceInternal(signal, bindings))) {
+          throw new Error("idle_inventory_incomplete");
+        }
+        pages += 1;
+        if (pages > MAX_CONTROL_PAGES_PER_CYCLE * MAX_RUNTIME_PAGES_PER_CANDIDATE_PAGE) {
+          throw new Error("idle_inventory_page_limit");
+        }
+      } while (this.candidatePage !== null || this.controlCursor !== null);
       if (signal?.aborted) return;
-      await this.scanOnce(signal);
-      pages += 1;
-      if (pages > MAX_CONTROL_PAGES_PER_CYCLE * MAX_RUNTIME_PAGES_PER_CANDIDATE_PAGE) {
-        throw new Error("idle_inventory_page_limit");
+      if (this.journalReady) await this.journal.prune(bindings);
+      for (const [instanceId, tracked] of this.tracked) {
+        const current = bindings.get(instanceId);
+        if (current === undefined || !sameIdleBinding(tracked.assignment, current)) {
+          this.tracked.delete(instanceId);
+        }
       }
-    } while (this.candidatePage !== null || this.controlCursor !== null);
+    } catch (error) {
+      this.resetScanState();
+      throw error;
+    }
+  }
+
+  private resetScanState(): void {
+    this.controlCursor = null;
+    this.candidatePage = null;
+    this.inspector = undefined;
+    this.runtimeCursor = undefined;
+    this.controlPagesInCycle = 0;
+    this.runtimePagesInCandidatePage = 0;
+    this.evaluatedCandidates.clear();
   }
 
   private nextWakeAt(): number | undefined {
@@ -436,6 +466,13 @@ export class ProvisionerIdleController {
   /** Processes at most one bounded Control Plane page and one Kubernetes page. */
   async scanOnce(signal?: AbortSignal): Promise<void> {
     await this.ensureJournalLoaded();
+    await this.scanOnceInternal(signal);
+  }
+
+  private async scanOnceInternal(
+    signal?: AbortSignal,
+    bindings?: Map<string, RuntimeAssignment>,
+  ): Promise<boolean> {
     if (this.candidatePage === null) {
       this.candidatePage = await this.options.operations.listIdleCandidates({
         workerId: this.options.workerId,
@@ -451,16 +488,19 @@ export class ProvisionerIdleController {
         this.controlCursor = null;
         this.controlPagesInCycle = 0;
         this.candidatePage = null;
-        return;
+        return false;
       }
     }
 
     const candidates = this.candidatePage.items.filter((candidate) =>
       isCurrentRuntimeCandidate(candidate, this.options.clusterId),
     );
+    for (const candidate of candidates) {
+      bindings?.set(candidate.instanceId, assignmentOf(candidate));
+    }
     if (candidates.length === 0) {
       this.finishCandidatePage();
-      return;
+      return true;
     }
 
     this.inspector ??= this.createInspector(candidates[0]!);
@@ -469,7 +509,7 @@ export class ProvisionerIdleController {
     if (this.runtimePagesInCandidatePage > MAX_RUNTIME_PAGES_PER_CANDIDATE_PAGE) {
       this.logger?.warn("idle_runtime_cursor_cycle_reset", { code: "cursor_page_limit" });
       this.finishCandidatePage();
-      return;
+      return false;
     }
     this.metrics?.increment("idle_runtime_page");
 
@@ -489,10 +529,11 @@ export class ProvisionerIdleController {
       if (page.nextCursor === this.runtimeCursor) {
         this.logger?.warn("idle_runtime_cursor_stalled", { code: "cursor_did_not_advance" });
         this.finishCandidatePage();
-        return;
+        return false;
       }
       this.runtimeCursor = page.nextCursor;
     }
+    return true;
   }
 
   private async evaluateCandidate(

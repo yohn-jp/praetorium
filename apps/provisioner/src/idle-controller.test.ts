@@ -239,14 +239,21 @@ function harness(
     readonly managed?: ReturnType<typeof managedRuntime>;
     readonly runtimeObservation?: RuntimeObservation;
     readonly runtimePages?: readonly RuntimePage<ManagedRuntimeSummary>[];
-    readonly identityExpiry?: number;
+    readonly identityExpiry?: number | ((currentNow: number) => number);
     readonly journalConfigured?: boolean;
     readonly authProbe?: RuntimeAuthAcceptanceProbe;
     readonly activityOffsetMs?: number;
+    readonly candidates?: () => readonly ProvisionerIdleCandidate[];
+    readonly listCandidatePage?: (
+      cursor: string | null,
+    ) => Promise<{
+      readonly items: readonly ProvisionerIdleCandidate[];
+      readonly nextCursor: string | null;
+    }>;
   } = {},
 ) {
   let currentNow = now;
-  const activityAt = now - (options.activityOffsetMs ?? 16 * 60_000);
+  let activityAt = now - (options.activityOffsetMs ?? 16 * 60_000);
   const journalDirectory = join(tmpdir(), `praetorium-idle-${randomUUID()}`);
   journalDirectories.push(journalDirectory);
   const journalPath = join(journalDirectory, "state.json");
@@ -257,8 +264,8 @@ function harness(
   const listIdleCandidates = vi.fn(
     async (input: { readonly limit: number; readonly cursor: string | null }) => {
       expect(input.limit).toBe(25);
-      expect(input.cursor).toBeNull();
-      return { items: [value], nextCursor: null };
+      if (options.listCandidatePage !== undefined) return options.listCandidatePage(input.cursor);
+      return { items: options.candidates?.() ?? [value], nextCursor: null };
     },
   );
   const issueObservationCredential = vi.fn(async () => ({
@@ -305,7 +312,9 @@ function harness(
       ? {}
       : {
           async runtimeIdentityExpiresAt() {
-            return options.identityExpiry!;
+            return typeof options.identityExpiry === "function"
+              ? options.identityExpiry(currentNow)
+              : options.identityExpiry!;
           },
           refreshRuntimeIdentity: refreshIdentity,
         }),
@@ -358,6 +367,9 @@ function harness(
     refreshIdentity,
     advance(ms: number) {
       currentNow += ms;
+    },
+    setActivityTimestamp(timestamp: number) {
+      activityAt = timestamp;
     },
   };
 }
@@ -497,6 +509,100 @@ describe("ProvisionerIdleController", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.listIdleCandidates).toHaveBeenCalledTimes(2);
 
+    abort.abort();
+    await running;
+  });
+
+  it("drops retired binding timers and hints on a complete snapshot, then rediscovers a restart", async () => {
+    let present = true;
+    const h = harness({
+      activityOffsetMs: 0,
+      candidates: () => (present ? [candidate()] : []),
+      identityExpiry: (currentNow) => currentNow + 200_000,
+    });
+    const abort = new AbortController();
+    const running = h.controller.run(abort.signal);
+    const binding = { instanceId, repositoryId, generation: 7, runtimeEpoch: 9, clusterId };
+
+    await vi.waitFor(() => expect(h.runtimeCursors).toHaveLength(1));
+    await vi.waitFor(async () => {
+      const journal = new IdleDeadlineJournal(h.journalPath);
+      await journal.load();
+      expect(journal.get(binding)).toBeDefined();
+    });
+
+    present = false;
+    h.controller.notifyWorkAvailable();
+    await vi.waitFor(() => expect(h.listIdleCandidates).toHaveBeenCalledTimes(2));
+    await vi.waitFor(async () => {
+      const journal = new IdleDeadlineJournal(h.journalPath);
+      await journal.load();
+      expect(journal.get(binding)).toBeUndefined();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    h.advance(120_000);
+    await h.controller.processDueOnce();
+    expect(h.refreshIdentity).not.toHaveBeenCalled();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+
+    present = true;
+    h.setActivityTimestamp(now + 120_000);
+    h.controller.notifyWorkAvailable();
+    await vi.waitFor(() => expect(h.listIdleCandidates).toHaveBeenCalledTimes(3));
+    await vi.waitFor(async () => {
+      expect(h.runtimeCursors).toHaveLength(2);
+      const journal = new IdleDeadlineJournal(h.journalPath);
+      await journal.load();
+      expect(journal.get(binding)).toMatchObject({
+        lastMeaningfulActivityAt: now + 120_000,
+        deadlineAt: now + 120_000 + 15 * 60_000,
+      });
+    });
+    h.advance(120_000);
+    await h.controller.processDueOnce();
+    expect(h.refreshIdentity).toHaveBeenCalledOnce();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+
+    abort.abort();
+    await running;
+  });
+
+  it("keeps tracked bindings and journal hints when a full inventory scan fails partway", async () => {
+    let candidatePageCalls = 0;
+    const h = harness({
+      activityOffsetMs: 0,
+      identityExpiry: (currentNow) => currentNow + 200_000,
+      listCandidatePage: async (cursor) => {
+        candidatePageCalls += 1;
+        if (candidatePageCalls === 1) return { items: [candidate()], nextCursor: null };
+        if (candidatePageCalls === 2 && cursor === null) return { items: [], nextCursor: "page-2" };
+        throw new Error("control_plane_unavailable");
+      },
+    });
+    const abort = new AbortController();
+    const running = h.controller.run(abort.signal);
+
+    await vi.waitFor(async () => {
+      expect(h.runtimeCursors).toHaveLength(1);
+      const journal = new IdleDeadlineJournal(h.journalPath);
+      await journal.load();
+      expect(
+        journal.get({ instanceId, repositoryId, generation: 7, runtimeEpoch: 9, clusterId }),
+      ).toBeDefined();
+    });
+    h.controller.notifyWorkAvailable();
+    await vi.waitFor(() => expect(h.listIdleCandidates).toHaveBeenCalledTimes(3));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    h.advance(120_000);
+    await h.controller.processDueOnce();
+    expect(h.refreshIdentity).toHaveBeenCalledOnce();
+
+    const journal = new IdleDeadlineJournal(h.journalPath);
+    await journal.load();
+    expect(
+      journal.get({ instanceId, repositoryId, generation: 7, runtimeEpoch: 9, clusterId }),
+    ).toBeDefined();
     abort.abort();
     await running;
   });

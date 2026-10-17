@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 const JOURNAL_VERSION = 1;
@@ -100,17 +100,16 @@ export class IdleDeadlineJournal {
       this.loaded = true;
       return;
     }
-    let data: Buffer;
+    let data: Buffer | null;
     try {
-      data = await readFile(this.path);
-    } catch (error) {
-      if (isMissingFile(error)) {
-        this.loaded = true;
-        return;
-      }
+      data = await readBoundedFile(this.path);
+    } catch {
       throw new IdleDeadlineJournalError();
     }
-    if (data.byteLength > MAX_JOURNAL_BYTES) throw new IdleDeadlineJournalError();
+    if (data === null) {
+      this.loaded = true;
+      return;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(data.toString("utf8")) as unknown;
@@ -148,6 +147,35 @@ export class IdleDeadlineJournal {
     const next = new Map(this.records);
     next.set(record.instanceId, record);
     if (next.size > MAX_RECORDS) throw new IdleDeadlineJournalError();
+    await this.replace(next);
+    return true;
+  }
+
+  async remove(binding: IdleDeadlineBinding): Promise<boolean> {
+    if (!this.persistent || this.path === undefined) return false;
+    const existing = this.records.get(binding.instanceId);
+    if (existing === undefined || !sameBinding(existing, binding)) return true;
+    const next = new Map(this.records);
+    next.delete(binding.instanceId);
+    await this.replace(next);
+    return true;
+  }
+
+  async prune(bindings: ReadonlyMap<string, IdleDeadlineBinding>): Promise<boolean> {
+    if (!this.persistent || this.path === undefined) return false;
+    const next = new Map(
+      [...this.records].filter(([instanceId, record]) => {
+        const binding = bindings.get(instanceId);
+        return binding !== undefined && sameBinding(record, binding);
+      }),
+    );
+    if (next.size === this.records.size) return true;
+    await this.replace(next);
+    return true;
+  }
+
+  private async replace(next: Map<string, IdleDeadlineRecord>): Promise<void> {
+    if (next.size > MAX_RECORDS) throw new IdleDeadlineJournalError();
     const payload = Buffer.from(
       JSON.stringify({ version: JOURNAL_VERSION, records: [...next.values()] }),
       "utf8",
@@ -156,7 +184,6 @@ export class IdleDeadlineJournal {
     await this.writeAtomic(payload);
     this.records.clear();
     for (const [instanceId, value] of next) this.records.set(instanceId, value);
-    return true;
   }
 
   private async writeAtomic(payload: Buffer): Promise<void> {
@@ -188,6 +215,33 @@ export class IdleDeadlineJournal {
       await unlink(temporary).catch(() => undefined);
       throw new IdleDeadlineJournalError();
     }
+  }
+}
+
+async function readBoundedFile(path: string): Promise<Buffer | null> {
+  let file: Awaited<ReturnType<typeof open>>;
+  try {
+    file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  } catch (error) {
+    if (isMissingFile(error)) return null;
+    throw error;
+  }
+  try {
+    const before = await file.stat();
+    if (!before.isFile() || before.size > MAX_JOURNAL_BYTES) throw new IdleDeadlineJournalError();
+    const data = Buffer.allocUnsafe(before.size + 1);
+    let offset = 0;
+    while (offset < data.byteLength) {
+      const { bytesRead } = await file.read(data, offset, data.byteLength - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > MAX_JOURNAL_BYTES) throw new IdleDeadlineJournalError();
+    const after = await file.stat();
+    if (before.size !== after.size || before.size !== offset) throw new IdleDeadlineJournalError();
+    return data.subarray(0, offset);
+  } finally {
+    await file.close();
   }
 }
 

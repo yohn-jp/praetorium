@@ -53,11 +53,43 @@ describe("IdleDeadlineJournal", () => {
     expect(restored.get({ ...record, generation: record.generation + 1 })).toBeUndefined();
   });
 
+  it("prunes and removes scheduler hints without touching runtime resources", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "praetorium-idle-journal-"));
+    directories.push(directory);
+    const path = join(directory, "state.json");
+    const journal = new IdleDeadlineJournal(path);
+    await journal.load();
+    const historical = { ...record, instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAA" };
+    await journal.put(record);
+    await journal.put(historical);
+
+    expect(await journal.prune(new Map([[record.instanceId, record]]))).toBe(true);
+    expect(journal.get(record)).toEqual(record);
+    expect(journal.get(historical)).toBeUndefined();
+    expect(await journal.remove(record)).toBe(true);
+    expect(journal.get(record)).toBeUndefined();
+
+    const restored = new IdleDeadlineJournal(path);
+    await restored.load();
+    expect(restored.get(record)).toBeUndefined();
+  });
+
   it("fails closed on a malformed durable file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "praetorium-idle-journal-"));
     directories.push(directory);
     const path = join(directory, "state.json");
     await writeFile(path, "{}");
+    const journal = new IdleDeadlineJournal(path);
+
+    await expect(journal.load()).rejects.toThrow("idle_deadline_journal_unavailable");
+    expect(journal.persistent).toBe(false);
+  });
+
+  it("rejects an oversized journal before allocating based on its file size", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "praetorium-idle-journal-"));
+    directories.push(directory);
+    const path = join(directory, "state.json");
+    await writeFile(path, Buffer.alloc(4 * 1024 * 1024 + 1, 0x20));
     const journal = new IdleDeadlineJournal(path);
 
     await expect(journal.load()).rejects.toThrow("idle_deadline_journal_unavailable");

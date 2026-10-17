@@ -12,32 +12,18 @@ import test from "node:test";
 import { Miniflare } from "miniflare";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const sourceCut = "094719bebe7b05ed02fedcbd55762c29bebce514";
 const ownedEvidencePaths = [
   "tests/integration/runtime-credentials-worker.partial.test.mjs",
   "docs/verification/RUNTIME-CREDENTIALS-PARTIAL.md",
 ];
-const frozenTreePathspec = [".", ...ownedEvidencePaths.map((file) => `:(exclude)${file}`)];
 const gatewayAuthHeader = "X-Control-Plane-Gateway-Auth";
 const promisifiedExecFile = promisify(execFile);
 
-function assertProductionSourceCut() {
-  execFileSync("git", ["merge-base", "--is-ancestor", sourceCut, "HEAD"], {
+function assertCleanProductionTree() {
+  const checkedHead = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: repositoryRoot,
-    stdio: "ignore",
-  });
-  execFileSync("git", ["diff", "--quiet", sourceCut, "HEAD", "--", ...frozenTreePathspec], {
-    cwd: repositoryRoot,
-    stdio: "ignore",
-  });
-  execFileSync("git", ["diff", "--quiet", "HEAD", "--", ...frozenTreePathspec], {
-    cwd: repositoryRoot,
-    stdio: "ignore",
-  });
-  execFileSync("git", ["diff", "--cached", "--quiet", "HEAD", "--", ...frozenTreePathspec], {
-    cwd: repositoryRoot,
-    stdio: "ignore",
-  });
+    encoding: "utf8",
+  }).trim();
   const status = execFileSync(
     "git",
     [
@@ -50,7 +36,12 @@ function assertProductionSourceCut() {
     ],
     { cwd: repositoryRoot, encoding: "utf8" },
   );
-  assert.equal(status, "", "production source paths must be clean at the pinned commit");
+  assert.equal(
+    status,
+    "",
+    "the current committed production tree must be clean except for this test and its evidence note",
+  );
+  return checkedHead;
 }
 
 function gatewayHeaders(secret) {
@@ -77,6 +68,8 @@ function makeControlPlaneWorker(
   persistenceRoot,
   gatewaySecret,
   retirementSecret,
+  provisionerSecret,
+  gatewayService,
   date,
   flags,
 ) {
@@ -89,7 +82,11 @@ function makeControlPlaneWorker(
     bindings: {
       CONTROL_PLANE_GATEWAY_AUTH: gatewaySecret,
       RUNTIME_CREDENTIAL_RETIREMENT_AUTH: retirementSecret,
+      PROVISIONER_AUTH_TOKEN: provisionerSecret,
+      PROVISIONER_WORKER_ID: "owned-partial-provisioner",
+      PROVISIONER_CLUSTER_ID: "owned-partial-cluster",
     },
+    serviceBindings: { GATEWAY_SERVICE: gatewayService },
     d1Databases: { CONTROL_PLANE_DB: "praetorium-runtime-credential-partial" },
     d1Persist: path.join(persistenceRoot, "d1"),
     durableObjects: {
@@ -125,11 +122,121 @@ async function migrate(database, migrationDirectory) {
   }
 }
 
+function runtimeCredentialContext(metadata) {
+  return JSON.stringify([
+    "praetorium-runtime-git-credential:v1",
+    metadata.tokenId,
+    metadata.repositoryId,
+    metadata.installationId,
+    metadata.instanceId,
+    metadata.runtimeId,
+    metadata.runtimeEpoch,
+    metadata.leaseId,
+    metadata.permission,
+    metadata.expiresAt,
+  ]);
+}
+
+async function seedActiveRuntimeCredential(database, tokenVault, input) {
+  const expiresAt = new Date(Date.now() + 3_000_000).toISOString();
+  const tokenId = await sha256Hex(input.token);
+  const metadata = {
+    tokenId,
+    repositoryId: input.repositoryId,
+    installationId: input.installationId,
+    instanceId: input.instanceId,
+    runtimeId: input.runtimeId,
+    runtimeEpoch: input.runtimeEpoch,
+    leaseId: input.leaseId,
+    permission: "read",
+    expiresAt,
+  };
+  const encryptedSecret = await tokenVault.seal(input.token, runtimeCredentialContext(metadata));
+  const now = Date.now();
+  await database
+    .prepare(
+      `INSERT INTO runtime_git_credentials (
+         token_id, repository_id, installation_id, instance_id, runtime_id,
+         runtime_epoch, lease_id, permission, expires_at, encrypted_secret_json,
+         status, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+    )
+    .bind(
+      tokenId,
+      metadata.repositoryId,
+      metadata.installationId,
+      metadata.instanceId,
+      metadata.runtimeId,
+      metadata.runtimeEpoch,
+      metadata.leaseId,
+      metadata.permission,
+      Date.parse(expiresAt),
+      JSON.stringify(encryptedSecret),
+      now,
+      now,
+    )
+    .run();
+  return { tokenId, expiresAt };
+}
+
+async function seedRunningOperation(database, input) {
+  const now = Date.now();
+  await database
+    .prepare(
+      `INSERT INTO operations (
+         operation_id, instance_id, repository_id, generation, runtime_epoch, kind,
+         status, phase, attempt, lease_epoch, worker_id, lease_token, lease_expires_at,
+         cluster_id, idempotency_scope, idempotency_key, request_hash, actor_id,
+         authorization_revision, created_at, updated_at
+       ) VALUES (?, ?, ?, 0, ?, 'stop', 'running', 'accepted', 1, 1, ?, ?, ?,
+         'owned-partial-cluster', ?, ?, ?, 'owned-partial-probe', 1, ?, ?)`,
+    )
+    .bind(
+      input.operationId,
+      input.instanceId,
+      input.repositoryId,
+      input.runtimeEpoch,
+      input.workerId,
+      input.leaseToken,
+      now + 60_000,
+      `repo:${input.repositoryId}`,
+      input.operationId,
+      "a".repeat(64),
+      now,
+      now,
+    )
+    .run();
+}
+
+async function postProvisionerCheckpoint(miniflare, secret, input) {
+  return miniflare.dispatchFetch("https://control-plane.test/internal/provisioner/checkpoint", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+}
+
+function syntheticWriterAbsenceProof(instanceId, repositoryId, retiredRuntimeEpoch, suffix) {
+  return {
+    instanceId,
+    repositoryId,
+    retiredRuntimeEpoch,
+    providerObservationId: `synthetic-owned-census-${suffix}`,
+    censusObservedAt: new Date().toISOString(),
+    remainingWriters: 0,
+    evidenceIdentities: [],
+    source: "runtime-provider-census",
+  };
+}
+
 test(
   "actual Control Plane Worker stores encrypted runtime credentials and fails closed until GitHub revocation is acknowledged (partial)",
   { timeout: 60_000 },
   async (t) => {
-    assertProductionSourceCut();
+    const checkedHead = assertCleanProductionTree();
 
     const controlPlaneDirectory = path.join(repositoryRoot, "apps/control-plane");
     const workerConfigPath = path.join(controlPlaneDirectory, "wrangler.toml");
@@ -149,12 +256,27 @@ test(
     );
     const gatewaySecret = randomBytes(32).toString("base64url");
     const retirementSecret = randomBytes(32).toString("base64url");
-    assert.notEqual(gatewaySecret, retirementSecret);
+    const provisionerSecret = randomBytes(32).toString("base64url");
+    assert.equal(new Set([gatewaySecret, retirementSecret, provisionerSecret]).size, 3);
     let miniflare;
     let githubServer;
     let serverAddress;
+    let registryForRetirement;
     const githubRequests = [];
     const controlPlaneRequests = [];
+    const gatewayServiceRequests = [];
+    const gatewayService = async (request) => {
+      const url = new URL(request.url);
+      const authorization = request.headers.get("Authorization");
+      const payload = await request.json();
+      const authorized = authorization === `Bearer ${retirementSecret}`;
+      gatewayServiceRequests.push({ origin: url.origin, path: url.pathname, authorized, payload });
+      if (!authorized) return Response.json({ complete: false }, { status: 401 });
+      if (!registryForRetirement) return Response.json({ complete: false }, { status: 503 });
+      const result = await registryForRetirement.retire(payload);
+      gatewayServiceRequests.at(-1).result = result;
+      return Response.json(result);
+    };
 
     try {
       await promisifiedExecFile(
@@ -181,6 +303,8 @@ test(
         persistenceRoot,
         gatewaySecret,
         retirementSecret,
+        provisionerSecret,
+        gatewayService,
         dateMatch[1],
         compatibilityFlags,
       );
@@ -188,6 +312,21 @@ test(
       const bindings = await miniflare.getBindings();
       assert.ok(bindings.CONTROL_PLANE_DB, "the real Worker D1 binding is available");
       assert.ok(bindings.REPOSITORY_COORDINATOR, "the real Worker Durable Object is available");
+      assert.equal(typeof bindings.GATEWAY_SERVICE?.fetch, "function");
+      const wrongGatewayBindingAuth = await bindings.GATEWAY_SERVICE.fetch(
+        "https://gateway.internal/internal/github/retire",
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer wrong-owned-test-secret",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ repositoryId: 1, runtimeEpoch: 1 }),
+        },
+      );
+      assert.equal(wrongGatewayBindingAuth.status, 401);
+      assert.equal(gatewayServiceRequests.length, 1);
+      gatewayServiceRequests.length = 0;
       const database = await miniflare.getD1Database("CONTROL_PLANE_DB");
       await migrate(database, path.join(controlPlaneDirectory, "migrations"));
 
@@ -387,6 +526,7 @@ test(
         timeoutMs: 500,
         now: () => new Date(),
       });
+      registryForRetirement = registry;
 
       const identity = {
         repositoryId,
@@ -515,13 +655,198 @@ test(
       );
       assert.equal((credentialRows.results ?? []).length, 2);
 
+      const absenceToken = `ghs_owned_absence_barrier_${randomBytes(18).toString("hex")}`;
+      await seedActiveRuntimeCredential(database, tokenVault, {
+        token: absenceToken,
+        repositoryId,
+        installationId,
+        instanceId,
+        runtimeId: "synthetic-old-runtime",
+        runtimeEpoch: 1,
+        leaseId: "synthetic-old-lease",
+      });
+      await assertCredentialState(database, absenceToken, "active");
+
+      const absenceOperationId = `op_owned_absence_${randomBytes(8).toString("hex")}`;
+      const absenceLeaseToken = randomBytes(32).toString("base64url");
+      await seedRunningOperation(database, {
+        operationId: absenceOperationId,
+        instanceId,
+        repositoryId,
+        runtimeEpoch: 1,
+        workerId: "owned-partial-provisioner",
+        leaseToken: absenceLeaseToken,
+      });
+      const writerAbsenceProof = syntheticWriterAbsenceProof(
+        instanceId,
+        repositoryId,
+        1,
+        "known-epoch",
+      );
+      const absenceCheckpoint = {
+        schemaVersion: 1,
+        lifecycle: {
+          instanceId,
+          repositoryId,
+          phase: "old-writer-absent",
+          writerAbsenceProof,
+        },
+        writerAbsenceProof,
+      };
+      githubMode = "401";
+      const deniedCheckpoint = await postProvisionerCheckpoint(miniflare, provisionerSecret, {
+        operationId: absenceOperationId,
+        workerId: "owned-partial-provisioner",
+        leaseToken: absenceLeaseToken,
+        leaseEpoch: 1,
+        expectedCheckpointSequence: 0,
+        phase: "old-writer-absent",
+        checkpoint: absenceCheckpoint,
+      });
+      const deniedBody = await jsonResponse(deniedCheckpoint);
+      if (deniedCheckpoint.status !== 503)
+        t.diagnostic(
+          JSON.stringify({
+            deniedStatus: deniedCheckpoint.status,
+            deniedBody,
+            gatewayBinding: await miniflare.getBindings().then((env) => ({
+              exists: Boolean(env.GATEWAY_SERVICE),
+              type: typeof env.GATEWAY_SERVICE,
+              fetchType: typeof env.GATEWAY_SERVICE?.fetch,
+            })),
+            gatewayServiceCalls: gatewayServiceRequests,
+            operation: await database
+              .prepare(
+                "SELECT phase, status, lease_epoch, checkpoint_sequence FROM operations WHERE operation_id = ?",
+              )
+              .bind(absenceOperationId)
+              .first(),
+            credential: await database
+              .prepare("SELECT status FROM runtime_git_credentials WHERE token_id = ?")
+              .bind(await sha256Hex(absenceToken))
+              .first(),
+          }),
+        );
+      assert.equal(
+        deniedCheckpoint.status,
+        503,
+        "the actual Provisioner checkpoint route denies the zero-census checkpoint while a known token remains pending",
+      );
+      assert.equal(deniedBody.error.code, "UPSTREAM_UNAVAILABLE");
+      await assertCredentialState(database, absenceToken, "revocation_pending");
+      const persistedAbsence = await database
+        .prepare(
+          "SELECT phase, checkpoint_sequence, checkpoint_json FROM operations WHERE operation_id = ?",
+        )
+        .bind(absenceOperationId)
+        .first();
+      assert.equal(persistedAbsence.phase, "old-writer-absent");
+      assert.equal(persistedAbsence.checkpoint_sequence, 1);
+      assert.deepEqual(
+        JSON.parse(persistedAbsence.checkpoint_json).writerAbsenceProof,
+        writerAbsenceProof,
+      );
+      assert.deepEqual(gatewayServiceRequests.at(-1), {
+        origin: "https://gateway.internal",
+        path: "/internal/github/retire",
+        authorized: true,
+        payload: { repositoryId, runtimeEpoch: 1 },
+        result: { complete: false },
+      });
+      assert.equal(githubRequests.at(-1).mode, "401");
+      assert.equal(githubRequests.at(-1).authorization, `Bearer ${absenceToken}`);
+
+      githubMode = "204";
+      const acceptedCheckpoint = await postProvisionerCheckpoint(miniflare, provisionerSecret, {
+        operationId: absenceOperationId,
+        workerId: "owned-partial-provisioner",
+        leaseToken: absenceLeaseToken,
+        leaseEpoch: 1,
+        expectedCheckpointSequence: 1,
+        phase: "old-writer-absent",
+        checkpoint: absenceCheckpoint,
+      });
+      assert.equal(acceptedCheckpoint.status, 200);
+      assert.equal((await jsonResponse(acceptedCheckpoint)).phase, "old-writer-absent");
+      await assertCredentialState(database, absenceToken, "revoked");
+      assert.equal(gatewayServiceRequests.length, 2);
+      assert.deepEqual(gatewayServiceRequests.at(-1).result, { complete: true });
+      assert.equal(githubRequests.at(-1).mode, "204");
+      assert.equal(githubRequests.at(-1).authorization, `Bearer ${absenceToken}`);
+
+      const nullEpochToken = `ghs_owned_null_epoch_${randomBytes(18).toString("hex")}`;
+      await seedActiveRuntimeCredential(database, tokenVault, {
+        token: nullEpochToken,
+        repositoryId,
+        installationId,
+        instanceId,
+        runtimeId: "synthetic-null-epoch-runtime",
+        runtimeEpoch: 1,
+        leaseId: "synthetic-null-epoch-lease",
+      });
+      const nullEpochOperationId = `op_owned_null_epoch_${randomBytes(8).toString("hex")}`;
+      const nullEpochLeaseToken = randomBytes(32).toString("base64url");
+      await seedRunningOperation(database, {
+        operationId: nullEpochOperationId,
+        instanceId,
+        repositoryId,
+        runtimeEpoch: 1,
+        workerId: "owned-partial-provisioner",
+        leaseToken: nullEpochLeaseToken,
+      });
+      const nullEpochProof = syntheticWriterAbsenceProof(
+        instanceId,
+        repositoryId,
+        null,
+        "null-epoch",
+      );
+      const nullEpochCheckpoint = {
+        schemaVersion: 1,
+        lifecycle: {
+          instanceId,
+          repositoryId,
+          phase: "old-writer-absent",
+          writerAbsenceProof: nullEpochProof,
+        },
+        writerAbsenceProof: nullEpochProof,
+      };
+      const gatewayCallCountBeforeNullEpoch = gatewayServiceRequests.length;
+      const noEpochCheckpoint = await postProvisionerCheckpoint(miniflare, provisionerSecret, {
+        operationId: nullEpochOperationId,
+        workerId: "owned-partial-provisioner",
+        leaseToken: nullEpochLeaseToken,
+        leaseEpoch: 1,
+        expectedCheckpointSequence: 0,
+        phase: "old-writer-absent",
+        checkpoint: nullEpochCheckpoint,
+      });
+      assert.equal(noEpochCheckpoint.status, 200);
+      assert.equal((await jsonResponse(noEpochCheckpoint)).phase, "old-writer-absent");
+      await assertCredentialState(database, nullEpochToken, "active");
+      assert.equal(
+        gatewayServiceRequests.length,
+        gatewayCallCountBeforeNullEpoch,
+        "a null retired epoch does not invoke the Gateway retirement service",
+      );
+
+      const allCredentialRows = await database
+        .prepare(
+          "SELECT token_id, encrypted_secret_json, status FROM runtime_git_credentials WHERE repository_id = ?",
+        )
+        .bind(repositoryId)
+        .all();
+      const allStored = JSON.stringify(allCredentialRows.results ?? []);
+      assert.ok(
+        ![token204, tokenPending, absenceToken, nullEpochToken].some((token) =>
+          allStored.includes(token),
+        ),
+        "all synthetic bearer tokens remain encrypted at rest",
+      );
+      assert.equal((allCredentialRows.results ?? []).length, 4);
+
       t.diagnostic(
         JSON.stringify({
-          sourceCut,
-          checkedHead: execFileSync("git", ["rev-parse", "HEAD"], {
-            cwd: repositoryRoot,
-            encoding: "utf8",
-          }).trim(),
+          checkedHead,
           actualControlPlaneWorker: true,
           migrations: 4,
           actualControlPlaneCredentialRoutes: true,
@@ -535,6 +860,8 @@ test(
             "timeout stays pending",
             "network failure stays pending",
             "successful retry clears pending",
+            "actual zero-census old-writer-absent checkpoint is denied until known token is revoked",
+            "null retired epoch skips the barrier without calling Gateway",
           ],
           syntheticHistoricalReservation:
             "released row inserted only to satisfy pending-route history check",
@@ -545,6 +872,8 @@ test(
             "no artifact or producer acceptance",
             "no live GitHub App or GitHub API call",
             "no Gateway HTTP broker issuance/auth-route proof",
+            "absence proof and two preexisting credential rows are synthetic test inputs",
+            "no actual Kubernetes provider census or live runtime writer",
           ],
         }),
       );

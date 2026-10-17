@@ -160,7 +160,7 @@ def runtime_preflight(config):
     sha256_matches(installer, config["installerSha256"])
     require(config["k3sVersion"] in output(str(binary), "--version"), "staged K3s binary version mismatch")
     require(not Path("/usr/local/bin/k3s").exists() and
-            not K3S_CONFIG.exists() and
+            not K3S_CONFIG.parent.exists() and
             output("systemctl", "show", "-p", "LoadState", "--value", "k3s.service") == "not-found",
             "existing K3s installation must not be overwritten")
     free_port(address, 6443)
@@ -204,6 +204,8 @@ def build_preflight(config):
                  "apparmor_parser", "useradd", "getent"):
         executable(tool)
     require(BUILD_ROOT.is_mount(), "dedicated XFS cache must already be mounted; never formats disks")
+    require(not any(BUILD_ROOT.iterdir()), "dedicated BuildKit cache is not empty; refusing to relabel existing data")
+    require(not Path("/var/run/docker.sock").exists(), "privileged Docker socket exists on BuildKit host")
     mount = output("findmnt", "-n", "-o", "FSTYPE,OPTIONS", "--mountpoint", str(BUILD_ROOT))
     require(mount.startswith("xfs ") and
             any(x in mount.split(" ", 1)[1].split(",") for x in ("prjquota", "pquota")),

@@ -346,7 +346,8 @@ function renderStaticBundle(inventory) {
 function requireClusterOwnership(inventory, kubeconfig) {
   const name = inventory.ownership.clusterName;
   const context = inventory.ownership.context;
-  const clusters = run("kind", ["get", "clusters", "--kubeconfig", kubeconfig])
+  // Kind lists container-backed cluster names; kubeconfig belongs to kubectl.
+  const clusters = run("kind", ["get", "clusters"])
     .trim()
     .split(/\s+/)
     .filter(Boolean);

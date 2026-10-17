@@ -988,6 +988,44 @@ test("partial Git writes leave durable recovery evidence before push and verify 
       records.map((record) => record.status),
       ["PENDING", "CLEANED"],
     );
+    const expiryRef = "refs/heads/praetorium-t14/12345678-1234-1234-1234-123456789abe";
+    let expiryArtifact;
+    let gateCalls = 0;
+    let pushReached = false;
+    await assert.rejects(
+      attemptOwnedRefPush(
+        "/unused/local-repository",
+        "https://github.com/owned-org/t14-access.git",
+        expiryRef,
+        expectedCommit,
+        {},
+        async (effect) => {
+          gateCalls += 1;
+          if (gateCalls === 2) throw new Error("owned test environment expired");
+          return effect();
+        },
+        async (_cwd, args) => {
+          if (args[0] === "rev-parse") return { stdout: `${expectedCommit}\n` };
+          pushReached = true;
+          return { stdout: "" };
+        },
+        async () => {
+          expiryArtifact = await createDurableRefRecovery(
+            config,
+            repository,
+            expiryRef,
+            expectedCommit,
+          );
+        },
+      ),
+      /owned test environment expired/u,
+    );
+    assert.equal(gateCalls, 2);
+    assert.equal(pushReached, false);
+    assert.equal(
+      JSON.parse((await readFile(expiryArtifact.path, "utf8")).trim()).status,
+      "PENDING",
+    );
     const remainingRef = "refs/heads/praetorium-t14/12345678-1234-1234-1234-123456789abd";
     const remainingArtifact = await createDurableRefRecovery(
       config,

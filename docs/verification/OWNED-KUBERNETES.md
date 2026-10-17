@@ -377,7 +377,7 @@ structurally valid GHCR auth shape; no real credential was introduced. The
 preserved run-two request SHA-256 is
 `53db7221de13a59a324f31a0fbfe23519dcfa6e42b0ceace12dfc970cd546a04`. The
 root coordinator independently read the live run-four Pod from the API. The
-preserved [applied Pod](evidence/owned-kubernetes-build-worker/run-04-applied-pod.json)
+preserved [sanitized applied Pod](evidence/owned-kubernetes-build-worker/run-04-applied-pod.json)
 and [recursive comparison](evidence/owned-kubernetes-build-worker/run-04-applied-spec-comparison.json)
 show that every field of the committed run-two request matches the actual
 run-four Pod, allowing additional API defaults. Original submitted run-four

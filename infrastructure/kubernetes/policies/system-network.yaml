@@ -1,0 +1,155 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: praetorium-provisioner-network
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/part-of: praetorium
+    app.kubernetes.io/managed-by: flux
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: provisioner
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: praetorium-observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # @@PROVISIONER_API_EGRESS_RULES@@
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              arcadia.io/platform: arcadia-platform
+              app.kubernetes.io/managed-by: arcadia-provisioner
+              arcadia.io/ownership-version: v1
+              arcadia.io/runtime-cluster-id: "@@CLUSTER_ID@@"
+          podSelector:
+            matchLabels:
+              arcadia.io/platform: arcadia-platform
+              app.kubernetes.io/managed-by: arcadia-provisioner
+              arcadia.io/ownership-version: v1
+              arcadia.io/runtime-cluster-id: "@@CLUSTER_ID@@"
+              app.kubernetes.io/name: scriptorium
+      ports:
+        - protocol: TCP
+          port: http
+    # @@PROVISIONER_PRIVATE_CONTROL_PLANE_EGRESS_RULES@@
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 168.63.129.16/32
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - ::/128
+              - ::1/128
+              - ::ffff:0:0/96
+              - 2001:db8::/32
+              - fc00::/7
+              - fe80::/10
+              - ff00::/8
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: praetorium-instance-access-network
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/part-of: praetorium
+    app.kubernetes.io/managed-by: flux
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: instance-access
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # @@INSTANCE_ACCESS_PRIVATE_GATEWAY_EGRESS_RULES@@
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 168.63.129.16/32
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - ::/128
+              - ::1/128
+              - ::ffff:0:0/96
+              - 2001:db8::/32
+              - fc00::/7
+              - fe80::/10
+              - ff00::/8
+      ports:
+        - protocol: TCP
+          port: 443

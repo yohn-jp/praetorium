@@ -310,6 +310,8 @@ async function pullAndStartRegistry(root, env, onRegistryStarted) {
       "--network=host",
       "--env",
       `REGISTRY_HTTP_ADDR=127.0.0.1:${port}`,
+      "--env",
+      "REGISTRY_HTTP_DEBUG_ADDR=127.0.0.1:0",
       REGISTRY_IMAGE,
     ],
     { env, logPath: path.join(root, "logs", "registry-start.log") },
@@ -735,7 +737,32 @@ function outerIdIsMapped(id, ownerId, mapping) {
   );
 }
 
+function mountInfoPath(value) {
+  return value.replace(/\\([0-7]{3})/gu, (_escape, octal) =>
+    String.fromCharCode(Number.parseInt(octal, 8)),
+  );
+}
+
+async function assertNoMountsBelow(root) {
+  const mountInfo = await readFile("/proc/self/mountinfo", "utf8");
+  for (const line of mountInfo.split("\n")) {
+    if (!line) continue;
+    const [mountFields] = line.split(" - ", 1);
+    const fields = mountFields?.split(" ");
+    if (!fields || fields.length < 5) throw new Error("could not parse current mount information");
+    const mountPoint = path.resolve(mountInfoPath(fields[4]));
+    const relative = path.relative(root, mountPoint);
+    const isAtOrBelowRoot =
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+    if (isAtOrBelowRoot) {
+      throw new Error(`refusing cleanup: mountpoint under owned disposable root: ${mountPoint}`);
+    }
+  }
+}
+
 async function verifyOwnedTree(root, owner) {
+  await assertNoMountsBelow(root);
   const rootInfo = await lstat(root);
   if (
     !rootInfo.isDirectory() ||

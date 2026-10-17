@@ -351,6 +351,19 @@ describe("OperationServiceHttpClient", () => {
     expect(claim?.snapshot.binding.suspended).toBe(false);
   });
 
+  it("accepts the Control Plane's JSON null when its operation queue is empty", async () => {
+    const service = client(async () => Response.json(null));
+
+    await expect(
+      service.claimNext({ workerId: "worker-a", clusterId: "cluster-a", leaseSeconds: 30 }),
+    ).resolves.toBeNull();
+
+    const malformed = client(async () => Response.json({}));
+    await expect(
+      malformed.claimNext({ workerId: "worker-a", clusterId: "cluster-a", leaseSeconds: 30 }),
+    ).rejects.toThrow("invalid claimed operation");
+  });
+
   it("rejects a claimed response whose operation, binding and instance identities diverge", async () => {
     const body = claimBody({
       operation: {

@@ -954,6 +954,7 @@ function parseReservationOrNull(input: unknown): ProvisionerReservation | null {
 }
 
 function parseClaim(input: unknown): ClaimedProvisionerOperation | null {
+  if (input === null) return null;
   const response = object(input, "invalid claim response");
   if (response.operation === null) return null;
   const operation = object(response.operation, "invalid claimed operation");

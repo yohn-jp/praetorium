@@ -251,6 +251,17 @@ async function toolPath(environmentName, fallback) {
   return value;
 }
 
+function assertExpectedKubeconfigSelection(config) {
+  assert.equal(config.contexts?.length, 1);
+  const selectedContext = config.contexts[0];
+  assert.equal(selectedContext.name, EXPECTED_CONTEXT);
+  assert.equal(selectedContext.context?.cluster, EXPECTED_CONTEXT);
+  assert.equal(config.clusters?.length, 1);
+  assert.equal(config.clusters[0].name, selectedContext.context.cluster);
+  assert.equal(config.users?.length, 1);
+  assert.equal(config.users[0].name, selectedContext.context?.user);
+}
+
 async function loadKubeconfig(kubectl, kubeconfig) {
   const { stdout } = await runBounded(kubectl, [
     "--kubeconfig",
@@ -265,11 +276,7 @@ async function loadKubeconfig(kubectl, kubeconfig) {
     "json",
   ]);
   const config = JSON.parse(stdout);
-  assert.equal(config.contexts?.length, 1);
-  assert.equal(config.contexts[0].name, EXPECTED_CONTEXT);
-  assert.equal(config.contexts[0].context?.cluster, EXPECTED_CLUSTER);
-  assert.equal(config.clusters?.length, 1);
-  assert.equal(config.users?.length, 1);
+  assertExpectedKubeconfigSelection(config);
   const cluster = config.clusters[0].cluster;
   const user = config.users[0].user;
   const server = new URL(cluster.server);
@@ -825,6 +832,39 @@ test("local preflight binds the probe to production provider settings and canoni
     "infrastructure/kubernetes/policies/provisioner-rbac.yaml",
     "ClusterRoleBinding",
     "praetorium-provisioner-bootstrap",
+  );
+});
+
+test("Kind kubeconfig selection follows the context's cluster and user references", () => {
+  const kubeconfigMetadata = {
+    contexts: [
+      {
+        name: EXPECTED_CONTEXT,
+        context: { cluster: EXPECTED_CONTEXT, user: EXPECTED_CONTEXT },
+      },
+    ],
+    clusters: [{ name: EXPECTED_CONTEXT }],
+    users: [{ name: EXPECTED_CONTEXT }],
+  };
+
+  assert.doesNotThrow(() => assertExpectedKubeconfigSelection(kubeconfigMetadata));
+  assert.throws(
+    () =>
+      assertExpectedKubeconfigSelection({
+        ...kubeconfigMetadata,
+        clusters: [{ name: EXPECTED_CLUSTER }],
+      }),
+    assert.AssertionError,
+    "cluster entry must match the selected context's cluster reference",
+  );
+  assert.throws(
+    () =>
+      assertExpectedKubeconfigSelection({
+        ...kubeconfigMetadata,
+        users: [{ name: "unexpected-user" }],
+      }),
+    assert.AssertionError,
+    "user entry must match the selected context's user reference",
   );
 });
 

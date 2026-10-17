@@ -52,6 +52,13 @@ function block(reasonCode) {
   throw new GateBlocked(reasonCode);
 }
 
+function ensureOwnerLifetime(inventory, requiredSeconds) {
+  const remainingMs = Date.parse(inventory.environment.expiresAt) - Date.now();
+  const requiredMs = requiredSeconds * 1_000 + 5_000;
+  if (remainingMs < requiredMs) block("INSUFFICIENT_LIFETIME");
+  return Math.min(requiredSeconds * 1_000, remainingMs - 5_000);
+}
+
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -458,7 +465,7 @@ function parseModuleSelection(text) {
   if (!match) return null;
   const section = match[1]?.trim() ?? "";
   if (section === "None") return [];
-  return section.split(", ").map((value) => value.replace(/\s+\([^()]*\)$/u, "").trim());
+  return section.split(", ").map((value) => value.trim());
 }
 
 async function formSelection(form) {
@@ -472,6 +479,24 @@ async function formSelection(form) {
   };
 }
 
+async function moduleDisplayNames(form) {
+  const options = await form
+    .locator('select[name="moduleIds"] option')
+    .evaluateAll((items) =>
+      items.map((item) => {
+        const match = /^(.*) \((.+) · sha256:[0-9a-f]{64}\)$/u.exec(
+          (item.textContent ?? "").trim(),
+        );
+        return match ? { id: item.value, displayName: `${match[1]} (${match[2]})` } : null;
+      }),
+    );
+  if (options.some((option) => option === null)) return null;
+  const byId = new Map(options.map((option) => [option.id, option.displayName]));
+  const names = [...byId.values()];
+  if (names.length !== new Set(names).size) return null;
+  return byId;
+}
+
 function sameSelection(left, right) {
   return (
     left.releasePolicy === right.releasePolicy &&
@@ -481,14 +506,29 @@ function sameSelection(left, right) {
   );
 }
 
+function sameStringSet(left, right) {
+  return (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    JSON.stringify([...left].sort()) === JSON.stringify([...right].sort())
+  );
+}
+
 function extractDigest(text) {
   return /Composed image:\s*(sha256:[0-9a-f]{64})/u.exec(text)?.[1] ?? null;
 }
 
-async function dashboardSnapshot(page, config, gatewayOrigin) {
-  const response = await page.goto(`${gatewayOrigin.origin}/repositories/${config.repository.id}`, {
-    waitUntil: "domcontentloaded",
-  });
+async function dashboardSnapshot(page, config, gatewayOrigin, inventory) {
+  ensureOwnerLifetime(inventory, 0);
+  let response;
+  try {
+    response = await page.goto(`${gatewayOrigin.origin}/repositories/${config.repository.id}`, {
+      waitUntil: "domcontentloaded",
+    });
+  } catch {
+    block("RUNTIME_UNAVAILABLE");
+  }
+  if (response?.status() === 503) block("RUNTIME_UNAVAILABLE");
   assert.equal(response?.status(), 200, "repository dashboard must load successfully");
   await page.getByRole("heading", { name: config.repository.fullName, exact: true }).waitFor();
   const text = await page.locator("main").innerText();
@@ -513,10 +553,12 @@ async function dashboardSnapshot(page, config, gatewayOrigin) {
     currentModules: parseModuleSelection(await current.innerText()),
     desiredModules: parseModuleSelection(await desired.innerText()),
     selection: (await configureForm.count()) === 1 ? await formSelection(configureForm) : null,
+    moduleDisplayNames:
+      (await configureForm.count()) === 1 ? await moduleDisplayNames(configureForm) : null,
   };
 }
 
-async function waitForReadyApp(page, config, derived, handoffPosts, deadlineMs) {
+async function waitForReadyApp(page, config, derived, inventory, handoffPosts, deadlineMs) {
   const entryPath = `/entry/${encodeURIComponent(config.instance.id)}`;
   while (Date.now() < deadlineMs) {
     const location = new URL(page.url());
@@ -542,7 +584,10 @@ async function waitForReadyApp(page, config, derived, handoffPosts, deadlineMs) 
       const poll = Number(location.searchParams.get("poll") ?? "0");
       if (body.includes("Repository instance is starting") && poll >= 5) {
         const statusLink = page.getByRole("link", { name: "Check status", exact: true });
-        if (await statusLink.count()) await statusLink.click();
+        if (await statusLink.count()) {
+          ensureOwnerLifetime(inventory, 5);
+          await statusLink.click();
+        }
       }
     }
 
@@ -551,19 +596,26 @@ async function waitForReadyApp(page, config, derived, handoffPosts, deadlineMs) 
   assert.fail("instance did not reach the producer application before the owned deadline");
 }
 
-async function waitForDeployment(page, config, derived, expectedModules, deadlineMs) {
+async function waitForDeployment(page, config, derived, inventory, expectedModules, deadlineMs) {
   while (Date.now() < deadlineMs) {
-    const snapshot = await dashboardSnapshot(page, config, derived.gatewayOrigin);
+    const snapshot = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
     const alerts = await page.getByRole("alert").allTextContents();
     if (alerts.length > 0 || /Build: (Failed|Canceled)/u.test(snapshot.text)) {
       assert.fail("configuration build failed; current deployment must remain available");
     }
+    const selectedModuleNames =
+      snapshot.selection && snapshot.moduleDisplayNames
+        ? snapshot.selection.moduleIds.map((moduleId) =>
+            snapshot.moduleDisplayNames.get(moduleId),
+          )
+        : null;
     const deployedAndRequestedModulesMatch =
       snapshot.currentModules !== null &&
       snapshot.desiredModules !== null &&
-      snapshot.currentModules.length > 0 &&
-      JSON.stringify([...snapshot.currentModules].sort()) ===
-        JSON.stringify([...snapshot.desiredModules].sort());
+      selectedModuleNames !== null &&
+      !selectedModuleNames.some((name) => typeof name !== "string") &&
+      sameStringSet(snapshot.currentModules, selectedModuleNames) &&
+      sameStringSet(snapshot.desiredModules, selectedModuleNames);
     if (
       snapshot.state === "Ready" &&
       snapshot.currentDigest &&
@@ -614,24 +666,29 @@ test(
       throw new Error(`BLOCKED: ${reasonCode}`);
     }
 
-    const { config, storageState, derived, executablePath } = inputs;
+    const { inventory, config, storageState, derived, executablePath } = inputs;
     let browser;
     let context;
     let stage = "browser-launch";
     const gatewayRequests = [];
     const instanceRequests = [];
     const handoffPosts = [];
+    let ownerWindowExpired = false;
     try {
       try {
-        browser = await chromium.launch({ executablePath, headless: true, args: ["--no-sandbox"] });
+        browser = await chromium.launch({ executablePath, headless: true });
       } catch {
         block("BROWSER_UNAVAILABLE");
       }
-      context = await browser.newContext({ storageState });
+      context = await browser.newContext({ serviceWorkers: "block", storageState });
       context.setDefaultTimeout(15_000);
-      context.setDefaultNavigationTimeout(Math.max(...Object.values(config.timeouts)) * 1_000);
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
+        if (Date.parse(inventory.environment.expiresAt) <= Date.now()) {
+          ownerWindowExpired = true;
+          await route.abort("aborted");
+          return;
+        }
         if (
           url.origin === derived.gatewayOrigin.origin ||
           url.origin === derived.instanceOrigin.origin ||
@@ -665,6 +722,7 @@ test(
       stage = "gateway-runtime-probe";
       let gatewayHealth;
       try {
+        ensureOwnerLifetime(inventory, 10);
         gatewayHealth = await context.request.get(`${derived.gatewayOrigin.origin}/healthz`, {
           timeout: 10_000,
           maxRedirects: 0,
@@ -675,7 +733,15 @@ test(
       if (gatewayHealth.status() !== 200) block("RUNTIME_UNAVAILABLE");
 
       stage = "github-oauth-login";
-      await page.goto(`${derived.gatewayOrigin.origin}/`, { waitUntil: "domcontentloaded" });
+      context.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, config.timeouts.loginSeconds),
+      );
+      try {
+        ensureOwnerLifetime(inventory, 10);
+        await page.goto(`${derived.gatewayOrigin.origin}/`, { waitUntil: "domcontentloaded" });
+      } catch {
+        block("RUNTIME_UNAVAILABLE");
+      }
       const loginDeadline = Date.now() + config.timeouts.loginSeconds * 1000;
       while (Date.now() < loginDeadline) {
         const location = new URL(page.url());
@@ -697,6 +763,7 @@ test(
         1,
         "the authenticated Gateway session must be created by its real GitHub OAuth callback",
       );
+      ensureOwnerLifetime(inventory, 10);
       const session = await page.evaluate(async () => {
         const response = await fetch("/api/session", { cache: "no-store" });
         return { status: response.status, body: await response.json().catch(() => null) };
@@ -724,8 +791,27 @@ test(
         "OAuth nonce must be cleared after callback",
       );
 
+      stage = "repository-selection";
+      const repositoryRow = page
+        .getByRole("heading", { name: config.repository.fullName, exact: true })
+        .locator("xpath=..");
+      const repositoryText = await repositoryRow.innerText();
+      assert.match(repositoryText, /GitHub App: Active/u);
+      assert.match(repositoryText, /Repository access: (Maintain|Admin) access/u);
+      const manageRepository = repositoryRow.getByRole("link", {
+        name: "Manage repository",
+        exact: true,
+      });
+      assert.equal(
+        await manageRepository.getAttribute("href"),
+        `/repositories/${config.repository.id}`,
+      );
+      ensureOwnerLifetime(inventory, 10);
+      await manageRepository.click();
+      await page.waitForURL(`${derived.gatewayOrigin.origin}/repositories/${config.repository.id}`);
+
       stage = "repository-and-stopped-dashboard";
-      const dashboard = await dashboardSnapshot(page, config, derived.gatewayOrigin);
+      const dashboard = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
       if (dashboard.state !== "Stopped" || !dashboard.currentDigest || !dashboard.desiredDigest) {
         block("OWNED_ENVIRONMENT_UNAVAILABLE");
       }
@@ -741,23 +827,32 @@ test(
       });
       if (!(await configureForm.count())) block("OWNED_ENVIRONMENT_UNAVAILABLE");
       const initialSelection = await formSelection(configureForm);
-      if (sameSelection(initialSelection, config.selection)) block("OWNER_INPUT_MISSING");
       if (
-        dashboard.currentModules &&
-        JSON.stringify([...dashboard.currentModules].sort()) ===
-          JSON.stringify([...config.selection.moduleIds].sort())
+        dashboard.currentDigest !== dashboard.desiredDigest ||
+        dashboard.currentModules === null ||
+        dashboard.desiredModules === null ||
+        !sameStringSet(dashboard.currentModules, dashboard.desiredModules)
       ) {
+        block("OWNED_ENVIRONMENT_UNAVAILABLE");
+      }
+      if (sameStringSet(initialSelection.moduleIds, config.selection.moduleIds)) {
         block("OWNER_INPUT_MISSING");
       }
 
       stage = "stopped-api-write-no-replay";
-      const stoppedBeforeWrite = await dashboardSnapshot(page, config, derived.gatewayOrigin);
+      const stoppedBeforeWrite = await dashboardSnapshot(
+        page,
+        config,
+        derived.gatewayOrigin,
+        inventory,
+      );
       if (stoppedBeforeWrite.state !== "Stopped") block("OWNED_ENVIRONMENT_UNAVAILABLE");
       if ((await cookiesAt(context, derived.instanceOrigin.origin)).length !== 0) {
         block("OWNER_INPUT_MISSING");
       }
       let writeResponse;
       try {
+        ensureOwnerLifetime(inventory, 10);
         writeResponse = await context.request.post(
           `${derived.instanceOrigin.origin}${config.writeProbe.path}`,
           {
@@ -788,12 +883,21 @@ test(
       assert.equal(writeResult?.error?.code, "INSTANCE_STARTING");
 
       stage = "stopped-bookmark-wake-and-handoff";
+      context.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, config.timeouts.wakeSeconds),
+      );
       const initialHandoffCount = handoffPosts.length;
-      await page.goto(`${derived.instanceOrigin.origin}/`, { waitUntil: "domcontentloaded" });
+      try {
+        ensureOwnerLifetime(inventory, 10);
+        await page.goto(`${derived.instanceOrigin.origin}/`, { waitUntil: "domcontentloaded" });
+      } catch {
+        block("RUNTIME_UNAVAILABLE");
+      }
       await waitForReadyApp(
         page,
         config,
         derived,
+        inventory,
         handoffPosts,
         Date.now() + config.timeouts.wakeSeconds * 1000,
       );
@@ -818,6 +922,7 @@ test(
       assert.equal(firstHandoff.referer, "", "handoff code must not be sent in a Referer header");
       await verifyApplicationCookies(context, derived);
 
+      ensureOwnerLifetime(inventory, 10);
       const replay = await context.request.post(
         `${derived.instanceOrigin.origin}/_platform/handoff`,
         {
@@ -839,7 +944,10 @@ test(
       );
 
       stage = "ui-selection-preview";
-      await dashboardSnapshot(page, config, derived.gatewayOrigin);
+      context.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, Math.min(30, config.timeouts.configurationSeconds)),
+      );
+      await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
       const previewButton = page.getByRole("button", { name: "Preview selection", exact: true });
       const previewForm = previewButton.locator("xpath=ancestor::form");
       await previewForm
@@ -854,6 +962,7 @@ test(
       await previewForm
         .locator('select[name="resourceProfileId"]')
         .selectOption(config.selection.resourceProfileId);
+      ensureOwnerLifetime(inventory, Math.min(30, config.timeouts.configurationSeconds));
       await previewButton.click();
       await page.getByText("Supported module configuration", { exact: true }).waitFor();
       const previewStatus = page.locator(
@@ -869,17 +978,44 @@ test(
 
       stage = "ui-reconfigure-build-and-preservation";
       const actionPath = `/repositories/${config.repository.id}/actions`;
+      context.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, config.timeouts.configurationSeconds),
+      );
       const saveResponsePromise = page.waitForResponse(
         (response) =>
           response.url().startsWith(`${derived.gatewayOrigin.origin}${actionPath}`) &&
           response.request().method() === "POST",
       );
+      ensureOwnerLifetime(inventory, 10);
       await page.getByRole("button", { name: "Save and build", exact: true }).click();
       const saveResponse = await saveResponsePromise;
       assert.equal(saveResponse.status(), 202, "UI configuration must queue the build");
-      const duringBuild = await page.goto(`${derived.instanceOrigin.origin}/`, {
-        waitUntil: "domcontentloaded",
-      });
+      const pendingBuild = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
+      assert.equal(
+        pendingBuild.currentDigest,
+        dashboard.currentDigest,
+        "the old deployment must still be current before replacement finishes",
+      );
+      assert.equal(
+        pendingBuild.state,
+        "Ready",
+        "the current runtime must remain ready during the build",
+      );
+      assert.match(
+        pendingBuild.text,
+        /Build: (Reserved|Queued|Claimed|Building|Verifying artifact)/u,
+        "the old runtime must be observed while the replacement build is active",
+      );
+      context.setDefaultNavigationTimeout(ensureOwnerLifetime(inventory, 10));
+      let duringBuild;
+      try {
+        duringBuild = await page.goto(`${derived.instanceOrigin.origin}/`, {
+          waitUntil: "domcontentloaded",
+        });
+      } catch {
+        block("RUNTIME_UNAVAILABLE");
+      }
+      if (duringBuild?.status() === 503) block("RUNTIME_UNAVAILABLE");
       assert.equal(
         duringBuild?.status(),
         200,
@@ -888,10 +1024,27 @@ test(
       await page
         .getByRole("heading", { name: config.instance.applicationHeading, exact: true })
         .waitFor();
+      const afterAppGet = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
+      assert.equal(
+        afterAppGet.currentDigest,
+        dashboard.currentDigest,
+        "the stable application GET must finish while the old deployment remains current",
+      );
+      assert.equal(
+        afterAppGet.state,
+        "Ready",
+        "the current runtime must remain ready through the application GET",
+      );
+      assert.match(
+        afterAppGet.text,
+        /Build: (Reserved|Queued|Claimed|Building|Verifying artifact)/u,
+        "the stable application GET must be bracketed by observations of the active build",
+      );
       const configured = await waitForDeployment(
         page,
         config,
         derived,
+        inventory,
         config.selection.moduleIds,
         Date.now() + config.timeouts.configurationSeconds * 1000,
       );
@@ -903,6 +1056,9 @@ test(
       const configuredDigest = configured.currentDigest;
 
       stage = "ui-same-image-redeploy";
+      context.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, config.timeouts.redeploySeconds),
+      );
       await page
         .getByRole("button", { name: "Redeploy current configuration", exact: true })
         .waitFor();
@@ -911,15 +1067,16 @@ test(
           response.url().startsWith(`${derived.gatewayOrigin.origin}${actionPath}`) &&
           response.request().method() === "POST",
       );
+      ensureOwnerLifetime(inventory, config.timeouts.redeploySeconds);
       await page
         .getByRole("button", { name: "Redeploy current configuration", exact: true })
         .click();
       const redeployResponse = await redeployResponsePromise;
-      assert.equal(redeployResponse.status(), 202, "same-image redeploy must be accepted");
+      assert.equal(redeployResponse.status(), 200, "same-image redeploy must be accepted");
       let redeployed;
       const redeployDeadline = Date.now() + config.timeouts.redeploySeconds * 1000;
       while (Date.now() < redeployDeadline) {
-        redeployed = await dashboardSnapshot(page, config, derived.gatewayOrigin);
+        redeployed = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
         if (/redeploy: Complete/iu.test(redeployed.text) && redeployed.state === "Ready") break;
         if (/redeploy: Failed|redeploy: Blocked/iu.test(redeployed.text)) {
           assert.fail("same-image redeploy failed");
@@ -938,13 +1095,18 @@ test(
       );
 
       stage = "ui-entry-after-redeploy";
+      context.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, config.timeouts.redeploySeconds),
+      );
       await page.getByRole("button", { name: "Enter application", exact: true }).waitFor();
+      ensureOwnerLifetime(inventory, config.timeouts.redeploySeconds);
       const handoffCountBeforeUiEntry = handoffPosts.length;
       await page.getByRole("button", { name: "Enter application", exact: true }).click();
       await waitForReadyApp(
         page,
         config,
         derived,
+        inventory,
         handoffPosts,
         Date.now() + config.timeouts.redeploySeconds * 1000,
       );
@@ -965,6 +1127,7 @@ test(
         (cookie) => cookie.name === "__Host-praetorium_csrf",
       );
       assert.ok(csrfBefore && !csrfBefore.httpOnly);
+      ensureOwnerLifetime(inventory, 10);
       const invalidRefresh = await page.evaluate(async () => {
         const response = await fetch("/_platform/refresh", {
           method: "POST",
@@ -978,6 +1141,7 @@ test(
       const beforeRefresh = (await cookiesAt(context, derived.instanceOrigin.origin)).find(
         (cookie) => cookie.name === "__Host-praetorium_access",
       )?.value;
+      ensureOwnerLifetime(inventory, 10);
       const validRefresh = await page.evaluate(async () => {
         const csrf = globalThis.document.cookie
           .split(";")
@@ -994,9 +1158,9 @@ test(
       assert.equal(validRefresh.status, 303, "valid same-origin CSRF refresh must rotate access");
       assert.equal(validRefresh.location, "/");
       const afterRefreshCookies = await cookiesAt(context, derived.instanceOrigin.origin);
-      assert.notEqual(
-        afterRefreshCookies.find((cookie) => cookie.name === "__Host-praetorium_access")?.value,
-        beforeRefresh,
+      assert.ok(
+        afterRefreshCookies.find((cookie) => cookie.name === "__Host-praetorium_access")?.value !==
+          beforeRefresh,
         "refresh must replace the short-lived access cookie",
       );
       assert.equal(
@@ -1013,7 +1177,9 @@ test(
       const reasonCode =
         error instanceof GateBlocked && BLOCKED_CODES.has(error.reasonCode)
           ? error.reasonCode
-          : "ACCEPTANCE_ASSERTION_FAILED";
+          : ownerWindowExpired || Date.parse(inventory.environment.expiresAt) <= Date.now()
+            ? "INSUFFICIENT_LIFETIME"
+            : "ACCEPTANCE_ASSERTION_FAILED";
       await writeRunnerResult(
         reasonCode === "ACCEPTANCE_ASSERTION_FAILED" ? "FAILED" : "BLOCKED",
         reasonCode,

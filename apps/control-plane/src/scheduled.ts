@@ -19,9 +19,9 @@ export type ScheduledT11Result = {
   readonly rollouts: Awaited<ReturnType<typeof runStableRolloutBatch>>;
 };
 
-/** Callable by Worker tests and the Control Plane composition root. */
-export async function runScheduledT11(deps: ScheduledT11Dependencies): Promise<ScheduledT11Result> {
-  const at = deps.promotions.clock.now();
+export type ScheduledT11DisabledResult = { readonly releaseWork: "disabled" };
+
+export async function runStableReleaseWork(deps: ScheduledT11Dependencies) {
   const runId = crypto.randomUUID();
   const promotions: ReleasePromotionDeps = {
     ...deps.promotions,
@@ -32,10 +32,16 @@ export async function runScheduledT11(deps: ScheduledT11Dependencies): Promise<S
     workerId: `${deps.rollouts.workerId}:${runId}`,
   };
 
-  const discovery = await discoverStableCandidates(deps.promotions.releases, { at });
-  const promotionBatch = await advanceStablePromotions(promotions);
+  const promotionsBatch = await advanceStablePromotions(promotions);
   const rolloutBatch = await runStableRolloutBatch(rollouts);
-  return { discovery, promotions: promotionBatch, rollouts: rolloutBatch };
+  return { promotions: promotionsBatch, rollouts: rolloutBatch };
+}
+
+/** Callable by Worker tests and the Control Plane composition root. */
+export async function runScheduledT11(deps: ScheduledT11Dependencies): Promise<ScheduledT11Result> {
+  const at = deps.promotions.clock.now();
+  const discovery = await discoverStableCandidates(deps.promotions.releases, { at });
+  return { discovery, ...(await runStableReleaseWork(deps)) };
 }
 
 export interface ScheduledController {
@@ -47,7 +53,6 @@ export interface ScheduledExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-/** Cloudflare-compatible scheduled adapter, wired by the Worker composition root. */
 export function createScheduledHandler<Environment>(
   resolveDependencies: (
     environment: Environment,
@@ -56,9 +61,36 @@ export function createScheduledHandler<Environment>(
   controller: ScheduledController,
   environment: Environment,
   context: ScheduledExecutionContext,
-) => Promise<ScheduledT11Result> {
-  return async (_controller, environment, context) => {
-    const execution = Promise.resolve(resolveDependencies(environment)).then(runScheduledT11);
+) => Promise<ScheduledT11Result>;
+export function createScheduledHandler<Environment>(
+  resolveDependencies: (
+    environment: Environment,
+  ) => Promise<ScheduledT11Dependencies | null> | ScheduledT11Dependencies | null,
+): (
+  controller: ScheduledController,
+  environment: Environment,
+  context: ScheduledExecutionContext,
+) => Promise<ScheduledT11Result | ScheduledT11DisabledResult>;
+/** Cloudflare-compatible scheduled adapter, wired by the Worker composition root. */
+export function createScheduledHandler<Environment>(
+  resolveDependencies: (
+    environment: Environment,
+  ) =>
+    | Promise<ScheduledT11Dependencies | null>
+    | ScheduledT11Dependencies
+    | null,
+): (
+  controller: ScheduledController,
+  environment: Environment,
+  context: ScheduledExecutionContext,
+) => Promise<ScheduledT11Result | ScheduledT11DisabledResult> {
+  return async (_controller, environment, context): Promise<
+    ScheduledT11Result | ScheduledT11DisabledResult
+  > => {
+    const execution: Promise<ScheduledT11Result | ScheduledT11DisabledResult> = (async () => {
+      const deps = await resolveDependencies(environment);
+      return deps ? runScheduledT11(deps) : { releaseWork: "disabled" as const };
+    })();
     context.waitUntil(execution);
     return execution;
   };

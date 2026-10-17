@@ -148,6 +148,20 @@ function dependencies(owners: string[], pageLimits: number[]) {
 }
 
 describe("Control Plane scheduled T11 entry point", () => {
+  it("returns cleanly when release scheduling is disabled", async () => {
+    const contextPromises: Promise<unknown>[] = [];
+    const handler = createScheduledHandler(() => null);
+    const result = await handler(
+      { cron: "*/5 * * * *", scheduledTime: NOW },
+      {},
+      { waitUntil: (promise) => contextPromises.push(promise) },
+    );
+
+    expect(result).toEqual({ releaseWork: "disabled" });
+    expect(contextPromises).toHaveLength(1);
+    await expect(contextPromises[0]).resolves.toEqual(result);
+  });
+
   it("scans one bounded page, schedules its promise and uses a unique owner per invocation", async () => {
     const owners: string[] = [];
     const pageLimits: number[] = [];

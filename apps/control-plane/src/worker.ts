@@ -5,6 +5,7 @@ import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
 import { createScheduledHandler } from "./scheduled.js";
+import type { ExecutionContext } from "hono";
 import { createRuntimeIdentityRoutes } from "./runtime-identity-routes.js";
 import { createRuntimeBindingMetadataReader } from "./runtime-binding.js";
 import { createRuntimeGitCredentialRoutes } from "./runtime-git-credential-routes.js";
@@ -85,7 +86,7 @@ function composeServices(env: ControlPlaneEnv) {
       })
     : undefined;
   const releases =
-    env.RELEASE_POLICY_JSON && buildServices
+    env.RELEASE_POLICY_JSON && env.RELEASE_OPERATOR_TOKEN && buildServices
       ? composeReleaseServices({
           db: env.CONTROL_PLANE_DB,
           builds: buildServices,
@@ -308,13 +309,13 @@ export class RepositoryCoordinator {
 export default {
   scheduled: createScheduledHandler<ControlPlaneEnv>(async (env) => {
     await new D1RuntimeGitCredentialStore(env.CONTROL_PLANE_DB).purgeExpired(Date.now(), 64);
-    const { releases, buildServices } = composeServices(env);
-    if (buildServices) await buildServices.planCacheMaintenance(new Date());
-    if (!releases)
-      throw new Error("T11 release policy and isolated operator/canary bindings unavailable");
-    return releases.scheduled;
+    return composeServices(env).releases?.scheduled ?? null;
   }),
-  async fetch(request: Request, env: ControlPlaneEnv): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: ControlPlaneEnv,
+    context?: ExecutionContext,
+  ): Promise<Response> {
     try {
       const url = new URL(request.url);
       const coordinated =
@@ -348,7 +349,7 @@ export default {
         const id = env.REPOSITORY_COORDINATOR.idFromName(`repository:${repositoryId}`);
         return await env.REPOSITORY_COORDINATOR.get(id).fetch(request);
       }
-      return await composeControlPlane(env).fetch(request);
+      return await composeControlPlane(env).fetch(request, env, context);
     } catch {
       return Response.json(
         { error: { code: "UPSTREAM_UNAVAILABLE" } },

@@ -254,6 +254,13 @@ candidate matrix report hash is
 cleanup report hash is
 `4fa6999e3af2ee40c1380bbf061d90a2e65ac2513b384d65bed02a56deb3b01e`. The
 archive omits kubeconfig, auth, private environment, and key material.
+The original 199-entry manifest before the secret-mount probe has SHA-256
+`e76a2c23d708b6fc88c10969f0c9ec525ea506929c3d3bd2a0d00c2f7af746a6`; its
+verified bytes are preserved outside `current/` at
+`/tmp/praetorium-owned-kube-evidence-20261017/manifests/e76a2c23d708b6fc88c10969f0c9ec525ea506929c3d3bd2a0d00c2f7af746a6.SHA256SUMS`.
+The 225-entry manifest with the secret-mount probe is preserved beside it as
+`ed5a500547a3ec53871e02ba0d91d7f5b407b6b3554fd9d9d86ff3b08abc917e.SHA256SUMS`.
+These snapshot files are outside the hashed `current/` tree.
 
 ## Build Worker secret-mount filesystem metadata
 

@@ -21,7 +21,10 @@ export type ScheduledT11Result = {
 
 export type ScheduledT11DisabledResult = { readonly releaseWork: "disabled" };
 
-export async function runStableReleaseWork(deps: ScheduledT11Dependencies) {
+export async function runStableReleaseWork(
+  deps: ScheduledT11Dependencies,
+  input: { readonly promotionPasses?: number } = {},
+) {
   const runId = crypto.randomUUID();
   const promotions: ReleasePromotionDeps = {
     ...deps.promotions,
@@ -32,7 +35,15 @@ export async function runStableReleaseWork(deps: ScheduledT11Dependencies) {
     workerId: `${deps.rollouts.workerId}:${runId}`,
   };
 
-  const promotionsBatch = await advanceStablePromotions(promotions);
+  const promotionPasses = Math.max(1, Math.min(2, Math.trunc(input.promotionPasses ?? 1)));
+  const promotionsBatch = { claimed: 0, advanced: 0, retried: 0, terminal: 0 };
+  for (let pass = 0; pass < promotionPasses; pass += 1) {
+    const result = await advanceStablePromotions(promotions);
+    promotionsBatch.claimed += result.claimed;
+    promotionsBatch.advanced += result.advanced;
+    promotionsBatch.retried += result.retried;
+    promotionsBatch.terminal += result.terminal;
+  }
   const rolloutBatch = await runStableRolloutBatch(rollouts);
   return { promotions: promotionsBatch, rollouts: rolloutBatch };
 }

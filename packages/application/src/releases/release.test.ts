@@ -169,6 +169,7 @@ class MemoryReleaseStore implements ReleaseAdmissionRepository, ReleasePromotion
   async createCandidate(candidateValue: ReleaseCandidate): Promise<"created" | "duplicate"> {
     if (await this.findByDigest(candidateValue.imageDigest)) return "duplicate";
     this.candidates.set(candidateValue.id, candidateValue);
+    this.workflows.set(candidateValue.id, queuedWorkflow(candidateValue.id));
     return "created";
   }
 
@@ -224,7 +225,11 @@ class MemoryReleaseStore implements ReleaseAdmissionRepository, ReleasePromotion
       this.checkpoint.cursor !== input.expectedCursor
     )
       return "conflict";
-    this.checkpoint = { cursor: input.page.nextCursor, revision: input.expectedRevision + 1 };
+    const lastCandidate = input.page.items.at(-1);
+    this.checkpoint = {
+      cursor: input.page.nextCursor ?? lastCandidate?.id ?? input.expectedCursor,
+      revision: input.expectedRevision + 1,
+    };
     for (const item of input.page.items) {
       if (!this.workflows.has(item.id)) this.workflows.set(item.id, queuedWorkflow(item.id));
     }
@@ -395,6 +400,38 @@ describe("stable release candidate application", () => {
       runtimeMetadata: { ...input.runtimeMetadata, producerRevision: "b".repeat(40) },
     });
     expect(parsed.success).toBe(false);
+  });
+
+  it("keeps legacy reconciliation forward-only after the catalog is exhausted", async () => {
+    const store = new MemoryReleaseStore();
+    const clock = new MutableClock();
+    const first = candidate("1.0.0", "release-1", DIGEST);
+    store.candidates.set(first.id, first);
+
+    await expect(discoverStableCandidates(store, { at: clock.now() })).resolves.toMatchObject({
+      kind: "advanced",
+      discovered: 1,
+      nextCursor: null,
+    });
+    const checkpointAfterFirst = store.checkpoint;
+
+    await expect(discoverStableCandidates(store, { at: clock.now() })).resolves.toMatchObject({
+      kind: "advanced",
+      discovered: 0,
+      nextCursor: null,
+    });
+    expect(store.checkpoint).toEqual(checkpointAfterFirst);
+
+    const next = candidate("2.0.0", "release-2", OTHER_DIGEST);
+    await store.createCandidate(next);
+    await expect(discoverStableCandidates(store, { at: clock.now() })).resolves.toMatchObject({
+      kind: "advanced",
+      discovered: 1,
+      nextCursor: null,
+    });
+    expect(store.workflows.get(first.id)?.state).toBe("queued");
+    expect(store.workflows.get(next.id)?.state).toBe("queued");
+    expect(store.checkpoint.cursor).toBe(next.id);
   });
 
   it("persists discovery, runs ten minutes of matching canary evidence, then promotes", async () => {

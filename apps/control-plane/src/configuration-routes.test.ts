@@ -254,6 +254,81 @@ describe("Control Plane configuration routes", () => {
     });
   });
 
+  it("schedules build and pending operation hints only after a successful plan", async () => {
+    const service = configuration();
+    const notifications: string[] = [];
+    const notifyWorkAvailable = vi.fn(async (kind: "build" | "operation") => {
+      notifications.push(kind);
+    });
+    const routes = createConfigurationRoutes({ configuration: service, notifyWorkAvailable });
+    const pending: Promise<unknown>[] = [];
+    const context = {
+      waitUntil(promise: Promise<unknown>) {
+        pending.push(promise);
+      },
+      passThroughOnException() {},
+      props: {},
+    };
+    const response = await routes.fetch(
+      jsonRequest(
+        "/v1/instances/instance-1/configuration",
+        {
+          actorId: "octocat",
+          bindingEpoch: BINDING.bindingEpoch,
+          authorizationRevision: BINDING.authorizationRevision,
+          expectedGeneration: INSTANCE.generation,
+          selection: SELECTION,
+        },
+        { "Idempotency-Key": "config-apply-1" },
+      ),
+      {},
+      context,
+    );
+
+    expect(response.status).toBe(200);
+    expect(pending).toHaveLength(2);
+    await Promise.all(pending);
+    expect(notifications).toEqual(["build", "operation"]);
+  });
+
+  it("does not hint on a successful replay with no runnable work", async () => {
+    const service = configuration();
+    vi.mocked(service.plan).mockResolvedValueOnce({
+      ...RECEIPT,
+      revision: { ...REVISION, artifactDigest: KEY, status: "admitted" },
+      operation: null,
+      replayed: true,
+    });
+    const notifyWorkAvailable = vi.fn(async () => undefined);
+    const routes = createConfigurationRoutes({ configuration: service, notifyWorkAvailable });
+    const pending: Promise<unknown>[] = [];
+    const response = await routes.fetch(
+      jsonRequest(
+        "/v1/instances/instance-1/configuration",
+        {
+          actorId: "octocat",
+          bindingEpoch: BINDING.bindingEpoch,
+          authorizationRevision: BINDING.authorizationRevision,
+          expectedGeneration: INSTANCE.generation,
+          selection: SELECTION,
+        },
+        { "Idempotency-Key": "config-apply-1" },
+      ),
+      {},
+      {
+        waitUntil(promise: Promise<unknown>) {
+          pending.push(promise);
+        },
+        passThroughOnException() {},
+        props: {},
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(pending).toHaveLength(0);
+    expect(notifyWorkAvailable).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed, oversized, queried, and unsupported requests", async () => {
     const service = configuration();
     const routes = createConfigurationRoutes({ configuration: service });

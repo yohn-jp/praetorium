@@ -4,6 +4,10 @@ import type { D1DesiredStateInput, D1PlatformStore, D1Database } from "@praetori
 import type { ClaimedOperation } from "@praetorium/application/operations";
 import { Hono } from "hono";
 import type { ControlCredentialIssuer } from "./control-credentials.js";
+import {
+  scheduleWorkNotification,
+  type WorkNotificationDispatcher,
+} from "./work-notification-scheduler.js";
 
 const Id = z.string().min(1).max(128);
 const Counter = z.number().int().nonnegative();
@@ -55,6 +59,7 @@ export interface ProvisionerIdleRoutesDependencies {
   readonly clusterId: string;
   readonly now: () => number;
   readonly newOperationId: () => string;
+  readonly notifyWorkAvailable?: WorkNotificationDispatcher;
   readonly resolveCurrentRuntime: (
     snapshot: RepositorySnapshot,
     revision: NonNullable<ClaimedOperation["currentDeploymentRevision"]>,
@@ -228,6 +233,11 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
       );
     const result = await deps.store.requestDesiredStateWithFence(desiredState, [fence]);
     if (!result?.operation) return conflict(c);
+    try {
+      scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation");
+    } catch {
+      // The fenced idle-stop operation was durably accepted already.
+    }
     return c.json({ operationId: result.operation.id });
   });
 

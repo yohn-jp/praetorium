@@ -20,6 +20,10 @@ import {
 } from "./provisioner-routes.js";
 import { createManagementRoutes, type ManagementDependencies } from "./management-routes.js";
 import type { InstanceService, RepositoryRegistryService } from "@praetorium/application/instances";
+import {
+  scheduleWorkNotification,
+  type WorkNotificationDispatcher,
+} from "./work-notification-scheduler.js";
 const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const revision = z.number().int().nonnegative();
 const ResolveSchema = z.strictObject({
@@ -64,6 +68,7 @@ export type ControlPlaneDependencies = {
   runtimeAuthProbe?: Hono;
   runtimeCredentials?: Hono;
   credentialRetirementSecret?: string;
+  notifyWorkAvailable?: WorkNotificationDispatcher;
   now?: () => number;
 };
 /** Only authenticated control metadata enters this Worker. Actor identity comes from Gateway session authority. */
@@ -169,12 +174,26 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
       requestId: c.req.header("X-Request-Id") ?? crypto.randomUUID(),
       now: (deps.now ?? Date.now)(),
     });
+    if (result.operation?.status === "pending") {
+      try {
+        scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation");
+      } catch {
+        // The desired-state transaction already committed.
+      }
+    }
     return c.json({
       ...result,
       operation: result.operation ? publicOperation(result.operation) : null,
     });
   });
-  if (deps.configuration) app.route("/", createConfigurationRoutes(deps.configuration));
+  if (deps.configuration)
+    app.route(
+      "/",
+      createConfigurationRoutes({
+        ...deps.configuration,
+        ...(deps.notifyWorkAvailable ? { notifyWorkAvailable: deps.notifyWorkAvailable } : {}),
+      }),
+    );
   else {
     app.all("/v1/instances/:instanceId/configuration", (c) =>
       c.json({ error: { code: "CONFIGURATION_SERVICE_UNAVAILABLE" } }, 503),
@@ -183,16 +202,37 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
       c.json({ error: { code: "CONFIGURATION_SERVICE_UNAVAILABLE" } }, 503),
     );
   }
-  if (deps.operationAdmin) app.route("/", createOperationAdminRoutes(deps.operationAdmin));
+  if (deps.operationAdmin)
+    app.route(
+      "/",
+      createOperationAdminRoutes({
+        ...deps.operationAdmin,
+        ...(deps.notifyWorkAvailable ? { notifyWorkAvailable: deps.notifyWorkAvailable } : {}),
+      }),
+    );
   if (deps.webhook) app.route("/", createGitHubWebhookRoutes(deps.webhook));
   if (deps.runtimeIdentity) app.route("/", deps.runtimeIdentity);
   if (deps.runtimeHealth) app.route("/", deps.runtimeHealth);
   if (deps.runtimeAuthProbe) app.route("/internal/provisioner", deps.runtimeAuthProbe);
   if (deps.runtimeCredentials) app.route("/", deps.runtimeCredentials);
   if (deps.operatorAdmission) app.route("/v1/operator/releases", deps.operatorAdmission);
-  if (deps.builds) app.route("/", createBuildRoutes(deps.builds));
+  if (deps.builds)
+    app.route(
+      "/",
+      createBuildRoutes({
+        ...deps.builds,
+        ...(deps.notifyWorkAvailable ? { notifyWorkAvailable: deps.notifyWorkAvailable } : {}),
+      }),
+    );
   if (deps.management) app.route("/", createManagementRoutes(deps.management));
-  if (deps.idle) app.route("/internal/provisioner", createProvisionerIdleRoutes(deps.idle));
+  if (deps.idle)
+    app.route(
+      "/internal/provisioner",
+      createProvisionerIdleRoutes({
+        ...deps.idle,
+        ...(deps.notifyWorkAvailable ? { notifyWorkAvailable: deps.notifyWorkAvailable } : {}),
+      }),
+    );
   if (deps.provisioner)
     app.route("/internal/provisioner", createProvisionerRoutes(deps.provisioner));
   return app;

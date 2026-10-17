@@ -7,6 +7,8 @@ import type { OperationService } from "@praetorium/application/operations";
 import {
   ServiceBackedDisposableCanary,
   createRegistryBackedReleaseVerifier,
+  type CanaryConfigurationService,
+  type CanaryInstanceService,
   type CanaryProvisionerObservationReader,
   type DisposableCanaryBinding,
   type ReleaseCandidate,
@@ -29,6 +31,8 @@ import {
   type T11D1Database,
 } from "./adapters/d1/t11-release-rollouts.js";
 import { createOperatorReleaseAdmissionRoutes } from "./releases/operator-admission.js";
+import { runStableReleaseWork } from "./scheduled.js";
+import type { WorkNotificationDispatcher } from "./work-notification-scheduler.js";
 
 export type T11RolloutCompositionDependencies = RegistryBackedReleaseVerifierDeps & {
   readonly db: T11D1Database;
@@ -50,6 +54,7 @@ export type T11RolloutCompositionDependencies = RegistryBackedReleaseVerifierDep
   readonly workerId: string;
   readonly authorizeOperator: (headers: Headers) => Promise<{ readonly actorId: string } | null>;
   readonly requestId?: () => string;
+  readonly notifyWorkAvailable?: WorkNotificationDispatcher;
 };
 
 /**
@@ -59,6 +64,13 @@ export type T11RolloutCompositionDependencies = RegistryBackedReleaseVerifierDep
  */
 export function createT11RolloutComposition(deps: T11RolloutCompositionDependencies) {
   const verifier = createRegistryBackedReleaseVerifier(deps);
+  const notifyWork = async (kind: "build" | "operation") => {
+    try {
+      await deps.notifyWorkAvailable?.(kind);
+    } catch {
+      // A hint never changes the durable release or rollout result.
+    }
+  };
   const stagedActivator: StagedRolloutActivator = {
     findStageByIdempotency(repositoryId, idempotencyKey) {
       return deps.configurations.findStageByIdempotency(repositoryId, idempotencyKey);
@@ -66,6 +78,7 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     async activateStageUnderClusterFence(input) {
       const receipt = await deps.configurations.activateStageUnderClusterFence(input);
       if (!receipt) return null;
+      await notifyWork("operation");
       return {
         operationId: receipt.operationId,
         generation: receipt.generation,
@@ -74,17 +87,42 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
   };
   const releases = new D1T11ReleaseRolloutStore(deps.db, stagedActivator);
   const followers = new D1StableFollowerRepository(deps.db, deps.defaultClusterId);
+  const canaryConfigurations: CanaryConfigurationService = {
+    async plan(input) {
+      const receipt = await deps.canaryConfigurations.plan(input);
+      if (receipt.revision.status === "building") await notifyWork("build");
+      if (receipt.operation?.status === "pending") await notifyWork("operation");
+      return receipt;
+    },
+    findByIdempotency(repositoryId, idempotencyKey) {
+      return deps.canaryConfigurations.findByIdempotency(repositoryId, idempotencyKey);
+    },
+  };
+  const canaryInstances: CanaryInstanceService = {
+    getByRepositoryId(repositoryId) {
+      return deps.instances.getByRepositoryId(repositoryId);
+    },
+    async requestDesiredState(input) {
+      const receipt = await deps.instances.requestDesiredState(input);
+      if (receipt.operation?.status === "pending") await notifyWork("operation");
+      return receipt;
+    },
+  };
   const canary = new ServiceBackedDisposableCanary({
     binding: deps.canaryBinding,
-    instances: deps.instances,
-    configurations: deps.canaryConfigurations,
+    instances: canaryInstances,
+    configurations: canaryConfigurations,
     operations: deps.operations,
     observations: deps.canaryObservations,
     now: () => deps.clock.nowMs(),
     ...(deps.requestId ? { newRequestId: deps.requestId } : {}),
   });
 
-  const stableComposition = createStableFollowerComposition(deps.configurations, deps.clock);
+  const stableComposition = createStableFollowerComposition(
+    deps.configurations,
+    deps.clock,
+    notifyWork,
+  );
   const rolloutDependencies: StableRolloutDeps = {
     releases,
     followers,
@@ -107,6 +145,7 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     clock: deps.clock,
     workerId: deps.workerId,
   };
+  const scheduled = { promotions, rollouts: rolloutDependencies };
   const operatorReleaseAdmission = createOperatorReleaseAdmissionRoutes({
     releases,
     registry: deps.registry,
@@ -116,12 +155,15 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     ids: deps.ids,
     authorize: deps.authorizeOperator,
     ...(deps.requestId ? { requestId: deps.requestId } : {}),
+    afterAdmitted: (_candidate, context) => {
+      context.waitUntil(runStableReleaseWork(scheduled, { promotionPasses: 2 }));
+    },
   });
 
   return {
     releases,
     followers,
-    scheduled: { promotions, rollouts: rolloutDependencies },
+    scheduled,
     operatorReleaseAdmission,
   };
 }
@@ -129,6 +171,7 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
 function createStableFollowerComposition(
   configurations: T11RolloutCompositionDependencies["configurations"],
   clock: ReleaseClock,
+  notifyWork: (kind: "build" | "operation") => Promise<void>,
 ): CompositionProvider {
   return {
     async compose({ release, follower, idempotencyKey }) {
@@ -156,6 +199,7 @@ function createStableFollowerComposition(
       if (receipt.stage.status !== "staged") {
         return { kind: "failed", code: "staged_configuration_not_active", retryable: false };
       }
+      if (receipt.build.status === "pending") await notifyWork("build");
       if (receipt.build.status === "failed" || receipt.build.status === "cancelled") {
         return {
           kind: "failed",

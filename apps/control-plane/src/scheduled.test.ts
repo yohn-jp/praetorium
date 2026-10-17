@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReleasePromotionDeps } from "@praetorium/application/releases";
 import type { StableRolloutDeps } from "@praetorium/application/rollouts";
-import { createScheduledHandler } from "./scheduled.js";
+import { createScheduledHandler, runStableReleaseWork } from "./scheduled.js";
 
 const TIME = "2026-01-01T00:00:00.000Z";
 const NOW = Date.parse(TIME);
@@ -186,5 +186,18 @@ describe("Control Plane scheduled T11 entry point", () => {
     expect(contextPromises).toHaveLength(2);
     await expect(contextPromises[0]).resolves.toEqual(first);
     await expect(contextPromises[1]).resolves.toEqual(second);
+  });
+
+  it("runs bounded release progression without legacy discovery", async () => {
+    const owners: string[] = [];
+    const pageLimits: number[] = [];
+    const deps = dependencies(owners, pageLimits);
+
+    const result = await runStableReleaseWork(deps, { promotionPasses: 99 });
+
+    expect(result.promotions).toMatchObject({ claimed: 0, advanced: 0 });
+    expect(owners).toHaveLength(2);
+    expect(owners[0]).toBe(owners[1]);
+    expect(pageLimits).toEqual([]);
   });
 });

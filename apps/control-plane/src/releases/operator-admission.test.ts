@@ -141,6 +141,28 @@ describe("operator release admission route", () => {
     });
   });
 
+  it("schedules release progression after durable admission without delaying the response", async () => {
+    const work = Promise.resolve();
+    const waitUntil = vi.fn();
+    const afterAdmitted: NonNullable<OperatorReleaseAdmissionDependencies["afterAdmitted"]> =
+      (_candidate, context) => context.waitUntil(work);
+    const afterAdmittedSpy = vi.fn(afterAdmitted);
+    const app = createOperatorReleaseAdmissionRoutes(deps({ afterAdmitted: afterAdmittedSpy }));
+    const response = await app.fetch(
+      new Request("https://control.example/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(manifest()),
+      }),
+      {},
+      { waitUntil, passThroughOnException() {}, props: {} },
+    );
+
+    expect(response.status).toBe(201);
+    expect(afterAdmittedSpy).toHaveBeenCalledOnce();
+    expect(waitUntil).toHaveBeenCalledWith(work);
+  });
+
   it("keeps verification outages retryable", async () => {
     const routeDeps = deps({
       producerMetadata: {

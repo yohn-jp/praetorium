@@ -19,6 +19,10 @@ import {
 } from "@praetorium/application/configurations";
 import { Hono, type Context, type Next } from "hono";
 import { z } from "zod";
+import {
+  scheduleWorkNotification,
+  type WorkNotificationDispatcher,
+} from "./work-notification-scheduler.js";
 
 const MAX_CONFIGURATION_REQUEST_BYTES = 65_536;
 const InstanceId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
@@ -73,6 +77,7 @@ export type ConfigurationRoutesOptions = {
   >;
   readonly now?: () => number;
   readonly requestId?: () => string;
+  readonly notifyWorkAvailable?: WorkNotificationDispatcher;
 };
 
 /** Public configuration preview and desired-revision planning routes. */
@@ -139,6 +144,16 @@ export function createConfigurationRoutes(options: ConfigurationRoutesOptions) {
       requestId: requestIdValue,
       now: now(),
     });
+    try {
+      if (result.revision.status === "building") {
+        scheduleWorkNotification(c.executionCtx, options.notifyWorkAvailable, "build");
+      }
+      if (result.operation?.status === "pending") {
+        scheduleWorkNotification(c.executionCtx, options.notifyWorkAvailable, "operation");
+      }
+    } catch {
+      // The desired revision and any associated work were committed already.
+    }
     return c.json(ConfigurationPlanResponseSchema.parse(projectPlan(result)));
   });
 

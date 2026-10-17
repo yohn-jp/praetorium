@@ -190,6 +190,39 @@ function follower(instanceId: string, clusterId = "cluster-1"): StableFollower {
 }
 
 describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
+  it("rolls back candidate and audit if atomic admission cannot create its workflow", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    db.database.exec(`
+      CREATE TRIGGER reject_initial_release_workflow
+      BEFORE INSERT ON release_candidate_workflows
+      BEGIN SELECT RAISE(ABORT, 'workflow admission failed'); END;
+    `);
+    const release = candidate();
+
+    await expect(
+      store(db).createCandidateWithAudit({
+        candidate: release,
+        audit: {
+          actorId: "operator-1",
+          requestId: "request-1",
+          action: "release.candidate.admit",
+          targetId: release.id,
+          outcome: "accepted",
+          metadata: { digest: release.imageDigest },
+          occurredAt: TIME,
+        },
+      }),
+    ).rejects.toThrow("workflow admission failed");
+
+    expect(
+      db.database.prepare("SELECT COUNT(*) AS count FROM release_candidates").get(),
+    ).toMatchObject({ count: 0 });
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM audit_events").get()).toMatchObject({
+      count: 0,
+    });
+  });
+
   it("persists admitted candidates, audit, cursor, workflow leases and channel CAS across store reconstruction", async () => {
     const db = new SQLiteD1();
     installSchema(db);
@@ -209,7 +242,20 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
         },
       }),
     ).toBe("created");
+    expect(
+      db.database
+        .prepare("SELECT state, next_attempt_at FROM release_candidate_workflows WHERE release_id = ?")
+        .get(release.id),
+    ).toMatchObject({ state: "queued", next_attempt_at: null });
+    db.database
+      .prepare("DELETE FROM release_candidate_workflows WHERE release_id = ?")
+      .run(release.id);
     expect(await first.createCandidate(release)).toBe("duplicate");
+    expect(
+      db.database
+        .prepare("SELECT state FROM release_candidate_workflows WHERE release_id = ?")
+        .get(release.id),
+    ).toMatchObject({ state: "queued" });
     expect(db.database.prepare("SELECT count(*) AS count FROM audit_events").get()).toMatchObject({
       count: 1,
     });
@@ -279,6 +325,15 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     ).toBe("ineligible");
     const next = candidate("release-2", "2.0.0", `sha256:${"b".repeat(64)}`);
     await store(db).createCandidate(next);
+    const checkpoint = await store(db).getDiscoveryCheckpoint();
+    expect(checkpoint.cursor).toBe(encodeURIComponent(JSON.stringify([TIME, release.id])));
+    const unreconciledTail = await store(db).listCandidates(checkpoint.cursor, 50);
+    expect(unreconciledTail.items.map((item) => item.id)).toEqual([next.id]);
+    expect(
+      db.database
+        .prepare("SELECT state FROM release_candidate_workflows WHERE release_id = ?")
+        .get(next.id),
+    ).toMatchObject({ state: "queued" });
     expect(
       await store(db).promoteStable({
         releaseId: next.id,

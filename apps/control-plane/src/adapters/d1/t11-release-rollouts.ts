@@ -363,22 +363,11 @@ export class D1T11ReleaseRolloutStore
   }
 
   async createCandidate(candidate: ReleaseCandidate): Promise<"created" | "duplicate"> {
-    const result = await this.db
-      .prepare(
-        `INSERT OR IGNORE INTO release_candidates
-           (release_id, image_digest, version, image_repository, status, candidate_json, created_at)
-         VALUES (?, ?, ?, ?, 'candidate', ?, ?)`,
-      )
-      .bind(
-        candidate.id,
-        candidate.imageDigest,
-        candidate.version,
-        candidate.imageRepository,
-        JSON.stringify(candidate),
-        candidate.createdAt,
-      )
-      .run();
-    return result.meta.changes === 1 ? "created" : "duplicate";
+    const results = await this.db.batch([
+      this.candidateInsert(candidate),
+      this.initialWorkflowInsert(candidate),
+    ]);
+    return results[0]?.meta.changes === 1 ? "created" : "duplicate";
   }
 
   async createCandidateWithAudit(input: {
@@ -395,23 +384,51 @@ export class D1T11ReleaseRolloutStore
   }): Promise<"created" | "duplicate"> {
     const { candidate, audit } = input;
     const results = await this.db.batch([
-      this.db
-        .prepare(
-          `INSERT OR IGNORE INTO release_candidates
-             (release_id, image_digest, version, image_repository, status, candidate_json, created_at)
-           VALUES (?, ?, ?, ?, 'candidate', ?, ?)`,
-        )
-        .bind(
-          candidate.id,
-          candidate.imageDigest,
-          candidate.version,
-          candidate.imageRepository,
-          JSON.stringify(candidate),
-          candidate.createdAt,
-        ),
+      this.candidateInsert(candidate),
       this.auditStatement(audit, true),
+      this.initialWorkflowInsert(candidate),
     ]);
     return results[0]?.meta.changes === 1 ? "created" : "duplicate";
+  }
+
+  private candidateInsert(candidate: ReleaseCandidate): D1PreparedStatement {
+    return this.db
+      .prepare(
+        `INSERT OR IGNORE INTO release_candidates
+           (release_id, image_digest, version, image_repository, status, candidate_json, created_at)
+         VALUES (?, ?, ?, ?, 'candidate', ?, ?)`,
+      )
+      .bind(
+        candidate.id,
+        candidate.imageDigest,
+        candidate.version,
+        candidate.imageRepository,
+        JSON.stringify(candidate),
+        candidate.createdAt,
+      );
+  }
+
+  private initialWorkflowInsert(candidate: ReleaseCandidate): D1PreparedStatement {
+    const createdAt = Date.parse(candidate.createdAt);
+    if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
+      throw new TypeError("release candidate creation time is invalid");
+    }
+    return this.db
+      .prepare(
+        `INSERT OR IGNORE INTO release_candidate_workflows
+           (release_id, state, revision, attempts, next_attempt_at, lease_owner,
+            lease_epoch, lease_expires_at, canary_artifact_digest, canary_build_key,
+            canary_runtime_id, canary_operation_id, healthy_since, last_healthy_at,
+            last_health_evidence_json, cleanup_evidence_json, follower_cursor,
+            follower_planning_complete, canary_cleanup_complete, cleanup_disposition,
+            failure_code, updated_at)
+         SELECT ?, 'queued', 0, 0, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, 0, 0, NULL, NULL, ?
+          WHERE EXISTS (
+            SELECT 1 FROM release_candidates WHERE release_id = ?
+          )`,
+      )
+      .bind(candidate.id, createdAt, candidate.id);
   }
 
   private auditStatement(
@@ -556,6 +573,10 @@ export class D1T11ReleaseRolloutStore
     readonly at: string;
   }): Promise<"advanced" | "conflict"> {
     const timestamp = Date.parse(input.at);
+    const lastCandidate = input.page.items.at(-1);
+    const checkpointCursor =
+      input.page.nextCursor ??
+      (lastCandidate ? cursorEncode(lastCandidate.createdAt, lastCandidate.id) : input.expectedCursor);
     const statements = [
       this.db
         .prepare(
@@ -563,7 +584,7 @@ export class D1T11ReleaseRolloutStore
               SET cursor = ?, revision = revision + 1, updated_at = ?
             WHERE checkpoint_id = 'stable' AND revision = ? AND cursor IS ?`,
         )
-        .bind(input.page.nextCursor, timestamp, input.expectedRevision, input.expectedCursor),
+        .bind(checkpointCursor, timestamp, input.expectedRevision, input.expectedCursor),
       ...input.page.items.map((candidate) =>
         this.db
           .prepare(
@@ -586,7 +607,7 @@ export class D1T11ReleaseRolloutStore
             timestamp,
             timestamp,
             input.expectedRevision + 1,
-            input.page.nextCursor,
+            checkpointCursor,
           ),
       ),
     ];

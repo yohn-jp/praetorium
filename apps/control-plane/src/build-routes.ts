@@ -11,6 +11,10 @@ import type {
 } from "@praetorium/application/builds";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  scheduleWorkNotification,
+  type WorkNotificationDispatcher,
+} from "./work-notification-scheduler.js";
 
 const MAX_BUILD_REQUEST_BYTES = 1_048_576;
 const SERVICE_TOKEN_MIN = 32;
@@ -21,6 +25,7 @@ export type BuildRoutesOptions = {
   readonly queue: BuildQueuePort;
   readonly serviceToken: string;
   readonly workerId?: string;
+  readonly notifyWorkAvailable?: WorkNotificationDispatcher;
   /** BuildQueueService replaces this transport value with its Control Plane clock. */
   readonly now?: () => number;
 };
@@ -84,6 +89,17 @@ export function createBuildRoutes(options: BuildRoutesOptions) {
       ...input,
       now: now(),
     } satisfies BuildQueueReportInput);
+    if (result.accepted) {
+      try {
+        if (input.result.kind === "succeeded") {
+          scheduleWorkNotification(c.executionCtx, options.notifyWorkAvailable, "operation");
+        } else if (input.result.kind === "failed" && input.result.retryable) {
+          scheduleWorkNotification(c.executionCtx, options.notifyWorkAvailable, "build");
+        }
+      } catch {
+        // The terminal report was durably accepted already.
+      }
+    }
     return c.json(result);
   });
 

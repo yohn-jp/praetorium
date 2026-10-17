@@ -8,9 +8,9 @@ export type DiscoveryResult =
   | { readonly kind: "conflict"; readonly discovered: 0; readonly nextCursor: string | null };
 
 /**
- * Scans the durable, already-admitted candidate catalog one bounded page at a
- * time. The page and checkpoint are committed together by the repository so a
- * worker restart repeats a page safely instead of losing a candidate.
+ * Reconciles candidates that predate workflow-on-admission in bounded pages.
+ * The checkpoint moves forward and stays at the last seen candidate after the
+ * current catalog is exhausted, so later runs only inspect the new tail.
  */
 export async function discoverStableCandidates(
   releases: ReleasePromotionRepository,
@@ -19,6 +19,9 @@ export async function discoverStableCandidates(
   const checkpoint = await releases.getDiscoveryCheckpoint();
   const limit = Math.max(1, Math.min(100, Math.trunc(input.limit ?? RELEASE_DISCOVERY_PAGE_SIZE)));
   const page = await releases.listCandidates(checkpoint.cursor, limit);
+  if (page.items.length === 0 && page.nextCursor === null) {
+    return { kind: "advanced", discovered: 0, nextCursor: null };
+  }
   const result = await releases.commitDiscoveryPage({
     expectedRevision: checkpoint.revision,
     expectedCursor: checkpoint.cursor,

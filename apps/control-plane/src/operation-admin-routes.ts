@@ -12,6 +12,10 @@ import type { OperationService } from "@praetorium/application/operations";
 import type { D1Database } from "@praetorium/persistence/d1";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  scheduleWorkNotification,
+  type WorkNotificationDispatcher,
+} from "./work-notification-scheduler.js";
 
 const MAX_BODY_BYTES = 16_384;
 const MAX_CURSOR_LENGTH = 4_096;
@@ -90,6 +94,7 @@ export type OperationAdminDependencies = {
   readonly db: D1Database;
   readonly instances: InstanceService;
   readonly operations: OperationService;
+  readonly notifyWorkAvailable?: WorkNotificationDispatcher;
   readonly now?: () => number;
 };
 
@@ -227,6 +232,13 @@ export function createOperationAdminRoutes(deps: OperationAdminDependencies) {
       ) {
         return c.json({ error: { code: "OPERATION_RETRY_CONFLICT" } }, 409);
       }
+      if (replay.operation.status === "pending") {
+        try {
+          scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation");
+        } catch {
+          // Retry was already durably accepted.
+        }
+      }
       return c.json(publicOperation(replay.operation));
     }
 
@@ -249,6 +261,13 @@ export function createOperationAdminRoutes(deps: OperationAdminDependencies) {
       !isRetryReceipt(result.operation, oldOperation, input.expectedGeneration)
     ) {
       return c.json({ error: { code: "OPERATION_RETRY_CONFLICT" } }, 409);
+    }
+    if (result.operation.status === "pending") {
+      try {
+        scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation");
+      } catch {
+        // Retry was already durably accepted.
+      }
     }
     return c.json(publicOperation(result.operation));
   });

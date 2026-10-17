@@ -154,6 +154,81 @@ describe("Control Plane build routes", () => {
     expect(buildQueue.report).toHaveBeenCalledOnce();
   });
 
+  it("hints only after an accepted terminal report can release runnable work", async () => {
+    const buildQueue = queue();
+    const notifications: string[] = [];
+    const notifyWorkAvailable = vi.fn(async (kind: "build" | "operation") => {
+      notifications.push(kind);
+    });
+    const routes = createBuildRoutes({
+      queue: buildQueue,
+      serviceToken: TOKEN,
+      notifyWorkAvailable,
+    });
+    const pending: Promise<unknown>[] = [];
+    const context = {
+      waitUntil(promise: Promise<unknown>) {
+        pending.push(promise);
+      },
+      passThroughOnException() {},
+      props: {},
+    };
+    const succeeded = {
+      buildId: "build-1",
+      buildKey: KEY,
+      attemptId: "attempt-1",
+      leaseEpoch: 1,
+      leaseToken: "lease-token-012345678901234567890123",
+      workerId: "worker-1",
+      sequence: 1,
+      result: {
+        kind: "succeeded",
+        candidateRef: `ghcr.io/example/runtime@${KEY}`,
+        manifestDigest: KEY,
+        compositionManifest: { repository: "ghcr.io/example/composition", digest: KEY },
+        statement: {
+          schemaVersion: "praetorium.build-artifact/v1",
+          buildKey: KEY,
+          artifact: {
+            repository: "example/runtime",
+            digest: KEY,
+            platformManifestDigest: KEY,
+            platform: "linux/amd64",
+          },
+          compositionManifest: { repository: "ghcr.io/example/composition", digest: KEY },
+          producerRevision: "a".repeat(40),
+          resolvedModules: [],
+          contractVersion: "scriptorium-build/v1",
+          issuedAt: "2026-01-01T00:00:00.000Z",
+        },
+        signature: { algorithm: "Ed25519", keyId: "key-1", signature: "AA==" },
+      },
+    };
+    const accepted = await routes.fetch(
+      request("/internal/builds/build-1/report", succeeded),
+      {},
+      context,
+    );
+
+    expect(accepted.status).toBe(200);
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
+    expect(notifications).toEqual(["operation"]);
+
+    vi.mocked(buildQueue.report).mockResolvedValueOnce({ accepted: false, duplicate: false });
+    const rejected = await routes.fetch(
+      request("/internal/builds/build-1/report", {
+        ...succeeded,
+        result: { kind: "failed", code: "BUILD_FAILED", message: "rejected", retryable: true },
+      }),
+      {},
+      context,
+    );
+    expect(rejected.status).toBe(200);
+    expect(pending).toHaveLength(1);
+    expect(notifyWorkAvailable).toHaveBeenCalledOnce();
+  });
+
   it("keeps unmatched paths out of the build API and rejects non-POST worker calls", async () => {
     const routes = createBuildRoutes({ queue: queue(), serviceToken: TOKEN });
     const other = await routes.fetch(request("/v1/instances/one/configuration", undefined));

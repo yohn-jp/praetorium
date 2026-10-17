@@ -8,6 +8,7 @@ import type { composeBuildServices } from "./build-composition.js";
 import type { D1Database } from "@praetorium/persistence/d1";
 import type { InstanceService } from "@praetorium/application/instances";
 import type { OperationService } from "@praetorium/application/operations";
+import type { WorkNotificationDispatcher } from "./work-notification-scheduler.js";
 
 const Policy = z.strictObject({
   workerId: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/u),
@@ -43,6 +44,7 @@ export function composeReleaseServices(input: {
   operations: OperationService;
   policyJson: string;
   operatorToken: string;
+  notifyWorkAvailable?: WorkNotificationDispatcher;
 }) {
   const policy = Policy.parse(JSON.parse(input.policyJson));
   if (!/^[\x21-\x7e]{32,4096}$/u.test(input.operatorToken))
@@ -59,6 +61,9 @@ export function composeReleaseServices(input: {
     clock: { nowMs: Date.now, now: () => new Date().toISOString() },
     ids: { newReleaseId: () => `rel_${crypto.randomUUID()}` },
     workerId: policy.workerId,
+    ...(input.notifyWorkAvailable
+      ? { notifyWorkAvailable: input.notifyWorkAvailable }
+      : {}),
     authorizeOperator: async (headers) =>
       (await equalSecret(
         headers.get("Authorization")?.replace(/^Bearer /u, "") ?? "",

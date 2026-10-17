@@ -4,6 +4,7 @@ import {
   ingestReleaseCandidate,
   type IngestReleaseDeps,
   type IngestReleaseResult,
+  type ReleaseCandidate,
   type RegistryBackedReleaseVerifierDeps,
 } from "@praetorium/application/releases";
 
@@ -11,12 +12,21 @@ const MAX_MANIFEST_BYTES = 1_048_576;
 
 export type OperatorReleasePrincipal = { readonly actorId: string };
 
+export interface ReleaseAdmissionExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
 export interface OperatorReleaseAdmissionDependencies
   extends Omit<IngestReleaseDeps, "verifier">,
     RegistryBackedReleaseVerifierDeps {
   /** Uses the separately configured operator authority, never repository access. */
   readonly authorize: (headers: Headers) => Promise<OperatorReleasePrincipal | null>;
   readonly requestId?: () => string;
+  /** Schedules durable release work after the candidate and audit have committed. */
+  readonly afterAdmitted?: (
+    candidate: ReleaseCandidate,
+    context: ReleaseAdmissionExecutionContext,
+  ) => void;
 }
 
 /**
@@ -72,6 +82,13 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
       return c.json({ error: { code: "RELEASE_CANDIDATE_DENIED", reason: result.reason } }, 422);
     }
     const { candidate } = result;
+    if (deps.afterAdmitted) {
+      try {
+        deps.afterAdmitted(candidate, c.executionCtx);
+      } catch {
+        // Admission is already durable; the scheduled recovery path owns retries.
+      }
+    }
     return c.json(
       {
         release: {

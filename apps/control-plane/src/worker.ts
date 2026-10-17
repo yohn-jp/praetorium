@@ -6,6 +6,7 @@ import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
 import { createScheduledHandler } from "./scheduled.js";
 import type { ExecutionContext } from "hono";
+import { notifyWorkAvailable, type WorkNotificationEnv } from "./work-notifications.js";
 import { createRuntimeIdentityRoutes } from "./runtime-identity-routes.js";
 import { createRuntimeBindingMetadataReader } from "./runtime-binding.js";
 import { createRuntimeGitCredentialRoutes } from "./runtime-git-credential-routes.js";
@@ -29,7 +30,7 @@ export interface CoordinatorNamespace {
   idFromName(name: string): unknown;
   get(id: unknown): { fetch(request: Request): Promise<Response> };
 }
-export interface ControlPlaneEnv {
+export interface ControlPlaneEnv extends WorkNotificationEnv {
   CONTROL_PLANE_DB: D1Database;
   REPOSITORY_COORDINATOR: CoordinatorNamespace;
   CONTROL_PLANE_GATEWAY_AUTH: string;
@@ -53,6 +54,7 @@ export interface ControlPlaneEnv {
   RELEASE_OPERATOR_TOKEN?: string;
 }
 function composeServices(env: ControlPlaneEnv) {
+  const notifyWork = (kind: "build" | "operation") => notifyWorkAvailable(env, kind);
   const store = new D1PlatformStore(env.CONTROL_PLANE_DB);
   const registry = new RepositoryRegistryService(store, () =>
     newInstanceId(Date.now(), crypto.getRandomValues(new Uint8Array(10))),
@@ -94,9 +96,11 @@ function composeServices(env: ControlPlaneEnv) {
           operations,
           policyJson: env.RELEASE_POLICY_JSON,
           operatorToken: required(env.RELEASE_OPERATOR_TOKEN),
+          notifyWorkAvailable: notifyWork,
         })
       : undefined;
   const app = createControlPlaneApp({
+    notifyWorkAvailable: notifyWork,
     ...(env.GATEWAY_SERVICE && env.PROVISIONER_AUTH_TOKEN
       ? {
           runtimeAuthProbe: createProvisionerRuntimeAuthProbeRoutes({
@@ -289,16 +293,30 @@ function randomCapability(): string {
   ).join("");
 }
 /** This DO serializes repository transitions only; all desired state stays in D1. */
+export interface RepositoryCoordinatorState {
+  waitUntil(promise: Promise<unknown>): void;
+  readonly props?: unknown;
+  readonly exports?: unknown;
+}
+
 export class RepositoryCoordinator {
   private pending: Promise<void> = Promise.resolve();
   constructor(
-    _state: unknown,
+    private readonly state: RepositoryCoordinatorState,
     private readonly env: ControlPlaneEnv,
   ) {}
   fetch(request: Request): Promise<Response> {
     // Serialize requests without holding the DO initialization gate over registry I/O.
     // D1 transactions and expected-generation fences remain authoritative after a restart.
-    const response = this.pending.then(() => composeControlPlane(this.env).fetch(request));
+    const executionContext: ExecutionContext = {
+      waitUntil: (promise) => this.state.waitUntil(promise),
+      passThroughOnException() {},
+      props: this.state.props,
+      ...(this.state.exports === undefined ? {} : { exports: this.state.exports }),
+    };
+    const response = this.pending.then(() =>
+      composeControlPlane(this.env).fetch(request, this.env, executionContext),
+    );
     this.pending = response.then(
       () => undefined,
       () => undefined,

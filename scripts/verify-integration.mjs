@@ -344,7 +344,9 @@ function classifyRunnerResult(category, result, report = null) {
       typeof report.reason === "string" &&
       report.reason.length > 0 &&
       report.reason.length <= 512 &&
-      !/[\u0000-\u001f\u007f]/u.test(report.reason);
+      [...report.reason].every(
+        (character) => character.codePointAt(0) >= 32 && character.codePointAt(0) !== 127,
+      );
     if (!valid || result.status === 0) {
       return {
         status: "FAILED",

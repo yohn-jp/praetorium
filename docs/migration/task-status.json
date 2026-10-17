@@ -13,8 +13,8 @@
     "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
     "sourceSnapshotPath": "/tmp/praetorium-campaign-source",
     "sourceSnapshotGitMetadata": "unavailable; source revision is pinned in docs/migration/PLAN.md and SOURCE-HANDLERS.json",
-    "producerRevision": "1950ba5b729e5c1611124abe78722c70362c08b2",
-    "producerStatusDocumentCommit": "aa3f321",
+    "producerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
+    "producerStatusDocumentCommit": "5089752",
     "partialWorkerTestEvidenceCommit": "37f187c",
     "testsRunForThisLedger": [
       "corepack pnpm@11.18.0 install --frozen-lockfile (pass at exact production source cut 27142b0ab28e6c7323af3e2c11ed6121bf830574; /tmp/praetorium-current-install.log)",
@@ -33,7 +33,8 @@
     "frozenInstallRunForThisLedger": true,
     "rootCheckRunForThisLedger": true,
     "frozenInstallStatus": "pass",
-    "rootCheckStatus": "pass at exact source cut 27142b0 with pnpm 11.18.0; 29/29 Turbo tasks; test stage 5.056s"
+    "rootCheckStatus": "pass at exact source cut 27142b0 with pnpm 11.18.0; 29/29 Turbo tasks; test stage 5.056s",
+    "producerRefreshNote": "Producer preflight was refreshed separately at main commit 5089752; production source and runtime verification remain pinned to 27142b0 (unchanged through this documentation-only refresh). No new producer runtime acceptance was executed."
   },
   "statusLegend": {
     "implementation": [
@@ -56,8 +57,8 @@
   },
   "producerPreflight": {
     "checkedInStatusPath": "docs/migration/PRODUCER-STATUS.json",
-    "producerRevision": "1950ba5b729e5c1611124abe78722c70362c08b2",
-    "producerStatusDocumentCommit": "aa3f321",
+    "producerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
+    "producerStatusDocumentCommit": "5089752",
     "statusAtEvidenceCut": "missing",
     "gate": "BLOCKED",
     "producerModified": false,
@@ -94,7 +95,7 @@
         "artifactDigest": null
       }
     ],
-    "note": "Read-only current producer preflight integrated at aa3f321, source revision 1950ba5b729e5c1611124abe78722c70362c08b2, marks S01-S05 missing/BLOCKED and artifactDigest null. The local digest for candidate e85c173a is not current-main or published evidence. No producer artifact/conformance acceptance exists."
+    "note": "Read-only producer preflight at 5089752 observes e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f: S01-S05 missing/BLOCKED and current-main artifactDigest null. The new local Core recovery digest cb6d9d3e belongs to ancestor bc2b0936; the prior Full local digest belongs to e85c173a. Neither is current-main or published hosted-composition evidence. No producer artifact/conformance acceptance exists."
   },
   "tasks": {
     "T00": {
@@ -122,12 +123,12 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Read-only producer preflight at 1950ba5b729e5c1611124abe78722c70362c08b2 marks S01-S05 missing/BLOCKED and artifactDigest null. Target consumer contracts cannot turn that producer gate green; the isolated candidate digest is not current-main or published evidence."
+        "Read-only producer preflight at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f marks S01-S05 missing/BLOCKED and artifactDigest null. Target consumer contracts cannot turn that producer gate green; the isolated candidate digest is not current-main or published evidence."
       ],
       "recordedCheckDocs": [
         "docs/migration/PRODUCER-STATUS.json"
       ],
-      "recordStatus": "Producer status document integrated at aa3f321 records revision 1950ba5b729e5c1611124abe78722c70362c08b2; S01-S05 are missing/BLOCKED and no current-main artifact digest or producer conformance run is recorded."
+      "recordStatus": "Producer status document integrated at 5089752 records revision e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f; S01-S05 are missing/BLOCKED and no current-main artifact digest or producer conformance run is recorded."
     },
     "T02": {
       "implementation": "partial",
@@ -189,7 +190,7 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Current producer 1950ba5b729e5c1611124abe78722c70362c08b2 preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
+        "Current producer e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T04.md",
@@ -210,7 +211,7 @@
         "apps/control-plane/src/releases/operator-admission.ts"
       ],
       "blockers": [
-        "No current producer composition or immutable artifact is available for admission at producer revision 1950ba5b729e5c1611124abe78722c70362c08b2.",
+        "No current producer composition or immutable artifact is available for admission at producer revision e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f.",
         "Bounded pinned-safe planner and D1 snapshot are wired into the scheduled Worker; the local Worker runner verifies configured retention policy and durable advisory audit. No cache/OCI deletion or storage reclamation is claimed, and no remote OCI delete executor is required by the current contract."
       ],
       "recordedCheckDocs": [
@@ -356,7 +357,7 @@
         "apps/control-plane/migrations/0002_stable_release_rollouts.sql"
       ],
       "blockers": [
-        "Current producer S01 metadata and immutable artifact at revision 1950ba5b729e5c1611124abe78722c70362c08b2 are missing; composition remains unavailable and retries without metadata.",
+        "Current producer S01 metadata and immutable artifact at revision e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f are missing; composition remains unavailable and retries without metadata.",
         "No real canary, ten-minute health window, writer-absence observation, stable follower rollout or persisted canary observation is available; S02/S05 canary evidence remains blocked."
       ],
       "recordedCheckDocs": [
@@ -416,7 +417,7 @@
       ],
       "blockers": [
         "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout; the fixed harness returned exit 2 with errors=[].",
-        "Current producer S01-S05 are missing at revision 1950ba5b729e5c1611124abe78722c70362c08b2; artifactDigest is null and no current-main immutable artifact is available.",
+        "Current producer S01-S05 are missing at revision e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f; artifactDigest is null and no current-main immutable artifact is available.",
         "The six blocked fixed categories also lack their executable runner files; supplying resources alone does not complete acceptance. A separate partial M04 Worker test at 37f187c verifies a synthetic local revocation barrier but is not a T14 category pass or real writer/provider acceptance.",
         "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain even when external resources are supplied."
       ],
@@ -474,7 +475,7 @@
       "id": "S01-S05",
       "capability": "producer catalog, hosted access, Git credentials, quiesce and immutable composition evidence",
       "state": "blocked",
-      "evidence": "docs/migration/PRODUCER-STATUS.json at 1950ba5b729e5c1611124abe78722c70362c08b2 marks each producer gate missing/BLOCKED and artifactDigest null."
+      "evidence": "docs/migration/PRODUCER-STATUS.json at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f marks each producer gate missing/BLOCKED and artifactDigest null."
     },
     {
       "id": "T09-runtime",

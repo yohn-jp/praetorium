@@ -473,5 +473,13 @@
       "path": "apps/provisioner/src/lifecycle-executor.ts",
       "gap": "isRollbackCompatible always false: evidence-based compatible rollback checker is missing; producer compatibility evidence must precede enablement."
     }
-  ]
+  ],
+  "latestProducerPreflight": {
+    "producerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
+    "documentCommit": "5089752",
+    "artifactDigest": null,
+    "artifactDigestReason": "No current-main OCI manifest digest or published reference was supplied for e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f (tree 7c54b5ae786979259f2b616655996cb7eb8e69c9). The refreshed docs/verification/P13-BROWSER-RECOVERY.md reports a local Core image manifest digest sha256:cb6d9d3e792fba6020c561946b07c07aa4f7c7043aaed3597cefbeab586d6a05 for ancestor source bc2b0936d418d1d8f5dcd8b16e74d1f9f3d65c0f (tree 480aadf546cd28944c5a242ef9cd0ac55b215616); current main has advanced beyond that tested tree. The image remained local. The full-profile model lifecycle report separately records local digest sha256:7a2e4fd5d00b36f90a19cfe90b30c6c0c5e01df4f922650696be813abd006b07 for candidate source e85c173a318e17eed084bbfb4dde2411a2abc2cf, also not current main and not published. Earlier anonymous GHCR and GitHub package API requests returned HTTP 401; registry absence is not inferred.",
+    "producerModified": false,
+    "note": "Separate documentation-only preflight refresh. Original production/test evidence cut is retained; no new producer runtime acceptance was run."
+  }
 }

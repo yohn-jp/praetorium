@@ -1,7 +1,10 @@
 name: Publish Praetorium service images
 
 on:
+  pull_request:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -30,6 +33,7 @@ jobs:
           node --test tests/deployment/reproducibility.test.mjs
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: verify
     runs-on: ubuntu-24.04
     permissions:

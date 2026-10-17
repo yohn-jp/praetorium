@@ -136,6 +136,10 @@ if (!nodes.items?.length || !nodes.items.every((node) =>
   node.metadata?.labels?.["praetorium.io/cluster-id"] === inventory.clusterId)) {
   throw new Error("K3s node cluster ownership labels do not match the inventory");
 }
+const fluxNamespace = readResource("namespace", "flux-system");
+if (fluxNamespace && fluxNamespace.metadata?.labels?.["praetorium.io/bootstrap-cluster-id"] !== inventory.clusterId) {
+  throw new Error("refusing to adopt existing Flux controllers not owned by this Praetorium cluster");
+}
 const buildTool = run("kubectl", ["version", "--client"]);
 const fluxTool = run("flux", ["--version"]);
 if (!buildTool || !fluxTool) throw new Error("kubectl and Flux CLI are required");
@@ -168,6 +172,7 @@ applyManifest(namespaceManifest, true);
 applyManifest(namespaceManifest);
 const fluxInstall = run("flux", ["install", "--export"], { timeout: 60_000 });
 applyManifest(fluxInstall);
+kubectl(["label", "namespace", "flux-system", "praetorium.io/bootstrap-cluster-id=" + inventory.clusterId, "--overwrite"]);
 for (const controller of ["source-controller", "kustomize-controller", "helm-controller"]) {
   kubectl(["-n", "flux-system", "rollout", "status", "deployment/" + controller, "--timeout=300s"],
     { timeout: 330_000 });

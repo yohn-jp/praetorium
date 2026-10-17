@@ -323,7 +323,8 @@ async function readRunnerResult(resultPath) {
     const buffer = Buffer.alloc(4097);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead > 4096) return {};
-    return JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
+    const report = JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
+    return isRecord(report) ? report : {};
   } catch (error) {
     return error.code === "ENOENT" ? null : {};
   } finally {

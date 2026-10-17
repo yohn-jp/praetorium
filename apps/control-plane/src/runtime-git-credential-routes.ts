@@ -83,17 +83,27 @@ export function createRuntimeGitCredentialRoutes(deps: RuntimeGitCredentialRoute
       binding = await deps.runtimeBindings.getCurrent(input.repositoryId);
     } catch {
       const pending = await deps.credentials.markPending(input.tokenId, nowMs);
+      if (!pending || pending.status === "active")
+        return context.json(
+          { error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" } },
+          503,
+        );
       return context.json(
         {
           error: { code: "RUNTIME_BINDING_UNAVAILABLE" },
-          status: pending?.status ?? record.status,
+          status: pending.status,
         },
         503,
       );
     }
     if (!matchesCurrentBinding(input, binding)) {
       const pending = await deps.credentials.markPending(input.tokenId, nowMs);
-      return context.json({ status: pending?.status ?? record.status });
+      if (!pending || pending.status === "active")
+        return context.json(
+          { error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" } },
+          503,
+        );
+      return context.json({ status: pending.status });
     }
     return context.json({ status: record.status });
   });

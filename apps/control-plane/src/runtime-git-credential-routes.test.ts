@@ -312,6 +312,42 @@ describe("Control Plane runtime Git credential routes", () => {
     expect(await revokedResponse.json()).toEqual({ status: "revoked" });
   });
 
+  it("fails closed when an inactive or unavailable binding cannot confirm the stored registration", async () => {
+    const absentRecordCredentials = new MemoryCredentials();
+    absentRecordCredentials.markPending = async () => null;
+    const inactive = createRoutes({
+      db: new SQLiteD1(),
+      credentials: absentRecordCredentials,
+      binding: null,
+    });
+    const inactiveResponse = await inactive.app.request(
+      "/internal/runtime-credentials",
+      jsonRequest(registration()),
+    );
+    expect(inactiveResponse.status).toBe(503);
+    expect(await inactiveResponse.json()).toEqual({
+      error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" },
+    });
+
+    const unavailableCredentials = new MemoryCredentials();
+    unavailableCredentials.markPending = async () => null;
+    const unavailable = createRoutes({
+      db: new SQLiteD1(),
+      credentials: unavailableCredentials,
+      onReadBinding: () => {
+        throw new Error("binding read failed");
+      },
+    });
+    const unavailableResponse = await unavailable.app.request(
+      "/internal/runtime-credentials",
+      jsonRequest(registration(2)),
+    );
+    expect(unavailableResponse.status).toBe(503);
+    expect(await unavailableResponse.json()).toEqual({
+      error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" },
+    });
+  });
+
   it("rejects plaintext or extra fields and credential expiries outside the bounded GitHub lifetime", async () => {
     const { app } = createRoutes({ db: new SQLiteD1() });
     const plaintext = await app.request(

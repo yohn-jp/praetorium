@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { validateSystemNetwork } from "./system-network.mjs";
 
 export const requiredIntegrationCategories = [
   "workers-d1-do",
@@ -18,6 +19,7 @@ const inventoryKeys = [
   "clusterId",
   "cloudflare",
   "domains",
+  "network",
   "gateway",
   "buildkit",
   "buildWorker",
@@ -282,6 +284,10 @@ export function validateInventory(value) {
   ) {
     errors.push("domains.tlsSecretName must be a Kubernetes DNS subdomain");
   }
+
+  const systemNetwork = validateSystemNetwork(value.network, value.domains);
+  errors.push(...systemNetwork.errors);
+  blockers.push(...systemNetwork.blockers);
 
   exactKeys(
     value.gateway,

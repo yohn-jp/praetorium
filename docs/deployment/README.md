@@ -12,6 +12,12 @@ Before infrastructure application, create the referenced service credentials out
 
 The T14 harness consumes the separate `infrastructure/test/acceptance-inventory.json`. It follows the exact seven-category owned inventory schema and currently marks every category missing. Its owner identity is explicitly unresolved. `scripts/preflight-integration.mjs` reads that file without consulting the current Kubernetes context, never executes resource-provided commands, and reports missing resources as `BLOCKED` / `NOT_CHECKED`.
 
+## Explicit system network destinations
+
+`network.kubernetesApiEndpoints` must list operator-verified API destinations as `{ "address": "<single IP>", "port": <TCP port> }`: the Kubernetes Service VIP and any backend address/port required by the selected CNI's Service-DNAT enforcement. It starts unset. Do not copy a host's API address or guess a Kind subnet. `network.controlPlaneCidrs` and `network.gatewayServiceCidrs` accept only explicit host `/32` or `/128` destinations for the corresponding Pod-reachable origin. Private/local origins, HTTP Gateway URLs and nonstandard ports require explicit entries; literal origin IPs must match the supplied destinations. Ports come from the configured URL, including the supported disposable HTTP Gateway port. Normal public HTTPS on 443 uses the reviewed public egress rule. No DNS-resolution or CNI matching success is inferred from an inventory value.
+
+The renderer expands these public locators into static system NetworkPolicy rules. No broad CIDR, loopback, link-local, metadata endpoint or multicast destination can be added through these fields; additive rules must not reopen the public rule's metadata exclusions. Provisioner runtime egress uses named destination port `http` to owned Scriptorium Pods, paired with the tenant's exact declared-port ingress rule. The Instance Access service has no tenant egress. Source templates contain comment sentinels; full rendered manifests must contain structured rules and no unresolved tokens before apply. Validate API VIP/backend matching, DNS, named ports, permitted origins and denied metadata/private access against the explicitly owned disposable cluster and its policy-enforcing CNI. The checked-in Kind configuration does not establish that CNI acceptance.
+
 ## Disposable Kind flow
 
 Run all commands from the repository root. `plan` and `preflight` do not mutate a cluster. Every command names its inventory explicitly:

@@ -19,9 +19,9 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
+import { systemNetworkRenderValues } from "../infrastructure/scripts/system-network.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const defaultInventory = path.join(repoRoot, "infrastructure/test/disposable-inventory.json");
 
 function usage() {
   process.stderr.write(`Usage:
@@ -211,6 +211,7 @@ function buildKustomize(directory) {
 function renderValues(inventory) {
   const secret = inventory.secretRefs;
   return {
+    ...systemNetworkRenderValues(inventory),
     "@@CLUSTER_ID@@": inventory.clusterId,
     "@@PROVISIONER_WORKER_ID@@": `${inventory.clusterId}-provisioner`,
     "@@PROVISIONER_MAX_CPU_MILLI@@": String(inventory.buildPolicy.runtimeResourceLimits.cpuMilli),

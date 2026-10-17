@@ -121,5 +121,10 @@
       "privateKey": "tls.key"
     }
   },
-  "acmeContactEmail": "operator@praetorium.localhost"
+  "acmeContactEmail": "operator@praetorium.localhost",
+  "network": {
+    "kubernetesApiEndpoints": null,
+    "controlPlaneCidrs": [],
+    "gatewayServiceCidrs": []
+  }
 }

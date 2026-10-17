@@ -23,6 +23,7 @@
     "@praetorium/application": "workspace:*",
     "@praetorium/buildkit": "workspace:*",
     "@praetorium/contracts": "workspace:*",
-    "@praetorium/ghcr": "workspace:*"
+    "@praetorium/ghcr": "workspace:*",
+    "zod": "4.4.3"
   }
 }

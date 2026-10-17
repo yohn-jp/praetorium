@@ -68,6 +68,9 @@ importers:
       '@praetorium/ghcr':
         specifier: workspace:*
         version: link:../../plugins/ghcr
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
   apps/control-plane:
     dependencies:

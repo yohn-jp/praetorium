@@ -68,3 +68,11 @@ those contracts plus explicitly owned environments is required before the
 remaining implementations and real gates can finish. T15 full certification is
 blocked. No production deployment, key change, release/package publication or
 legacy-data retirement occurred.
+
+Final ledger reconciliation preserves the older coverage evidence as
+`historicalEvidenceCut` and identifies the current 4f52afd verification cut
+separately. Mapping tests rerun after reconciliation: 9 passed, no skips
+(`/tmp/praetorium-final-ledger-mapping.log`). Explicit lint rerun at `ba0b3a7`
+passed with command and exit code 0 preserved in
+`/tmp/praetorium-final-explicit-lint.json`; the historical quiet log alone does
+not preserve an exit code. No production source changed.

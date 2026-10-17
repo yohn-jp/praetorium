@@ -1764,13 +1764,7 @@ async function verifyControllerIdentityAndPermissions(
   }
 }
 
-function assertAdmissionPolicyDenial(
-  response,
-  policyName,
-  bindingName,
-  expectedValidationMessage,
-  description,
-) {
+function assertAdmissionPolicyDenial(response, expected, description) {
   assert.equal(
     response.statusCode,
     422,
@@ -1783,15 +1777,37 @@ function assertAdmissionPolicyDenial(
   assert.equal(body.reason, "Invalid", `${description} was not denied as Invalid`);
   assert.equal(body.code, 422, `${description} response code did not match HTTP 422`);
   assert.ok(typeof body.message === "string", `${description} denial omitted its message`);
-  const attributionPrefix = `ValidatingAdmissionPolicy '${policyName}' with binding '${bindingName}' denied request: `;
+  const { resource, group, resourceName, policyName, bindingName, validationMessage } = expected;
+  const policyDenialMessage = `ValidatingAdmissionPolicy '${policyName}' with binding '${bindingName}' denied request: ${validationMessage}`;
+  const resourceQualifiedName = group ? `${resource}.${group}` : resource;
   assert.ok(
-    body.message.startsWith(attributionPrefix),
-    `${description} was not attributed to the exact ValidatingAdmissionPolicy and binding`,
+    isRecord(body.details),
+    `${description} omitted Kubernetes Status.details from its admission denial`,
   );
   assert.equal(
-    body.message.slice(attributionPrefix.length),
-    expectedValidationMessage,
-    `${description} did not report the expected validation denial (policy configuration/evaluation failures are not acceptance)`,
+    body.details.kind,
+    resource,
+    `${description} reported an unexpected denied resource kind`,
+  );
+  assert.equal(
+    body.details.group ?? "",
+    group,
+    `${description} reported an unexpected resource group`,
+  );
+  assert.equal(
+    body.details.name,
+    resourceName,
+    `${description} reported an unexpected resource name`,
+  );
+  assert.equal(
+    body.message,
+    `${resourceQualifiedName} "${resourceName}" is forbidden: ${policyDenialMessage}`,
+    `${description} did not use the expected resource-wrapped VAP denial`,
+  );
+  assert.ok(
+    Array.isArray(body.details.causes) &&
+      body.details.causes.some((cause) => cause.message === policyDenialMessage),
+    `${description} did not include exact policy+binding+validation attribution in Status.details.causes`,
   );
 }
 
@@ -1842,9 +1858,15 @@ async function verifyProvisionerAdmissionGuards(
   });
   assertAdmissionPolicyDenial(
     namespaceResponse,
-    "praetorium-provisioner-instance-namespaces",
-    "praetorium-provisioner-instance-namespaces",
-    "The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.",
+    {
+      resource: "namespaces",
+      group: "",
+      resourceName: namespaceName,
+      policyName: "praetorium-provisioner-instance-namespaces",
+      bindingName: "praetorium-provisioner-instance-namespaces",
+      validationMessage:
+        "The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.",
+    },
     "unowned run-unique Namespace server-side dry run",
   );
   await requireNotFound(controllerTransport, namespacePath, "dry-run namespace", requestMs);
@@ -1875,9 +1897,15 @@ async function verifyProvisionerAdmissionGuards(
   });
   assertAdmissionPolicyDenial(
     roleBindingResponse,
-    "praetorium-provisioner-instance-rolebindings",
-    "praetorium-provisioner-instance-rolebindings",
-    "The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.",
+    {
+      resource: "rolebindings",
+      group: "rbac.authorization.k8s.io",
+      resourceName: roleBindingName,
+      policyName: "praetorium-provisioner-instance-rolebindings",
+      bindingName: "praetorium-provisioner-instance-rolebindings",
+      validationMessage:
+        "The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.",
+    },
     "run-unique system RoleBinding server-side dry run with the exact tenant role and Provisioner subject",
   );
   await requireNotFound(controllerTransport, roleBindingPath, "dry-run RoleBinding", requestMs);
@@ -3156,121 +3184,117 @@ test("Kubernetes identity and access reviews use their actual API resources", as
   );
 });
 
-test("T14 admission proof requires the exact VAP and binding Invalid denial", () => {
-  const expected = {
-    statusCode: 422,
-    body: {
-      kind: "Status",
-      status: "Failure",
-      reason: "Invalid",
-      code: 422,
-      message:
-        "ValidatingAdmissionPolicy 'praetorium-provisioner-instance-namespaces' with binding 'praetorium-provisioner-instance-namespaces' denied request: The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.",
-    },
+test("T14 admission proof requires upstream-wrapped exact VAP and binding Invalid denial", () => {
+  function makeVapStatus({
+    resource,
+    group,
+    resourceName,
+    policyName,
+    bindingName,
+    validationMessage,
+    reason = "Invalid",
+    code = 422,
+  }) {
+    const policyDenialMessage = `ValidatingAdmissionPolicy '${policyName}' with binding '${bindingName}' denied request: ${validationMessage}`;
+    const resourceQualifiedName = group ? `${resource}.${group}` : resource;
+    return {
+      statusCode: code,
+      body: {
+        kind: "Status",
+        apiVersion: "v1",
+        metadata: {},
+        status: "Failure",
+        message: `${resourceQualifiedName} "${resourceName}" is forbidden: ${policyDenialMessage}`,
+        reason,
+        details: {
+          kind: resource,
+          ...(group ? { group } : {}),
+          name: resourceName,
+          causes: [{ message: policyDenialMessage }],
+        },
+        code,
+      },
+    };
+  }
+
+  const namespaceExpected = {
+    resource: "namespaces",
+    group: "",
+    resourceName: "praetorium-instances-t14-deny-0123456789abcdef0123",
+    policyName: "praetorium-provisioner-instance-namespaces",
+    bindingName: "praetorium-provisioner-instance-namespaces",
+    validationMessage:
+      "The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.",
   };
-  const expectedMessage =
-    "The Provisioner may create or update only a namespace owned by this cluster and one valid instance identity.";
+  const roleBindingExpected = {
+    resource: "rolebindings",
+    group: "rbac.authorization.k8s.io",
+    resourceName: "t14-deny-0123456789abcdef0123",
+    policyName: "praetorium-provisioner-instance-rolebindings",
+    bindingName: "praetorium-provisioner-instance-rolebindings",
+    validationMessage:
+      "The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.",
+  };
+
   assert.doesNotThrow(() =>
     assertAdmissionPolicyDenial(
-      expected,
-      "praetorium-provisioner-instance-namespaces",
-      "praetorium-provisioner-instance-namespaces",
-      expectedMessage,
+      makeVapStatus(namespaceExpected),
+      namespaceExpected,
       "test Namespace request",
     ),
   );
-  const roleBindingValidationMessage =
-    "The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.";
   assert.doesNotThrow(() =>
     assertAdmissionPolicyDenial(
-      {
-        statusCode: 422,
-        body: {
-          kind: "Status",
-          status: "Failure",
-          reason: "Invalid",
-          code: 422,
-          message:
-            "ValidatingAdmissionPolicy 'praetorium-provisioner-instance-rolebindings' with binding 'praetorium-provisioner-instance-rolebindings' denied request: The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.",
-        },
-      },
-      "praetorium-provisioner-instance-rolebindings",
-      "praetorium-provisioner-instance-rolebindings",
-      roleBindingValidationMessage,
+      makeVapStatus(roleBindingExpected),
+      roleBindingExpected,
       "test system RoleBinding request",
     ),
   );
+
+  const genericRbacForbidden = makeVapStatus(namespaceExpected);
+  genericRbacForbidden.statusCode = 403;
+  genericRbacForbidden.body.status = "Failure";
+  genericRbacForbidden.body.reason = "Forbidden";
+  genericRbacForbidden.body.code = 403;
+  genericRbacForbidden.body.message = `namespaces "${namespaceExpected.resourceName}" is forbidden: User "system:serviceaccount:default:default" cannot create namespaces`;
+  genericRbacForbidden.body.details = {
+    kind: "namespaces",
+    name: namespaceExpected.resourceName,
+  };
   assert.throws(
     () =>
       assertAdmissionPolicyDenial(
-        {
-          ...expected,
-          statusCode: 403,
-          body: { ...expected.body, reason: "Forbidden", code: 403 },
-        },
-        "praetorium-provisioner-instance-namespaces",
-        "praetorium-provisioner-instance-namespaces",
-        expectedMessage,
+        genericRbacForbidden,
+        namespaceExpected,
         "test Namespace request",
       ),
     /HTTP 422 Invalid/u,
     "generic RBAC Forbidden must not count as proof that the VAP is enforcing",
   );
+
+  const bindinglessDenial = makeVapStatus(namespaceExpected);
+  const withoutBinding = `ValidatingAdmissionPolicy '${namespaceExpected.policyName}' denied request: ${namespaceExpected.validationMessage}`;
+  bindinglessDenial.body.message = `namespaces "${namespaceExpected.resourceName}" is forbidden: ${withoutBinding}`;
+  bindinglessDenial.body.details.causes = [{ message: withoutBinding }];
   assert.throws(
     () =>
-      assertAdmissionPolicyDenial(
-        {
-          ...expected,
-          body: {
-            ...expected.body,
-            message: 'User "system:serviceaccount:default:default" cannot create namespaces',
-          },
-        },
-        "praetorium-provisioner-instance-namespaces",
-        "praetorium-provisioner-instance-namespaces",
-        expectedMessage,
-        "test Namespace request",
-      ),
-    /not attributed to the exact ValidatingAdmissionPolicy and binding/u,
+      assertAdmissionPolicyDenial(bindinglessDenial, namespaceExpected, "test Namespace request"),
+    /expected resource-wrapped VAP denial/u,
+    "a policy name without exact binding attribution must fail",
   );
+
+  const configurationFailure = makeVapStatus(namespaceExpected);
+  const failedConfiguration = `ValidatingAdmissionPolicy '${namespaceExpected.policyName}' with binding '${namespaceExpected.bindingName}' denied request: failed to configure binding: CEL error`;
+  configurationFailure.body.message = `namespaces "${namespaceExpected.resourceName}" is forbidden: ${failedConfiguration}`;
+  configurationFailure.body.details.causes = [{ message: failedConfiguration }];
   assert.throws(
     () =>
       assertAdmissionPolicyDenial(
-        {
-          ...expected,
-          body: {
-            ...expected.body,
-            message:
-              "ValidatingAdmissionPolicy 'praetorium-provisioner-instance-namespaces' denied request",
-          },
-        },
-        "praetorium-provisioner-instance-namespaces",
-        "praetorium-provisioner-instance-namespaces",
-        expectedMessage,
+        configurationFailure,
+        namespaceExpected,
         "test Namespace request",
       ),
-    /not attributed to the exact ValidatingAdmissionPolicy and binding/u,
-    "a message without the exact binding attribution must fail",
-  );
-  assert.throws(
-    () =>
-      assertAdmissionPolicyDenial(
-        {
-          ...expected,
-          body: {
-            ...expected.body,
-            message: expected.body.message.replace(
-              expectedMessage,
-              "failed to configure binding: CEL error",
-            ),
-          },
-        },
-        "praetorium-provisioner-instance-namespaces",
-        "praetorium-provisioner-instance-namespaces",
-        expectedMessage,
-        "test Namespace request",
-      ),
-    /expected validation denial/u,
+    /expected resource-wrapped VAP denial/u,
     "policy configuration/evaluation failures must not count as an enforced validation",
   );
 });

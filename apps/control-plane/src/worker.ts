@@ -15,7 +15,11 @@ import { InstanceService, RepositoryRegistryService } from "@praetorium/applicat
 import { OperationService } from "@praetorium/application/operations";
 import { D1PlatformStore, type D1Database } from "@praetorium/persistence/d1";
 import { createControlCredentialIssuer } from "./control-credentials.js";
-import { resolveAdmittedRuntime, resolveRuntimeContext } from "./runtime-context.js";
+import {
+  readAdmittedPersistence,
+  resolveAdmittedRuntime,
+  resolveRuntimeContext,
+} from "./runtime-context.js";
 import { createControlPlaneApp, equalSecret, boundedJson } from "./app.js";
 export interface CoordinatorNamespace {
   idFromName(name: string): unknown;
@@ -148,14 +152,22 @@ function composeServices(env: ControlPlaneEnv) {
             newOperationId: () =>
               newOperationId(Date.now(), crypto.getRandomValues(new Uint8Array(10))),
             resolveCurrentRuntime: async (snapshot, revision) =>
-              resolveAdmittedRuntime(snapshot, revision, snapshot.instance.observedRuntimeEpoch, {
-                gatewayOrigin: required(env.GATEWAY_ORIGIN),
-                controlPlaneOrigin: required(env.CONTROL_PLANE_ORIGIN),
-                instanceHostSuffix: required(env.INSTANCE_HOST_SUFFIX),
-                registryHost: required(env.RUNTIME_REGISTRY_HOST),
-                credentialBrokerLocator: required(env.GIT_CREDENTIAL_BROKER_LOCATOR),
-                defaultBranchPolicy: "revalidate-current-default",
-              }),
+              resolveAdmittedRuntime(
+                snapshot,
+                revision,
+                snapshot.instance.observedRuntimeEpoch,
+                {
+                  gatewayOrigin: required(env.GATEWAY_ORIGIN),
+                  controlPlaneOrigin: required(env.CONTROL_PLANE_ORIGIN),
+                  instanceHostSuffix: required(env.INSTANCE_HOST_SUFFIX),
+                  registryHost: required(env.RUNTIME_REGISTRY_HOST),
+                  credentialBrokerLocator: required(env.GIT_CREDENTIAL_BROKER_LOCATOR),
+                  defaultBranchPolicy: "revalidate-current-default",
+                },
+                buildServices
+                  ? await readAdmittedPersistence(revision, buildServices.registry)
+                  : undefined,
+              ),
           },
         }
       : {}),
@@ -200,14 +212,33 @@ function composeServices(env: ControlPlaneEnv) {
                   BuildInputSchema.parse(JSON.parse(row.build_input_json)),
                 );
               }
-              return resolveRuntimeContext(claim, {
-                gatewayOrigin: required(env.GATEWAY_ORIGIN),
-                controlPlaneOrigin: required(env.CONTROL_PLANE_ORIGIN),
-                instanceHostSuffix: required(env.INSTANCE_HOST_SUFFIX),
-                registryHost: required(env.RUNTIME_REGISTRY_HOST),
-                credentialBrokerLocator: required(env.GIT_CREDENTIAL_BROKER_LOCATOR),
-                defaultBranchPolicy: "revalidate-current-default",
-              });
+              const persistenceEntries = buildServices
+                ? await Promise.all(
+                    [claim.currentDeploymentRevision, claim.deploymentRevision].map(
+                      async (revision) => {
+                        const persistence = await readAdmittedPersistence(
+                          revision,
+                          buildServices.registry,
+                        );
+                        return revision && persistence
+                          ? ([revision.revisionId, persistence] as const)
+                          : null;
+                      },
+                    ),
+                  )
+                : [];
+              return resolveRuntimeContext(
+                claim,
+                {
+                  gatewayOrigin: required(env.GATEWAY_ORIGIN),
+                  controlPlaneOrigin: required(env.CONTROL_PLANE_ORIGIN),
+                  instanceHostSuffix: required(env.INSTANCE_HOST_SUFFIX),
+                  registryHost: required(env.RUNTIME_REGISTRY_HOST),
+                  credentialBrokerLocator: required(env.GIT_CREDENTIAL_BROKER_LOCATOR),
+                  defaultBranchPolicy: "revalidate-current-default",
+                },
+                new Map(persistenceEntries.filter((entry) => entry !== null)),
+              );
             },
           },
         }

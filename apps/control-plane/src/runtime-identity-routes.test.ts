@@ -271,6 +271,24 @@ afterEach(() => {
 });
 
 describe("runtime identity routes", () => {
+  it("exposes renewable binding metadata only for the configured Provisioner cluster", async () => {
+    const h = await harness(false);
+    const response = await h.app.request("/internal/provisioner/runtime-bindings/7001");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      runtimeId: "res_current-4",
+      leaseId: "res_current-4",
+      clusterId: CLUSTER_ID,
+      repositoryId: REPOSITORY_ID,
+      installationId: INSTALLATION_ID,
+    });
+    const foreign = createRuntimeIdentityRoutes({
+      ...h.dependencies,
+      clusterId: "another-cluster",
+    });
+    expect((await foreign.request("/internal/provisioner/runtime-bindings/7001")).status).toBe(404);
+    expect((await h.app.request("/internal/provisioner/runtime-bindings/7002")).status).toBe(404);
+  });
   it("publishes only the public P-256 key and returns current observed writer metadata during a pending build", async () => {
     const h = await harness(false);
     const jwksResponse = await h.app.request("/.well-known/runtime-identity-jwks.json");

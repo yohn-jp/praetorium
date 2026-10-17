@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { buildKey, canonicalBuildInput, BuildInputSchema, DigestSchema } from "./build.js";
+import { PersistenceCompatibilitySchema } from "./persistence-compatibility.js";
 
 const ModuleIdentitySchema = z.strictObject({
   id: z.string().min(1).max(128),
@@ -46,6 +47,7 @@ export const CompositionManifestSchema = z
     server: z.strictObject({ entry: ArtifactEntrySchema, moduleIds: ModuleIdsSchema }),
     browser: z.strictObject({ entry: ArtifactEntrySchema, moduleIds: ModuleIdsSchema }),
     nativeDependencies: z.array(NativeDependencySchema).max(512),
+    persistence: PersistenceCompatibilitySchema.optional(),
     smoke: z.strictObject({
       id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),
       healthPath: z

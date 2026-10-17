@@ -1,6 +1,16 @@
 # Scriptorium producer contract for Praetorium
 
-Status: required cross-repository contract, not a claim of producer implementation. Authority: Epic #1 and [PLATFORM.md](PLATFORM.md). Only Scriptorium's coordinator publishes its producer implementation. Praetorium implements a consumer adapter, never an authentication bypass or a private fork of the writer.
+Status: required cross-repository contract, not a claim of producer implementation. Authority: the current Hosted Integration Completion instruction, Epic #1 and [PLATFORM.md](PLATFORM.md). Sol now coordinates implementation in both repositories. The historical read-only producer observations below record earlier cuts and do not prohibit this campaign's producer implementation.
+
+## Current hosted campaign contract decisions
+
+The canonical existing `scriptorium-build/v1`, `scriptorium-platform/v1`, access grant, mutation receipt and runtime identity/control parsers remain the wire authority. The campaign starts at Praetorium `1be782c3819fed58ec319dd93dc34c80938b88cd` and Scriptorium `3f7b174ef6667b004c21e24a9ed89b8329d04c04`. Availability and real acceptance will be recorded against the integrated source/artifact cuts; these decisions alone do not certify them.
+
+The hosted runtime reads a mounted canonical assignment JSON file at `/run/scriptorium/runtime-assignment.json` (`SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH`), with a separate renewable runtime identity JWT at `/run/scriptorium/runtime-identity.jwt`. Provisioner renews that identity through its existing authenticated Control Plane issuance route; no Control Plane or Instance Access shared credential belongs in a tenant container. Instance Access retains handoff/refresh/logout and the HttpOnly `__Host-praetorium_access` cookie. Producer UI/API/MCP verify the same scoped grant, with same-origin CSRF checks for cookie writes. `credentialBrokerLocator` is the trusted HTTPS broker URL. Process termination follows authenticated safe quiesce, then provider SIGTERM and observed writer absence. Runtime metadata's shutdown path names that existing quiesce endpoint.
+
+Optional `CompositionManifest.persistence` declares `scriptorium-persistence/v1` directional support: `readable[{formatId,versions[]}]` and `writable[{formatId,version}]`. Writers must read their own output, and rollback readers must understand every format/version the target can write, including browser-origin recovery. Stable format IDs are `scriptorium.git-operations` (v1), `scriptorium.git-publications` (v1), `scriptorium.git-proposals` (v1/v2), and `scriptorium.browser-recovery-indexeddb` (v3). The producer declares only supported formats from its actual code.
+
+Optional `RuntimeStatus.persistence` reports `{state: verified|unknown, observedRemoteCommit, formats[{formatId,version}]}` from a complete scan of the confirmed remote revision. A server does not claim to inspect browser IndexedDB. Missing declarations, unknown/incomplete observations, unsupported actual versions or a mismatched remote revision cannot establish rollback compatibility. The Control Plane projects declarations only after checking the admitted composition blob's digest and build binding. Fresh post-target evidence, safe quiesce and writer-absence fencing remain required before replacement. Historical artifacts remain parseable without these optional fields; they carry no compatibility proof.
 
 ## 1. Observed producer and closure rule
 

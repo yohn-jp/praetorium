@@ -283,7 +283,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/domain
 
-  plugins/kubernetes: {}
+  plugins/kubernetes:
+    dependencies:
+      '@praetorium/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
 
   plugins/legacy-recovery: {}
 

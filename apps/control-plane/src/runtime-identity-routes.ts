@@ -172,6 +172,16 @@ export function createRuntimeIdentityRoutes(deps: RuntimeIdentityRoutesDependenc
     return context.json(binding);
   });
 
+  // The outer Control Plane middleware requires the Provisioner credential on
+  // this namespace. No Gateway credential is projected into a tenant runtime.
+  app.get("/internal/provisioner/runtime-bindings/:repositoryId", async (context) => {
+    const repositoryId = parseRepositoryId(context.req.param("repositoryId"));
+    const binding = await deps.runtimeBindings.getCurrent(repositoryId);
+    if (!binding || binding.clusterId !== deps.clusterId)
+      return context.json({ error: { code: "RUNTIME_BINDING_UNAVAILABLE" } }, 404);
+    return context.json(binding);
+  });
+
   app.post("/internal/provisioner/runtime-identity", async (context) => {
     const input = RuntimeIdentityRequestSchema.parse(await boundedJson(context.req.raw));
     const nowMs = now();

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PersistenceObservationSchema } from "./persistence-compatibility.js";
 
 export const ScriptoriumBuildContractVersion = z.literal("scriptorium-build/v1");
 export const ScriptoriumPlatformContractVersion = z.literal("scriptorium-platform/v1");
@@ -140,6 +141,7 @@ export const RuntimeStatusSchema = z.strictObject({
   ready: z.boolean(),
   activity: ActivitySchema,
   lastConfirmedRemoteRevision: RemoteRevisionSchema,
+  persistence: PersistenceObservationSchema.optional(),
   observedAt: z.iso.datetime(),
 });
 export type RuntimeStatus = z.infer<typeof RuntimeStatusSchema>;

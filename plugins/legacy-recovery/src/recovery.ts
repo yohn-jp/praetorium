@@ -19,17 +19,16 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { validateOffHostResticDestination } from "./restic-destination.ts";
 
 export const IMPORT_FORMAT = "praetorium.legacy-import-plan.v1";
 export const METADATA_FORMAT = "praetorium.platform-metadata-backup.v1";
 
 const ARCHIVE_FORMAT = "praetorium.encrypted-metadata.v1";
 const FILE_NAMES = ["d1-export.sql", "migration-checksums.json", "platform-config.json"] as const;
-const REMOTE_RESTIC_SCHEMES = new Set(["s3", "sftp", "rest", "gs", "azure", "b2", "swift"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SNAPSHOT_ID = /^[0-9a-f]{64}$/i;
@@ -966,38 +965,7 @@ function d1DatabaseInfo(payload: unknown): { databaseId: string; name?: string }
   throw new Error("Wrangler did not return a valid D1 database identity");
 }
 
-function ensureRemoteRestic(env: NodeJS.ProcessEnv): {
-  repository: string;
-  fingerprint: string;
-  backend: string;
-} {
-  const repository = env.RESTIC_REPOSITORY;
-  if (!repository) throw new Error("RESTIC_REPOSITORY is required for off-host metadata backup");
-  const separator = repository.indexOf(":");
-  const backend = separator > 0 ? repository.slice(0, separator).toLowerCase() : "";
-  const target = separator > 0 ? repository.slice(separator + 1) : "";
-  if (!REMOTE_RESTIC_SCHEMES.has(backend) || !target || target.startsWith("//")) {
-    throw new Error("RESTIC_REPOSITORY must name an approved off-host Restic backend");
-  }
-  if (/^[a-z][a-z0-9+.-]*:\/\/[^/]*@/i.test(target))
-    throw new Error("Restic backend credentials must not be embedded in the repository URL");
-  if (!env.RESTIC_PASSWORD && !env.RESTIC_PASSWORD_FILE)
-    throw new Error("Restic password environment is required");
-  if (env.RESTIC_PASSWORD_FILE) {
-    const metadata = awaitStatFile(env.RESTIC_PASSWORD_FILE);
-    if (!metadata)
-      throw new Error("RESTIC_PASSWORD_FILE must reference an accessible regular file");
-  }
-  return { repository, backend, fingerprint: sha256(repository) };
-}
-
-function awaitStatFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
+const ensureRemoteRestic = validateOffHostResticDestination;
 
 function resticEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const allow = (name: string) =>
@@ -1200,6 +1168,7 @@ export async function createD1ResticBackup(
       sourceRevision: source.sourceRevision,
       archiveSha256: sha256(archive),
       repositoryFingerprint: remote.fingerprint,
+      destinationIdentityFingerprint: remote.destinationIdentityFingerprint,
       destination: "off-host-restic",
     };
   } finally {
@@ -1320,6 +1289,7 @@ export async function createLegacyPvcSnapshot(
     sourceReleaseId: metadata.releaseId,
     sourceImageDigest: metadata.imageDigest,
     repositoryFingerprint: remote.fingerprint,
+    destinationIdentityFingerprint: remote.destinationIdentityFingerprint,
     sourcePath: dataPath,
     readOnlyMountVerified: true,
     oldDataDeleted: false,
@@ -1538,6 +1508,7 @@ export async function stageLegacyD1ResticRestore(
       exportSha256: (manifest.databaseExport as Record<string, unknown>).sha256,
       migrationChecksumsSha256: (manifest.migrationChecksums as Record<string, unknown>).sha256,
       repositoryFingerprint: repository.fingerprint,
+      destinationIdentityFingerprint: repository.destinationIdentityFingerprint,
       d1ImportExecuted: false,
     };
   } finally {

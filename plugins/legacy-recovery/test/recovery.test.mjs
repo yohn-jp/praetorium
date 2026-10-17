@@ -13,6 +13,7 @@ import {
   encryptMetadataBackup,
   stageLegacyD1ResticRestore,
 } from "../src/recovery.ts";
+import { validateOffHostResticDestination } from "../src/restic-destination.ts";
 
 const DATABASE_ID = "c89db32e-83f4-4e62-8cd7-7c8f97659029";
 const REVISION = "534b6868432cd2e62df04d22f1e3dac6341b9aaf";
@@ -411,6 +412,7 @@ test("metadata CLI backs up, verifies, and stages an isolated restore without im
       env: {
         ...process.env,
         RESTIC_REPOSITORY: "s3:s3.amazonaws.com/legacy-cli-test",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:s3.amazonaws.com/legacy-cli-test",
         RESTIC_PASSWORD: "legacy-cli-test-secret",
       },
       encoding: "utf8",
@@ -440,6 +442,191 @@ test("metadata CLI backs up, verifies, and stages an isolated restore without im
   await assert.rejects(stat(tamperedDestination));
 });
 
+test("off-host Restic destination validation binds owner-approved remote identity and rejects local targets", () => {
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "s3:s3.amazonaws.com/praetorium/recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /exactly match the owner-approved/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "rest:http://127.0.0.1:8000/recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "rest:http://127.0.0.1:8000/recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /loopback or local endpoint/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "rest:http://[::ffff:7f00:1]:8000/recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "rest:http://[::ffff:7f00:1]:8000/recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /loopback or local endpoint/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "s3:/tmp/recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:/tmp/recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /local filesystem path/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "s3:127.0.0.1:9000/recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:127.0.0.1:9000/recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /loopback or local endpoint/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "s3:localhost/recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:localhost/recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /loopback or local endpoint/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "sftp:operator@localhost:recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "sftp:operator@localhost:recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /loopback or local endpoint/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "s3:http://localhost:9000/recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:http://localhost:9000/recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /loopback or local endpoint/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "s3:s3.amazonaws.com/praetorium/recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:s3.amazonaws.com/praetorium/recovery",
+        RESTIC_REPOSITORY_FILE: "/protected/alternate-repository",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /RESTIC_REPOSITORY_FILE is an unsupported conflicting configuration/,
+  );
+  assert.throws(
+    () =>
+      validateOffHostResticDestination({
+        RESTIC_REPOSITORY: "s3:s3.amazonaws.com/other/recovery",
+        PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:s3.amazonaws.com/approved/recovery",
+        RESTIC_PASSWORD: "opaque-test-password",
+      }),
+    /exactly match the owner-approved/,
+  );
+
+  const repository = "s3:s3.amazonaws.com/praetorium/recovery";
+  assert.deepEqual(
+    validateOffHostResticDestination({
+      RESTIC_REPOSITORY: repository,
+      PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: repository,
+      RESTIC_PASSWORD: "opaque-test-password",
+    }),
+    {
+      backend: "s3",
+      endpoint: "s3.amazonaws.com",
+      repositoryScope: "praetorium/recovery",
+      fingerprint: digest(repository),
+      destinationIdentityFingerprint: digest(
+        JSON.stringify({
+          format: "praetorium.offhost-restic-destination.v1",
+          backend: "s3",
+          endpoint: "s3.amazonaws.com",
+          repositoryFingerprint: digest(repository),
+        }),
+      ),
+    },
+  );
+
+  const customRepository = "s3:https://backup-owned.example.test/recovery-bucket/praetorium";
+  assert.deepEqual(
+    validateOffHostResticDestination({
+      RESTIC_REPOSITORY: customRepository,
+      PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: customRepository,
+      RESTIC_PASSWORD: "opaque-test-password",
+    }),
+    {
+      backend: "s3",
+      endpoint: "https://backup-owned.example.test",
+      repositoryScope: "recovery-bucket/praetorium",
+      fingerprint: digest(customRepository),
+      destinationIdentityFingerprint: digest(
+        JSON.stringify({
+          format: "praetorium.offhost-restic-destination.v1",
+          backend: "s3",
+          endpoint: "https://backup-owned.example.test",
+          repositoryFingerprint: digest(customRepository),
+        }),
+      ),
+    },
+  );
+
+  const portRepository = "s3:backup-owned.example.test:9000/recovery-bucket/praetorium";
+  assert.deepEqual(
+    validateOffHostResticDestination({
+      RESTIC_REPOSITORY: portRepository,
+      PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: portRepository,
+      RESTIC_PASSWORD: "opaque-test-password",
+    }),
+    {
+      backend: "s3",
+      endpoint: "backup-owned.example.test:9000",
+      repositoryScope: "recovery-bucket/praetorium",
+      fingerprint: digest(portRepository),
+      destinationIdentityFingerprint: digest(
+        JSON.stringify({
+          format: "praetorium.offhost-restic-destination.v1",
+          backend: "s3",
+          endpoint: "backup-owned.example.test:9000",
+          repositoryFingerprint: digest(portRepository),
+        }),
+      ),
+    },
+  );
+
+  const sftpRepository = "sftp:operator@backup.example.test:relative/recovery";
+  assert.deepEqual(
+    validateOffHostResticDestination({
+      RESTIC_REPOSITORY: sftpRepository,
+      PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: sftpRepository,
+      RESTIC_PASSWORD: "opaque-test-password",
+    }),
+    {
+      backend: "sftp",
+      endpoint: "backup.example.test",
+      repositoryScope: "relative/recovery",
+      fingerprint: digest(sftpRepository),
+      destinationIdentityFingerprint: digest(
+        JSON.stringify({
+          format: "praetorium.offhost-restic-destination.v1",
+          backend: "sftp",
+          endpoint: "backup.example.test",
+          repositoryFingerprint: digest(sftpRepository),
+        }),
+      ),
+    },
+  );
+});
+
 test("remote D1 CLI path exports only the named remote database, keeps Restic secrets out of Wrangler, and verifies its archive", async (t) => {
   const root = await tempDir(t);
   const config = join(root, "wrangler.toml");
@@ -454,6 +641,7 @@ test("remote D1 CLI path exports only the named remote database, keeps Restic se
   const env = {
     PATH: process.env.PATH,
     RESTIC_REPOSITORY: "s3:s3.amazonaws.com/praetorium-recovery-test",
+    PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:s3.amazonaws.com/praetorium-recovery-test",
     RESTIC_PASSWORD: "restic-fixture-secret",
     CLOUDFLARE_API_TOKEN: "cloudflare-fixture-secret",
   };
@@ -499,6 +687,19 @@ test("remote D1 CLI path exports only the named remote database, keeps Restic se
     { run, env, tempRoot: root, now: () => new Date("2026-10-17T00:00:00.000Z") },
   );
   assert.equal(receipt.snapshotId, SNAPSHOT_ID);
+  const repositoryFingerprint = digest(env.RESTIC_REPOSITORY);
+  assert.equal(
+    receipt.destinationIdentityFingerprint,
+    digest(
+      JSON.stringify({
+        format: "praetorium.offhost-restic-destination.v1",
+        backend: "s3",
+        endpoint: "s3.amazonaws.com",
+        repositoryFingerprint,
+      }),
+    ),
+  );
+  assert.equal(JSON.stringify(receipt).includes("s3.amazonaws.com"), false);
   const info = calls.find((call) => call.command === "wrangler" && call.args[1] === "info");
   const exportCall = calls.find((call) => call.command === "wrangler" && call.args[1] === "export");
   const restic = calls.find((call) => call.command === "restic");
@@ -508,6 +709,7 @@ test("remote D1 CLI path exports only the named remote database, keeps Restic se
   assert.ok(resticBackup.args.some((argument) => argument.startsWith("recovery-point:")));
   assert.equal(info.env.RESTIC_PASSWORD, undefined);
   assert.equal(restic.env.CLOUDFLARE_API_TOKEN, undefined);
+  assert.equal(restic.env.PRAETORIUM_OFFHOST_RESTIC_REPOSITORY, undefined);
   assert.equal((await stat(output)).mode & 0o777, 0o600);
   const decrypted = decryptMetadataBackup(await readFile(output), PASSPHRASE);
   assert.equal(decrypted.manifest.source.databaseId, DATABASE_ID);
@@ -546,6 +748,7 @@ test("legacy D1 Restic restore remains checksum-verified, isolated, and inert", 
   );
   const env = {
     RESTIC_REPOSITORY: "s3:s3.amazonaws.com/legacy-restore-fixture",
+    PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:s3.amazonaws.com/legacy-restore-fixture",
     RESTIC_PASSWORD: "restic-fixture-secret",
   };
   let tamperSql = false;
@@ -600,6 +803,7 @@ test("legacy PVC Restic CLI requires a read-only /data mount and records the exa
   const calls = [];
   const env = {
     RESTIC_REPOSITORY: "s3:https://backup.example.test/legacy",
+    PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: "s3:https://backup.example.test/legacy",
     RESTIC_PASSWORD: "restic-fixture-secret",
     PRAETORIUM_LEGACY_INSTANCE_ID: INSTANCE_A,
     PRAETORIUM_LEGACY_VOLUME_UID: VOLUME_UID,

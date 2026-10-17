@@ -65,7 +65,11 @@ pnpm --filter @praetorium/legacy-recovery recovery -- metadata-restore \
 
 `metadata-restore` refuses an existing destination and any path inside the current checkout. It authenticates and verifies all file checksums before creating the destination, then writes the SQL as an inert file and reports `sqlImported: false`. A restore drill must use a disposable D1 instance and a separately reviewed import procedure; this command never imports SQL.
 
-For a remote D1 backup in one explicit operation, `d1-backup` requires `--remote`, calls Wrangler `d1 info` and `d1 export --remote`, encrypts the export/config/checksum set, then uploads the encrypted archive to the approved remote Restic repository. It retains the source `arcadia-platform-d1` and `recovery-point:<id>` tags alongside the Praetorium format tag. Wrangler receives no Restic credentials, Restic receives no Cloudflare credentials, and the receipt contains the D1 ID, source revision, archive checksum, snapshot ID, and repository fingerprint only.
+For a remote D1 backup in one explicit operation, `d1-backup` requires `--remote`, calls Wrangler `d1 info` and `d1 export --remote`, encrypts the export/config/checksum set, then uploads the encrypted archive to the approved remote Restic repository. It retains the source `arcadia-platform-d1` and `recovery-point:<id>` tags alongside the Praetorium format tag. Wrangler receives no Restic credentials, Restic receives no Cloudflare credentials, and the receipt contains the D1 ID, source revision, archive checksum, snapshot ID, repository fingerprint, and a fingerprint of the parsed repository identity; it does not contain the raw repository URI or endpoint.
+
+Set both `RESTIC_REPOSITORY` and `PRAETORIUM_OFFHOST_RESTIC_REPOSITORY` from the owner's protected recovery configuration to the same exact repository URI. This binds the effective Restic repository to the destination approved for that recovery environment. Do not derive the approval value from an untrusted command argument. The validator also rejects local filesystem paths and exposed loopback/local hosts before starting Restic. A matching URI is configuration evidence; the real backup acceptance run must still use and verify the owner's actual remote storage account and destination.
+
+For S3-compatible storage, put the actual endpoint directly in the repository URI, for example `s3:https://backup.example.test:9000/bucket`. The validator binds and checks that parsed endpoint. The command rejects `RESTIC_REPOSITORY_FILE`, which would introduce a second Restic repository source.
 
 ```sh
 pnpm --filter @praetorium/legacy-recovery recovery -- d1-backup \
@@ -79,7 +83,7 @@ pnpm --filter @praetorium/legacy-recovery recovery -- d1-backup \
   --key-file /protected/keys/platform-recovery.key
 ```
 
-Supply Wrangler and Restic credentials through the approved secret mechanism. Restic repositories must use a supported off-host URL scheme; local paths and URL-embedded credentials are rejected. Restoring a new-format archive from Restic first requires retrieving it with `restic restore <snapshot-id> --target <isolated-staging>`, then passing that archive to `metadata-verify` and `metadata-restore`.
+Supply Wrangler and Restic credentials through the approved secret mechanism. The approved-destination variable above is required for D1 backup, legacy D1 staging, and PVC backup. Restic repositories must use a supported remote scheme and exactly match that approved identity; local paths, loopback/local endpoints, and URL-embedded credentials are rejected. Restoring a new-format archive from Restic first requires retrieving it with `restic restore <snapshot-id> --target <isolated-staging>`, then passing that archive to `metadata-verify` and `metadata-restore`.
 
 Existing source-format `arcadia-platform.d1-recovery.v1` snapshots can be restored directly to a protected isolated staging directory. This checks their SQL byte count and SHA-256 plus the migration checksum SHA-256 before writing anything, and never runs Wrangler `execute`:
 
@@ -98,7 +102,7 @@ The application PVC remains opaque. `pvc-backup` runs within a controlled read-o
 pnpm --filter @praetorium/legacy-recovery recovery -- pvc-backup
 ```
 
-Required variables are `RESTIC_REPOSITORY`, `RESTIC_PASSWORD_FILE` or `RESTIC_PASSWORD`, `PRAETORIUM_LEGACY_INSTANCE_ID`, `PRAETORIUM_LEGACY_VOLUME_UID`, `PRAETORIUM_LEGACY_SCHEMA_VERSION`, `PRAETORIUM_LEGACY_GENERATION`, `PRAETORIUM_LEGACY_RELEASE_ID`, and `PRAETORIUM_LEGACY_IMAGE_DIGEST`. The repository and secret values do not appear in receipts. The command does not restore into or delete any old PVC.
+Required variables are `RESTIC_REPOSITORY`, `PRAETORIUM_OFFHOST_RESTIC_REPOSITORY`, `RESTIC_PASSWORD_FILE` or `RESTIC_PASSWORD`, `PRAETORIUM_LEGACY_INSTANCE_ID`, `PRAETORIUM_LEGACY_VOLUME_UID`, `PRAETORIUM_LEGACY_SCHEMA_VERSION`, `PRAETORIUM_LEGACY_GENERATION`, `PRAETORIUM_LEGACY_RELEASE_ID`, and `PRAETORIUM_LEGACY_IMAGE_DIGEST`. The repository and secret values do not appear in receipts. The command does not restore into or delete any old PVC.
 
 Restore operator keys separately: Platform signing keys, Gateway/session and credential encryption keys, GitHub App private key, Restic access, and the metadata archive passphrase. A successful archive checksum cannot recover a missing external key.
 

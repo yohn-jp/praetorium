@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { RuntimeAssignment } from "@praetorium/contracts";
 import { describe, expect, it } from "vitest";
 import {
   KubernetesRuntimeProvider,
@@ -40,6 +41,7 @@ const NAMESPACE = runtimeNamespaceName(PREFIX, INSTANCE_ID);
 const DEPLOYMENT = runtimeResourceName(INSTANCE_ID);
 const INDEX_DIGEST = `sha256:${"a".repeat(64)}`;
 const CHILD_DIGEST = `sha256:${"b".repeat(64)}`;
+const COMPOSITION_DIGEST = `sha256:${"c".repeat(64)}`;
 const HOST = "i-00000000000000000000000001.praetorium.example.test";
 const RESTRICTED_POD_SECURITY_LABELS = {
   "pod-security.kubernetes.io/enforce": "restricted",
@@ -122,6 +124,47 @@ function spec(epoch = 1, generation = 1): RunningInstanceSpec {
         resume: "/api/platform/v1/resume",
       },
     },
+  };
+}
+
+function assignment(epoch = 1): RuntimeAssignment {
+  return {
+    contractVersion: "scriptorium-platform/v1",
+    instanceId: INSTANCE_ID,
+    repositoryId: REPOSITORY_ID,
+    repositoryLocator: "https://github.com/writer/workspace",
+    defaultBranchPolicy: "follow-default",
+    runtimeEpoch: epoch,
+    imageDigest: INDEX_DIGEST,
+    compositionManifestDigest: COMPOSITION_DIGEST,
+    enabledModuleIds: ["core"],
+    credentialBrokerLocator: "https://praetorium.example.test/internal/github/credential",
+    controlServicePolicy: {
+      issuer: "https://praetorium.example.test",
+      jwksUrl: "https://praetorium.example.test/.well-known/jwks.json",
+      audience: "praetorium-control",
+    },
+    grantPolicy: {
+      issuer: "https://praetorium.example.test",
+      jwksUrl: "https://praetorium.example.test/.well-known/jwks.json",
+      audience: "scriptorium-hosted",
+    },
+  };
+}
+
+function unsignedProof(expiresAtSeconds: number): string {
+  const encode = (value: unknown) => btoa(JSON.stringify(value))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+  return `${encode({ alg: "ES256", kid: "test" })}.${encode({ exp: expiresAtSeconds })}.signature`;
+}
+
+function hostedSpec(epoch = 1, generation = 1, proof = unsignedProof(800)): RunningInstanceSpec {
+  return {
+    ...spec(epoch, generation),
+    scriptoriumAssignment: assignment(epoch),
+    runtimeIdentityProof: proof,
   };
 }
 
@@ -561,6 +604,62 @@ describe("Kubernetes runtime provider", () => {
         "arcadia.io/release-id"
       ],
     ).toBe(revision);
+  });
+
+  it("projects the canonical Hosted assignment and renewable proof as a read-only runtime mount", () => {
+    const hosted = hostedSpec();
+    const resources = createKubernetesResourceRenderer({
+      namespacePrefix: PREFIX,
+      clusterId: CLUSTER_ID,
+      ingressNamespace: "traefik",
+      instanceAccessNamespace: "praetorium-system",
+      instanceAccessService: "instance-access",
+      controlNamespace: "praetorium-system",
+      controlService: "provisioner",
+      maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
+    }).renderRunning(hosted);
+    const secret = resources.find((resource) => resource.kind === "Secret");
+    const deployment = resources.find((resource) => resource.kind === "Deployment");
+    const podSpec = record(record(record(deployment).spec).template).spec;
+    const container = record((record(podSpec).containers as unknown[])[0]);
+    const volume = (record(podSpec).volumes as unknown[])
+      .map(record)
+      .find((candidate) => record(candidate.secret).secretName === `${DEPLOYMENT}-runtime`);
+
+    expect(secret?.metadata.name).toBe(`${DEPLOYMENT}-runtime`);
+    expect(record(secret?.stringData)["runtime-assignment.json"]).toBe(
+      JSON.stringify(hosted.scriptoriumAssignment),
+    );
+    expect(record(secret?.stringData)["runtime-identity.jwt"]).toBe(hosted.runtimeIdentityProof);
+    expect(container.env).toEqual([
+      { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
+      {
+        name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
+        value: "/run/scriptorium/runtime-assignment.json",
+      },
+    ]);
+    expect((container.volumeMounts as unknown[]).map(record)).toContainEqual({
+      name: "scriptorium-runtime",
+      mountPath: "/run/scriptorium",
+      readOnly: true,
+    });
+    expect(volume).toMatchObject({
+      name: "scriptorium-runtime",
+      secret: { secretName: `${DEPLOYMENT}-runtime`, defaultMode: 0o444 },
+    });
+    const recoveryService = resources.find(
+      (resource) => resource.kind === "Service" && resource.metadata.name === `${DEPLOYMENT}-control`,
+    );
+    expect(record(recoveryService?.spec)).toMatchObject({
+      type: "ClusterIP",
+      publishNotReadyAddresses: true,
+      selector: {
+        "arcadia.io/instance-id": INSTANCE_ID,
+        "app.kubernetes.io/name": "scriptorium",
+        "praetorium.io/runtime-epoch": "1",
+        "arcadia.io/generation": "1",
+      },
+    });
   });
 
   it("rejects a control ingress peer outside the trusted Provisioner identity", () => {
@@ -1110,6 +1209,95 @@ describe("Kubernetes runtime provider", () => {
     expect(api.objects.has(key("IngressRoute", NAMESPACE, DEPLOYMENT))).toBe(false);
   });
 
+  it("renews only the mounted identity proof while preserving the Hosted assignment bytes", async () => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const runtime = provider(api, targetReservations(), () => 500_000);
+    const hosted = hostedSpec();
+    await runtime.ensureRunning(hosted, new AbortController().signal, () => undefined);
+    api.addWriterPod(hosted);
+    const reference = key("Secret", NAMESPACE, `${DEPLOYMENT}-runtime`);
+    const before = record(api.objects.get(reference));
+    const beforeAssignment = record(before.stringData)["runtime-assignment.json"];
+    const previousWrites = api.writes.length;
+
+    await runtime.refreshRuntimeIdentity(
+      hosted,
+      unsignedProof(650),
+      new AbortController().signal,
+      () => undefined,
+    );
+
+    const after = record(api.objects.get(reference));
+    expect(api.writes.slice(previousWrites)).toEqual(["write:Secret"]);
+    expect(record(after.stringData)["runtime-assignment.json"]).toBe(beforeAssignment);
+    expect(record(after.stringData)["runtime-identity.jwt"]).toBe(unsignedProof(650));
+    await expect(runtime.readRuntimeIdentityProjection(identity())).resolves.toMatchObject({
+      identity: identity(),
+      assignment: hosted.scriptoriumAssignment,
+      runtimeIdentityProof: unsignedProof(650),
+      expiresAt: new Date(650_000).toISOString(),
+    });
+  });
+
+  it("resolves recovery control only for the exact live writer without requiring app readiness", async () => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const runtime = provider(api, targetReservations(), () => 500_000);
+    await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+    api.addWriterPod(spec());
+    const podKey = key("Pod", NAMESPACE, "writer-1");
+    const pod = record(api.objects.get(podKey));
+    const status = record(pod.status);
+    const conditions = status.conditions as unknown[];
+    api.objects.set(podKey, {
+      ...pod,
+      status: {
+        ...status,
+        conditions: conditions.map((condition) =>
+          record(condition).type === "Ready"
+            ? { ...record(condition), status: "False" }
+            : condition,
+        ),
+      },
+    });
+
+    await expect(runtime.getRecoveryControlEndpoint(spec())).resolves.toBe(
+      `http://${DEPLOYMENT}-control.${NAMESPACE}.svc.cluster.local:3847`,
+    );
+    await expect(runtime.getControlEndpoint(spec())).rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it.each(["duplicate writer", "wrong selector"])(
+    "rejects recovery control with %s",
+    async (problem) => {
+      const api = new FakeKubernetesApi();
+      api.addNode();
+      const runtime = provider(api, targetReservations(), () => 500_000);
+      await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+      api.addWriterPod(spec());
+      const serviceKey = key("Service", NAMESPACE, `${DEPLOYMENT}-control`);
+      if (problem === "duplicate writer") {
+        const writer = record(api.objects.get(key("Pod", NAMESPACE, "writer-1")));
+        api.objects.set(key("Pod", NAMESPACE, "writer-extra"), {
+          ...writer,
+          metadata: { ...record(writer.metadata), name: "writer-extra", uid: "pod-extra" },
+        });
+      } else {
+        const service = record(api.objects.get(serviceKey));
+        const serviceSpec = record(service.spec);
+        api.objects.set(serviceKey, {
+          ...service,
+          spec: { ...serviceSpec, selector: { "app.kubernetes.io/name": "scriptorium" } },
+        });
+      }
+
+      await expect(runtime.getRecoveryControlEndpoint(spec())).rejects.toMatchObject({
+        code: problem === "duplicate writer" ? "unavailable" : "conflict",
+      });
+    },
+  );
+
   it.each(["missing", "wrong port"])(
     "fails closed when the internal control Service is %s",
     async (problem) => {
@@ -1244,7 +1432,10 @@ describe("Kubernetes runtime provider", () => {
     const api = new FakeKubernetesApi();
     api.addNode();
     const runtime = provider(api, targetReservations(), () => 900_000);
-    await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+    const hosted = hostedSpec();
+    await runtime.ensureRunning(hosted, new AbortController().signal, () => undefined);
+    api.addWriterPod(hosted);
+    api.objects.delete(key("Pod", NAMESPACE, "writer-1"));
     const result = await runtime.ensureRuntimeDeleted(
       identity(),
       new AbortController().signal,
@@ -1254,9 +1445,11 @@ describe("Kubernetes runtime provider", () => {
     expect(api.deletes.map((item) => item.kind)).toEqual([
       "Deployment",
       "Service",
+      "Service",
       "NetworkPolicy",
       "ResourceQuota",
       "LimitRange",
+      "Secret",
       "ServiceAccount",
       "RoleBinding",
     ]);
@@ -1273,6 +1466,7 @@ describe("Kubernetes runtime provider", () => {
     expect(api.objects.has(key("RoleBinding", NAMESPACE, "praetorium-provisioner-runtime"))).toBe(
       false,
     );
+    expect(api.objects.has(key("Secret", NAMESPACE, `${DEPLOYMENT}-runtime`))).toBe(false);
     expect(api.namespaces.has(NAMESPACE)).toBe(true);
     expect(api.writes).not.toContain("delete:Namespace");
   });

@@ -1,3 +1,4 @@
+import type { RuntimeAssignment } from "@praetorium/contracts";
 export type RuntimeNeutralState =
   | "absent"
   | "provisioning"
@@ -109,7 +110,19 @@ export interface RuntimeInstanceSpec extends InstanceIdentity {
   readonly hostname: string | null;
   /** Already-resolved, bounded settings. Raw control-plane payloads do not enter this port. */
   readonly runtimeConfig: RuntimeMetadata;
+  /** Canonical Scriptorium assignment projected into a read-only runtime Secret. */
+  readonly scriptoriumAssignment?: RuntimeAssignment;
+  /** Short-lived Control Plane proof; Provisioner refreshes the projected Secret before expiry. */
+  readonly runtimeIdentityProof?: string;
   readonly application?: RuntimeApplicationRequirements;
+}
+
+export interface RuntimeIdentityProjection {
+  readonly identity: InstanceIdentity;
+  readonly assignment: RuntimeAssignment;
+  readonly runtimeIdentityProof: string;
+  /** Parsed from the mounted proof for refresh scheduling only; the broker verifies its signature. */
+  readonly expiresAt: string;
 }
 
 export interface RunningInstanceSpec extends RuntimeInstanceSpec {

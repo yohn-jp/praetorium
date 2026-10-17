@@ -3,6 +3,7 @@ import {
   createHandoffCode,
   createSession,
   keyedDigest,
+  issueAccessToken,
   ok,
   type GitHubOAuthProvider,
   type KeyRecord,
@@ -145,6 +146,7 @@ async function setup(options: {
   let accessChecks = 0;
   let repositoryReads = 0;
   let desiredRequests = 0;
+  const mutationRateLimitKeys: string[] = [];
   const checkedRuntimeEpochs: number[] = [];
   let writeAllowed = options.write ?? true;
   let authorizationRevision = options.revision ?? snapshot.binding.authorizationRevision;
@@ -224,7 +226,12 @@ async function setup(options: {
     runtimeCredentialRateLimiter: { consume: async () => true },
     loginRateLimiter: { consume: async () => true },
     wakeRateLimiter: { consume: async () => true },
-    mutationReceiptRateLimiter: { consume: async () => true },
+    mutationReceiptRateLimiter: {
+      consume: async (key: string) => {
+        mutationRateLimitKeys.push(key);
+        return true;
+      },
+    },
     githubProvider: options.provider as GatewayContext["githubProvider"],
     githubAccess: access as unknown as GatewayContext["githubAccess"],
     githubUserTokens: {
@@ -253,6 +260,32 @@ async function setup(options: {
     router: createGatewayRouter(context),
     sessionCookie: `__Host-praetorium_session=${created.value.rawSessionId}`,
     request,
+    bearerRequest: async (token: string) => new Request(
+      `${ORIGIN}/api/repositories/${REPOSITORY_ID}/mutation-authorizations`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ operationId: OPERATION_ID, payloadDigest: PAYLOAD_DIGEST }),
+      },
+    ),
+    issueAccessGrant: (permissions: readonly ("read" | "write" | "maintain" | "admin")[] = ["read", "write"], runtimeEpoch = 7) =>
+      issueAccessToken(signingKey, {
+        issuer: ORIGIN,
+        audience: `https://ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`,
+        subjectUserId: USER_ID,
+        instanceId: INSTANCE_ID,
+        repositoryId: REPOSITORY_ID,
+        runtimeEpoch,
+        permissions,
+        sessionRevision: created.value.record.sessionRevision,
+        authorizationRevision: snapshot.binding.authorizationRevision,
+        now: NOW,
+        ttlSeconds: 90,
+        tokenId: "access-grant-test",
+      }),
     handoffStore,
     gatewaySessionDigest: created.value.digest,
     instanceAccessSecret: "i".repeat(40),
@@ -260,6 +293,7 @@ async function setup(options: {
     get accessChecks() { return accessChecks; },
     get repositoryReads() { return repositoryReads; },
     get desiredRequests() { return desiredRequests; },
+    get mutationRateLimitKeys() { return mutationRateLimitKeys; },
     get checkedRuntimeEpochs() { return checkedRuntimeEpochs; },
     set writeAllowed(value: boolean) { writeAllowed = value; },
     set authorizationRevision(value: number) { authorizationRevision = value; },
@@ -417,6 +451,56 @@ describe("Gateway mutation authorization endpoint", () => {
     }
     expect(test.accessChecks).toBe(1);
     expect(test.repositoryReads).toBe(1);
+  });
+
+  it("issues a publish receipt for a current Hosted bearer grant without Gateway cookies", async () => {
+    const test = await setup({ configured: true });
+    const token = await test.issueAccessGrant();
+    const response = await test.router.fetch(await test.bearerRequest(token));
+    expect(response.status).toBe(201);
+    const body = await response.json() as { receipt: string };
+    const verifier = createMutationAuthorizationReceiptVerifier({
+      issuer: ORIGIN,
+      audience: "praetorium-git-publisher",
+      resolveKey: async (kid) => kid === "gateway-test-key" ? test.publicKey : null,
+    });
+    const receipt = await verifier.verify(body.receipt, {
+      repositoryId: REPOSITORY_ID,
+      instanceId: INSTANCE_ID,
+      runtimeEpoch: 7,
+      operationId: OPERATION_ID,
+      payloadDigest: PAYLOAD_DIGEST,
+      now: NOW,
+    });
+    expect(receipt.ok).toBe(true);
+    if (receipt.ok) {
+      expect(receipt.value.sub).toBe(USER_ID);
+      expect(receipt.value.sessionRevision).toBe(0);
+    }
+    expect(test.accessChecks).toBe(1);
+  });
+
+  it("rejects read-only or stale Hosted grants and rechecks current write access", async () => {
+    const test = await setup({ configured: true });
+    const readOnly = await test.issueAccessGrant(["read"]);
+    expect((await test.router.fetch(await test.bearerRequest(readOnly))).status).toBe(401);
+    const staleEpoch = await test.issueAccessGrant(["read", "write"], 6);
+    expect((await test.router.fetch(await test.bearerRequest(staleEpoch))).status).toBe(401);
+    const current = await test.issueAccessGrant();
+    test.writeAllowed = false;
+    expect((await test.router.fetch(await test.bearerRequest(current))).status).toBe(403);
+    expect(test.accessChecks).toBe(1);
+  });
+
+  it("charges mutation rate limits only to a verified user and repository", async () => {
+    const test = await setup({ configured: true });
+    const invalid = await test.router.fetch(await test.bearerRequest("bad.token.value"));
+    expect(invalid.status).toBe(401);
+    expect(test.mutationRateLimitKeys).toEqual([]);
+
+    const valid = await test.router.fetch(await test.bearerRequest(await test.issueAccessGrant()));
+    expect(valid.status).toBe(201);
+    expect(test.mutationRateLimitKeys).toEqual([`${USER_ID}:${REPOSITORY_ID}`]);
   });
 
   it("redeems, rotates and revokes the stable-origin grant through service-authenticated routes", async () => {

@@ -1,5 +1,12 @@
+import { RuntimeAssignmentSchema } from "@praetorium/contracts";
 import { RuntimeProviderError } from "../errors.js";
-import { CLUSTER_LABEL_KEY, INSTANCE_LABEL_KEY, managedLabels } from "../labels.js";
+import {
+  CLUSTER_LABEL_KEY,
+  GENERATION_LABEL_KEY,
+  INSTANCE_LABEL_KEY,
+  RUNTIME_EPOCH_LABEL_KEY,
+  managedLabels,
+} from "../labels.js";
 import { runtimeNamespaceName, runtimeResourceName } from "../naming.js";
 import type {
   ReleaseSpec,
@@ -120,6 +127,52 @@ function validateApplication(
   return application;
 }
 
+function runtimeProjection(
+  options: KubernetesResourceRendererOptions,
+  spec: RuntimeInstanceSpec,
+): { readonly secretName: string; readonly resource: KubernetesResource } | null {
+  const assignmentInput = spec.scriptoriumAssignment;
+  const proof = spec.runtimeIdentityProof;
+  if (assignmentInput === undefined && proof === undefined) return null;
+  if (assignmentInput === undefined || proof === undefined)
+    failInvalid("hosted runtime assignment and identity proof must be supplied together");
+  let assignment: ReturnType<typeof RuntimeAssignmentSchema.parse>;
+  try {
+    assignment = RuntimeAssignmentSchema.parse(assignmentInput);
+  } catch {
+    failInvalid("hosted runtime assignment is invalid");
+  }
+  if (
+    assignment.instanceId !== spec.instanceId ||
+    assignment.repositoryId !== spec.repositoryId ||
+    assignment.runtimeEpoch !== spec.runtimeEpoch ||
+    spec.release === null ||
+    assignment.imageDigest !== spec.release.imageDigest
+  ) failInvalid("hosted runtime assignment does not match the admitted image and identity");
+  if (
+    proof.length < 16 ||
+    proof.length > 4_096 ||
+    !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(proof)
+  ) failInvalid("hosted runtime identity proof is invalid");
+
+  const namespaceName = namespace(spec, options.namespacePrefix);
+  const baseName = runtimeResourceName(spec.instanceId);
+  const secretName = `${baseName}-runtime`;
+  return {
+    secretName,
+    resource: {
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: metadata(spec, namespaceName, secretName),
+      type: "Opaque",
+      stringData: {
+        "runtime-assignment.json": JSON.stringify(assignment),
+        "runtime-identity.jwt": proof,
+      },
+    },
+  };
+}
+
 function validateArtifact(spec: RuntimeInstanceSpec): void {
   if (
     spec.release === null ||
@@ -168,6 +221,22 @@ function baseResources(
       spec: {
         type: "ClusterIP",
         selector: labels,
+        ports: [{ name: "http", port: app.httpPort, targetPort: "http", protocol: "TCP" }],
+      },
+    },
+    {
+      apiVersion: "v1",
+      kind: "Service",
+      metadata: metadata(spec, ns, `${name}-control`),
+      spec: {
+        type: "ClusterIP",
+        publishNotReadyAddresses: true,
+        selector: {
+          [INSTANCE_LABEL_KEY]: spec.instanceId,
+          [APPLICATION_LABEL_KEY]: APPLICATION_LABEL_VALUE,
+          [RUNTIME_EPOCH_LABEL_KEY]: String(spec.runtimeEpoch),
+          [GENERATION_LABEL_KEY]: String(spec.generation),
+        },
         ports: [{ name: "http", port: app.httpPort, targetPort: "http", protocol: "TCP" }],
       },
     },
@@ -351,6 +420,7 @@ function deployment(
   const ns = namespace(spec, options.namespacePrefix);
   const name = runtimeResourceName(spec.instanceId);
   const profile = spec.resourceProfile.request;
+  const hostedProjection = runtimeProjection(options, spec);
   const podLabels = {
     ...managedLabels({
       instanceId: spec.instanceId,
@@ -392,6 +462,17 @@ function deployment(
               name: "scriptorium",
               image: spec.release?.artifactRef ?? "",
               imagePullPolicy: "IfNotPresent",
+              ...(hostedProjection
+                ? {
+                    env: [
+                      { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
+                      {
+                        name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
+                        value: "/run/scriptorium/runtime-assignment.json",
+                      },
+                    ],
+                  }
+                : {}),
               ports: [{ name: "http", containerPort: app.httpPort, protocol: "TCP" }],
               resources: {
                 requests: {
@@ -433,12 +514,23 @@ function deployment(
               volumeMounts: [
                 { name: "workspace", mountPath: "/data", readOnly: false },
                 { name: "temporary", mountPath: "/tmp", readOnly: false },
+                ...(hostedProjection
+                  ? [{ name: "scriptorium-runtime", mountPath: "/run/scriptorium", readOnly: true }]
+                  : []),
               ],
             },
           ],
           volumes: [
             { name: "workspace", emptyDir: { sizeLimit: memory(profile.ephemeralStorageMiB) } },
             { name: "temporary", emptyDir: { sizeLimit: memory(profile.ephemeralStorageMiB) } },
+            ...(hostedProjection
+              ? [
+                  {
+                    name: "scriptorium-runtime",
+                    secret: { secretName: hostedProjection.secretName, defaultMode: 0o444 },
+                  },
+                ]
+              : []),
           ],
         },
       },
@@ -469,14 +561,24 @@ export function createKubernetesResourceRenderer(
   }
   return {
     renderRunning(spec: RunningInstanceSpec) {
-      return [...baseResources(options, spec), deployment(options, spec, 1)];
+      const projection = runtimeProjection(options, spec);
+      return [
+        ...baseResources(options, spec),
+        ...(projection ? [projection.resource] : []),
+        deployment(options, spec, 1),
+      ];
     },
     renderStopped(spec: StoppedInstanceSpec) {
       if (spec.release === null) return baseResources(options, spec);
       return [...baseResources(options, spec), deployment(options, spec, 0)];
     },
     renderRelease(spec: ReleaseSpec) {
-      return [...baseResources(options, spec), deployment(options, spec, 1)];
+      const projection = runtimeProjection(options, spec);
+      return [
+        ...baseResources(options, spec),
+        ...(projection ? [projection.resource] : []),
+        deployment(options, spec, 1),
+      ];
     },
     renderEndpoint(spec: RunningInstanceSpec | ReleaseSpec) {
       return endpoint(options, spec);

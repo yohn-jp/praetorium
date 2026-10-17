@@ -1,3 +1,4 @@
+import { RuntimeAssignmentSchema, type RuntimeAssignment } from "@praetorium/contracts";
 import { createHash } from "node:crypto";
 import { RuntimeProviderError } from "../errors.js";
 import {
@@ -27,6 +28,7 @@ import type {
   RuntimeDeletionSpec,
   RuntimeEffectGuard,
   RuntimeEndpointActivationEvidence,
+  RuntimeIdentityProjection,
   RuntimeNeutralState,
   RuntimeObservation,
   RuntimePage,
@@ -278,6 +280,7 @@ const RESTRICTED_POD_SECURITY_LABELS = {
   "pod-security.kubernetes.io/audit": "restricted",
   "pod-security.kubernetes.io/warn": "restricted",
 } as const;
+const APPLICATION_LABEL_VALUE = "scriptorium";
 const POD_SECURITY_MODES = ["enforce", "audit", "warn"] as const;
 
 function namespaceLabels(identity: InstanceIdentity): Readonly<Record<string, string>> {
@@ -616,6 +619,34 @@ function validateProfile(profile: RuntimeResourceProfile): void {
   }
 }
 
+function secretText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const binary = atob(value);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function runtimeIdentityExpiry(token: string): string | null {
+  const parts = token.split(".");
+  if (parts.length !== 3 || !parts.every((part) => /^[A-Za-z0-9_-]+$/u.test(part))) return null;
+  try {
+    const payload = parts[1]!.replaceAll("-", "+").replaceAll("_", "/");
+    const binary = atob(payload + "=".repeat((4 - payload.length % 4) % 4));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const claims: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const exp = record(claims)?.exp;
+    return typeof exp === "number" && Number.isSafeInteger(exp) && exp > 0
+      ? new Date(exp * 1000).toISOString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export class KubernetesRuntimeProvider implements RuntimeProvider {
   private readonly namespacePrefix: string;
   private readonly now: () => number;
@@ -775,6 +806,101 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       ...(actualImageDigest === undefined ? {} : { observedImageDigest: actualImageDigest }),
       conditions: deployment === undefined ? [] : deploymentConditions(deployment),
     };
+  }
+
+  /** Reads the current Provisioner-owned Hosted assignment and identity projection. */
+  async readRuntimeIdentityProjection(
+    identity: InstanceIdentity,
+    signal?: AbortSignal,
+  ): Promise<RuntimeIdentityProjection | null> {
+    validateIdentity(identity, this.options.clusterId);
+    const namespaceName = this.namespaceFor(identity.instanceId);
+    const secretName = `${runtimeResourceName(identity.instanceId)}-runtime`;
+    const value = await this.getOptional({ kind: "Secret", namespace: namespaceName, name: secretName }, signal);
+    if (value === undefined) return null;
+    const metadata = assertObjectOwned(value, identity, namespaceName, secretName);
+    if (!targetMatches(metadata, identity)) {
+      throw new RuntimeProviderError("conflict", "Hosted runtime projection belongs to another epoch", "retryable");
+    }
+    const object = record(value);
+    const data = record(object?.data);
+    const stringData = record(object?.stringData);
+    const assignmentText = typeof stringData?.["runtime-assignment.json"] === "string"
+      ? stringData["runtime-assignment.json"] as string
+      : secretText(data?.["runtime-assignment.json"]);
+    const proof = typeof stringData?.["runtime-identity.jwt"] === "string"
+      ? stringData["runtime-identity.jwt"] as string
+      : secretText(data?.["runtime-identity.jwt"]);
+    if (
+      assignmentText === null ||
+      proof === null ||
+      proof.length < 16 ||
+      proof.length > 4_096
+    ) throw new RuntimeProviderError("invalid_response", "Hosted runtime projection is incomplete", "retryable");
+    let assignment: RuntimeAssignment;
+    try {
+      assignment = RuntimeAssignmentSchema.parse(JSON.parse(assignmentText) as unknown);
+    } catch {
+      throw new RuntimeProviderError("invalid_response", "Hosted runtime assignment is invalid", "retryable");
+    }
+    const expiresAt = runtimeIdentityExpiry(proof);
+    const deploymentName = runtimeResourceName(identity.instanceId);
+    const deployment = await this.getOptional(
+      { kind: "Deployment", namespace: namespaceName, name: deploymentName },
+      signal,
+    );
+    if (deployment === undefined)
+      throw new RuntimeProviderError("invalid_response", "Hosted runtime deployment is missing", "retryable");
+    const deploymentMetadata = assertObjectOwned(deployment, identity, namespaceName, deploymentName);
+    if (
+      assignment.instanceId !== identity.instanceId ||
+      assignment.repositoryId !== identity.repositoryId ||
+      assignment.runtimeEpoch !== identity.runtimeEpoch ||
+      assignment.imageDigest !== deploymentMetadata.annotations["arcadia.io/release-digest"] ||
+      expiresAt === null
+    ) throw new RuntimeProviderError("invalid_response", "Hosted runtime projection binding is invalid", "retryable");
+    return { identity, assignment, runtimeIdentityProof: proof, expiresAt };
+  }
+
+  /** Renews only the existing Secret mounted into a ready writer; the Pod is not restarted. */
+  async refreshRuntimeIdentity(
+    spec: RunningInstanceSpec,
+    proof: string,
+    signal: AbortSignal,
+    beforeEffect: RuntimeEffectGuard,
+  ): Promise<void> {
+    this.validateRunningSpec(spec);
+    const observation = await this.inspect(spec, signal);
+    if (!this.isDesiredAndReady(observation, spec)) {
+      throw new RuntimeProviderError("conflict", "Hosted identity refresh requires the current ready writer", "retryable");
+    }
+    const expiresAt = runtimeIdentityExpiry(proof);
+    if (
+      expiresAt === null ||
+      Date.parse(expiresAt) <= this.now() ||
+      Date.parse(expiresAt) - this.now() > 300_000
+    ) throw new RuntimeProviderError("invalid_spec", "Hosted runtime identity proof lifetime is invalid", "terminal");
+    const rendered = this.options.renderer.renderRunning({ ...spec, runtimeIdentityProof: proof });
+    const secret = rendered.find((resource) => resource.kind === "Secret" && resource.metadata.name === `${runtimeResourceName(spec.instanceId)}-runtime`);
+    if (!secret) throw new RuntimeProviderError("invalid_spec", "Hosted runtime assignment is required for identity refresh", "terminal");
+    const reference = { kind: "Secret", namespace: secret.metadata.namespace, name: secret.metadata.name } as const;
+    const current = await this.getOptional(reference, signal);
+    if (current === undefined) throw new RuntimeProviderError("conflict", "Hosted runtime identity projection is missing", "retryable");
+    const metadata = assertObjectOwned(current, spec, reference.namespace, reference.name);
+    if (!targetMatches(metadata, spec))
+      throw new RuntimeProviderError("conflict", "Hosted runtime identity projection belongs to another epoch", "retryable");
+    const currentObject = record(current);
+    const currentData = record(currentObject?.data);
+    const currentStringData = record(currentObject?.stringData);
+    const desiredStringData = record(secret.stringData);
+    const currentAssignment = typeof currentStringData?.["runtime-assignment.json"] === "string"
+      ? currentStringData["runtime-assignment.json"] as string
+      : secretText(currentData?.["runtime-assignment.json"]);
+    if (
+      currentAssignment === null ||
+      desiredStringData?.["runtime-assignment.json"] !== currentAssignment
+    ) throw new RuntimeProviderError("conflict", "Hosted runtime assignment changed during identity refresh", "retryable");
+    await this.applyOwnedResource(secret, current, spec, signal, beforeEffect);
   }
 
   async ensureRunning(
@@ -1119,6 +1245,83 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       );
     }
     return `http://${serviceName}.${namespaceName}.svc.cluster.local:${httpPort}`;
+  }
+
+  /** Returns an internal recovery Service only for the exact live writer and image. */
+  async getRecoveryControlEndpoint(
+    spec: RunningInstanceSpec,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    this.validateRunningSpec(spec);
+    const observation = await this.inspect(spec, signal);
+    const census = observation.writerCensus;
+    const writer = census.pods[0];
+    const namespaceName = this.namespaceFor(spec.instanceId);
+    if (
+      census.scope !== "instance-repository-all-epochs" ||
+      census.complete !== true ||
+      census.queriedNamespace !== namespaceName ||
+      census.namespaceUid === null ||
+      census.namespaceResourceVersion === null ||
+      census.listResourceVersion === null ||
+      census.queriedPodCount !== 1 ||
+      census.pods.length !== 1 ||
+      writer === undefined ||
+      writer.namespace !== namespaceName ||
+      writer.uid.length === 0 ||
+      writer.runtimeEpoch !== spec.runtimeEpoch ||
+      writer.generation !== spec.generation ||
+      writer.deleting ||
+      writer.phase !== "Running" ||
+      !sameIdentity(observation.identity, spec) ||
+      observation.observedImageDigest !== spec.release.platformManifestDigest ||
+      !writer.imageIds.some((imageId) => imageId.endsWith(spec.release.platformManifestDigest))
+    ) {
+      throw new RuntimeProviderError(
+        "unavailable",
+        "exact live writer evidence is unavailable for the recovery endpoint",
+        "retryable",
+      );
+    }
+
+    const serviceName = `${runtimeResourceName(spec.instanceId)}-control`;
+    const service = await this.getOptional({ kind: "Service", namespace: namespaceName, name: serviceName }, signal);
+    if (service === undefined)
+      throw new RuntimeProviderError("unavailable", "owned recovery Service is not observed", "retryable");
+    const metadata = assertObjectOwned(service, spec, namespaceName, serviceName);
+    const serviceSpec = record(record(service)?.spec);
+    const ports = Array.isArray(serviceSpec?.ports) ? serviceSpec.ports : [];
+    const port = record(ports[0]);
+    const selector = record(serviceSpec?.selector);
+    const expectedSelector = {
+      [INSTANCE_LABEL_KEY]: spec.instanceId,
+      "app.kubernetes.io/name": APPLICATION_LABEL_VALUE,
+      [RUNTIME_EPOCH_LABEL_KEY]: String(spec.runtimeEpoch),
+      [GENERATION_LABEL_KEY]: String(spec.generation),
+    };
+    const expectedLabels = resourceLabels(spec, spec.release.releaseId);
+    if (
+      !targetMatches(metadata, spec) ||
+      Object.entries(expectedLabels).some(([key, value]) => metadata.labels[key] !== value) ||
+      serviceSpec?.type !== "ClusterIP" ||
+      serviceSpec.publishNotReadyAddresses !== true ||
+      serviceSpec.externalName !== undefined ||
+      ports.length !== 1 ||
+      port?.name !== "http" ||
+      port.port !== spec.application?.httpPort ||
+      port.targetPort !== "http" ||
+      port.protocol !== "TCP" ||
+      selector === undefined ||
+      Object.keys(selector).length !== Object.keys(expectedSelector).length ||
+      Object.entries(expectedSelector).some(([key, value]) => selector[key] !== value)
+    ) {
+      throw new RuntimeProviderError(
+        "conflict",
+        "recovery Service identity, selector or port does not match the exact writer",
+        "retryable",
+      );
+    }
+    return `http://${serviceName}.${namespaceName}.svc.cluster.local:${spec.application?.httpPort}`;
   }
 
   async listManagedInstances(
@@ -1526,10 +1729,12 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     const baseName = runtimeResourceName(spec.instanceId);
     const expectedNames = new Set([
       baseName,
+      baseName + "-control",
       baseName + "-app",
       baseName + "-network",
       baseName + "-quota",
       baseName + "-limits",
+      ...(spec.scriptoriumAssignment === undefined ? [] : [baseName + "-runtime"]),
     ]);
     const namespaceName = this.namespaceFor(spec.instanceId);
     for (const resource of resources) {
@@ -1556,6 +1761,16 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
           "terminal",
         );
       }
+    }
+    const hostedSecrets = resources.filter(
+      (resource) => resource.kind === "Secret" && resource.metadata.name === `${baseName}-runtime`,
+    );
+    if (hostedSecrets.length !== (spec.scriptoriumAssignment === undefined ? 0 : 1)) {
+      throw new RuntimeProviderError(
+        "invalid_spec",
+        "renderer did not project the exact Hosted runtime assignment",
+        "terminal",
+      );
     }
     const deployment = resources.find((resource) => resource.kind === "Deployment");
     if (deployment === undefined || appContainerImage(deployment) !== spec.release.artifactRef) {
@@ -1864,9 +2079,11 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     const name = runtimeResourceName(identity.instanceId);
     const resources = [
       { kind: "Service" as const, name },
+      { kind: "Service" as const, name: `${name}-control` },
       { kind: "NetworkPolicy" as const, name: `${name}-network` },
       { kind: "ResourceQuota" as const, name: `${name}-quota` },
       { kind: "LimitRange" as const, name: `${name}-limits` },
+      { kind: "Secret" as const, name: `${name}-runtime` },
       { kind: "ServiceAccount" as const, name: `${name}-app` },
       { kind: "RoleBinding" as const, name: "praetorium-provisioner-runtime" },
     ];
@@ -1897,9 +2114,11 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     const name = runtimeResourceName(identity.instanceId);
     const references = [
       { kind: "Service" as const, name },
+      { kind: "Service" as const, name: `${name}-control` },
       { kind: "NetworkPolicy" as const, name: `${name}-network` },
       { kind: "ResourceQuota" as const, name: `${name}-quota` },
       { kind: "LimitRange" as const, name: `${name}-limits` },
+      { kind: "Secret" as const, name: `${name}-runtime` },
       { kind: "ServiceAccount" as const, name: `${name}-app` },
       { kind: "RoleBinding" as const, name: "praetorium-provisioner-runtime" },
       { kind: "Deployment" as const, name },

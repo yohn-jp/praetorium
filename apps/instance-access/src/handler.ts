@@ -453,6 +453,15 @@ export function createInstanceAccessHandler(
       ]);
     }
 
+    if (request.method === "GET" && url.pathname === "/_platform/reauth") {
+      if (!isHtmlNavigation(request)) return problem(400, "REAUTH_REQUIRES_NAVIGATION");
+      return withCookies(fallbackEntry(instance, config), [
+        expiredCookie(ACCESS_COOKIE, "/", true),
+        expiredCookie(REFRESH_COOKIE, "/_platform", true),
+        expiredCookie(CSRF_COOKIE, "/", false),
+      ]);
+    }
+
     if (isHtmlNavigation(request)) return fallbackEntry(instance, config);
     if (request.method === "HEAD") return new Response(null, { status: 503, headers: { "Retry-After": String(RETRY_AFTER_SECONDS), "Cache-Control": "no-store" } });
     return problem(503, "INSTANCE_STARTING", true);

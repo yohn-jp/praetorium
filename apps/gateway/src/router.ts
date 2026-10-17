@@ -9,6 +9,7 @@ import {
   exchangeMcpCredentialForAccessToken,
   generateToken,
   handleGithubCallbackWithCredentialSink,
+  importPublicKeyJwk,
   isSafeRelativeRedirect,
   keyedDigest,
   listMcpCredentialsForUser,
@@ -21,6 +22,7 @@ import {
   revokeSession,
   startGithubLogin,
   touchSession,
+  verifyAccessToken,
   type UserId,
   type McpCredentialId,
 } from "@praetorium/auth";
@@ -408,59 +410,117 @@ async function handleMutationAuthorization(
   rawRepositoryId: string,
   now: string,
 ): Promise<Response> {
-  if (!exactOriginRequest(request, context)) {
-    return errorResponse(request, "UNAUTHORIZED", "request origin or CSRF token is invalid", context.requestId);
-  }
-  const session = await requireSession(request, context, now);
-  if (!session.ok) return session.response;
-  if (!(await hasValidGatewayCsrf(request, context, session.session))) {
-    return errorResponse(request, "UNAUTHORIZED", "request origin or CSRF token is invalid", context.requestId);
-  }
   const repositoryId = numericRepositoryId(rawRepositoryId);
   const body = await readBoundedJson(request);
   const parsed = body ? MutationReceiptRequestSchema.safeParse(body) : null;
   if (repositoryId === null || !parsed?.success) {
     return errorResponse(request, "INVALID_REQUEST", "mutation authorization request is invalid", context.requestId);
   }
-  try {
-    if (!(await context.mutationReceiptRateLimiter.consume(
-      `${session.session.actor.userId}:${repositoryId}`,
-      now,
-    ))) return errorResponse(request, "RATE_LIMITED", "mutation authorization is rate limited", context.requestId);
 
+  const authorization = request.headers.get("Authorization");
+  const bearerMatch = authorization === null ? null : /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/u.exec(authorization);
+  const bearerMode = authorization !== null;
+  let actorUserId: string;
+  let sessionRevision: number;
+  let sessionExpiresAt: string | null = null;
+  let grantExpiresAt: number | null = null;
+  let grantAuthorizationRevision: number | null = null;
+  if (bearerMode) {
+    // A hosted instance presents the short-lived grant it already received during
+    // handoff/refresh. Do not mix it with ambient Gateway browser credentials.
+    if (!bearerMatch || hasCookieName(request, SESSION_COOKIE_NAME))
+      return errorResponse(request, "UNAUTHENTICATED", "hosted access grant is invalid", context.requestId);
+    actorUserId = "";
+    sessionRevision = -1;
+  } else {
+    if (!exactOriginRequest(request, context)) {
+      return errorResponse(request, "UNAUTHORIZED", "request origin or CSRF token is invalid", context.requestId);
+    }
+    const session = await requireSession(request, context, now);
+    if (!session.ok) return session.response;
+    if (!(await hasValidGatewayCsrf(request, context, session.session))) {
+      return errorResponse(request, "UNAUTHORIZED", "request origin or CSRF token is invalid", context.requestId);
+    }
+    actorUserId = session.session.actor.userId;
+    sessionRevision = session.session.resolved.record.sessionRevision;
+    sessionExpiresAt = session.session.resolved.record.expiresAt;
+  }
+  try {
     const snapshot = await context.controlPlane.getByRepositoryId(repositoryId);
     if (!snapshot) return errorResponse(request, "NOT_FOUND", "repository instance not found", context.requestId);
+    const runtimeEpoch = runtimeEpochForAccess(snapshot.instance);
+    if (bearerMode) {
+      const host = instanceHostname(snapshot.instance.instanceId, context.config.instanceHostnameSuffix);
+      const audience = `https://${host}`;
+      const verified = await verifyAccessToken({
+        token: bearerMatch![1]!,
+        expectedIssuer: context.config.origin,
+        expectedAudience: audience,
+        expectedInstanceId: snapshot.instance.instanceId,
+        expectedRepositoryId: repositoryId,
+        expectedRuntimeEpoch: runtimeEpoch,
+        requiredPermissions: ["write"],
+        now,
+        clockSkewSeconds: 0,
+        resolveKey: async (kid) => {
+          const record = context.keyRegistry.find((candidate) =>
+            candidate.kid === kid && candidate.status !== "compromised",
+          );
+          if (!record) return null;
+          return await importPublicKeyJwk(record.publicKeyJwk);
+        },
+      });
+      if (!verified.ok)
+        return errorResponse(request, "UNAUTHENTICATED", "hosted access grant is invalid", context.requestId);
+      actorUserId = verified.value.sub;
+      sessionRevision = verified.value.sessionRevision;
+      grantExpiresAt = verified.value.exp * 1000;
+      grantAuthorizationRevision = verified.value.authorizationRevision;
+    }
+    // Only a verified user identity may consume that user's quota. In
+    // particular, invalid hosted grants cannot drain a shared repository key.
+    if (!(await context.mutationReceiptRateLimiter.consume(`${actorUserId}:${repositoryId}`, now)))
+      return errorResponse(request, "RATE_LIMITED", "mutation authorization is rate limited", context.requestId);
+
     const access = await context.githubAccess.checkBoundAccess(
-      session.session.actor.userId,
+      actorUserId,
       repositoryId,
       snapshot.instance.instanceId,
-      runtimeEpochForAccess(snapshot.instance),
+      runtimeEpoch,
       now,
     );
     if (access.status === "unavailable") return unavailable(request, context);
     if (
       !decisionMatches(access, snapshot, repositoryId, now) ||
-      !access.permissions.includes("write")
+      !access.permissions.includes("write") ||
+      (bearerMode && (
+        grantExpiresAt === null ||
+        grantExpiresAt <= Date.parse(now) ||
+        grantAuthorizationRevision !== access.authorizationRevision
+      ))
     ) return accessDenied(request, context);
     const receiptTtlSeconds = Math.min(
       60,
       context.config.accessGrantTtlSeconds,
       Math.floor((access.expiresAt - Date.parse(now)) / 1000),
-      Math.floor((Date.parse(session.session.resolved.record.expiresAt) - Date.parse(now)) / 1000),
+      ...(grantExpiresAt === null ? [] : [Math.floor((grantExpiresAt - Date.parse(now)) / 1000)]),
+      ...(sessionExpiresAt === null
+        ? []
+        : [Math.floor((Date.parse(sessionExpiresAt) - Date.parse(now)) / 1000)]),
     );
     if (receiptTtlSeconds < 1) return accessDenied(request, context);
 
     const issued = await issueMutationAuthorizationReceipt(context.signingKey, {
       issuer: context.config.origin,
       audience: GITHUB_PUBLISH_RECEIPT_AUDIENCE,
-      subjectUserId: session.session.actor.userId,
+      subjectUserId: actorUserId,
       repositoryId,
       instanceId: snapshot.instance.instanceId,
-      runtimeEpoch: runtimeEpochForAccess(snapshot.instance),
+      runtimeEpoch,
       operationId: parsed.data.operationId,
       payloadDigest: parsed.data.payloadDigest,
       authorizationRevision: access.authorizationRevision,
-      sessionRevision: session.session.resolved.record.sessionRevision,
+      sessionRevision,
       now,
       ttlSeconds: receiptTtlSeconds,
     });

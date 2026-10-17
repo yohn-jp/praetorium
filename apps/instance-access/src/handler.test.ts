@@ -287,6 +287,38 @@ describe("Instance Access production handler", () => {
     expect(gatewayCalls).toBe(0);
   });
 
+  it("clears stale same-origin grants and re-enters the current Gateway handoff", async () => {
+    let gatewayCalls = 0;
+    const handler = createInstanceAccessHandler(environment(async () => {
+      gatewayCalls += 1;
+      return grantResponse();
+    }));
+    const fetchRequest = await handler(new Request(`${origin}/_platform/reauth`, {
+      headers: { Host: host, Accept: "application/json", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty" },
+    }));
+    expect(fetchRequest.status).toBe(400);
+    expect(fetchRequest.headers.getSetCookie()).toHaveLength(0);
+
+    const navigation = await handler(new Request(`${origin}/_platform/reauth`, {
+      headers: {
+        Host: host,
+        Accept: "text/html",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+      },
+    }));
+    expect(navigation.status).toBe(302);
+    expect(navigation.headers.get("Location")).toBe(
+      `https://gateway.service.test/entry/ins_${ULID.toUpperCase()}`,
+    );
+    const cookies = navigation.headers.getSetCookie();
+    expect(cookies).toHaveLength(3);
+    expect(cookies.some((value) => value.startsWith("__Host-praetorium_access=") && value.includes("Max-Age=0"))).toBe(true);
+    expect(cookies.some((value) => value.startsWith("__Secure-praetorium_refresh=") && value.includes("Max-Age=0"))).toBe(true);
+    expect(cookies.some((value) => value.startsWith("__Host-praetorium_csrf=") && value.includes("Max-Age=0"))).toBe(true);
+    expect(gatewayCalls).toBe(0);
+  });
+
   it("does not send image, iframe, or other subresource requests through the wake path", async () => {
     let gatewayCalls = 0;
     const handler = createInstanceAccessHandler(

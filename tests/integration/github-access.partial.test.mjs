@@ -764,8 +764,8 @@ async function attemptOwnedRefPush(
   }
   const localHead = headResult.stdout.trim();
   assert.equal(localHead, expectedHash, "push source differs from its recorded cleanup hash");
+  await gate(beforePush);
   return gate(async () => {
-    await beforePush();
     try {
       // The empty expected value makes branch creation atomic and refuses a ref that
       // another actor created after the preflight existence check.

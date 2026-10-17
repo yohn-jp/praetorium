@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LifecycleService } from "./service.js";
 import { isPersistenceRollbackCompatible, SCRIPTORIUM_PLATFORM_CONTRACT_VERSION } from "./index.js";
 import type {
@@ -756,14 +756,20 @@ describe("LifecycleService", () => {
   });
 
   it("does not treat a lease timeout as proof that the old writer stopped", async () => {
-    const h = harness({ leaveWriterAfterStop: true, quiesceTimeoutMs: 5 });
+    vi.useFakeTimers();
+    try {
+      const h = harness({ leaveWriterAfterStop: true, quiesceTimeoutMs: 5 });
+      const execution = h.service.execute("op-01", h.context);
+      await vi.runAllTimersAsync();
+      const result = await execution;
 
-    const result = await h.service.execute("op-01", h.context);
-
-    expect(result.status).toBe("unknown");
-    expect(h.counters.stops).toEqual([4]);
-    expect(h.counters.starts).toHaveLength(0);
-    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([4]);
+      expect(result.status).toBe("unknown");
+      expect(h.counters.stops).toEqual([4]);
+      expect(h.counters.starts).toHaveLength(0);
+      expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([4]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("redeploys an unchanged digest under a new epoch and activates only with live evidence", async () => {

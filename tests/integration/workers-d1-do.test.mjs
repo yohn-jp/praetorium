@@ -584,8 +584,8 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
       422,
       "operator authority reaches real admission but cannot admit a malformed manifest",
     );
-    // The real scheduled entry plans/audits cache retention even without T11
-    // release bindings. Missing T11 remains an explicit scheduled failure.
+    // Optional release policy must not fail unrelated maintenance. Periodic
+    // recovery must not append unchanged advisory cache-GC plans.
     await miniflare.dispose();
     miniflare = makeMiniflare(
       script,
@@ -598,18 +598,14 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     const scheduledResponse = await miniflare.dispatchFetch(
       "https://control-plane.test/cdn-cgi/handler/scheduled?cron=*%2F5%20*%20*%20*%20*",
     );
-    assert.equal(scheduledResponse.status, 500, "missing T11 policy remains unavailable");
+    assert.equal(scheduledResponse.status, 200, "disabled release policy permits maintenance");
     const maintenanceDb = await miniflare.getD1Database("CONTROL_PLANE_DB");
     const maintenance = await maintenanceDb
       .prepare(
         "SELECT metadata_json FROM audit_events WHERE action='build-cache.gc.planned' ORDER BY occurred_at DESC LIMIT 1",
       )
       .first();
-    assert.ok(maintenance, "actual scheduled entry durably audited cache planning");
-    const maintenanceMetadata = JSON.parse(maintenance.metadata_json);
-    assert.equal(maintenanceMetadata.deletionAttempted, false);
-    assert.equal(maintenanceMetadata.advisoryOnly, true);
-    assert.equal(maintenanceMetadata.policy.maxEvictions, 8);
+    assert.equal(maintenance, null, "scheduled recovery does not append advisory GC audits");
   } finally {
     await miniflare?.dispose();
     await rm(persistenceRoot, { recursive: true, force: true });

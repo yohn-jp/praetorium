@@ -16,16 +16,16 @@ harnesses use the strict reason-code outcome protocol reviewed at `d1f5d37`.
 
 Fresh root verification at exact `164ae3b`:
 
-| Check | Result | Scope |
-| --- | --- | --- |
-| Required frozen install and full check | PASS;29/29 cached test tasks,boundaries/schema | Local workspace only |
-| Infra and mapping | 57 passed,no failures/skips | Local canonical render and mappings |
-| Kubernetes local guards | 4 passed | No live API server |
-| GitHub fixed local guards | 3 passed | Ownership/schema/recovery files only |
-| GitHub partial | 6 passed,1 live SKIP/BLOCKED | No live App/resources |
-| New fixed runner environment contract | Both exit1 and map BLOCKED/OWNER_INPUT_MISSING | Actual verifier env+sidecar, missing input only |
-| Fixed harness | Local Worker/D1/DO VERIFIED;six BLOCKED/NOT_CHECKED;exit2;errors=[] | Actual local Wrangler/Miniflare/D1/DO only |
-| Focused ESLint and syntax | PASS | Verifier and implemented probes |
+| Check                                  | Result                                                              | Scope                                           |
+| -------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------- |
+| Required frozen install and full check | PASS;29/29 cached test tasks,boundaries/schema                      | Local workspace only                            |
+| Infra and mapping                      | 57 passed,no failures/skips                                         | Local canonical render and mappings             |
+| Kubernetes local guards                | 4 passed                                                            | No live API server                              |
+| GitHub fixed local guards              | 3 passed                                                            | Ownership/schema/recovery files only            |
+| GitHub partial                         | 6 passed,1 live SKIP/BLOCKED                                        | No live App/resources                           |
+| New fixed runner environment contract  | Both exit1 and map BLOCKED/OWNER_INPUT_MISSING                      | Actual verifier env+sidecar, missing input only |
+| Fixed harness                          | Local Worker/D1/DO VERIFIED;six BLOCKED/NOT_CHECKED;exit2;errors=[] | Actual local Wrangler/Miniflare/D1/DO only      |
+| Focused ESLint and syntax              | PASS                                                                | Verifier and implemented probes                 |
 
 Logs are `/tmp/praetorium-164ae3b-{install,check,infra-mapping,kube-local,github-fixed-local,github-partial-local,lint}.log`,
 `/tmp/praetorium-164ae3b-fixed-blocked.json` and

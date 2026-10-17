@@ -3,11 +3,13 @@
 For agentic workers: use the available plan-execution/subagent workflow for the fixed tasks below. Sol coordinates the complete campaign; implementation workers and independent read-only reviewers are separate. Do not impose a stop/reconfirmation after each task.
 
 Goal: migrate Arcadia Platform into a deployable, repository-scoped Praetorium with GitHub App access, selected-module OCI composition and safe on-demand Scriptorium routing.
-Architecture: [PLATFORM.md](../architecture/PLATFORM.md); producer authority/handoff: [SCRIPTORIUM-CONTRACT.md](../architecture/SCRIPTORIUM-CONTRACT.md).
+Architecture: [PLATFORM.md](../architecture/PLATFORM.md); shared producer contract: [SCRIPTORIUM-CONTRACT.md](../architecture/SCRIPTORIUM-CONTRACT.md).
 Tech stack: existing TypeScript/Node 24, pnpm/Turbo/Vitest, Hono/Workers/D1/DO, Node workers, BuildKit, NixOS/K3s/Flux.
 Authority: Epic #1 and current explicit owner instructions. Coverage: [COVERAGE.json](COVERAGE.json). Dispatch: [SOL-GOAL.md](SOL-GOAL.md).
 
 ## 1. Inspected truth, not inherited completion claims
+
+Campaign update (2026-10-17): S01-S05 implementation is committed at Scriptorium `008d5c429ec279a424cafd5b8c4cbee70a613b8e`; consumer/lifecycle/recovery implementation is committed at Praetorium `a669f5c16faa85d5fcc162241b793eab734d46c2`. Actual final-source Runtime Base, Build Kit, Core, Story and MCP candidates were generated in the owned registry; all three compositions passed production unsigned artifact inspection and startup smoke. See [artifact evidence](../verification/HOSTED-ARTIFACTS-008d5c4.json) and [deployment runbook](../verification/HOSTED-INTEGRATION-RUNBOOK.md). Signed source admission and real GitHub/Hosted lifecycle/browser/canary/off-host recovery acceptance remain BLOCKED, so accepted `artifactDigest` stays null. Older observations below are historical.
 
 | Repository | Pinned main | Observation |
 | --- | --- | --- |
@@ -28,7 +30,7 @@ Pinned evidence (all source paths use the source SHA above): `package.json`, `AG
 ## 2. Global constraints and review focus
 
 - Praetorium main commit/push is authorized for the dispatched Sol campaign. Sol is the only integration writer; workers use isolated paths/worktrees. No mandatory leaf PRs, force-push, history rewrite or unowned working-tree changes.
-- Arcadia Platform/Loom remain read-only. Scriptorium is concurrently owned by its existing coordinator; use the named S01–S05 handoff rather than competing edits.
+- Arcadia Platform/Loom remain read-only. Scriptorium S01–S05 implementation is part of this campaign and shares the canonical contract in `SCRIPTORIUM-CONTRACT.md`; no further producer-ownership handoff is pending.
 - No CI/GitHub Actions or organization-template synchronization/addition/execution. Product build orchestration is in scope. No Inari.
 - Local/test environments must be explicitly owned and disposable. Production application of Cloudflare/D1/DNS/K3s/NixOS, public artifact release, credential rotation and legacy deletion is not authorized.
 - Never copy private infrastructure values/operational secrets or user work. Preserve source provenance and behavior without copying source Git ancestry.
@@ -57,7 +59,7 @@ Review focus: (1) two users entering the same repository and stale authorization
 | T14 | Integrated real-runtime acceptance | T06,T07,T08,T09,T10,T11,T12,T13 |
 | T15 | Independent final review, corrections and certification | T14 |
 
-Dispatch every ready non-overlapping task; no artificial batch of three. Dependencies are committed producer checkpoints, not sibling uncommitted code. Shared root manifests/lockfile, contract schemas, D1 migration ordering and top-level wiring are Sol-owned. Workers submit bounded changes to those files for serialized integration rather than independently replacing them.
+Dispatch every ready non-overlapping task; no artificial batch of three. Cross-repository source work proceeds in the coordinated campaign; acceptance runs against exact final committed source and artifact cuts, never sibling uncommitted code. Shared root manifests/lockfile, contract schemas, D1 migration ordering and top-level wiring are Sol-owned. Workers submit bounded changes to those files for serialized integration rather than independently replacing them.
 
 Private helper naming may change, but the following neutral ports and producer wire schemas are frozen at T01. Consumers run a seam preflight against exact exports/versions before deep implementation.
 
@@ -93,10 +95,10 @@ Proof: `pnpm install --frozen-lockfile`; `pnpm check`; changed-file format check
 
 Own: `packages/contracts/src/{access,repository,build,artifact,lifecycle,provider,producer}.ts`, generated schemas, `packages/domain`, `docs/migration/PRODUCER-STATUS.json` and fixed interface fixtures. Source: existing contracts/domain/runtime neutral types and auth wire shapes.
 
-- [ ] Refresh all three SHAs; classify S01–S05 as available/in-progress/missing with actual code/artifact references. Freeze the exact public producer schema; fixtures stay labeled fixtures.
+- [ ] Record the exact source cut and classify S01–S05 from their current source paths separately from artifact and product acceptance. The campaign implementation exposes the existing canonical versioned producer contracts; fixtures stay labeled fixtures.
 - [ ] Define D1 identities/generations, build input canonicalization, provider ports, permissions, runtime epoch and stopping dispositions. Reject unknown fields/versions that could alter execution.
 - [ ] Tests: normalized module order shares a build key; differing artifact/recipe/platform changes key; tenant data rejected; wrong host/repository/epoch grant rejected; invalid module graph/resource profile rejected.
-- [ ] Verify schema drift and direct consumers compile before dispatch. Commit contracts and producer handoff. Do not turn a missing producer into a static-token or arbitrary-build fallback.
+- [ ] Verify schema drift and direct consumers compile. Sol owns shared contract changes and root manifests; producer implementations are in the same campaign. Do not add a parallel ABI, static-token fallback or arbitrary-build path.
 
 ### T02 — GitHub App access and broker
 
@@ -122,8 +124,8 @@ Own: `plugins/scriptorium` and adapter fixtures/tests. Source: `packages/loom-ad
 
 - [ ] Normalize declared build catalog/module/resource rules and runtime/probe/auth requirements. Consume S01–S05 through versioned formats.
 - [ ] Replace Loom-specific port/image/data/auth assumptions with exact producer metadata. Distinguish immutable image identity from echoed configuration.
-- [ ] Tests: unsupported producer version, incompatible/unknown module, wrong closure/digest, missing auth/quiesce evidence and distinct 3000-versus-old-3847 profiles. Validate Core and two non-preset selections with producer conformance fixtures.
-- [ ] Consumer tests may pass with labeled fixtures; record each missing actual producer proof and keep the real-image gate blocked.
+- [ ] Tests: unsupported producer version, incompatible/unknown module, wrong closure/digest, missing auth/quiesce evidence and distinct 3000-versus-old-3847 profiles. Labeled fixtures cover consumer unit cases; exact-image Core and two non-preset source compositions require real conformance at T14.
+- [ ] Producer and consumer source now implement the versioned hosted interfaces; retain labeled fixtures for unit coverage, and keep real-image acceptance blocked until exact-image conformance is run.
 
 ### T05 — Registry, artifact admission and cache
 
@@ -141,7 +143,7 @@ Own: `apps/build-worker`, `plugins/buildkit`, `packages/application/src/builds`,
 - [ ] Claim coalesced immutable BuildInput, run the trusted producer recipe in isolated BuildKit, capture bounded progress and verify result before registering an artifact.
 - [ ] Build worker has no runtime kube credential or work-repository token. Implement cancellation, resource/disk/time bounds, cleanup and attempt fencing.
 - [ ] Tests: concurrent equal configs create one admitted result; worker crash/retry/late report; changed module makes distinct input; canceled obsolete selection does not deploy; build secret absent from layers/cache/logs; Core/backend/browser closure verified.
-- [ ] Real BuildKit plus registry round-trip is required. Build current app replacement before draining the old runtime. Publish commits/evidence even when an external producer artifact remains missing.
+- [ ] The composition artifact inspector, runtime package closure and declared smoke path are implemented in the current source cut. Real BuildKit plus registry round-trip and actual image dependency inspection are still required before admission. Build current app replacement before draining the old runtime.
 
 ### T07 — Kubernetes runtime and capacity
 
@@ -159,7 +161,7 @@ Own: Gateway entry/repository/open routes and `apps/instance-access`; source Gat
 - [ ] Resolve repository binding through authorized services; start/wait existing or absent instance without allocating per-user duplicates.
 - [ ] Implement one-use POST handoff, host-only grants, refresh/logout and stable fallback routing. Direct bookmarks on stopped origins must reach the wake path.
 - [ ] Tests: wrong origin/repository/user/epoch, code replay, CSRF, duplicate wake, unauthorized guessed hostname, direct bookmark when stopped, expired grant and MCP request during startup. Never replay the caller's POST or route application bodies through Workers.
-- [ ] Verify actual Worker/DO/service binding and browser cookie behavior; producer auth interop stays explicitly dependent on S02.
+- [ ] Verify actual Worker/DO/service binding and browser cookie behavior together with the Scriptorium grant verifier; source implementation alone does not pass the hosted browser gate.
 
 ### T09 — Lifecycle, idle and safe replacement
 
@@ -167,7 +169,7 @@ Own: `apps/provisioner` and `packages/application/src/lifecycle`; source real ru
 
 - [ ] Reuse the real executor; bind the new providers and repository epoch. Implement activity observation, 15-minute configurable idle decision, quiesce, restart/redeploy/update and resume-on-abort.
 - [ ] Old instance stays running while a new build is pending. Pending checkpoints/uncertain publication block retirement. No automatic push or force reset. Preserve stable identity/origin.
-- [ ] Tests: in-flight checkpoint/job, unknown quiesce, stale resume, lease expiry without writer termination, crash after each irreversible step, failed new readiness and compatible rollback. Same-digest redeploy must create a new epoch.
+- [ ] Tests: in-flight checkpoint/job, unknown quiesce, stale resume, lease expiry without writer termination, crash after each irreversible step, failed new readiness and compatibility-evidence-backed rollback. The compatibility checker and lifecycle fences are implemented in the current source cut; rerun affected verification before treating rollback as accepted. Same-digest redeploy must create a new epoch.
 - [ ] Observe writer absence and actual target artifact/auth/module/repository readiness before marking success; record blockers instead of weakening evidence.
 
 ### T10 — Complete management UI
@@ -214,7 +216,7 @@ Own: `tests/integration`, `tests/e2e`, `scripts/verify-integration.mjs`, `docs/v
 - [ ] Prove GitHub App user authorization, two users to one repository instance, deny unrelated user/read-only mutations, scoped token renewal and real test-repository Git operations. Do not provision accounts or production App credentials implicitly.
 - [ ] Prove two distinct module configurations, identical-config cache hit, UI selection/redeploy, failed-build preservation, Core exclusion, direct-origin wake, active jobs/pending checkpoints blocking stop, clean quiesce and re-clone at stable origin.
 - [ ] Prove stable/pinned behavior, stale workers/reports, isolation/capacity, metadata restore and operator failure/recovery paths. Measure actual build/cache-hit/start/redeploy latency and resource use; no invented performance targets/results.
-- [ ] Reconcile every ledger row with target paths/proofs; all required rows must be verified. Missing producer S01–S05 or environment permissions remain individually BLOCKED; finish unaffected tasks but do not certify the full system.
+- [ ] Reconcile every ledger row with target paths/proofs; all required rows must be verified. S01–S05 source implementation is present, while image, hosted-flow, external App/signature, canary, full product and actual T13 off-host gates remain individually BLOCKED until evidenced; finish unaffected tasks but do not certify the full system.
 
 ### T15 — Independent review and delivery
 

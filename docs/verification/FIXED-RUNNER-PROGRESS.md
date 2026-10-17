@@ -1,5 +1,7 @@
 # Fixed runner implementation checkpoint
 
+> Historical report from before the Hosted Integration Completion campaign. Its missing-source and read-only statements describe that earlier cut. Current implementation and acceptance state are tracked in [the migration ledger](../migration/task-status.json), [producer status](../migration/PRODUCER-STATUS.json), and [the Hosted runbook](HOSTED-INTEGRATION-RUNBOOK.md). This report is not current campaign certification.
+
 Source cut `164ae3b` adds the fixed GitHub and browser-entry harnesses to the
 previous Worker and Kubernetes runners. Three fixed files remain absent:
 BuildKit/registry, producer recovery and stable rollout. Their real semantics

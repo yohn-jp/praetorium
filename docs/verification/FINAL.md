@@ -1,5 +1,7 @@
 # Platform migration delivery checkpoint
 
+> Historical report from before the Hosted Integration Completion campaign. Its missing-source and read-only statements describe that earlier cut. Current implementation and acceptance state are tracked in [the migration ledger](../migration/task-status.json), [producer status](../migration/PRODUCER-STATUS.json), and [the Hosted runbook](HOSTED-INTEGRATION-RUNBOOK.md). This report is not current campaign certification.
+
 The full migration is **not complete**. Implementation, local verification, deployment readiness and production deployment have different states. This checkpoint preserves integrated work and identifies the remaining acceptance and implementation gates; it does not close Epic #1.
 
 | State                         | Result                                                                                                                                                                                                                                                                                                                                                                                                                                               |

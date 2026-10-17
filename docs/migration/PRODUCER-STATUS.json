@@ -1,104 +1,155 @@
 {
   "checkedAt": "2026-10-17",
-  "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
-  "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
+  "sourceRevision": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+  "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
   "previousProducerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
   "artifactDigest": null,
-  "artifactDigestReason": "Core and Full preset image manifests are publicly available at exact digests for producer 3f7b174. They are not approved Runtime Base/Build Kit inputs or assignment-bound Platform compositions. S01-S04 interfaces remain missing and S05 lacks hosted composition/runtime metadata and stable-origin conformance. Accepted Platform artifactDigest remains null; see docs/verification/PRODUCER-3f7b174.md.",
-  "producerModified": false,
+  "artifactDigestReason": "Actual final-source Runtime Base, Build Kit, Core, Story and MCP candidates were generated in the owned registry and all three compositions passed the production unsigned candidate inspector and smoke. No Sigstore-signed source release has been admitted and full Hosted product gates have not passed, so accepted Platform artifactDigest remains null.",
+  "producerModified": true,
   "capabilities": [
     {
       "id": "S01",
-      "status": "missing",
+      "status": "available",
       "gate": "BLOCKED",
       "availableSourcePaths": [
-        "scripts/profile-build.mjs",
-        "scripts/profile-package.mjs",
-        "packages/module-runtime/src/module-plan.ts",
+        "Dockerfile",
+        "modules/*/package.json",
+        "packages/module-runtime/src/build-catalog.ts",
         "packages/module-runtime/src/index.ts",
+        "packages/module-runtime/src/module-plan.ts",
         "profiles/core.json",
         "profiles/full.json",
-        "modules/*/package.json",
-        "Dockerfile"
+        "scripts/build-catalog-bundle.mjs",
+        "scripts/hosted-build.mjs",
+        "scripts/hosted-build.test.mjs",
+        "scripts/profile-build.mjs",
+        "scripts/profile-package.mjs",
+        "scripts/hosted-attestation.mjs"
       ],
-      "missing": "At 1950ba5b all eight module packages remain in profiles/full.json, while scripts/profile-build.mjs accepts only core/full and resolves ModuleManifest through resolveModulePlan. Its generated server exports remain profile, moduleManifests, moduleLoaders, moduleDirectories and moduleWorkerEntries; the browser exports profile and moduleBrowserLoaders. There is no versioned scriptorium-build/v1 BuildCatalog resolver, digest/resource catalog, immutable Runtime Base or Build Kit, approved gateway.v0 receipt, or versioned composition manifest binding the selected image closure.",
+      "missing": "Source and actual final-source Core/Story/MCP artifacts are present and independently inspected. Remaining acceptance: signed source admission and actual Control Plane/Build Worker queue, artifact cache reuse, stale-result rejection and product operation gates.",
       "attempt": "Read-only detached snapshot of remote main at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f; compared 1950ba5b729e5c1611124abe78722c70362c08b2..e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f and rechecked profile-build/profile-package, module-runtime exports, manifests and Dockerfile. No BuildCatalog, Build Kit, receipt or composition-manifest contract was added; no producer build or conformance run was performed. Latest read-only e62bf91..271d7b delta audit confirms no change to this hosted interface; see docs/verification/PRODUCER-271d7b.md. No current-checkpoint producer conformance was run. Fresh read-only 271d7b..539375c audit: docs/verification/PRODUCER-539375c.md; owner-cookie recent-activity persistence/resume adds no hosted contract. No producer conformance run was performed. Fresh539375c..fc4eea8 audit: only Semantic browser polling lifecycle production change; no hosted S01-S04 interface added. See docs/verification/PRODUCER-fc4eea8.md. Read-only fc4..eab audit changes no hosted S01-S04 interface; new terminal component results are recorded in docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator publishes the versioned resolver/catalog and immutable Runtime Base/Build Kit recipe, then supplies owned disposable-image evidence for Core and two distinct legal non-preset compositions with backend/browser/native closure verification.",
-      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      "minimumUnblock": "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs.",
+      "latestAttempt": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance.",
+      "praetoriumSourcePaths": [
+        "plugins/scriptorium/src/catalog-resolver.ts",
+        "apps/build-worker/src/composition-artifacts.ts",
+        "apps/build-worker/src/pnpm-runtime-closure.ts",
+        "plugins/buildkit/src/provider.ts",
+        "plugins/buildkit/src/image-rootfs.ts",
+        "plugins/ghcr/src/candidate-verifier.ts"
+      ]
     },
     {
       "id": "S02",
-      "status": "missing",
+      "status": "available",
       "gate": "BLOCKED",
       "availableSourcePaths": [
-        "packages/api/src/server.ts",
+        "app/src/api.ts",
+        "packages/api/src/hosted-policy.ts",
+        "packages/api/src/platform-runtime.ts",
         "packages/api/src/server.test.ts",
+        "packages/api/src/server.ts",
         "packages/module-runtime/src/module-runtime.ts"
       ],
-      "missing": "At e62bf91 createServer({ authToken, ... }) still uses SCRIPTORIUM_AUTH_TOKEN, /api/login owner-cookie sessions and the existing /api/version auth modes. ModuleRuntime additionally rejects compute HTTP contributions using GET/HEAD, but that method/effect validation does not verify an issuer/JWKS AccessGrant, bind repository/instance/runtime epoch, enforce hosted principal roles, or accept a signed mutation receipt.",
+      "missing": "Hosted grant verification and repository/instance/runtime-epoch/principal permission binding are present in producer source. Still missing for acceptance: actual GitHub App and owned authorized-user flow, deployed public-metadata/private-control key configuration, current-grant browser/API/MCP and negative authorization conformance against an exact built instance.",
       "attempt": "Read current API authentication and route dispatch at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f and compared the 1950..e62 relevant source diff. The module-runtime change restricts HTTP methods for compute effects but adds no hosted grant verifier or assignment binding; no grant conformance run was performed. Publishing share grants remain content-sharing records. Latest read-only e62bf91..271d7b delta audit confirms no change to this hosted interface; see docs/verification/PRODUCER-271d7b.md. No current-checkpoint producer conformance was run. Fresh read-only 271d7b..539375c audit: docs/verification/PRODUCER-539375c.md; owner-cookie recent-activity persistence/resume adds no hosted contract. No producer conformance run was performed. Fresh539375c..fc4eea8 audit: only Semantic browser polling lifecycle production change; no hosted S01-S04 interface added. See docs/verification/PRODUCER-fc4eea8.md. Read-only fc4..eab audit changes no hosted S01-S04 interface; new terminal component results are recorded in docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator delivers hosted-grant and role enforcement plus negative issuer/repository/instance/epoch/expiry and read-only-role tests against an owned disposable runtime; static-token fallback is rejected.",
-      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      "minimumUnblock": "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs.",
+      "latestAttempt": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance.",
+      "praetoriumSourcePaths": [
+        "apps/control-plane/src/runtime-auth-probe.ts",
+        "apps/provisioner/src/scriptorium-control-client.ts",
+        "packages/contracts/src/producer.ts",
+        "tests/integration/producer-recovery.test.mjs",
+        "tests/e2e/browser-entry.test.mjs"
+      ]
     },
     {
       "id": "S03",
-      "status": "missing",
+      "status": "available",
       "gate": "BLOCKED",
       "availableSourcePaths": [
+        "docs/verification/P13-BROWSER-RECOVERY.md",
+        "packages/api/src/hosted-policy.ts",
+        "packages/api/src/platform-runtime.ts",
+        "packages/api/src/server.ts",
         "packages/contracts/src/index.ts",
+        "packages/core/src/hosted-git-credentials.ts",
         "packages/core/src/index.ts",
-        "tests/e2e/container-recovery.acceptance.mjs",
-        "docs/verification/P13-BROWSER-RECOVERY.md"
+        "tests/e2e/container-recovery.acceptance.mjs"
       ],
-      "missing": "At 1950ba5b CoreStoreOptions.githubToken, SCRIPTORIUM_GITHUB_TOKEN and the temporary GIT_ASKPASS helper remain the credential entry points. The 4c..1950 CoreStore changes add bounded historical-metadata reads/caching, not assignment-enforced repository binding, a renewable installation-token GitCredentialProvider, App-scope verification or a signed actor-bound publish authorization receipt. Existing GitHub acceptance uses a supplied token and does not prove App-token renewal.",
+      "missing": "Assignment-bound numeric repository identity, renewable scoped Git credentials and per-publication authorization are present in producer source. Still missing for acceptance: actual repository-limited GitHub App installation credentials and an exact-instance clone/fetch/expiry-renewal/authorized-push run against the owned test repository.",
       "attempt": "Read CoreStoreOptions, constructor/token handling and Git askpass execution in the detached e62bf91 tree and searched the 1950..e62 source diff. CoreStoreOptions.githubToken, SCRIPTORIUM_GITHUB_TOKEN and GIT_ASKPASS remain; no credential-provider seam was added. No live expiry/renewal or App-installation push test was run. Latest read-only e62bf91..271d7b delta audit confirms no change to this hosted interface; see docs/verification/PRODUCER-271d7b.md. No current-checkpoint producer conformance was run. Fresh read-only 271d7b..539375c audit: docs/verification/PRODUCER-539375c.md; owner-cookie recent-activity persistence/resume adds no hosted contract. No producer conformance run was performed. Fresh539375c..fc4eea8 audit: only Semantic browser polling lifecycle production change; no hosted S01-S04 interface added. See docs/verification/PRODUCER-fc4eea8.md. Read-only fc4..eab audit changes no hosted S01-S04 interface; new terminal component results are recorded in docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator delivers numeric repository assignment enforcement, scoped installation-token brokerage and renewal, plus an owned private test-repository run proving fresh clone, mismatch rejection, actual expiry/renewal and actor-authorized push.",
-      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      "minimumUnblock": "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs.",
+      "latestAttempt": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance.",
+      "praetoriumSourcePaths": [
+        "apps/control-plane/src/runtime-auth-probe.ts",
+        "apps/provisioner/src/scriptorium-control-client.ts",
+        "tests/integration/github-access.test.mjs",
+        "tests/integration/producer-recovery.test.mjs"
+      ]
     },
     {
       "id": "S04",
-      "status": "missing",
+      "status": "available",
       "gate": "BLOCKED",
       "availableSourcePaths": [
-        "packages/api/src/server.ts",
-        "packages/api/src/server.test.ts",
         "packages/api/src/job-history-store.ts",
+        "packages/api/src/platform-runtime.ts",
+        "packages/api/src/recent-activity-store.ts",
+        "packages/api/src/server.test.ts",
+        "packages/api/src/server.ts",
         "packages/core/src/index.ts",
         "packages/module-runtime/src/index.ts",
         "packages/module-runtime/src/module-runtime.ts",
         "packages/module-runtime/src/worker-supervisor.ts",
-        "tests/e2e/job-inbox.acceptance.spec.ts",
-        "packages/api/src/recent-activity-store.ts"
+        "tests/e2e/job-inbox.acceptance.spec.ts"
       ],
-      "missing": "At 1950ba5b the module-runtime package additionally exports DomainJobActionExecutor and DomainJobProgressSink and ActionHostContext.trackDomainJob; ModuleRuntime propagates declared job metadata and progress. packages/api/src/server.ts durably tracks the registered speaker-eval, speaker-retrain, aspect-review, zukan-proposal and summary-refresh types, with a maximum of 32 active domain jobs. Owner-cookie GET /api/jobs, GET /api/jobs/:id and GET /api/jobs/events expose history; an owner module-action POST with Prefer: respond-async can return 202 with X-Scriptorium-Job-Id and Location. This is useful internal observation for selected declared jobs, but there is still no versioned hosted status/activity contract, /api/platform/v1/status, /quiesce or /resume, operation/runtime-epoch fence, or complete API/MCP/publication activity snapshot and safe quiesce transition. Current 539375c recent-activity routes are private work-continuation data; they do not provide hosted status or safe quiesce/resume.",
+      "missing": "Versioned hosted status/activity/quiesce/resume and checkpoint/publication observations are present in producer source. Still missing for acceptance: exact-image runtime control, active job/checkpoint/uncertain-push stop barriers, safe resume, stale epoch handling and stable-origin recovery against the owned runtime.",
       "attempt": "Read the 1950..e62 module-runtime/API diff and searched the current source for hosted status, quiesce, resume and assignment/epoch contracts. The diff adds no such interface; existing owner-cookie job history and bounded domain-job tracking remain internal observations. No quiesce conformance run was performed. Latest read-only e62bf91..271d7b delta audit confirms no change to this hosted interface; see docs/verification/PRODUCER-271d7b.md. No current-checkpoint producer conformance was run. New RecentActivity migration types concern private user progress, not hosted runtime activity/control. Fresh read-only 271d7b..539375c audit: docs/verification/PRODUCER-539375c.md; owner-cookie recent-activity persistence/resume adds no hosted contract. No producer conformance run was performed. Fresh539375c..fc4eea8 audit: only Semantic browser polling lifecycle production change; no hosted S01-S04 interface added. See docs/verification/PRODUCER-fc4eea8.md. Read-only fc4..eab audit changes no hosted S01-S04 interface; new terminal component results are recorded in docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator delivers authenticated versioned status/activity and quiesce/resume interfaces, then proves in-flight work, checkpoints, uncertain publication, duplicate quiesce, stale resume and healthy-empty replacement cases.",
-      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      "minimumUnblock": "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs.",
+      "latestAttempt": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance.",
+      "praetoriumSourcePaths": [
+        "apps/provisioner/src/scriptorium-control-client.ts",
+        "packages/application/src/lifecycle/service.ts",
+        "packages/application/src/lifecycle/persistence-compatibility.ts",
+        "tests/integration/producer-recovery.test.mjs"
+      ]
     },
     {
       "id": "S05",
-      "status": "missing",
+      "status": "available",
       "gate": "BLOCKED",
       "availableSourcePaths": [
         "Dockerfile",
-        "scripts/verify-oci.sh",
-        "packages/api/src/server.ts",
+        "app/src/api.ts",
+        "app/src/storage/journal.ts",
         "docs/verification/OCI.md",
-        "docs/verification/P13-PACKAGING.md",
         "docs/verification/P13-BROWSER-RECOVERY.md",
         "docs/verification/P13-MODEL-OCI-LIFECYCLE.md",
+        "docs/verification/P13-PACKAGING.md",
+        "packages/api/src/platform-runtime.ts",
+        "packages/api/src/server.ts",
+        "scripts/profile-package.mjs",
+        "scripts/verify-oci.sh",
+        "tests/e2e/container-recovery.acceptance.mjs",
         "tests/integration/model-oci-lifecycle.acceptance.mjs",
-        "tests/integration/model-oci-lifecycle.container.mjs",
-        "tests/e2e/container-recovery.acceptance.mjs"
+        "tests/integration/model-oci-lifecycle.container.mjs"
       ],
-      "missing": "Published Core/Full preset images exist, but no accepted assignment/composition-bound runtime metadata or exact-image hosted stable-origin recovery/conformance was supplied. Published image identity alone does not satisfy Platform composition admission.",
+      "missing": "Actual final-source composition manifests, embedded metadata/persistence, physical server/browser/native closure and declared startup smoke passed. Hosted GitHub/browser recovery and lifecycle/canary acceptance remain unverified.",
       "attempt": "Root inspected fetched eab object/tree, runtime/packaging-path diff, FINAL-MIGRATION, P12 and exact-tree P13 report. Actual component evidence is recorded; no Platform producer conformance or registry publication was performed by this campaign. See docs/verification/PRODUCER-eab0fad.md.",
-      "minimumUnblock": "Existing producer coordinator supplies public runtime metadata bound to a hosted assignment, composition and image identity, then reruns the disposable stable-origin browser recovery against the exact current-main image and corroborates the reported metadata with its OCI/runtime observation.",
-      "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md.",
-      "priorMissingObservation": "At observed eab0fad the packaged application source matches frozen fc4; docs/verification and the migration-ledger verifier changed, not hosted interfaces. New local Core8661aa25, Full startup03cb0ddc and exact-tree Full modelac8aaf8f manifest evidence includes the final polling fix; P12 now passed. Producer records whole-verify final-stage ENOSPC followed by a successful unchanged-stage retry, not an original zero exit. Images remained local, with some duplicate images later removed; no published locator or hosted assignment/composition conformance is supplied. Accepted Platform artifactDigest remains null. See docs/verification/PRODUCER-eab0fad.md."
+      "minimumUnblock": "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs.",
+      "latestAttempt": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance.",
+      "priorMissingObservation": "At observed eab0fad the packaged application source matches frozen fc4; docs/verification and the migration-ledger verifier changed, not hosted interfaces. New local Core8661aa25, Full startup03cb0ddc and exact-tree Full modelac8aaf8f manifest evidence includes the final polling fix; P12 now passed. Producer records whole-verify final-stage ENOSPC followed by a successful unchanged-stage retry, not an original zero exit. Images remained local, with some duplicate images later removed; no published locator or hosted assignment/composition conformance is supplied. Accepted Platform artifactDigest remains null. See docs/verification/PRODUCER-eab0fad.md.",
+      "praetoriumSourcePaths": [
+        "apps/build-worker/src/composition-artifacts.ts",
+        "plugins/scriptorium/src/catalog-resolver.ts",
+        "tests/integration/producer-recovery.test.mjs",
+        "tests/e2e/browser-entry.test.mjs",
+        "tests/integration/stable-rollout.test.mjs"
+      ]
     }
   ],
-  "producerTree": "b399ba06cfd24a6b300e40e6b8f428312e93873d",
+  "producerTree": "e8b02d09f1ad50ba3fd7f820ef16bcdb5d172ae2",
   "latestAudit": "docs/verification/PRODUCER-3f7b174.md",
   "priorArtifactObservation": {
     "producerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
@@ -119,5 +170,86 @@
       "platform": "linux/amd64"
     }
   ],
-  "publishedPresetVerification": "Worker and root independently fetched raw tag/digest manifests and config blobs anonymously; hashes/descriptors match. Source association is existing tag/workflow head, with no embedded OCI revision labels. No workflow was triggered and no image was run by this audit."
+  "publishedPresetVerification": "Worker and root independently fetched raw tag/digest manifests and config blobs anonymously; hashes/descriptors match. Source association is existing tag/workflow head, with no embedded OCI revision labels. No workflow was triggered and no image was run by this audit.",
+  "implementationSourceCut": {
+    "praetoriumRevision": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+    "praetoriumWorkingTreeChangesPending": false,
+    "praetoriumRelevantPendingPaths": [],
+    "scriptoriumRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+    "scriptoriumTree": "e8b02d09f1ad50ba3fd7f820ef16bcdb5d172ae2",
+    "scriptoriumWorkingTreeChangesPending": false,
+    "scriptoriumRelevantPendingPaths": [],
+    "scope": "Committed implementation source cuts; pending evidence-only documents are excluded. Scriptorium root .codegraph/ is pre-existing untracked data; artifacts came from a separate clean checkout.",
+    "buildWorkerArtifactSource": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+    "lifecycleArtifactSource": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+    "artifactDigest": null,
+    "currentCutVerification": "Required Praetorium frozen install/check passed (29 tasks; application72, provisioner53, recovery12); Scriptorium frozen/typecheck/test/build/audit passed (one expected optional CPU-model skip). Actual Core/Story/MCP production unsigned inspection and startup smoke passed. Full Hosted acceptance remains blocked.",
+    "provisionerArtifactSource": "a669f5c16faa85d5fcc162241b793eab734d46c2"
+  },
+  "previousProducerObservation": {
+    "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
+    "producerTree": "b399ba06cfd24a6b300e40e6b8f428312e93873d",
+    "artifactDigest": null,
+    "artifactDigestReason": "Core and Full preset image manifests are publicly available at exact digests for producer 3f7b174. They are not approved Runtime Base/Build Kit inputs or assignment-bound Platform compositions. S01-S04 interfaces remain missing and S05 lacks hosted composition/runtime metadata and stable-origin conformance. Accepted Platform artifactDigest remains null; see docs/verification/PRODUCER-3f7b174.md.",
+    "producerModified": false,
+    "capabilities": [
+      {
+        "id": "S01",
+        "status": "missing",
+        "gate": "BLOCKED",
+        "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      },
+      {
+        "id": "S02",
+        "status": "missing",
+        "gate": "BLOCKED",
+        "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      },
+      {
+        "id": "S03",
+        "status": "missing",
+        "gate": "BLOCKED",
+        "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      },
+      {
+        "id": "S04",
+        "status": "missing",
+        "gate": "BLOCKED",
+        "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      },
+      {
+        "id": "S05",
+        "status": "missing",
+        "gate": "BLOCKED",
+        "latestAttempt": "Read-only eab0fad..3f7b174 source delta and direct public registry manifest/config verification; no hosted interface source changed. See docs/verification/PRODUCER-3f7b174.md."
+      }
+    ],
+    "latestAudit": "docs/verification/PRODUCER-3f7b174.md"
+  },
+  "latestCampaignObservation": {
+    "checkedAt": "2026-10-17",
+    "sourceCut": {
+      "praetoriumRevision": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+      "praetoriumWorkingTreeChangesPending": false,
+      "praetoriumRelevantPendingPaths": [],
+      "scriptoriumRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+      "scriptoriumTree": "e8b02d09f1ad50ba3fd7f820ef16bcdb5d172ae2",
+      "scriptoriumWorkingTreeChangesPending": false,
+      "scriptoriumRelevantPendingPaths": [],
+      "scope": "Committed implementation source cuts; pending evidence-only documents are excluded. Scriptorium root .codegraph/ is pre-existing untracked data; artifacts came from a separate clean checkout.",
+      "buildWorkerArtifactSource": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+      "lifecycleArtifactSource": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+      "artifactDigest": null,
+      "currentCutVerification": "Required Praetorium frozen install/check passed (29 tasks; application72, provisioner53, recovery12); Scriptorium frozen/typecheck/test/build/audit passed (one expected optional CPU-model skip). Actual Core/Story/MCP production unsigned inspection and startup smoke passed. Full Hosted acceptance remains blocked.",
+      "provisionerArtifactSource": "a669f5c16faa85d5fcc162241b793eab734d46c2"
+    },
+    "sourceImplementation": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance.",
+    "artifactEvidence": "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+    "artifactDigest": null,
+    "productAcceptance": "BLOCKED. Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs.",
+    "productionApplied": false
+  },
+  "legacyArcadiaSourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
+  "sourceRepository": "yohn-jp/praetorium",
+  "latestAuditScope": "Historical observation at the older revision named by latestAudit; current campaign evidence follows."
 }

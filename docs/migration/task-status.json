@@ -56,9 +56,22 @@
     "scope": "Historical verification cut; current bounded results are in latestCampaignVerification. The earlier heads and counts are preserved as history."
   },
   "statusLegend": {
-    "implementation": ["present", "partial", "missing"],
-    "integration": ["integrated", "partial", "missing"],
-    "realAcceptance": ["passed", "blocked", "not_run", "unverified"],
+    "implementation": [
+      "present",
+      "partial",
+      "missing"
+    ],
+    "integration": [
+      "integrated",
+      "partial",
+      "missing"
+    ],
+    "realAcceptance": [
+      "passed",
+      "blocked",
+      "not_run",
+      "unverified"
+    ],
     "meaning": "Implementation is code/schema presence; integration is production-path composition in this exact target HEAD; realAcceptance records only the bounded environment evidence stated per task. Unit/package tests do not constitute producer or deployed-system acceptance. T14 full acceptance is blocked."
   },
   "producerPreflight": {
@@ -111,9 +124,15 @@
       "implementation": "present",
       "integration": "integrated",
       "realAcceptance": "passed",
-      "evidence": ["package.json", "pnpm-workspace.yaml", "docs/migration/BASELINE.json"],
+      "evidence": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "docs/migration/BASELINE.json"
+      ],
       "blockers": [],
-      "recordedCheckDocs": ["docs/migration/BASELINE.json"],
+      "recordedCheckDocs": [
+        "docs/migration/BASELINE.json"
+      ],
       "recordStatus": "Fresh frozen install and required full check passed at 27142b0ab28e6c7323af3e2c11ed6121bf830574 (29/29 Turbo tasks, provider boundaries and generated schemas). This is local foundation verification, not runtime/product acceptance."
     },
     "T01": {
@@ -126,14 +145,18 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs."
       ],
-      "recordedCheckDocs": ["docs/migration/PRODUCER-STATUS.json"],
-      "recordStatus": "Read-only producer observation at eab0fad7c811aeedabe29fcd214598dc5207c178 records local Core/Full OCI and terminal P12 component evidence for frozen fc4 application code. Hosted S01-S04 interfaces and accepted S05 composition remain missing; Platform artifactDigest null. See docs/verification/PRODUCER-eab0fad.md. No Platform-to-producer conformance was run."
+      "recordedCheckDocs": [
+        "docs/migration/PRODUCER-STATUS.json",
+        "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+        "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md"
+      ],
+      "recordStatus": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance."
     },
     "T02": {
-      "implementation": "partial",
-      "integration": "partial",
+      "implementation": "present",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
         "packages/auth/src",
@@ -148,17 +171,17 @@
         "docs/migration/tasks/T14-github-access-partial.md"
       ],
       "blockers": [
-        "Gateway production context and Control Plane Worker compose the App-scoped runtime Git credential broker, encrypted known-token registry/revoker and runtime identity from configured secrets; local route/binding/SQLite tests and independent review cover the integrated retirement path at source cut 27142b0.",
-        "A separate actual Wrangler Worker/D1 partial probe passed 1/1 at test-only commit 37f187c. It supplies synthetic credentials and a synthetic zero-census proof: a GitHub 401 leaves revocation pending and the old-writer-absent checkpoint at 503; a local synthetic 204 acknowledgement marks revoked and a retry succeeds. The null retired-epoch case skips the callback.",
-        "No actual runtime writer/census or lease, live GitHub App/API call, authorized test users/private repository, or producer S02/S03 credential renewal/revocation acceptance was run. No global/instantaneous revocation claim is made."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T02.md",
         "docs/verification/INDEPENDENT-REVIEW.md",
         "docs/verification/RUNTIME-CREDENTIALS-PARTIAL.md",
-        "docs/migration/COVERAGE.json"
+        "docs/migration/COVERAGE.json",
+        "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+        "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md"
       ],
-      "recordStatus": "Runtime broker/identity issuance, encrypted known-token registration/revocation and retirement authority barriers are production-composed and locally unit/SQLite tested. The separate actual Worker probe verifies fail-closed checkpoint behavior only with synthetic census and local provider responses; GitHub App/API interoperability and real writer absence remain unverified."
+      "recordStatus": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance."
     },
     "T03": {
       "implementation": "present",
@@ -178,9 +201,10 @@
       "recordedCheckDocs": [
         "docs/migration/tasks/T03.md",
         "tests/integration/workers-d1-do.test.mjs",
-        "docs/verification/ACCEPTANCE.md"
+        "docs/verification/ACCEPTANCE.md",
+        "docs/verification/HOSTED-ACCEPTANCE-a669f5c.json"
       ],
-      "recordStatus": "The 27142b0ab28e6c7323af3e2c11ed6121bf830574 production Wrangler Worker passed local D1/DO acceptance covering migrations 0001-0004, repository resolution/coordination, webhook metadata persistence, actual audit pagination and scheduled advisory cache-retention audit. No Cloudflare deployment or full T14 acceptance.",
+      "recordStatus": "At a669f5c, the actual Wrangler-built Control Plane bundle passed the fixed owned local D1/SQLite DO runner with all five migrations, repository binding/coordination and durable metadata paths. This is local Worker acceptance, not Cloudflare deployment or GitHub/Hosted acceptance.",
       "acceptanceScope": "Actual Wrangler-built Control Plane Worker; local D1 migrations and persistent DO; repository resolve/read, desired operations, webhook metadata/persistence and Worker restart. No external Cloudflare environment."
     },
     "T04": {
@@ -193,10 +217,15 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs."
       ],
-      "recordedCheckDocs": ["docs/migration/tasks/T04.md", "docs/migration/PRODUCER-STATUS.json"],
-      "recordStatus": "Target consumer contracts/adapters are integrated. Published producer presets are recorded, but accepted composition and hosted conformance remain absent; current producer status controls the gate."
+      "recordedCheckDocs": [
+        "docs/migration/tasks/T04.md",
+        "docs/migration/PRODUCER-STATUS.json",
+        "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+        "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md"
+      ],
+      "recordStatus": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance."
     },
     "T05": {
       "implementation": "present",
@@ -211,19 +240,20 @@
         "apps/control-plane/src/releases/operator-admission.ts"
       ],
       "blockers": [
-        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md.",
-        "Bounded pinned-safe planner and D1 snapshot are wired into the scheduled Worker; the local Worker runner verifies configured retention policy and durable advisory audit. No cache/OCI deletion or storage reclamation is claimed, and no remote OCI delete executor is required by the current contract."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T05.md",
         "docs/migration/tasks/T05-cache.md",
-        "tests/integration/workers-d1-do.test.mjs"
+        "tests/integration/workers-d1-do.test.mjs",
+        "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+        "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md"
       ],
-      "recordStatus": "Root checks cover cache/admission tests; the actual scheduled Worker emits a bounded advisory retention audit. Real source artifact/GHCR acceptance and deployment operator policy remain blocked."
+      "recordStatus": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance."
     },
     "T06": {
-      "implementation": "partial",
-      "integration": "partial",
+      "implementation": "present",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
         "apps/build-worker/src",
@@ -235,16 +265,17 @@
         "apps/build-worker/test/main.test.ts"
       ],
       "blockers": [
-        "The production Build Worker entry defaults to UnavailableCompositionArtifactInspector, which always rejects; no digest-backed OCI/platform-manifest, server/browser/native closure verifier or declared-smoke runner is implemented and wired. PLAN T06/PLATFORM §4 require this before an artifact can be admitted.",
-        "Producer S01 receipt/catalog/immutable artifact is unavailable and is a prerequisite to define the verifier, not a substitute for implementing and wiring it. The owned disposable BuildKit/registry acceptance is also unavailable. After S01 contract/artifact delivery, the concrete closure inspector and declared-smoke implementation still need to be built and production-wired."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T06.md",
         "apps/build-worker/src/main.ts",
         "apps/build-worker/test/main.test.ts",
-        "docs/migration/PRODUCER-STATUS.json"
+        "docs/migration/PRODUCER-STATUS.json",
+        "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+        "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md"
       ],
-      "recordStatus": "Build worker queue/BuildKit/candidate-verification paths exist, but the production composition uses an always-rejecting inspector and cannot verify OCI closure or run declared smoke. The producer S01 receipt/catalog ABI must arrive first; it does not itself provide the missing verifier. Implement and wire that verifier afterward, then complete owned BuildKit/registry acceptance."
+      "recordStatus": "Concrete production inspector and startup smoke passed all three final-source candidate images. Actual signed source admission, queue/cache/stale-result fixed runner and full Hosted product acceptance remain blocked."
     },
     "T07": {
       "implementation": "present",
@@ -263,9 +294,7 @@
         "docs/verification/PLATFORM-SECURITY-DELTA.md"
       ],
       "blockers": [
-        "Owned Kind admission, real IPv4 policy packets, and the immutable Provisioner image projected-ServiceAccount GET/list subset passed. Full tenant application image/repository/auth, scheduling, ingress TLS, IPv6, capacity, writer/partition and T07 acceptance remain unverified.",
-        "At production cut b3fbe6d, principal/PSA and static RBAC plus namespace/RoleBinding/resource/Pod/network/route guards are composed in the canonical base and staged apply. Kubernetes package 34/34 and root infra 47/47 pass; these are local proof, not cluster enforcement.",
-        "Indefinite not-ready/unreachable tolerations prevent the default automatic node-eviction path but are not host fencing. Operator force deletion/node removal can erase API evidence before a process terminates; no force-delete was performed."
+        "Owned final Provisioner and Prometheus images are cryptographically verified and actually Ready in the existing owned Kind cluster. Full fixed Kubernetes runner remains unexecuted because the actual Gateway/Instance Access binding is unavailable without the owned App/OAuth inputs; no fake binding or substituted producer is used. Owner Traefik TLS verification passed; HTTP404 is expected because the actual instance route/backend is absent. Historical CNI/API proofs retain their original scope; IPv6/partition/full T07 acceptance is not passed."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T07.md",
@@ -274,7 +303,7 @@
         "docs/verification/KUBERNETES-NETWORK-PACKETS.md",
         "docs/verification/KUBERNETES-PROVIDER-READ.md"
       ],
-      "recordStatus": "Provider principal/PSA, RBAC/admission/network/route paths are integrated. Owned API probes exposed and validated CEL/IPv6 source fixes, integrated through f3327c1. Full scheduling/image/isolation/capacity/writer/partition acceptance remains unverified; see docs/verification/OWNED-KUBERNETES.md. Actual owned IPv4 packet component passed at 92a681d with live ingress/port/private-target controls, DNS, source renderer closure hashes and UID-guarded cleanup. Root independently confirmed all four namespaces absent and zero run Pods. This does not certify metadata/public HTTPS, IPv6, ingress TLS, capacity/writer integration or full T07/T14. Actual source431dbe1 Provisioner image with projected ServiceAccount passed bootstrap Deployment list and known-absent inspect at test source9a07bc6, with zero reservation callbacks and five UID-cleaned resources independently absent; this does not cover an existing-namespace Pod census, capacity/D1, runtime writes or full Provisioner/producer behavior."
+      "recordStatus": "Current real Provisioner deployment uses a669f5c empty-queue fix image c66e8c3253252090281fd11aa660163e1d72e63414652cf1695a8353cd0a93da, Ready with 0 restarts; root independently checked its actual Pod UID and imageID. Prometheus Ready. Control/runtime-identity JWKS are live public P-256/ES256 only. Full T07 runner remains blocked on actual Gateway/Instance Access."
     },
     "T08": {
       "implementation": "present",
@@ -290,19 +319,20 @@
         "tests/e2e/gateway-worker-security.partial.test.mjs"
       ],
       "blockers": [
-        "A local actual Gateway Worker/Miniflare Chromium security probe passed 1/1 from exact source cut 27142b0ab28e6c7323af3e2c11ed6121bf830574; it intentionally fails closed at the Control Plane boundary and does not exercise Instance Access or an owned stable origin.",
-        "No successful owned GitHub App flow, real stable-origin browser handoff/cookie behavior, deployed Worker service binding, or producer S02 grant acceptance was run."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T08.md",
         "docs/migration/tasks/T14-gateway-partial.md",
-        "docs/verification/ACCEPTANCE.md"
+        "docs/verification/ACCEPTANCE.md",
+        "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+        "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md"
       ],
-      "recordStatus": "The fixed real-browser-entry gate is BLOCKED. A narrower local Gateway Worker security/browser probe passed at the exact source cut; it does not exercise Instance Access, successful App OAuth or a stable origin."
+      "recordStatus": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance."
     },
     "T09": {
-      "implementation": "partial",
-      "integration": "partial",
+      "implementation": "present",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
         "apps/provisioner/src/main.ts",
@@ -320,9 +350,7 @@
         "apps/provisioner/src/idle-controller.test.ts"
       ],
       "blockers": [
-        "Typed Control Plane idle-candidate/idle-stop routes and ProvisionerIdleController are implemented, mounted and locally tested; they do not establish real Scriptorium S04/S05 observations. S02/S03 auth-probe/assignment transports and S04/S05 producer conformance remain unavailable, so the actual executable stays not-ready and claims no operations.",
-        "Compatible rollback is not implemented: apps/provisioner/src/lifecycle-executor.ts:isRollbackCompatible returns false because no schema/data compatibility proof is carried. PLAN T09 and PLATFORM §6 require compatible rollback under lifecycle fences; keep it fail-closed until a real compatibility checker/evidence is implemented. Do not infer compatibility from equal image digests.",
-        "Owned Kubernetes component runs passed for T07 only. No real producer-bound T09 quiesce/resume/lease/rollback, physical writer fencing or GitHub App revocation acceptance ran; the partial credential Worker probe uses synthetic state/provider responses."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T09.md",
@@ -331,9 +359,11 @@
         "apps/provisioner/src/lifecycle-executor.ts",
         "tests/integration/provisioner-capability-gate.test.mjs",
         "docs/migration/PLAN.md",
-        "docs/architecture/PLATFORM.md"
+        "docs/architecture/PLATFORM.md",
+        "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+        "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md"
       ],
-      "recordStatus": "The compiled Provisioner process is fail-closed; typed idle routes and controller are present and locally tested. Production execution still needs S02-S05 producer interoperability and a live cluster. Compatible automatic rollback remains safely disabled because its required schema/data compatibility checker/evidence is missing."
+      "recordStatus": "Directional compatibility and writer census are integrated. Every retirement/recovery now requires fresh assignment-bound remote status and same-operation re-quiesce with renewed deadline; historical receipts never authorize a stop. Root application72 tests passed; full producer/Kubernetes lifecycle acceptance remains blocked."
     },
     "T10": {
       "implementation": "present",
@@ -351,7 +381,9 @@
         "The authorized portal retry action now invokes the Control Plane retry path and has focused UI/service/route tests.",
         "No full real-browser management acceptance, owned GitHub App, producer composition/build, or live runtime lifecycle acceptance was run."
       ],
-      "recordedCheckDocs": ["docs/migration/tasks/T10.md"],
+      "recordedCheckDocs": [
+        "docs/migration/tasks/T10.md"
+      ],
       "recordStatus": "Portal routes, management APIs and retry are production-composed and covered by local tests; these do not substitute for the real-browser T10/T14 acceptance."
     },
     "T11": {
@@ -367,15 +399,16 @@
         "apps/control-plane/migrations/0002_stable_release_rollouts.sql"
       ],
       "blockers": [
-        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md.",
-        "No real canary, ten-minute health window, writer-absence observation, stable follower rollout or persisted canary observation is available; S02/S05 canary evidence remains blocked."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T11.md",
         "apps/control-plane/src/release-composition.ts",
-        "tests/integration/workers-d1-do.test.mjs"
+        "tests/integration/workers-d1-do.test.mjs",
+        "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+        "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md"
       ],
-      "recordStatus": "Scheduled and operator admission Worker composition is integrated and locally exercised; current producer metadata/artifact and S02/S05 canary observations remain unavailable, with no fixture completion claim."
+      "recordStatus": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance."
     },
     "T12": {
       "implementation": "present",
@@ -405,9 +438,7 @@
         "docs/verification/OWNED-KUBERNETES.md"
       ],
       "blockers": [
-        "Owned product create/ownership verification, bounded Pod/NetworkPolicy API proofs, three actual Platform service image builds, and Build Worker private-copy/init/cold-constructor checks passed in the stated component scope. Full baseline apply remains blocked by 25 operator inputs and producer interfaces; no full deployed-system acceptance is claimed.",
-        "The static bundle includes seven VAPs/bindings and system NetworkPolicies. Only a two-policy canonical subset and isolated candidate API probes ran; full guard-before-bootstrap readiness, CNI and Traefik traffic remain unverified.",
-        "No production infrastructure was applied."
+        "Owned local Worker/registry/BuildKit/Kind are reused; final service artifacts are verified and real Provisioner/Prometheus are Ready. Actual Gateway/Instance Access cannot be bound without owned App/OAuth inputs. No production infrastructure was applied."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T12.md",
@@ -424,21 +455,22 @@
         "plugins/legacy-recovery/src",
         "docs/migration/tasks/T13.md",
         "tests/integration/legacy-metadata-restore.partial.test.mjs",
-        "docs/verification/LEGACY-METADATA-PARTIAL.md"
+        "docs/verification/LEGACY-METADATA-PARTIAL.md",
+        "plugins/legacy-recovery/src/restic-destination.ts"
       ],
       "blockers": [
-        "The local partial probe uses only one synthetic Platform metadata row. No remote/off-host D1 export or Restic backend, source/legacy/user data, source PVC, producer checkpoint, key escrow, target binding, cutover or retirement was exercised; no old PVC or unpublished data was changed."
+        "The local partial probe uses only one synthetic Platform metadata row. No remote/off-host D1 export or Restic backend, source/legacy/user data, source PVC, producer checkpoint, key escrow, target binding, cutover or retirement was exercised; no old PVC or unpublished data was changed. The actual T13 off-host/source-data gate remains blocked."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T13.md",
         "docs/verification/LEGACY-METADATA-PARTIAL.md",
         "tests/integration/legacy-metadata-restore.partial.test.mjs"
       ],
-      "recordStatus": "A local partial integration test passed 1/1 at pinned code cut 4a94433: actual Wrangler local D1 migrations/seed/export, production metadata archive/verify/restore CLI, Restic 0.19.1 local repository, in-memory SQLite validation and tampered-ciphertext rejection before staging. The row is synthetic; this is not remote/off-host/source/PVC/producer T13 acceptance, which remains blocked."
+      "recordStatus": "A local partial integration test passed 1/1 at pinned code cut 4a94433: actual Wrangler local D1 migrations/seed/export, production metadata archive/verify/restore CLI, Restic 0.19.1 local repository, in-memory SQLite validation and tampered-ciphertext rejection before staging. The row is synthetic; this is not remote/off-host/source/PVC/producer T13 acceptance, which remains blocked. Current campaign adds protected exact destination-URI binding, loopback/local and conflicting repository-file rejection, correct Restic S3 path/bucket validation and destination fingerprints; root focused12 tests and full29-task check passed. No remote/off-host acceptance is inferred."
     },
     "T14": {
-      "implementation": "partial",
-      "integration": "partial",
+      "implementation": "present",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
         "scripts/verify-integration.mjs",
@@ -453,10 +485,8 @@
         "docs/verification/DELIVERY-4f52afd.md"
       ],
       "blockers": [
-        "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout; the fixed harness returned exit 2 with errors=[].",
-        "Current producer 3f7b174 has public digest-verified Core/Full presets. Accepted Platform composition remains absent (artifactDigest null); S01 catalog/receipt, S02-S04 hosted protocols and S05 assignment/conformance are incomplete. See docs/verification/PRODUCER-3f7b174.md.",
-        "The Kubernetes isolation runner is implemented/reviewed, but its complete CNI/ingress/provider/metadata-canary configuration remains unavailable; owned Kind API component probes do not verify that category. GitHub/browser fixed harnesses are also implemented/reviewed; three fixed files remain absent (BuildKit, producer recovery, stable rollout), and producer-client renewal remains unimplemented. The partial M04 probe remains synthetic.",
-        "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; S01 receipt/catalog ABI must arrive first, then the inspector/smoke path must be implemented and wired. T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain alongside the blocked producer/environment gates."
+        "Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs.",
+        "The current aggregate verified Worker/D1/DO only; six product categories are BLOCKED/NOT_CHECKED. Full Kubernetes runner inputs remain blocked on actual Gateway/Instance Access despite proven owned substrate readiness."
       ],
       "recordedCheckDocs": [
         "docs/verification/ACCEPTANCE.md",
@@ -464,7 +494,7 @@
         "docs/migration/PRODUCER-STATUS.json",
         "tests/integration/verify-integration.test.mjs"
       ],
-      "recordStatus": "Fresh owned local Worker/D1/DO fixed acceptance passed at 5e8d2ad; aggregate exit 2, six categories BLOCKED/NOT_CHECKED and errors=[]. Required install/check passed at 79100a0 with infra/verifier 57/57 and only ledger/evidence-document changes through 5e8d2ad. Four fixed runner paths exist; BuildKit, producer recovery and stable rollout remain absent. Owned Kind API and service-image component evidence does not establish full cluster/producer acceptance. See docs/verification/DELIVERY-5e8d2ad.md."
+      "recordStatus": "Actual existing verify-integration.mjs at a669f5c: workers-d1-do VERIFIED; six categories BLOCKED/NOT_CHECKED; errors=[]; exit2. Kubernetes/BuildKit substrates exist and were exercised separately; the complete fixed-runner inputs depend on real Gateway/App and signed source admission. No readback/fixture was substituted for a private runner config."
     },
     "T15": {
       "implementation": "partial",
@@ -476,14 +506,14 @@
         "docs/verification/ACCEPTANCE.md"
       ],
       "blockers": [
-        "Independent local reviews and corrections were completed and recorded; final campaign certification remains blocked by T14 and external producer/environment gates."
+        "Independent reviews of current committed code and actual image inspection evidence are resolved. Full campaign certification remains blocked by the unexecuted real Hosted product gates and T13 off-host acceptance."
       ],
       "recordedCheckDocs": [
         "docs/verification/INDEPENDENT-REVIEW.md",
         "docs/verification/FINAL.md",
         "docs/verification/ACCEPTANCE.md"
       ],
-      "recordStatus": "Independent review at production source cut 27142b0 closed the identified source/runtime findings within reviewer scope. The actual credential Worker partial probe at test-only evidence commit 37f187c further verified the synthetic local checkpoint barrier. T15 remains partial; full certification is blocked while T14 and producer/environment gates remain unresolved."
+      "recordStatus": "Current source and artifact component review is recorded in the campaign evidence; full product acceptance and certification are still blocked."
     }
   },
   "unimplementedOrPartialCapabilities": [
@@ -511,38 +541,38 @@
     {
       "id": "S01-S05",
       "capability": "producer catalog, hosted access, Git credentials, quiesce and immutable composition evidence",
-      "state": "blocked",
-      "evidence": "Read-only producer observation at eab0fad7c811aeedabe29fcd214598dc5207c178 records local Core/Full OCI and terminal P12 component evidence for frozen fc4 application code. Hosted S01-S04 interfaces and accepted S05 composition remain missing; Platform artifactDigest null. See docs/verification/PRODUCER-eab0fad.md. No Platform-to-producer conformance was run."
+      "state": "partial",
+      "evidence": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance."
     },
     {
       "id": "T09-runtime",
       "capability": "producer-assigned executable lifecycle operations",
-      "state": "blocked",
-      "evidence": "The actual executable probe proves health/readiness fail closed and zero claims without producer capabilities. Typed idle routes and ProvisionerIdleController exist and are locally tested, but S02/S03/S04/S05 producer interoperability is unavailable; compatible automatic rollback also remains unimplemented pending schema/data compatibility evidence."
+      "state": "partial",
+      "evidence": "Directional compatibility and writer census are integrated. Every retirement/recovery now requires fresh assignment-bound remote status and same-operation re-quiesce with renewed deadline; historical receipts never authorize a stop. Root application72 tests passed; full producer/Kubernetes lifecycle acceptance remains blocked."
     },
     {
       "id": "T14-environments-and-runners",
       "capability": "remaining six real integration categories",
       "state": "blocked",
-      "evidence": "At 0fcf16a required frozen install/check passed and the fixed harness VERIFIED actual owned local Worker/D1/DO only; aggregate exit 2, six BLOCKED/NOT_CHECKED and errors=[]. The newly implemented Kubernetes runner has 4/4 local validator tests and independent review; full acceptance refuses absent inventory before API construction. Five other fixed runners remain missing. No cluster was contacted."
+      "evidence": "Actual existing verify-integration.mjs at a669f5c: workers-d1-do VERIFIED; six categories BLOCKED/NOT_CHECKED; errors=[]; exit2. Kubernetes/BuildKit substrates exist and were exercised separately; the complete fixed-runner inputs depend on real Gateway/App and signed source admission. No readback/fixture was substituted for a private runner config."
     },
     {
       "id": "T15-review",
       "capability": "final independent campaign review and certification",
       "state": "partial",
-      "evidence": "docs/verification/INDEPENDENT-REVIEW.md records review at production source cut 27142b0 and the later 37f187c synthetic partial Worker probe; local findings were corrected, but full T15 certification is blocked by T14 and producer/environment acceptance."
+      "evidence": "Current source and artifact component review is recorded in the campaign evidence; full product acceptance and certification are still blocked."
     },
     {
       "id": "T06-composition-inspector",
       "capability": "digest-backed image/platform manifest, module/native closure and declared-smoke verification before candidate admission",
-      "state": "missing",
-      "evidence": "apps/build-worker/src/main.ts defaults to UnavailableCompositionArtifactInspector and apps/build-worker/test/main.test.ts confirms it rejects. PLAN T06/PLATFORM §4 require concrete verification and smoke before admission. The S01 receipt/catalog ABI is a prerequisite to define that verifier; implementation/wiring and owned BuildKit/registry acceptance remain required afterward."
+      "state": "partial",
+      "evidence": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance."
     },
     {
       "id": "T09-compatible-rollback",
       "capability": "schema/data-compatible prior-revision rollback through lifecycle fences",
-      "state": "missing",
-      "evidence": "apps/provisioner/src/lifecycle-executor.ts:isRollbackCompatible returns false because no compatibility proof is carried. This fails closed; PLAN T09 and PLATFORM §6 require compatible rollback behavior. No digest-equality shortcut."
+      "state": "partial",
+      "evidence": "Directional compatibility and writer census are integrated. Every retirement/recovery now requires fresh assignment-bound remote status and same-operation re-quiesce with renewed deadline; historical receipts never authorize a stop. Root application72 tests passed; full producer/Kubernetes lifecycle acceptance remains blocked."
     }
   ],
   "legacyDataDisposition": {
@@ -641,7 +671,10 @@
         "node scripts/deploy-workers.mjs preflight --inventory infrastructure/test/disposable-inventory.json"
       ],
       "status": "blocked_inputs",
-      "exitCodes": [2, 2],
+      "exitCodes": [
+        2,
+        2
+      ],
       "migrations": [
         "0001_repository_platform.sql",
         "0002_stable_release_rollouts.sql",
@@ -760,71 +793,234 @@
     "productionApplied": false
   },
   "latestFixedRunnerImplementation": {
-    "sourceHead": "d23b9af25155ebe8469de8bb58b8cbba793b6a73",
-    "document": "docs/verification/FIXED-RUNNER-PROGRESS.md",
+    "sourceHead": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+    "document": "docs/verification/HOSTED-INTEGRATION-RUNBOOK.md",
     "implementedFixedPaths": [
       "tests/integration/workers-d1-do.test.mjs",
-      "tests/integration/kubernetes-isolation.test.mjs",
       "tests/integration/github-access.test.mjs",
+      "tests/integration/buildkit-registry.test.mjs",
+      "tests/integration/kubernetes-isolation.test.mjs",
+      "tests/integration/producer-recovery.test.mjs",
+      "tests/integration/stable-rollout.test.mjs",
       "tests/e2e/browser-entry.test.mjs"
     ],
-    "remainingMissingFixedPaths": [
-      "tests/integration/buildkit-registry.test.mjs",
-      "tests/integration/producer-recovery.test.mjs",
-      "tests/integration/stable-rollout.test.mjs"
-    ],
-    "remainingMissingFixedRunners": 3,
-    "githubImplementationReview": "closed at worker f33ba36a28f429c8478caa5396dc91ae37ea883a; actual producer client renewal still unavailable; live NOT_CHECKED",
-    "browserImplementationReview": "closed at worker ff7cea8863b137007f3a346e4cf4638f077921a2; live NOT_CHECKED",
-    "requiredInstallAndCheck": "passed at exact sourceHead; 29/29 cached test-stage tasks plus boundaries/schema",
-    "infraAndMappingTestsPassed": 57,
-    "kubernetesLocalTestsPassed": 4,
-    "githubFixedLocalTestsPassed": 3,
-    "githubPartialLocalTestsPassed": 7,
-    "githubPartialLiveTestsSkipped": 1,
-    "missingInputFixedContract": "both new fixed runners exit1 and classify BLOCKED/OWNER_INPUT_MISSING through actual verifier environment",
-    "actualFixedAcceptanceReport": "/tmp/praetorium-164ae3b-acceptance.json",
-    "actualFixedAcceptance": "Worker/D1/DO VERIFIED locally only; six BLOCKED/NOT_CHECKED; exit2; errors=[]",
-    "liveGitHubAcceptance": "NOT_CHECKED",
-    "liveBrowserAcceptance": "NOT_CHECKED",
-    "producerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
-    "artifactDigest": null,
-    "remainingProducerConsumerImplementation": "Fixed GitHub category still requires actual producer client expiry/renewal after S03; direct Platform broker calls cannot certify it",
-    "applicationAndDeploymentSourceBaseline": "b3fbe6dcfb586b8f6aa28f5e06fa71ae89733061",
-    "baselineScope": "apps/packages/plugins/infrastructure and scripts except verify-integration.mjs are unchanged; that verifier and acceptance tests changed",
+    "remainingMissingFixedPaths": [],
+    "remainingMissingFixedRunners": 0,
+    "currentCutRunnerTests": "Syntax and explicit ESLint passed for the three new fixed runners; full product runs remain gated on the actual owner inputs. Current live Kubernetes result is recorded separately when available.",
+    "currentCutAggregateAcceptance": "Actual existing verify-integration.mjs at a669f5c: workers-d1-do VERIFIED; six categories BLOCKED/NOT_CHECKED; errors=[]; exit2. Kubernetes/BuildKit substrates exist and were exercised separately; the complete fixed-runner inputs depend on real Gateway/App and signed source admission. No readback/fixture was substituted for a private runner config.",
+    "currentSourceImplementation": "All seven fixed runner files are committed and wired into verify-integration.mjs; source availability does not pass live acceptance.",
     "productionApplied": false,
-    "infraAndMappingVerificationHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
-    "kubernetesLocalVerificationHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
-    "actualFixedAcceptanceSourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
-    "reviewDocument": "docs/verification/INDEPENDENT-REVIEW.md",
-    "reviewDocumentCommit": "5f0bcd9"
+    "previousObservation": {
+      "sourceHead": "d23b9af25155ebe8469de8bb58b8cbba793b6a73",
+      "document": "docs/verification/FIXED-RUNNER-PROGRESS.md",
+      "implementedFixedPaths": [
+        "tests/integration/workers-d1-do.test.mjs",
+        "tests/integration/kubernetes-isolation.test.mjs",
+        "tests/integration/github-access.test.mjs",
+        "tests/e2e/browser-entry.test.mjs"
+      ],
+      "remainingMissingFixedPaths": [
+        "tests/integration/buildkit-registry.test.mjs",
+        "tests/integration/producer-recovery.test.mjs",
+        "tests/integration/stable-rollout.test.mjs"
+      ],
+      "remainingMissingFixedRunners": 3,
+      "githubImplementationReview": "closed at worker f33ba36a28f429c8478caa5396dc91ae37ea883a; actual producer client renewal still unavailable; live NOT_CHECKED",
+      "browserImplementationReview": "closed at worker ff7cea8863b137007f3a346e4cf4638f077921a2; live NOT_CHECKED",
+      "requiredInstallAndCheck": "passed at exact sourceHead; 29/29 cached test-stage tasks plus boundaries/schema",
+      "infraAndMappingTestsPassed": 57,
+      "kubernetesLocalTestsPassed": 4,
+      "githubFixedLocalTestsPassed": 3,
+      "githubPartialLocalTestsPassed": 7,
+      "githubPartialLiveTestsSkipped": 1,
+      "missingInputFixedContract": "both new fixed runners exit1 and classify BLOCKED/OWNER_INPUT_MISSING through actual verifier environment",
+      "actualFixedAcceptanceReport": "/tmp/praetorium-164ae3b-acceptance.json",
+      "actualFixedAcceptance": "Worker/D1/DO VERIFIED locally only; six BLOCKED/NOT_CHECKED; exit2; errors=[]",
+      "liveGitHubAcceptance": "NOT_CHECKED",
+      "liveBrowserAcceptance": "NOT_CHECKED",
+      "producerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
+      "artifactDigest": null,
+      "remainingProducerConsumerImplementation": "Fixed GitHub category still requires actual producer client expiry/renewal after S03; direct Platform broker calls cannot certify it",
+      "applicationAndDeploymentSourceBaseline": "b3fbe6dcfb586b8f6aa28f5e06fa71ae89733061",
+      "baselineScope": "apps/packages/plugins/infrastructure and scripts except verify-integration.mjs are unchanged; that verifier and acceptance tests changed",
+      "productionApplied": false,
+      "infraAndMappingVerificationHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+      "kubernetesLocalVerificationHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+      "actualFixedAcceptanceSourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+      "reviewDocument": "docs/verification/INDEPENDENT-REVIEW.md",
+      "reviewDocumentCommit": "5f0bcd9"
+    },
+    "aggregateReport": "docs/verification/HOSTED-ACCEPTANCE-a669f5c.json"
   },
   "latestProducerObservation": {
-    "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
-    "producerTree": "b399ba06cfd24a6b300e40e6b8f428312e93873d",
-    "document": "docs/verification/PRODUCER-3f7b174.md",
-    "acceptedPlatformArtifactDigest": null,
-    "publishedPresetsVerified": true,
-    "hostedS01S04": "missing",
-    "hostedS05": "incomplete",
-    "productionApplied": false
+    "checkedAt": "2026-10-17",
+    "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+    "producerTree": "e8b02d09f1ad50ba3fd7f820ef16bcdb5d172ae2",
+    "praetoriumRevision": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+    "implementationSourceCut": {
+      "praetoriumRevision": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+      "praetoriumWorkingTreeChangesPending": false,
+      "praetoriumRelevantPendingPaths": [],
+      "scriptoriumRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+      "scriptoriumTree": "e8b02d09f1ad50ba3fd7f820ef16bcdb5d172ae2",
+      "scriptoriumWorkingTreeChangesPending": false,
+      "scriptoriumRelevantPendingPaths": [],
+      "scope": "Committed implementation source cuts; pending evidence-only documents are excluded. Scriptorium root .codegraph/ is pre-existing untracked data; artifacts came from a separate clean checkout.",
+      "buildWorkerArtifactSource": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+      "lifecycleArtifactSource": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+      "artifactDigest": null,
+      "currentCutVerification": "Required Praetorium frozen install/check passed (29 tasks; application72, provisioner53, recovery12); Scriptorium frozen/typecheck/test/build/audit passed (one expected optional CPU-model skip). Actual Core/Story/MCP production unsigned inspection and startup smoke passed. Full Hosted acceptance remains blocked.",
+      "provisionerArtifactSource": "a669f5c16faa85d5fcc162241b793eab734d46c2"
+    },
+    "artifactDigest": null,
+    "artifactEvidence": "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+    "sourceImplementation": "Committed S01-S05 at Scriptorium 008d5c429ec279a424cafd5b8c4cbee70a613b8e; consumer implementation at Praetorium a669f5c16faa85d5fcc162241b793eab734d46c2. Core/Story/MCP actual image generation, immutable all-layer verification, physical package/module/native closure and startup smoke passed through production inspector classes; see docs/verification/HOSTED-ARTIFACTS-008d5c4.json. These are unsigned candidates, not accepted Platform releases or full product acceptance.",
+    "productAcceptance": "BLOCKED",
+    "previousObservation": {
+      "producerRevision": "91993a136bf8b4b2806acc0850e73acf20b04a53",
+      "producerTree": "0fbb62bf87d8ea2c89384affe61fcc4e94bce6b8",
+      "document": "docs/migration/PRODUCER-STATUS.json",
+      "acceptedPlatformArtifactDigest": null,
+      "publishedPresetsVerified": true,
+      "hostedS01S04": "implemented in current source; real acceptance BLOCKED",
+      "hostedS05": "implemented in current source; exact-image stable-origin acceptance BLOCKED",
+      "productionApplied": false,
+      "sourceCut": {
+        "praetoriumRevision": "a301d6f68542d59306abe24c4520643f4887f495",
+        "praetoriumWorkingTreeChangesPending": true,
+        "praetoriumRelevantPendingPaths": [
+          "apps/build-worker/src/composition-artifacts.ts",
+          "apps/build-worker/src/pnpm-runtime-closure.ts",
+          "apps/build-worker/src/main.ts",
+          "apps/control-plane/src/runtime-auth-probe.ts",
+          "apps/provisioner/src/scriptorium-control-client.ts",
+          "packages/application/src/lifecycle/persistence-compatibility.ts",
+          "packages/contracts/src/persistence-compatibility.ts",
+          "plugins/buildkit/src/image-rootfs.ts",
+          "plugins/ghcr/src/candidate-verifier.ts",
+          "plugins/scriptorium/src/catalog-resolver.ts",
+          "tests/integration/buildkit-registry.test.mjs",
+          "tests/integration/producer-recovery.test.mjs",
+          "tests/integration/stable-rollout.test.mjs"
+        ],
+        "scriptoriumRevision": "91993a136bf8b4b2806acc0850e73acf20b04a53",
+        "scriptoriumTree": "0fbb62bf87d8ea2c89384affe61fcc4e94bce6b8",
+        "scriptoriumWorkingTreeChangesPending": true,
+        "scriptoriumRelevantPendingPaths": [
+          "packages/api/src/platform-runtime.ts",
+          "packages/api/src/server.ts",
+          "packages/api/src/server.test.ts",
+          "packages/core/src/index.ts",
+          "packages/core/src/index.test.ts",
+          "packages/core/src/transactions.test.ts",
+          "scripts/profile-package.mjs"
+        ],
+        "finalPraetoriumHead": null,
+        "finalScriptoriumHead": null,
+        "artifactDigest": null,
+        "currentCutVerification": "Pending; this status update does not claim clean-build, deployed-image, or full product acceptance."
+      },
+      "previousObservation": {
+        "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
+        "producerTree": "b399ba06cfd24a6b300e40e6b8f428312e93873d",
+        "document": "docs/verification/PRODUCER-3f7b174.md",
+        "acceptedPlatformArtifactDigest": null,
+        "publishedPresetsVerified": true,
+        "hostedS01S04": "missing",
+        "hostedS05": "incomplete",
+        "productionApplied": false
+      }
+    }
   },
   "latestCampaignVerification": {
     "checkedAt": "2026-10-17",
-    "mainEvidenceCut": "9a07bc6685dcd9fef6bd8da1d9e06f398aa551a7",
-    "sourceImageCut": "431dbe1c7c86251894efea3de2cf0ec94499ca10",
-    "baselineScope": "The earlier evidenceCut and its tests are historical cuts; this field and the linked component documents record later bounded verification without changing full task acceptance.",
-    "requiredFrozenInstallAndCheck": "passed at clean 9a07bc6; 29 cached test-stage tasks plus workspace build/lint/typecheck, boundaries and schemas; explicit CNI and provider-read ESLint/format passed",
-    "workerD1Do": "VERIFIED in fresh owned local fixed runner at 5e8d2ad; aggregate exit2, six BLOCKED/NOT_CHECKED, errors=[]",
-    "serviceImages": "three actual builds and digest/config/all-layer content readback; bounded service process evidence; independently reviewed through worker c585be27",
-    "buildWorkerProjection": "production prepare init and cold constructor-only Pod passed at source431dbe1; final Pod UID d73943fd-c716-410e-982d-bb7baf6b6d84; all containers exit0; no queue/build/service requests",
-    "buildWorkerTestInputProvenance": "Earlier generic failure used empty registry auths; before later success its owned test Secret was changed to a structurally valid dummy GHCR credential. Earlier failure was not stage-localized. No producer or real registry auth acceptance is inferred.",
-    "buildWorkerCleanup": "UID-precondition cleanup e57f4d91142af73080807da912286038ed46f285e4fa14b93541c669827d1e6f; root independently confirmed praetorium-build namespace absent",
-    "cniPacketProof": "PASS bounded real IPv4 packets at 92a681d; 16 report cases, 67097ms including setup/cleanup; four UID-preconditioned namespace deletes and root-independent 404/zero-Pod observation. Metadata/public HTTPS/IPv6/full T14 remain NOT_CHECKED. See KUBERNETES-NETWORK-PACKETS.md.",
-    "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
+    "sourceCut": {
+      "praetoriumRevision": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+      "praetoriumWorkingTreeChangesPending": false,
+      "praetoriumRelevantPendingPaths": [],
+      "scriptoriumRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+      "scriptoriumTree": "e8b02d09f1ad50ba3fd7f820ef16bcdb5d172ae2",
+      "scriptoriumWorkingTreeChangesPending": false,
+      "scriptoriumRelevantPendingPaths": [],
+      "scope": "Committed implementation source cuts; pending evidence-only documents are excluded. Scriptorium root .codegraph/ is pre-existing untracked data; artifacts came from a separate clean checkout.",
+      "buildWorkerArtifactSource": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+      "lifecycleArtifactSource": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+      "artifactDigest": null,
+      "currentCutVerification": "Required Praetorium frozen install/check passed (29 tasks; application72, provisioner53, recovery12); Scriptorium frozen/typecheck/test/build/audit passed (one expected optional CPU-model skip). Actual Core/Story/MCP production unsigned inspection and startup smoke passed. Full Hosted acceptance remains blocked.",
+      "provisionerArtifactSource": "a669f5c16faa85d5fcc162241b793eab734d46c2"
+    },
+    "artifactEvidence": "docs/verification/HOSTED-ARTIFACTS-008d5c4.json",
+    "requiredFrozenInstallAndCheck": "PASS at the recorded implementation cut: literal corepack pnpm@11.18.0 install --frozen-lockfile and check using the pinned nested pnpm shim; 29 successful tasks, boundaries/schema checks passed.",
+    "scriptoriumChecks": "PASS: pnpm12.10.1 frozen install, typecheck, test, build and audit:core at008d5c4; optional semantic CPU-model integration skipped1.",
+    "actualImageVerification": "PASS bounded: Runtime Base/Build Kit/platform images cryptographically read back; Core/Story/MCP receipts published and verified through actual production closure inspector/rootfs exporter and health smoke. Not queue/admission/App acceptance.",
+    "remainingMissingFixedRunners": 0,
     "acceptedPlatformArtifactDigest": null,
-    "remainingMissingFixedRunners": 3,
+    "fullProductAcceptance": "BLOCKED. Real GitHub App/OAuth/users/repositories and allowed Sigstore signing identity/bundle are unavailable; full Hosted entry, scoped Git operations, signed source admission, build-queue/cache and lifecycle/canary/browser fixed acceptance remain unverified. Remote D1/off-host Restic acceptance also lacks an owned remote destination and recovery inputs.",
+    "independentReviews": "Source reviews resolved attestation-format/version, OCI config/composition caps, orphan optional peer metadata, lifecycle stale-receipt and Restic destination findings; fresh relevant tests passed. Actual full product certification remains blocked.",
     "productionApplied": false,
-    "providerReadPath": "PASS bounded actual immutable Provisioner image + projected ServiceAccount Deployment list and known-absent inspect at 9a07bc6; eight Node tests passed (seven local + one real case), live case14074.185991ms / total20505.296999ms; zero reservation callbacks. Runtime imageID equals original config sha256:d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d. Five UID-deleted resources were independently NotFound. Earlier kubeconfig/Pod failures remain preserved; full provider/capacity/D1/producer/T07/T14 is not certified."
+    "historicalCheckpoint": {
+      "checkedAt": "2026-10-17",
+      "mainEvidenceCut": "9a07bc6685dcd9fef6bd8da1d9e06f398aa551a7",
+      "sourceImageCut": "431dbe1c7c86251894efea3de2cf0ec94499ca10",
+      "baselineScope": "The earlier evidenceCut and its tests are historical cuts; this field and the linked component documents record later bounded verification without changing full task acceptance.",
+      "requiredFrozenInstallAndCheck": "passed at clean 9a07bc6; 29 cached test-stage tasks plus workspace build/lint/typecheck, boundaries and schemas; explicit CNI and provider-read ESLint/format passed",
+      "workerD1Do": "VERIFIED in fresh owned local fixed runner at 5e8d2ad; aggregate exit2, six BLOCKED/NOT_CHECKED, errors=[]",
+      "serviceImages": "three actual builds and digest/config/all-layer content readback; bounded service process evidence; independently reviewed through worker c585be27",
+      "buildWorkerProjection": "production prepare init and cold constructor-only Pod passed at source431dbe1; final Pod UID d73943fd-c716-410e-982d-bb7baf6b6d84; all containers exit0; no queue/build/service requests",
+      "buildWorkerTestInputProvenance": "Earlier generic failure used empty registry auths; before later success its owned test Secret was changed to a structurally valid dummy GHCR credential. Earlier failure was not stage-localized. No producer or real registry auth acceptance is inferred.",
+      "buildWorkerCleanup": "UID-precondition cleanup e57f4d91142af73080807da912286038ed46f285e4fa14b93541c669827d1e6f; root independently confirmed praetorium-build namespace absent",
+      "cniPacketProof": "PASS bounded real IPv4 packets at 92a681d; 16 report cases, 67097ms including setup/cleanup; four UID-preconditioned namespace deletes and root-independent 404/zero-Pod observation. Metadata/public HTTPS/IPv6/full T14 remain NOT_CHECKED. See KUBERNETES-NETWORK-PACKETS.md.",
+      "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
+      "acceptedPlatformArtifactDigest": null,
+      "remainingMissingFixedRunners": 3,
+      "productionApplied": false,
+      "providerReadPath": "PASS bounded actual immutable Provisioner image + projected ServiceAccount Deployment list and known-absent inspect at 9a07bc6; eight Node tests passed (seven local + one real case), live case14074.185991ms / total20505.296999ms; zero reservation callbacks. Runtime imageID equals original config sha256:d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d. Five UID-deleted resources were independently NotFound. Earlier kubeconfig/Pod failures remain preserved; full provider/capacity/D1/producer/T07/T14 is not certified.",
+      "currentCampaignSourceCut": {
+        "praetoriumRevision": "a301d6f68542d59306abe24c4520643f4887f495",
+        "praetoriumWorkingTreeChangesPending": true,
+        "praetoriumRelevantPendingPaths": [
+          "apps/build-worker/src/composition-artifacts.ts",
+          "apps/build-worker/src/pnpm-runtime-closure.ts",
+          "apps/build-worker/src/main.ts",
+          "apps/control-plane/src/runtime-auth-probe.ts",
+          "apps/provisioner/src/scriptorium-control-client.ts",
+          "packages/application/src/lifecycle/persistence-compatibility.ts",
+          "packages/contracts/src/persistence-compatibility.ts",
+          "plugins/buildkit/src/image-rootfs.ts",
+          "plugins/ghcr/src/candidate-verifier.ts",
+          "plugins/scriptorium/src/catalog-resolver.ts",
+          "tests/integration/buildkit-registry.test.mjs",
+          "tests/integration/producer-recovery.test.mjs",
+          "tests/integration/stable-rollout.test.mjs"
+        ],
+        "scriptoriumRevision": "91993a136bf8b4b2806acc0850e73acf20b04a53",
+        "scriptoriumTree": "0fbb62bf87d8ea2c89384affe61fcc4e94bce6b8",
+        "scriptoriumWorkingTreeChangesPending": true,
+        "scriptoriumRelevantPendingPaths": [
+          "packages/api/src/platform-runtime.ts",
+          "packages/api/src/server.ts",
+          "packages/api/src/server.test.ts",
+          "packages/core/src/index.ts",
+          "packages/core/src/index.test.ts",
+          "packages/core/src/transactions.test.ts",
+          "scripts/profile-package.mjs"
+        ],
+        "finalPraetoriumHead": null,
+        "finalScriptoriumHead": null,
+        "artifactDigest": null,
+        "currentCutVerification": "Pending; this status update does not claim clean-build, deployed-image, or full product acceptance."
+      },
+      "currentCutBuild": "NOT_RECORDED: no final clean integrated OCI artifact digest yet",
+      "fullProductAcceptance": "BLOCKED: owned GitHub App/signature inputs, exact-image hosted flows, canary, complete product integration, and actual T13 off-host recovery remain unverified.",
+      "scope": "Historical bounded checkpoint and earlier work-in-progress source snapshot. Superseded for current campaign source/artifact state."
+    },
+    "currentAggregate": {
+      "sourceHead": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+      "report": "docs/verification/HOSTED-ACCEPTANCE-a669f5c.json",
+      "exitCode": 2,
+      "workerD1Do": "VERIFIED local actual production bundle, five migrations and persistent DO",
+      "otherCategories": "BLOCKED/NOT_CHECKED",
+      "errors": []
+    }
   }
 }

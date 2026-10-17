@@ -1,0 +1,601 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-17",
+  "scope": "Actual owned-registry image generation, cryptographic all-layer readback, production unsigned candidate inspection and startup smoke. Not source-release admission or full Hosted product acceptance.",
+  "praetoriumArtifactSource": "0a3e667741c2b0d3be1560537041bfe685261f1a",
+  "scriptoriumArtifactSource": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+  "registry": "https://127.0.0.1:35009",
+  "productionApplied": false,
+  "acceptedPlatformArtifactDigest": null,
+  "verification": {
+    "classes": [
+      "GhcrRegistryClient.verifyImage",
+      "ScriptoriumBuildCandidateReceiptReader.read",
+      "GhcrCandidateVerifier.verifyUnsignedCandidate",
+      "ScriptoriumCompositionArtifactInspector.inspectAndSmoke",
+      "BuildKitImageRootfsExporter"
+    ],
+    "transport": "TLS with explicitly owned CA; native mTLS BuildKit. No repository manuscript or Git credential input was supplied to these builds.",
+    "inspectorLogSha256": "sha256:560cc03c19af83dfff50d55e5f366c3d1a2015b3394d422b9642e282d558538f",
+    "unsignedProducerStatementSha256": "sha256:e9cb575d4c128b604acb1847d067c25d0180e85acda8074fc77177c58ad8ac8b",
+    "signedProducerBundle": null
+  },
+  "images": [
+    {
+      "type": "runtime-base",
+      "result": {
+        "repository": "scriptorium/build-kit",
+        "manifestDigest": "sha256:643e71a5833bf669c0c01ac086842c5ccc41b7d2e63a8d4ceb71e25ec11001e6",
+        "manifestMediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "platformManifestDigest": "sha256:643e71a5833bf669c0c01ac086842c5ccc41b7d2e63a8d4ceb71e25ec11001e6",
+        "platform": {
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "configDigest": "sha256:9942a875a26de4ec1ef9c632bea6d7fe70fb43b33e1b93e2dc854cf6a8901ff9",
+        "layerDescriptors": [
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+            "size": 28249323
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+            "size": 3314
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+            "size": 51041014
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+            "size": 1713055
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+            "size": 446
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:874f7bed0a537fc0608e32335f0e9a02a3c4b12f070a03719ddecacdf843fa11",
+            "size": 36229309
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+            "size": 32
+          }
+        ],
+        "reachableLayerBytes": 117236493
+      }
+    },
+    {
+      "type": "buildkit",
+      "result": {
+        "repository": "scriptorium/build-kit",
+        "manifestDigest": "sha256:d503f618a3ff8b4392033e54658c56e56939274240b557cae8c5329c0daee371",
+        "manifestMediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "platformManifestDigest": "sha256:d503f618a3ff8b4392033e54658c56e56939274240b557cae8c5329c0daee371",
+        "platform": {
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "configDigest": "sha256:93f9fbc9a2b6a5c646a4252c6092635a07780db7ae9636ab679d476ff1f7d555",
+        "layerDescriptors": [
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+            "size": 28249323
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+            "size": 3314
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+            "size": 51041014
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+            "size": 1713055
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+            "size": 446
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:e30d5642e2e81bfbbe57df1221494e6f9708a2938a2ec80fec3065d2ad6db4c2",
+            "size": 1087673
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:e0983a1efa9e7b92466b281f15626396dabe67f05f9b8c212defed8822eed5d2",
+            "size": 119
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:e20010f87aa56af58f7bd3ba4a6e5f9dacfd98dfa6f35568767efc57ba374035",
+            "size": 1057306
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:e88df49953e27ef99373076a7994e07a22b168ef103349e9d2cf48a56f8a8a94",
+            "size": 270797034
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+            "size": 32
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:251ea10888297bfd976765f008e6d94fd6dc0bca770254f88d074219454a3d8c",
+            "size": 2231600
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:81b3234d1af6e00d6d60e322d5a1523b42e66278cb28f2e228dc9d867b3a9530",
+            "size": 9883615
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:5987ee1cfce3dcd14626255bb240aabec49f4bb9ad8c5674fae71e1915d883bf",
+            "size": 6151973
+          }
+        ],
+        "reachableLayerBytes": 372216504
+      }
+    },
+    {
+      "name": "platform-instance-access",
+      "result": {
+        "repository": "praetorium/platform-instance-access",
+        "manifestDigest": "sha256:5d7c893a161e48b492ff53cc3fcdb858cfa9674e1858bc4be84114c6b774dcdc",
+        "manifestMediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "platformManifestDigest": "sha256:5d7c893a161e48b492ff53cc3fcdb858cfa9674e1858bc4be84114c6b774dcdc",
+        "platform": {
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "configDigest": "sha256:9d2643c8f3d0b916865bd00a7b8a80b66fb052cd95a74ae03f2d579262d5cbf7",
+        "layerDescriptors": [
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+            "size": 28249323
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+            "size": 3314
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+            "size": 51041014
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+            "size": 1713055
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+            "size": 446
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:72176a87c5539a559d0ac039304438b48f3ce647df520914fc4909c855f0fadf",
+            "size": 93
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:5402cebd9997072350954549a47ded44047069f74fc672ef2f2b69be2911734f",
+            "size": 1066212
+          }
+        ],
+        "reachableLayerBytes": 82073457
+      },
+      "runtime": {
+        "user": "10001:10001",
+        "cmd": [
+          "node",
+          "dist/server.js"
+        ],
+        "entrypoint": [
+          "docker-entrypoint.sh"
+        ]
+      }
+    },
+    {
+      "name": "platform-prometheus",
+      "result": {
+        "repository": "praetorium/platform-prometheus",
+        "manifestDigest": "sha256:60794fd5558bea17e57db0ec6622abb666d7a9836eecf10952008548f01c0d96",
+        "manifestMediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "platformManifestDigest": "sha256:60794fd5558bea17e57db0ec6622abb666d7a9836eecf10952008548f01c0d96",
+        "platform": {
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "configDigest": "sha256:66416213a3b43651d3521acc3987277b4f97ad0ae29acc581f910ef9bd3959bd",
+        "layerDescriptors": [
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:487858d29734ed603b5bd86f96a8d2e3bee39a06736bad6a93493b3a8ad0500f",
+            "size": 800495
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:6bddf0169a34a405e5ae6b655e5522aaa215579fb95501802a6c71a2463f00d7",
+            "size": 324622
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:3859a559c28892d2a12128bf809cf6b5811c523f43c6d454a7c2c88eebc267fe",
+            "size": 61914099
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:1e155d6744e4ce785ecb7a47a9ae3d34478d2915b39b9c87c58c0b097635ddba",
+            "size": 50988952
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:e1db8b9e6f1c4d610f5fc87cdb4e4a5368322439d8a11b625ca0724659396b53",
+            "size": 657
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:fde357b1187c49bf348cb14a469816a5e922c127a79d8c929c0c3bd2337a16a6",
+            "size": 4023
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:71af9fb8ff897321682e8c00c758ff1e377630aa5bb0a0ea00ce0651fa15e94f",
+            "size": 1596
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4ce6fa7d0795667c2318802fbbe205854ad9863ba599ce737b3803a54b597d3f",
+            "size": 100
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:f9de78a4ea69f06867632dc5fdc28e1738c97e03450db24fb55591dea183a092",
+            "size": 714
+          }
+        ],
+        "reachableLayerBytes": 114035258
+      },
+      "runtime": {
+        "user": "nobody",
+        "cmd": [
+          "--config.file=/etc/prometheus/prometheus.yml",
+          "--storage.tsdb.path=/prometheus"
+        ],
+        "entrypoint": [
+          "/bin/prometheus"
+        ]
+      }
+    },
+    {
+      "name": "platform-build-worker",
+      "sourceRevision": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+      "result": {
+        "repository": "praetorium/platform-build-worker",
+        "manifestDigest": "sha256:d0ccc520430a87e843f37372a720ae6400273f70e04ffe5f9851d756c9eb909a",
+        "manifestMediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "platformManifestDigest": "sha256:d0ccc520430a87e843f37372a720ae6400273f70e04ffe5f9851d756c9eb909a",
+        "platform": {
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "configDigest": "sha256:d2cf9f0d4b475f820fc9d0c7668115387e11735f0d5f6d43318b795aea5a995f",
+        "layerDescriptors": [
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+            "size": 28249323
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+            "size": 3314
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+            "size": 51041014
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+            "size": 1713055
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+            "size": 446
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:72176a87c5539a559d0ac039304438b48f3ce647df520914fc4909c855f0fadf",
+            "size": 93
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:dc1731f0d7aec19d7590eb564d8988f514d86cddd121eabb7314f37f92fabebb",
+            "size": 16859097
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
+            "size": 32
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:b195a5d697208e969fb9970a29e42169c6ce88eabf99ed68edc7d442544e54c1",
+            "size": 1416462
+          }
+        ],
+        "reachableLayerBytes": 99282836
+      },
+      "runtime": {
+        "user": "node",
+        "cmd": [
+          "node",
+          "dist/main.js"
+        ],
+        "entrypoint": [
+          "docker-entrypoint.sh"
+        ]
+      }
+    },
+    {
+      "name": "platform-provisioner",
+      "sourceRevision": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+      "result": {
+        "repository": "praetorium/platform-provisioner",
+        "manifestDigest": "sha256:c66e8c3253252090281fd11aa660163e1d72e63414652cf1695a8353cd0a93da",
+        "manifestMediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "platformManifestDigest": "sha256:c66e8c3253252090281fd11aa660163e1d72e63414652cf1695a8353cd0a93da",
+        "platform": {
+          "os": "linux",
+          "architecture": "amd64"
+        },
+        "configDigest": "sha256:620b2cabd244a0eacf7808855e9b31b04bd3ce268bb9b132da0e3a382b14b488",
+        "layerDescriptors": [
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:7fd1ebe418b5079d4aa36f416af9b143d127bc75b0155d71cb5fd559b5e04d39",
+            "size": 28249323
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:fb7da8a11632ec8a1daa7a740e634c10c151eccee31d49ba459b25877c5780e4",
+            "size": 3314
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:b9a701dba9fbaed52af5239f5eeaeec384346d232313fe2278e50f9259b8e3bc",
+            "size": 51041014
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:182ecac4702d154abbcf12044dcb36915e067902b76ad52919b967c71be97f53",
+            "size": 1713055
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:4cec569cef036288a370045819d1a4fed7630cc6eb5e0c8051745f2b7d37c5f2",
+            "size": 446
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:72176a87c5539a559d0ac039304438b48f3ce647df520914fc4909c855f0fadf",
+            "size": 93
+          },
+          {
+            "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+            "digest": "sha256:e928e8f8993687d25995c9d30fb8189647bedb0a206c9c24b3f8f57c731c69a0",
+            "size": 1166714
+          }
+        ],
+        "reachableLayerBytes": 82173959
+      },
+      "runtime": {
+        "user": "node",
+        "cmd": [
+          "node",
+          "dist/main.js"
+        ],
+        "entrypoint": [
+          "docker-entrypoint.sh"
+        ]
+      }
+    }
+  ],
+  "compositions": [
+    {
+      "selection": "core",
+      "praetoriumSourceRevision": "0a3e667741c2b0d3be1560537041bfe685261f1a",
+      "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+      "statement": {
+        "schemaVersion": "praetorium.build-artifact/v1",
+        "buildKey": "sha256:2c0d82a7a7ab2debdcd9727ca9fdebbf392fbc7314475ec5e34d451617f7631b",
+        "artifact": {
+          "repository": "praetorium/candidates",
+          "digest": "sha256:eff734e71927651d6aa11cdbd197679b1e900ef8e7462078322fe0ffb7284c6e",
+          "platformManifestDigest": "sha256:eff734e71927651d6aa11cdbd197679b1e900ef8e7462078322fe0ffb7284c6e",
+          "platform": "linux/amd64"
+        },
+        "compositionManifest": {
+          "repository": "praetorium/compositions",
+          "digest": "sha256:0ee015caaa5897ccd082eeaca0eef7aa7cdb6c3d661ce7a5a0dc0a3d0fa659e3"
+        },
+        "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+        "resolvedModules": [],
+        "contractVersion": "scriptorium-build/v1",
+        "issuedAt": "2026-10-17T07:49:34.329Z"
+      },
+      "inspection": {
+        "imageDigest": "sha256:eff734e71927651d6aa11cdbd197679b1e900ef8e7462078322fe0ffb7284c6e",
+        "compositionManifestDigest": "sha256:0ee015caaa5897ccd082eeaca0eef7aa7cdb6c3d661ce7a5a0dc0a3d0fa659e3",
+        "serverEntry": "app/launch.mjs",
+        "browserEntry": "app/app/dist/main.js",
+        "serverModuleIds": [],
+        "browserModuleIds": [],
+        "nativeDependencies": [],
+        "smoke": {
+          "id": "scriptorium-hosted-runtime-v1",
+          "healthPath": "/health/ready",
+          "passed": true
+        }
+      },
+      "scope": "production unsigned candidate verification; not signed source admission or GitHub App product acceptance"
+    },
+    {
+      "selection": "story",
+      "praetoriumSourceRevision": "0a3e667741c2b0d3be1560537041bfe685261f1a",
+      "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+      "statement": {
+        "schemaVersion": "praetorium.build-artifact/v1",
+        "buildKey": "sha256:f0d69ca340ffc237ba57911a7441d5b0ba386d35dc7b71a21b5cd8ce8f6cbd10",
+        "artifact": {
+          "repository": "praetorium/candidates",
+          "digest": "sha256:bc280880a21f533db2c40d719a203cb8d78925fdde4b700c4d359fde864bc9c1",
+          "platformManifestDigest": "sha256:bc280880a21f533db2c40d719a203cb8d78925fdde4b700c4d359fde864bc9c1",
+          "platform": "linux/amd64"
+        },
+        "compositionManifest": {
+          "repository": "praetorium/compositions",
+          "digest": "sha256:4272e1b95da47cb1ef17db30a35014e4fcd154a2e5c2a205d829f19ff6e34890"
+        },
+        "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+        "resolvedModules": [
+          {
+            "id": "story",
+            "version": "0.1.0",
+            "artifactDigest": "sha256:b4ccb79a62b04859dd67baaf8a2a43d1f496cf2861d5b02f615199e71d12526c"
+          }
+        ],
+        "contractVersion": "scriptorium-build/v1",
+        "issuedAt": "2026-10-17T07:49:45.332Z"
+      },
+      "inspection": {
+        "imageDigest": "sha256:bc280880a21f533db2c40d719a203cb8d78925fdde4b700c4d359fde864bc9c1",
+        "compositionManifestDigest": "sha256:4272e1b95da47cb1ef17db30a35014e4fcd154a2e5c2a205d829f19ff6e34890",
+        "serverEntry": "app/launch.mjs",
+        "browserEntry": "app/app/dist/main.js",
+        "serverModuleIds": [
+          "story"
+        ],
+        "browserModuleIds": [
+          "story"
+        ],
+        "nativeDependencies": [],
+        "smoke": {
+          "id": "scriptorium-hosted-runtime-v1",
+          "healthPath": "/health/ready",
+          "passed": true
+        }
+      },
+      "scope": "production unsigned candidate verification; not signed source admission or GitHub App product acceptance"
+    },
+    {
+      "selection": "mcp",
+      "praetoriumSourceRevision": "0a3e667741c2b0d3be1560537041bfe685261f1a",
+      "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+      "statement": {
+        "schemaVersion": "praetorium.build-artifact/v1",
+        "buildKey": "sha256:ee6d3922da1ac7c8ed9674d3242040f34a53e8e94e8c2de7daa4ac17447b9f86",
+        "artifact": {
+          "repository": "praetorium/candidates",
+          "digest": "sha256:f9733c3446773268f7fa69f9e51d351727ac4ca95840d14b8a17fd9e338843ce",
+          "platformManifestDigest": "sha256:f9733c3446773268f7fa69f9e51d351727ac4ca95840d14b8a17fd9e338843ce",
+          "platform": "linux/amd64"
+        },
+        "compositionManifest": {
+          "repository": "praetorium/compositions",
+          "digest": "sha256:a875f7aa90fae0c02df4f7f2f4b6099a9771cd53c3093bca75627707a352a7b4"
+        },
+        "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+        "resolvedModules": [
+          {
+            "id": "mcp",
+            "version": "0.1.0",
+            "artifactDigest": "sha256:8ae7cd4b613fed01c82228a1843148d06293742d6ba21261d3a98106f6e5c284"
+          }
+        ],
+        "contractVersion": "scriptorium-build/v1",
+        "issuedAt": "2026-10-17T07:49:56.845Z"
+      },
+      "inspection": {
+        "imageDigest": "sha256:f9733c3446773268f7fa69f9e51d351727ac4ca95840d14b8a17fd9e338843ce",
+        "compositionManifestDigest": "sha256:a875f7aa90fae0c02df4f7f2f4b6099a9771cd53c3093bca75627707a352a7b4",
+        "serverEntry": "app/launch.mjs",
+        "browserEntry": "app/app/dist/main.js",
+        "serverModuleIds": [
+          "mcp"
+        ],
+        "browserModuleIds": [],
+        "nativeDependencies": [],
+        "smoke": {
+          "id": "scriptorium-hosted-runtime-v1",
+          "healthPath": "/health/ready",
+          "passed": true
+        }
+      },
+      "scope": "production unsigned candidate verification; not signed source admission or GitHub App product acceptance"
+    }
+  ],
+  "notPassed": [
+    "Sigstore source signing and Control Plane release admission",
+    "GitHub App OAuth/repository selection and multi-user Hosted entry",
+    "Actual GitHub credential renewal, clone/fetch and authorized push",
+    "Hosted browser Checkpoint/GitHub save/conflict/recovery",
+    "Full production build queue/cache/stale-report fixed runner",
+    "Stable/Pinned canary/rollback and stopped-origin wake fixed runner",
+    "Remote D1 and off-host Restic restore acceptance"
+  ],
+  "platformServiceSources": {
+    "provisioner": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+    "buildWorker": "6cd9d267bb26af4052f80688e84c3a38cf948a84",
+    "instanceAccess": "94d3902f9831ad8ca9b885941d7054b57a74bf8a",
+    "prometheus": "docker.io/prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
+  },
+  "localClusterEvidence": {
+    "scope": "Owned substrate only; full fixed Kubernetes product runner not executed",
+    "provisioner": {
+      "uid": "5f1c9d98-4199-43d8-9cd8-3e684bcbca23",
+      "imageDigest": "sha256:c66e8c3253252090281fd11aa660163e1d72e63414652cf1695a8353cd0a93da",
+      "ready": true,
+      "restarts": 0
+    },
+    "prometheus": {
+      "uid": "d517b1b2-bf9b-4297-8e40-93437dfbafdb",
+      "imageDigest": "sha256:60794fd5558bea17e57db0ec6622abb666d7a9836eecf10952008548f01c0d96",
+      "ready": true
+    },
+    "publicJwks": "Control and runtime-identity endpoints200; one public ES256/P-256 key each; no d field",
+    "ingressTls": {
+      "hostname": "probe.instances.praetorium.test",
+      "transport": "temporary port-forward to owned Traefik Service",
+      "verified": true,
+      "httpStatus": 404,
+      "routePresent": false
+    },
+    "fullRunnerGate": "Actual Gateway/Instance Access and complete private runner configuration unavailable; no substitution"
+  }
+}

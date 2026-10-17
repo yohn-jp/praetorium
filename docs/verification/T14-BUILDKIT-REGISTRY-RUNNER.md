@@ -100,6 +100,13 @@ registry and Control Plane, pass the owner's certificate-only CA file. Leave
 TLS verification enabled and omit
 `PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY`.
 
+For an explicitly owned anonymous HTTPS registry on `127.0.0.1`, set
+`PRAETORIUM_BUILD_ALLOW_ANONYMOUS_LOOPBACK_PUBLISH=1` in the worker environment.
+This permits publication only to its configured candidate and composition
+repositories. It keeps TLS verification enabled and does not send a configured
+pull credential as a publish credential. Authenticated registries use the
+normal separate registry credentials instead.
+
 The runner writes private evidence to the configured `evidencePath` only after
 all three builds, cache reuse and stale-report assertions pass. It never writes
 credentials, BuildKit logs or source content into the evidence file.

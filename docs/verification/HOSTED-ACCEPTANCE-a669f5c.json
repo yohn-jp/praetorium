@@ -1,0 +1,105 @@
+{
+  "reportVersion": 1,
+  "task": "T14",
+  "status": "BLOCKED",
+  "mode": "run",
+  "inventoryId": "praetorium-owned-YopCuA",
+  "generatedAt": "2026-10-17T08:12:46.642Z",
+  "effectsExecuted": true,
+  "errors": [],
+  "categories": [
+    {
+      "id": "workers-d1-do",
+      "status": "VERIFIED",
+      "proofStatus": "VERIFIED",
+      "reason": "inventory is an ownership declaration, not runtime evidence",
+      "runnerStatus": "VERIFIED",
+      "runnerPath": "tests/integration/workers-d1-do.test.mjs",
+      "runnerReason": "fixed acceptance runner passed"
+    },
+    {
+      "id": "github-access",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "reason": "resource is declared missing",
+      "runnerStatus": "BLOCKED",
+      "runnerPath": "tests/integration/github-access.test.mjs",
+      "runnerReason": "resource is declared missing"
+    },
+    {
+      "id": "buildkit-registry",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "reason": "inventory is an ownership declaration, not runtime evidence",
+      "runnerStatus": "BLOCKED",
+      "runnerPath": "tests/integration/buildkit-registry.test.mjs",
+      "runnerReason": "Required owner input is unavailable"
+    },
+    {
+      "id": "kubernetes-isolation",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "reason": "resource is declared missing",
+      "runnerStatus": "BLOCKED",
+      "runnerPath": "tests/integration/kubernetes-isolation.test.mjs",
+      "runnerReason": "resource is declared missing"
+    },
+    {
+      "id": "browser-entry",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "reason": "resource is declared missing",
+      "runnerStatus": "BLOCKED",
+      "runnerPath": "tests/e2e/browser-entry.test.mjs",
+      "runnerReason": "resource is declared missing"
+    },
+    {
+      "id": "producer-recovery",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "reason": "resource is declared missing",
+      "runnerStatus": "BLOCKED",
+      "runnerPath": "tests/integration/producer-recovery.test.mjs",
+      "runnerReason": "resource is declared missing"
+    },
+    {
+      "id": "stable-rollout",
+      "status": "BLOCKED",
+      "proofStatus": "NOT_CHECKED",
+      "reason": "resource is declared missing",
+      "runnerStatus": "BLOCKED",
+      "runnerPath": "tests/integration/stable-rollout.test.mjs",
+      "runnerReason": "resource is declared missing"
+    }
+  ],
+  "intendedEffects": [
+    {
+      "category": "workers-d1-do",
+      "description": "Run the production Worker bundle against owned local D1 and Durable Object bindings; exercise migrations, repository binding and coordination."
+    },
+    {
+      "category": "github-access",
+      "description": "Use the owned test GitHub App, authorized test users and test repository to verify access decisions, scoped credential renewal and Git operations."
+    },
+    {
+      "category": "buildkit-registry",
+      "description": "Build approved producer compositions in isolated BuildKit and round-trip immutable artifacts through the owned disposable registry."
+    },
+    {
+      "category": "kubernetes-isolation",
+      "description": "Deploy into the owned disposable Kubernetes namespace and verify workload isolation, capacity, ingress and cleanup."
+    },
+    {
+      "category": "browser-entry",
+      "description": "Use a real browser against the owned stable origin to verify direct entry, wake, handoff, cookies and retry behavior."
+    },
+    {
+      "category": "producer-recovery",
+      "description": "Run the real producer image and exercise quiesce, recovery, re-clone and browser-journal reconciliation using producer evidence."
+    },
+    {
+      "category": "stable-rollout",
+      "description": "Exercise stable and pinned rollout, canary failure, stale worker reports and preservation of the serving instance."
+    }
+  ]
+}

@@ -328,5 +328,15 @@
     "actualFixedAcceptanceSourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
     "reviewDocument": "docs/verification/INDEPENDENT-REVIEW.md",
     "reviewDocumentCommit": "5f0bcd9"
+  },
+  "latestProducerObservation": {
+    "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
+    "producerTree": "b399ba06cfd24a6b300e40e6b8f428312e93873d",
+    "document": "docs/verification/PRODUCER-3f7b174.md",
+    "acceptedPlatformArtifactDigest": null,
+    "publishedPresetsVerified": true,
+    "hostedS01S04": "missing",
+    "hostedS05": "incomplete",
+    "productionApplied": false
   }
 }

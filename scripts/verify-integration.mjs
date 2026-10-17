@@ -9,6 +9,15 @@ import { fileURLToPath } from "node:url";
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_INVENTORY_BYTES = 64 * 1024;
+const RUNNER_REASON_CODES = Object.freeze({
+  OWNER_INPUT_MISSING: ["BLOCKED", "Required owner input is unavailable"],
+  OWNED_ENVIRONMENT_UNAVAILABLE: ["BLOCKED", "Owned disposable environment is unavailable"],
+  PRODUCER_CONTRACT_MISSING: ["BLOCKED", "Required producer contract is unavailable"],
+  RUNTIME_UNAVAILABLE: ["BLOCKED", "Required disposable runtime is unavailable"],
+  BROWSER_UNAVAILABLE: ["BLOCKED", "Required browser environment is unavailable"],
+  INSUFFICIENT_LIFETIME: ["BLOCKED", "Owner authorization lifetime is insufficient"],
+  ACCEPTANCE_ASSERTION_FAILED: ["FAILED", "Fixed acceptance assertion failed"],
+});
 const REQUIRED_CATEGORIES = Object.freeze([
   "workers-d1-do",
   "github-access",
@@ -338,23 +347,19 @@ function classifyRunnerResult(category, result, report = null) {
   }
   if (report !== null) {
     const valid =
-      hasOnlyKeys(report, ["reportVersion", "category", "status", "reason"]) &&
+      hasOnlyKeys(report, ["reportVersion", "category", "status", "reasonCode"]) &&
       report.reportVersion === 1 &&
       report.category === category &&
-      ["BLOCKED", "FAILED"].includes(report.status) &&
-      typeof report.reason === "string" &&
-      report.reason.length > 0 &&
-      report.reason.length <= 512 &&
-      [...report.reason].every(
-        (character) => character.codePointAt(0) >= 32 && character.codePointAt(0) !== 127,
-      );
+      typeof report.reasonCode === "string" &&
+      Object.hasOwn(RUNNER_REASON_CODES, report.reasonCode) &&
+      RUNNER_REASON_CODES[report.reasonCode][0] === report.status;
     if (!valid || result.status === 0) {
       return {
         status: "FAILED",
         reason: "fixed runner outcome report is invalid or contradicts its exit",
       };
     }
-    return { status: report.status, reason: report.reason };
+    return { status: report.status, reason: RUNNER_REASON_CODES[report.reasonCode][1] };
   }
   return result.status === 0
     ? { status: "VERIFIED", reason: "fixed acceptance runner passed" }

@@ -205,11 +205,11 @@ test("a fixed runner prerequisite report cannot promote a failed or signaled pro
     reportVersion: 1,
     category: "github-access",
     status: "BLOCKED",
-    reason: "Owned GitHub App input is unavailable",
+    reasonCode: "OWNER_INPUT_MISSING",
   };
   assert.deepEqual(classifyRunnerResult("github-access", { status: 1 }, report), {
     status: "BLOCKED",
-    reason: report.reason,
+    reason: "Required owner input is unavailable",
   });
   assert.equal(classifyRunnerResult("github-access", { status: 1 }).status, "FAILED");
   assert.equal(classifyRunnerResult("github-access", { status: 0 }).status, "VERIFIED");
@@ -221,9 +221,13 @@ test("a fixed runner prerequisite report cannot promote a failed or signaled pro
   for (const invalid of [
     { ...report, category: "browser-entry" },
     { ...report, status: "VERIFIED" },
-    { ...report, reason: "" },
-    { ...report, reason: "unsafe\nreason" },
-    { ...report, reason: "x".repeat(513) },
+    { ...report, reasonCode: "ACCEPTANCE_ASSERTION_FAILED" },
+    { ...report, reasonCode: "github_pat_private_value" },
+    { ...report, reasonCode: "https://private.invalid/secret" },
+    { ...report, reasonCode: "/private/owner/input" },
+    { ...report, reasonCode: "OWNER_INPUT_MISSING\u0085" },
+    { ...report, reasonCode: "OWNER_INPUT_MISSING\u2028" },
+    { ...report, reason: "github_pat_private_value" },
     { ...report, command: "untrusted" },
     {},
   ]) {

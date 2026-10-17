@@ -136,6 +136,15 @@ const networkPolicyScenarios = [
   rejected("extra-ingress-port", networkPolicy, (object) =>
     object.spec.ingress[0].ports.push({ protocol: "TCP", port: 8080 }),
   ),
+  rejected("ingress-port-range", networkPolicy, (object) => {
+    object.spec.ingress[0].ports[0].endPort = listenerPort + 1;
+  }),
+  rejected("dns-port-range", networkPolicy, (object) => {
+    object.spec.egress[0].ports[0].endPort = 54;
+  }),
+  rejected("public-https-port-range", networkPolicy, (object) => {
+    object.spec.egress[1].ports[0].endPort = 444;
+  }),
   rejected("extra-ingress-peer", networkPolicy, (object) =>
     object.spec.ingress[0].from.push(structuredClone(object.spec.ingress[0].from[0])),
   ),

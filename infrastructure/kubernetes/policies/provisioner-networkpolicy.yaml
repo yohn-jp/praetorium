@@ -39,69 +39,70 @@ spec:
         object.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@" &&
         object.metadata.labels["app.kubernetes.io/name"] == "scriptorium"
       message: NetworkPolicies must belong to the provisioner's exact tenant namespace and runtime identity.
+    # CEL exposes spec/peer/port/selector as typed structs, not maps. Check
+    # their optional fields explicitly; size() is for maps and lists only.
     - expression: >-
-        object.spec.size() == 4 &&
-        object.spec.podSelector.size() == 1 &&
+        has(object.spec.podSelector) && has(object.spec.ingress) &&
+        has(object.spec.egress) && has(object.spec.policyTypes) &&
+        (!has(object.spec.podSelector.matchExpressions) || object.spec.podSelector.matchExpressions.size() == 0) &&
         object.spec.podSelector.matchLabels.size() == 2 &&
         object.spec.podSelector.matchLabels["arcadia.io/instance-id"] == object.metadata.labels["arcadia.io/instance-id"] &&
         object.spec.podSelector.matchLabels["app.kubernetes.io/name"] == "scriptorium" &&
         object.spec.policyTypes == ["Ingress", "Egress"] &&
         object.spec.ingress.size() == 3 &&
         object.spec.ingress.all(rule,
-          rule.size() == 2 && rule.from.size() == 1 && rule.ports.size() == 1 &&
-          rule.ports[0].size() == 2 && rule.ports[0].protocol == "TCP" &&
+          has(rule.from) && has(rule.ports) && rule.from.size() == 1 && rule.ports.size() == 1 &&
+          !has(rule.ports[0].endPort) && rule.ports[0].protocol == "TCP" &&
           rule.ports[0].port >= 1 && rule.ports[0].port <= 65535 &&
           rule.ports[0].port == object.spec.ingress[0].ports[0].port
         ) &&
-        object.spec.ingress[0].from[0].size() == 2 &&
-        object.spec.ingress[0].from[0].namespaceSelector.size() == 1 &&
+        !has(object.spec.ingress[0].from[0].ipBlock) &&
+        (!has(object.spec.ingress[0].from[0].namespaceSelector.matchExpressions) || object.spec.ingress[0].from[0].namespaceSelector.matchExpressions.size() == 0) &&
         object.spec.ingress[0].from[0].namespaceSelector.matchLabels.size() == 1 &&
         object.spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"] == "traefik" &&
-        object.spec.ingress[0].from[0].podSelector.size() == 1 &&
+        (!has(object.spec.ingress[0].from[0].podSelector.matchExpressions) || object.spec.ingress[0].from[0].podSelector.matchExpressions.size() == 0) &&
         object.spec.ingress[0].from[0].podSelector.matchLabels.size() == 1 &&
         object.spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/name"] == "traefik" &&
-        object.spec.ingress[1].from[0].size() == 2 &&
-        object.spec.ingress[1].from[0].namespaceSelector.size() == 1 &&
+        !has(object.spec.ingress[1].from[0].ipBlock) &&
+        (!has(object.spec.ingress[1].from[0].namespaceSelector.matchExpressions) || object.spec.ingress[1].from[0].namespaceSelector.matchExpressions.size() == 0) &&
         object.spec.ingress[1].from[0].namespaceSelector.matchLabels.size() == 1 &&
         object.spec.ingress[1].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"] == "praetorium-system" &&
-        object.spec.ingress[1].from[0].podSelector.size() == 1 &&
+        (!has(object.spec.ingress[1].from[0].podSelector.matchExpressions) || object.spec.ingress[1].from[0].podSelector.matchExpressions.size() == 0) &&
         object.spec.ingress[1].from[0].podSelector.matchLabels.size() == 1 &&
         object.spec.ingress[1].from[0].podSelector.matchLabels["app.kubernetes.io/name"] == "instance-access" &&
-        object.spec.ingress[2].from[0].size() == 2 &&
-        object.spec.ingress[2].from[0].namespaceSelector.size() == 1 &&
+        !has(object.spec.ingress[2].from[0].ipBlock) &&
+        (!has(object.spec.ingress[2].from[0].namespaceSelector.matchExpressions) || object.spec.ingress[2].from[0].namespaceSelector.matchExpressions.size() == 0) &&
         object.spec.ingress[2].from[0].namespaceSelector.matchLabels.size() == 1 &&
         object.spec.ingress[2].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"] == "praetorium-system" &&
-        object.spec.ingress[2].from[0].podSelector.size() == 1 &&
+        (!has(object.spec.ingress[2].from[0].podSelector.matchExpressions) || object.spec.ingress[2].from[0].podSelector.matchExpressions.size() == 0) &&
         object.spec.ingress[2].from[0].podSelector.matchLabels.size() == 1 &&
         object.spec.ingress[2].from[0].podSelector.matchLabels["app.kubernetes.io/name"] == "provisioner" &&
         object.spec.egress.size() == 2 &&
-        object.spec.egress[0].size() == 2 &&
+        has(object.spec.egress[0].to) && has(object.spec.egress[0].ports) &&
         object.spec.egress[0].to.size() == 1 &&
-        object.spec.egress[0].to[0].size() == 2 &&
-        object.spec.egress[0].to[0].namespaceSelector.size() == 1 &&
+        !has(object.spec.egress[0].to[0].ipBlock) &&
+        (!has(object.spec.egress[0].to[0].namespaceSelector.matchExpressions) || object.spec.egress[0].to[0].namespaceSelector.matchExpressions.size() == 0) &&
         object.spec.egress[0].to[0].namespaceSelector.matchLabels.size() == 1 &&
         object.spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"] == "kube-system" &&
-        object.spec.egress[0].to[0].podSelector.size() == 1 &&
+        (!has(object.spec.egress[0].to[0].podSelector.matchExpressions) || object.spec.egress[0].to[0].podSelector.matchExpressions.size() == 0) &&
         object.spec.egress[0].to[0].podSelector.matchLabels.size() == 1 &&
         object.spec.egress[0].to[0].podSelector.matchLabels["k8s-app"] == "kube-dns" &&
         object.spec.egress[0].ports.size() == 2 &&
-        object.spec.egress[0].ports[0].size() == 2 &&
+        !has(object.spec.egress[0].ports[0].endPort) &&
         object.spec.egress[0].ports[0].protocol == "UDP" &&
         object.spec.egress[0].ports[0].port == 53 &&
-        object.spec.egress[0].ports[1].size() == 2 &&
+        !has(object.spec.egress[0].ports[1].endPort) &&
         object.spec.egress[0].ports[1].protocol == "TCP" &&
         object.spec.egress[0].ports[1].port == 53 &&
-        object.spec.egress[1].size() == 2 &&
+        has(object.spec.egress[1].to) && has(object.spec.egress[1].ports) &&
         object.spec.egress[1].to.size() == 2 &&
-        object.spec.egress[1].to.all(peer, peer.size() == 1 && has(peer.ipBlock)) &&
-        object.spec.egress[1].to[0].ipBlock.size() == 2 &&
+        object.spec.egress[1].to.all(peer, has(peer.ipBlock) && !has(peer.podSelector) && !has(peer.namespaceSelector)) &&
         object.spec.egress[1].to[0].ipBlock.cidr == "0.0.0.0/0" &&
         object.spec.egress[1].to[0].ipBlock.except == ["10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16", "168.63.129.16/32", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"] &&
-        object.spec.egress[1].to[1].ipBlock.size() == 2 &&
         object.spec.egress[1].to[1].ipBlock.cidr == "::/0" &&
         object.spec.egress[1].to[1].ipBlock.except == ["::/128", "::1/128", "::/96", "::ffff:0:0/96", "2001:db8::/32", "fc00::/7", "fec0::/10", "fe80::/10", "ff00::/8"] &&
         object.spec.egress[1].ports.size() == 1 &&
-        object.spec.egress[1].ports[0].size() == 2 &&
+        !has(object.spec.egress[1].ports[0].endPort) &&
         object.spec.egress[1].ports[0].protocol == "TCP" &&
         object.spec.egress[1].ports[0].port == 443
       message: Tenant NetworkPolicies must preserve the exact three ingress peers, bounded listener, DNS, and public HTTPS egress.

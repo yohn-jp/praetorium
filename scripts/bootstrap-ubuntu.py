@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 ROLE_MARKER = Path("/etc/praetorium/ubuntu-role.json")
 BUILD_ROOT = Path("/var/lib/praetorium-buildkit")
@@ -25,6 +26,9 @@ APPARMOR_PROFILE = Path("/etc/apparmor.d/praetorium-rootlesskit")
 DISK_CHECK = Path("/usr/local/libexec/praetorium-buildkit-disk-check.py")
 DISK_UNIT = Path("/etc/systemd/system/praetorium-buildkit-disk-check.service")
 DISK_TIMER = Path("/etc/systemd/system/praetorium-buildkit-disk-check.timer")
+# BuildKit v0.34 proxyprovider allocates isolated /30 pairs from this range.
+BUILDKIT_VERSION = "v0.34.0"
+BUILDKIT_PROXY_CIDR = "10.89.0.0/16"
 K3S_CONFIG = Path("/etc/rancher/k3s/config.yaml")
 
 
@@ -112,6 +116,29 @@ def oci_runtime():
         if shutil.which(name):
             return executable(name)
     raise ValueError("missing preinstalled OCI runtime: runc or buildkit-runc")
+
+
+def verified_buildkitd():
+    binary = executable("buildkitd")
+    require(output(binary, "--version").startswith(
+        "buildkitd github.com/moby/buildkit " + BUILDKIT_VERSION + " "),
+        "BuildKit " + BUILDKIT_VERSION + " is required for the validated proxy network profile")
+    return binary
+
+
+def verify_egress_proxy(proxy, egress_cidrs):
+    parsed = urlsplit(proxy)
+    port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+    require(1 <= port <= 65535, "invalid egress proxy port")
+    addresses = {ipaddress.ip_address(entry[4][0]) for entry in
+                 socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)}
+    networks = [ipaddress.ip_network(value) for value in egress_cidrs]
+    internal = ipaddress.ip_network(BUILDKIT_PROXY_CIDR)
+    require(addresses and all(isinstance(address, ipaddress.IPv4Address) and
+                              address not in internal and
+                              any(address in network for network in networks)
+                              for address in addresses),
+            "egress proxy must resolve entirely inside configured IPv4 egressCidrs, outside the internal proxy range")
 
 
 def verify_certificate_ip(cert, address):
@@ -218,9 +245,15 @@ def build_preflight(config):
     free_port(address, config["listenPort"])
     cidrs(config["clientCidrs"], "clientCidrs")
     cidrs(config["egressCidrs"], "egressCidrs")
+    internal = ipaddress.ip_network(BUILDKIT_PROXY_CIDR)
+    require(ipaddress.ip_address(address) not in internal and
+            all(not ipaddress.ip_network(value).overlaps(internal)
+                for value in config["clientCidrs"] + config["egressCidrs"]),
+            "10.89.0.0/16 is reserved for BuildKit's isolated proxy networks")
     proxy = concrete(config["egressProxyUrl"], "egressProxyUrl")
     require(re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?", proxy),
             "proxy must be an origin without credentials/path")
+    verify_egress_proxy(proxy, config["egressCidrs"])
     only_keys(config["tls"], ["serverCertFile", "serverKeyFile", "clientCaFile"], "tls")
     for label, filename in config["tls"].items():
         require(filename.startswith(("/run/secrets/", "/var/lib/praetorium/credentials/")),
@@ -239,9 +272,10 @@ def build_preflight(config):
     require(isinstance(config["cpuQuota"], str) and re.fullmatch(r"[1-9][0-9]{0,3}%", config["cpuQuota"]), "invalid cpuQuota")
     require(isinstance(config["memoryMax"], str) and re.fullmatch(r"[1-9][0-9]{0,5}[MGT]", config["memoryMax"]), "invalid memoryMax")
     require(type(config["tasksMax"]) is int and 16 <= config["tasksMax"] <= 4096, "invalid tasksMax")
-    for tool in ("rootlesskit", "slirp4netns", "buildkitd", "findmnt", "python3",
+    for tool in ("rootlesskit", "slirp4netns", "findmnt", "python3",
                  "apparmor_parser", "useradd", "getent"):
         executable(tool)
+    verified_buildkitd()
     oci_runtime()
     build_storage_preflight(config)
     require(not Path("/var/run/docker.sock").exists(), "privileged Docker socket exists on BuildKit host")
@@ -316,48 +350,18 @@ def configure_rootlesskit_apparmor(rootlesskit):
         execute("apparmor_parser", "-r", str(APPARMOR_PROFILE))
 
 
-def apply_build(config):
-    rootlesskit = executable("rootlesskit")
-    slirp4netns = executable("slirp4netns")
-    buildkitd = executable("buildkitd")
-    runtime = oci_runtime()
-    execute("useradd", "--system", "--user-group", "--create-home", "-F",
-            "--home-dir", str(BUILD_ROOT), "--shell", "/usr/sbin/nologin", "buildkit")
-    for filename in ("/etc/subuid", "/etc/subgid"):
-        entries = Path(filename).read_text().splitlines()
-        require(any(line.startswith("buildkit:") for line in entries),
-                "buildkit subordinate IDs missing after user creation: " + filename)
-    state = BUILD_ROOT / "state"
-    state.mkdir(mode=0o700, exist_ok=False)
-    execute("chown", "-R", "buildkit:buildkit", str(state))
+def render_build_unit(config, rootlesskit, slirp4netns, buildkitd):
     tls = config["tls"]
-    write_new(BUILD_CONFIG, "\n".join([
-        'root = "' + str(state) + '"',
-        'proxyNetwork = true', '',
-        '[grpc]',
-        '  address = ["tcp://0.0.0.0:' + str(config["listenPort"]) + '"]',
-        '  [grpc.tls]',
-        '    cert = "/run/credentials/praetorium-buildkit.service/server.crt"',
-        '    key = "/run/credentials/praetorium-buildkit.service/server.key"',
-        '    ca = "/run/credentials/praetorium-buildkit.service/client-ca.crt"',
-        '[worker.oci]', '  rootless = true',
-        '  binary = ' + json.dumps(runtime),
-        '  max-parallelism = 1', '  gc = true',
-        '  maxUsedSpace = ' + str(config["gcMaxUsedMiB"] * 1024 * 1024),
-        '  minFreeSpace = ' + str(config["minFreeMiB"] * 1024 * 1024),
-        '  reservedSpace = "5%"', ''
-    ]))
-    configure_rootlesskit_apparmor(rootlesskit)
     port = str(config["listenPort"])
     allow = " ".join(config["clientCidrs"] + config["egressCidrs"] +
-                     ["127.0.0.0/8", "::1/128"])
+                     ["127.0.0.0/8", "::1/128", BUILDKIT_PROXY_CIDR])
     command = (" ".join([rootlesskit, "--net=slirp4netns",
                "--slirp4netns-binary=" + slirp4netns,
                "--copy-up=/etc",
                "--disable-host-loopback", "--port-driver=builtin",
                "--publish=" + config["bindAddress"] + ":" + port + ":" + port + "/tcp",
                buildkitd, "--config=" + str(BUILD_CONFIG), "--rootless"]))
-    write_new(BUILD_UNIT, "\n".join([
+    return "\n".join([
         "[Unit]", "Description=Praetorium isolated rootless mTLS BuildKit",
         "Wants=network-online.target", "After=network-online.target",
         "RequiresMountsFor=" + str(BUILD_ROOT), "",
@@ -386,7 +390,41 @@ def apply_build(config):
         "IPAddressDeny=any", "IPAddressAllow=" + allow,
         "UMask=0077", "",
         "[Install]", "WantedBy=multi-user.target", ""
+    ])
+
+
+def apply_build(config):
+    rootlesskit = executable("rootlesskit")
+    slirp4netns = executable("slirp4netns")
+    buildkitd = verified_buildkitd()
+    runtime = oci_runtime()
+    execute("useradd", "--system", "--user-group", "--create-home", "-F",
+            "--home-dir", str(BUILD_ROOT), "--shell", "/usr/sbin/nologin", "buildkit")
+    for filename in ("/etc/subuid", "/etc/subgid"):
+        entries = Path(filename).read_text().splitlines()
+        require(any(line.startswith("buildkit:") for line in entries),
+                "buildkit subordinate IDs missing after user creation: " + filename)
+    state = BUILD_ROOT / "state"
+    state.mkdir(mode=0o700, exist_ok=False)
+    execute("chown", "-R", "buildkit:buildkit", str(state))
+    write_new(BUILD_CONFIG, "\n".join([
+        'root = "' + str(state) + '"',
+        'proxyNetwork = true', '',
+        '[grpc]',
+        '  address = ["tcp://0.0.0.0:' + str(config["listenPort"]) + '"]',
+        '  [grpc.tls]',
+        '    cert = "/run/credentials/praetorium-buildkit.service/server.crt"',
+        '    key = "/run/credentials/praetorium-buildkit.service/server.key"',
+        '    ca = "/run/credentials/praetorium-buildkit.service/client-ca.crt"',
+        '[worker.oci]', '  rootless = true',
+        '  binary = ' + json.dumps(runtime),
+        '  max-parallelism = 1', '  gc = true',
+        '  maxUsedSpace = ' + str(config["gcMaxUsedMiB"] * 1024 * 1024),
+        '  minFreeSpace = ' + str(config["minFreeMiB"] * 1024 * 1024),
+        '  reservedSpace = "5%"', ''
     ]))
+    configure_rootlesskit_apparmor(rootlesskit)
+    write_new(BUILD_UNIT, render_build_unit(config, rootlesskit, slirp4netns, buildkitd))
     write_new(DISK_CHECK, Path(__file__).with_name("check-build-disk.py").read_text(), 0o755)
     write_new(DISK_UNIT, "\n".join([
         "[Unit]", "Description=Check free space on the shared BuildKit filesystem", "",

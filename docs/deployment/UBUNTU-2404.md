@@ -73,7 +73,9 @@ for a mismatched IP. Fill the operator input JSON with:
 - Private listening IPv4 address and TCP port; both Build Worker *client CIDRs*
   and approved build-input/proxy/registry *egress CIDRs*.
 - A credential-free `http[s]://host[:port]` egress proxy origin. The proxy
-  must be reachable within the egress CIDRs.
+  must resolve entirely to IPv4 addresses within the egress CIDRs, outside
+  BuildKit's reserved internal range. Preflight checks current DNS answers;
+  revalidate the network policy before changing proxy DNS or endpoints.
 - Root-owned 0600 server certificate, private key and trusted client CA files,
   strictly outside Git in `/run/secrets` or
   `/var/lib/praetorium/credentials`. The Build Worker uses its own separate
@@ -122,6 +124,18 @@ helpers and capabilities inside the child user namespace; limiting it to
 SETUID/SETGID prevents UID mapping on the validated Ubuntu host. RootlessKit
 uses `--publish` for the private listener and `--copy-up=/etc` to preserve
 isolated DNS configuration when the host resolver restarts.
+
+This Ubuntu profile requires **BuildKit v0.34.0**; preflight and apply reject
+other reported versions rather than assuming their internal network layout.
+Verify its release archive digest before installation. The validated proxy
+network allocates private `/30` links from
+`10.89.0.0/16`. The service's cgroup IP filter must admit this internal range
+as well as the configured clients and egress destinations, or `RUN` requests
+cannot reach BuildKit's own proxy. Reserve this range for the isolated build
+namespaces; bootstrap rejects overlapping host/client/egress inputs. It is
+not an extra external registry/proxy destination. The `proxyNetwork` setting
+and upstream proxy policy still enforce build-request egress. Revalidate the
+internal range and enforcement when changing the pinned BuildKit version.
 
 ## Nonmutating preflight, then explicit apply
 

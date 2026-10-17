@@ -1,5 +1,6 @@
 """Preflight regressions only; these do not certify an Ubuntu host bootstrap."""
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,6 +17,45 @@ spec.loader.exec_module(bootstrap)
 
 
 class PreflightTests(unittest.TestCase):
+    def test_buildkit_network_profile_accepts_only_its_validated_version(self):
+        for version in ("v0.34.0", "v0.33.0", "v0.34.1", "v0.34.0-other"):
+            with self.subTest(version=version), \
+                    patch.object(bootstrap, "executable", return_value="/usr/local/bin/buildkitd"), \
+                    patch.object(bootstrap, "output", return_value=
+                                 "buildkitd github.com/moby/buildkit " + version + " test-commit"):
+                if version == "v0.34.0":
+                    self.assertEqual(bootstrap.verified_buildkitd(), "/usr/local/bin/buildkitd")
+                else:
+                    with self.assertRaisesRegex(ValueError, "validated proxy network profile"):
+                        bootstrap.verified_buildkitd()
+
+    def test_proxy_dns_must_stay_inside_its_explicit_egress_ranges(self):
+        for addresses, allowed in ((["10.7.0.32"], True), (["10.89.1.5"], False),
+                                   (["10.7.0.31"], False), (["::1"], False),
+                                   (["10.7.0.32", "10.89.1.5"], False)):
+            answers = [(0, 0, 0, "", (address, 3128)) for address in addresses]
+            with self.subTest(addresses=addresses), \
+                    patch.object(bootstrap.socket, "getaddrinfo", return_value=answers):
+                if allowed:
+                    bootstrap.verify_egress_proxy("http://proxy.internal:3128", ["10.7.0.32/32"])
+                else:
+                    with self.assertRaisesRegex(ValueError, "configured IPv4 egressCidrs"):
+                        bootstrap.verify_egress_proxy("http://proxy.internal:3128", ["10.7.0.32/32"])
+
+    def test_host_client_and_egress_cannot_overlap_buildkit_proxy_network(self):
+        template = json.loads((Path(__file__).parents[2] /
+                               "infrastructure/ubuntu/examples/build.json").read_text())
+        for field, value in (("bindAddress", "10.89.0.31"),
+                             ("clientCidrs", ["10.89.0.0/30"]),
+                             ("egressCidrs", ["10.89.128.0/24"])):
+            config = {**template, "bindAddress": "10.7.0.32",
+                      "clientCidrs": ["10.7.0.31/32"], "egressCidrs": ["10.7.0.32/32"],
+                      field: value}
+            with self.subTest(field=field), patch.object(bootstrap, "interface_address"), \
+                    patch.object(bootstrap, "free_port"):
+                with self.assertRaisesRegex(ValueError, "reserved for BuildKit"):
+                    bootstrap.build_preflight(config)
+
     def test_packaged_rootlesskit_profile_does_not_get_a_conflicting_attachment(self):
         with patch.object(bootstrap.Path, "is_file", return_value=True), \
                 patch.object(bootstrap, "write_new") as write, \

@@ -6649,5 +6649,28 @@
     ],
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "WorkNotificationSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "version": {
+        "type": "number",
+        "const": 1
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "build",
+          "operation"
+        ]
+      }
+    },
+    "required": [
+      "version",
+      "kind"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   }
 }

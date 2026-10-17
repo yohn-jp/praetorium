@@ -15,3 +15,4 @@ export * from "./management.js";
 export * from "./runtime-identity.js";
 export * from "./runtime-git-credentials.js";
 export * from "./persistence-compatibility.js";
+export * from "./work-notification.js";

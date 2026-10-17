@@ -269,12 +269,15 @@ projection with mode `0440`, an 8 Mi memory `emptyDir`, and a 2 Gi temporary
 type, mode, ownership, symlink target metadata, and whether a read-only open
 succeeded. It never read or logged Secret payload bytes.
 
-The actual kubelet mount modes included writable shared roots: Secret
-projection root `03777` (UID 0/GID 10001), memory `emptyDir` root `03777`,
-and temporary `emptyDir` root `02777`. The projected `..data` target was
-`02755` (UID 0/GID 10001): group/world readable and executable, but not
-writable. The projected file was `0440` (UID 0/GID 10001), and UID/GID/group
-10001 successfully opened it read-only. These observations are relevant to the Build Worker secret
+The actual kubelet mount modes included group/world write permission bits on
+the Secret projection root `03777` (UID 0/GID 10001), memory `emptyDir` root
+`03777`, and temporary `emptyDir` root `02777`. The Secret volume itself was
+mounted read-only, so its mode bits do not establish that the root was
+writable to the process. The two `emptyDir` roots were writable mounts. The
+projected `..data` target was `02755` (UID 0/GID 10001): group/world readable
+and executable, but not writable. The projected file was `0440` (UID 0/GID
+10001), and UID/GID/group 10001 successfully opened it read-only. These
+observations are relevant to the Build Worker secret
 preparation path: validation that requires private modes on source mount
 directories cannot accept these raw Kubernetes mounts. This probe did not
 execute `prepare-runtime-secrets`, copy material into the private runtime

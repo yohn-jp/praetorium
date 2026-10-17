@@ -1,5 +1,7 @@
 # Praetorium — Repository-scoped application platform
 
+> **Historical design reference, not the current product authority.** Begin with [SYSTEM.md](SYSTEM.md) for verified actor responsibilities, [EXECUTION.md](EXECUTION.md) for actual trigger/traffic paths, and [REVIEW.md](REVIEW.md) for deviations. The original [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) and later explicit owner decisions define the product; historical implementation choices in this file must be re-evaluated. CI is now allowed by the owner.
+
 Status: execution design for Epic #1, based on the owner's agreed product decisions. This document specifies the target; it does not certify current code, a producer artifact or a live deployment.
 
 Companions: [producer contract](SCRIPTORIUM-CONTRACT.md), [implementation plan](../migration/PLAN.md), [coverage ledger](../migration/COVERAGE.json), [Sol dispatch](../migration/SOL-GOAL.md).

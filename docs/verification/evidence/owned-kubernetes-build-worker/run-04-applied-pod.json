@@ -1,0 +1,570 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "annotations": {
+      "praetorium.io/probe-image-source-ref": "431dbe1c7c86251894efea3de2cf0ec94499ca10",
+      "praetorium.io/probe-only": "true",
+      "praetorium.io/probe-source-commit": "431dbe1c7c86251894efea3de2cf0ec94499ca10"
+    },
+    "creationTimestamp": "2026-10-17T04:17:38Z",
+    "generation": 1,
+    "labels": {
+      "app.kubernetes.io/name": "build-worker",
+      "app.kubernetes.io/part-of": "praetorium",
+      "praetorium.io/owned-probe-run": "bw-20261017-1000-001"
+    },
+    "name": "praetorium-build-worker-probe-20261017",
+    "namespace": "praetorium-build",
+    "resourceVersion": "5050",
+    "uid": "d73943fd-c716-410e-982d-bb7baf6b6d84"
+  },
+  "spec": {
+    "automountServiceAccountToken": false,
+    "containers": [
+      {
+        "command": [
+          "node",
+          "--input-type=module",
+          "-e",
+          "import { lstat, access } from 'node:fs/promises';\nimport { constants } from 'node:fs';\nimport { createBuildWorker } from './dist/main.js';\nconst dirs = ['/var/run/praetorium-build-worker/private', '/var/run/praetorium-build-worker/private/buildkit', '/var/run/praetorium-build-worker/private/registry', '/var/run/praetorium-build-worker/private/registry-pull', '/var/run/praetorium-build-worker/private/control-plane', '/var/run/praetorium-build-worker/private/signing', '/tmp/praetorium-build-worker/private'];\nconst files = ['/var/run/praetorium-build-worker/private/buildkit/ca.crt', '/var/run/praetorium-build-worker/private/buildkit/tls.crt', '/var/run/praetorium-build-worker/private/buildkit/tls.key', '/var/run/praetorium-build-worker/private/registry/config.json', '/var/run/praetorium-build-worker/private/registry-pull/credential.json', '/var/run/praetorium-build-worker/private/control-plane/token', '/var/run/praetorium-build-worker/private/signing/key.pem'];\ntry { const metadata = []; for (const p of dirs) { const s = await lstat(p); if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== 10001 || s.gid !== 10001 || (s.mode & 0o7777) !== 0o700) throw new Error(); metadata.push({path:p,kind:'directory',uid:s.uid,gid:s.gid,mode:s.mode & 0o7777}); } for (const p of files) { const s = await lstat(p); if (!s.isFile() || s.isSymbolicLink() || s.uid !== 10001 || s.gid !== 10001 || s.nlink !== 1 || (s.mode & 0o7777) !== 0o600) throw new Error(); metadata.push({path:p,kind:'file',uid:s.uid,gid:s.gid,mode:s.mode & 0o7777,nlink:s.nlink}); } await access(process.env.PRAETORIUM_BUILDKIT_BUILDCTL_PATH, constants.X_OK); await createBuildWorker(process.env); await new Promise((resolve) => process.stdout.write(JSON.stringify({privateRuntimeMetadata:'verified',buildctlExecutable:true,constructor:'initialized',queueMethods:'unused',metadata})+'\\n', resolve)); process.exit(0); } catch { process.stderr.write('private runtime metadata or constructor validation failed\\n'); process.exit(1); }"
+        ],
+        "env": [
+          {
+            "name": "PRAETORIUM_BUILD_REGISTRY_PULL_CREDENTIAL_FILE",
+            "value": "/var/run/praetorium-build-worker/private/registry-pull/credential.json"
+          }
+        ],
+        "envFrom": [
+          {
+            "configMapRef": {
+              "name": "praetorium-build-worker-config"
+            }
+          }
+        ],
+        "image": "praetorium-owned.local/praetorium/platform-build-worker:main-431dbe1",
+        "imagePullPolicy": "Never",
+        "name": "build-worker",
+        "resources": {
+          "limits": {
+            "cpu": "1",
+            "ephemeral-storage": "2Gi",
+            "memory": "1Gi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "ephemeral-storage": "256Mi",
+            "memory": "256Mi"
+          }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+            "drop": ["ALL"]
+          },
+          "readOnlyRootFilesystem": true,
+          "runAsGroup": 10001,
+          "runAsNonRoot": true,
+          "runAsUser": 10001,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+          {
+            "mountPath": "/var/run/praetorium-build-worker",
+            "name": "runtime-private",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/tmp/praetorium-build-worker",
+            "name": "worker-temporary"
+          }
+        ]
+      }
+    ],
+    "dnsPolicy": "ClusterFirst",
+    "enableServiceLinks": true,
+    "imagePullSecrets": [
+      {
+        "name": "praetorium-bw-probe-image-pull-20261017"
+      }
+    ],
+    "initContainers": [
+      {
+        "command": [
+          "node",
+          "--input-type=module",
+          "-e",
+          "import { readBuildServiceToken } from './dist/http-client.js';\nimport { readRegistryPullCredential } from './dist/registry-credential.js';\nimport { loadFileBuilderSigner } from '@praetorium/application/builds';\nconst checks = await Promise.allSettled([readBuildServiceToken('/var/run/secrets/control-plane/token'), readRegistryPullCredential('/var/run/secrets/registry-pull/credential.json'), loadFileBuilderSigner({ privateKeyPath: '/var/run/secrets/signing/key.pem', keyId: 'owned-probe-key-20261017' })]);\nif (checks.some((result) => result.status === 'fulfilled')) { process.stderr.write('direct projection reader unexpectedly accepted source\\n'); process.exit(1); }\nprocess.stdout.write('direct projected source rejected by all three strict readers\\n');"
+        ],
+        "image": "praetorium-owned.local/praetorium/platform-build-worker:main-431dbe1",
+        "imagePullPolicy": "Never",
+        "name": "direct-projected-reader-check",
+        "resources": {
+          "limits": {
+            "cpu": "100m",
+            "ephemeral-storage": "16Mi",
+            "memory": "128Mi"
+          },
+          "requests": {
+            "cpu": "10m",
+            "ephemeral-storage": "1Mi",
+            "memory": "32Mi"
+          }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+            "drop": ["ALL"]
+          },
+          "readOnlyRootFilesystem": true,
+          "runAsGroup": 10001,
+          "runAsNonRoot": true,
+          "runAsUser": 10001,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+          {
+            "mountPath": "/var/run/secrets/buildkit",
+            "name": "buildkit-client",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/registry",
+            "name": "registry-push",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/registry-pull",
+            "name": "registry-pull",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/control-plane",
+            "name": "control-plane-auth",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/signing",
+            "name": "build-signing-key",
+            "readOnly": true
+          }
+        ]
+      },
+      {
+        "command": ["node", "dist/prepare-runtime-secrets.js"],
+        "image": "praetorium-owned.local/praetorium/platform-build-worker:main-431dbe1",
+        "imagePullPolicy": "Never",
+        "name": "prepare-runtime-secrets",
+        "resources": {
+          "limits": {
+            "cpu": "100m",
+            "ephemeral-storage": "16Mi",
+            "memory": "128Mi"
+          },
+          "requests": {
+            "cpu": "10m",
+            "ephemeral-storage": "1Mi",
+            "memory": "32Mi"
+          }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+            "drop": ["ALL"]
+          },
+          "readOnlyRootFilesystem": true,
+          "runAsGroup": 10001,
+          "runAsNonRoot": true,
+          "runAsUser": 10001,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "volumeMounts": [
+          {
+            "mountPath": "/var/run/secrets/buildkit",
+            "name": "buildkit-client",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/registry",
+            "name": "registry-push",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/registry-pull",
+            "name": "registry-pull",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/control-plane",
+            "name": "control-plane-auth",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/signing",
+            "name": "build-signing-key",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/praetorium-build-worker",
+            "name": "runtime-private"
+          },
+          {
+            "mountPath": "/tmp/praetorium-build-worker",
+            "name": "worker-temporary"
+          }
+        ]
+      }
+    ],
+    "nodeName": "praetorium-owned-kube-fresh-20261017-control-plane",
+    "preemptionPolicy": "PreemptLowerPriority",
+    "priority": 0,
+    "restartPolicy": "Never",
+    "schedulerName": "default-scheduler",
+    "securityContext": {
+      "fsGroup": 10001,
+      "runAsGroup": 10001,
+      "runAsNonRoot": true,
+      "runAsUser": 10001,
+      "seccompProfile": {
+        "type": "RuntimeDefault"
+      }
+    },
+    "serviceAccount": "praetorium-build-worker",
+    "serviceAccountName": "praetorium-build-worker",
+    "terminationGracePeriodSeconds": 30,
+    "tolerations": [
+      {
+        "effect": "NoExecute",
+        "key": "node.kubernetes.io/not-ready",
+        "operator": "Exists",
+        "tolerationSeconds": 300
+      },
+      {
+        "effect": "NoExecute",
+        "key": "node.kubernetes.io/unreachable",
+        "operator": "Exists",
+        "tolerationSeconds": 300
+      }
+    ],
+    "volumes": [
+      {
+        "name": "buildkit-client",
+        "secret": {
+          "defaultMode": 288,
+          "items": [
+            {
+              "key": "ca.crt",
+              "path": "ca.crt"
+            },
+            {
+              "key": "tls.crt",
+              "path": "tls.crt"
+            },
+            {
+              "key": "tls.key",
+              "path": "tls.key"
+            }
+          ],
+          "secretName": "praetorium-bw-probe-buildkit-20261017"
+        }
+      },
+      {
+        "name": "registry-push",
+        "secret": {
+          "defaultMode": 288,
+          "items": [
+            {
+              "key": "config.json",
+              "path": "config.json"
+            }
+          ],
+          "secretName": "praetorium-bw-probe-registry-push-20261017"
+        }
+      },
+      {
+        "name": "registry-pull",
+        "secret": {
+          "defaultMode": 288,
+          "items": [
+            {
+              "key": "credential.json",
+              "path": "credential.json"
+            }
+          ],
+          "secretName": "praetorium-bw-probe-registry-pull-20261017"
+        }
+      },
+      {
+        "name": "control-plane-auth",
+        "secret": {
+          "defaultMode": 288,
+          "items": [
+            {
+              "key": "token",
+              "path": "token"
+            }
+          ],
+          "secretName": "praetorium-bw-probe-control-plane-20261017"
+        }
+      },
+      {
+        "name": "build-signing-key",
+        "secret": {
+          "defaultMode": 288,
+          "items": [
+            {
+              "key": "private-key.pem",
+              "path": "key.pem"
+            }
+          ],
+          "secretName": "praetorium-bw-probe-signing-20261017"
+        }
+      },
+      {
+        "emptyDir": {
+          "sizeLimit": "2Gi"
+        },
+        "name": "worker-temporary"
+      },
+      {
+        "emptyDir": {
+          "medium": "Memory",
+          "sizeLimit": "8Mi"
+        },
+        "name": "runtime-private"
+      }
+    ]
+  },
+  "status": {
+    "phase": "Succeeded",
+    "containerStatuses": [
+      {
+        "allocatedResources": {
+          "cpu": "100m",
+          "ephemeral-storage": "256Mi",
+          "memory": "256Mi"
+        },
+        "containerID": "containerd://a50a7b580006d28a6d3182d8247d2bc6bcfe32745a11db0d37bb736f8ab29d28",
+        "image": "praetorium-owned.local/praetorium/platform-build-worker:main-431dbe1",
+        "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+        "lastState": {},
+        "name": "build-worker",
+        "ready": false,
+        "resources": {
+          "limits": {
+            "cpu": "1",
+            "ephemeral-storage": "2Gi",
+            "memory": "1Gi"
+          },
+          "requests": {
+            "cpu": "100m",
+            "ephemeral-storage": "256Mi",
+            "memory": "256Mi"
+          }
+        },
+        "restartCount": 0,
+        "started": false,
+        "state": {
+          "terminated": {
+            "containerID": "containerd://a50a7b580006d28a6d3182d8247d2bc6bcfe32745a11db0d37bb736f8ab29d28",
+            "exitCode": 0,
+            "finishedAt": "2026-10-17T04:17:43Z",
+            "reason": "Completed",
+            "startedAt": "2026-10-17T04:17:43Z"
+          }
+        },
+        "user": {
+          "linux": {
+            "gid": 10001,
+            "supplementalGroups": [10001],
+            "uid": 10001
+          }
+        },
+        "volumeMounts": [
+          {
+            "mountPath": "/var/run/praetorium-build-worker",
+            "name": "runtime-private",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/tmp/praetorium-build-worker",
+            "name": "worker-temporary"
+          }
+        ]
+      }
+    ],
+    "initContainerStatuses": [
+      {
+        "allocatedResources": {
+          "cpu": "10m",
+          "ephemeral-storage": "1Mi",
+          "memory": "32Mi"
+        },
+        "containerID": "containerd://5ebc9c5287c9019fce38998f2f1d6c26fa26d659edf30386514a7dbd079ec683",
+        "image": "praetorium-owned.local/praetorium/platform-build-worker:main-431dbe1",
+        "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+        "lastState": {},
+        "name": "direct-projected-reader-check",
+        "ready": true,
+        "resources": {
+          "limits": {
+            "cpu": "100m",
+            "ephemeral-storage": "16Mi",
+            "memory": "128Mi"
+          },
+          "requests": {
+            "cpu": "10m",
+            "ephemeral-storage": "1Mi",
+            "memory": "32Mi"
+          }
+        },
+        "restartCount": 0,
+        "started": false,
+        "state": {
+          "terminated": {
+            "containerID": "containerd://5ebc9c5287c9019fce38998f2f1d6c26fa26d659edf30386514a7dbd079ec683",
+            "exitCode": 0,
+            "finishedAt": "2026-10-17T04:17:40Z",
+            "reason": "Completed",
+            "startedAt": "2026-10-17T04:17:39Z"
+          }
+        },
+        "user": {
+          "linux": {
+            "gid": 10001,
+            "supplementalGroups": [10001],
+            "uid": 10001
+          }
+        },
+        "volumeMounts": [
+          {
+            "mountPath": "/var/run/secrets/buildkit",
+            "name": "buildkit-client",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/secrets/registry",
+            "name": "registry-push",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/secrets/registry-pull",
+            "name": "registry-pull",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/secrets/control-plane",
+            "name": "control-plane-auth",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/secrets/signing",
+            "name": "build-signing-key",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          }
+        ]
+      },
+      {
+        "allocatedResources": {
+          "cpu": "10m",
+          "ephemeral-storage": "1Mi",
+          "memory": "32Mi"
+        },
+        "containerID": "containerd://ec51f852437ecbd5e6f9a8aa450749295329aa3991ab64d7079a9f541055eff9",
+        "image": "praetorium-owned.local/praetorium/platform-build-worker:main-431dbe1",
+        "imageID": "sha256:c33ae8e0aed931ac21691aa1bdbcfbdbdd16e077618fbd9b491cabbad9a6ff64",
+        "lastState": {},
+        "name": "prepare-runtime-secrets",
+        "ready": true,
+        "resources": {
+          "limits": {
+            "cpu": "100m",
+            "ephemeral-storage": "16Mi",
+            "memory": "128Mi"
+          },
+          "requests": {
+            "cpu": "10m",
+            "ephemeral-storage": "1Mi",
+            "memory": "32Mi"
+          }
+        },
+        "restartCount": 0,
+        "started": false,
+        "state": {
+          "terminated": {
+            "containerID": "containerd://ec51f852437ecbd5e6f9a8aa450749295329aa3991ab64d7079a9f541055eff9",
+            "exitCode": 0,
+            "finishedAt": "2026-10-17T04:17:42Z",
+            "reason": "Completed",
+            "startedAt": "2026-10-17T04:17:41Z"
+          }
+        },
+        "user": {
+          "linux": {
+            "gid": 10001,
+            "supplementalGroups": [10001],
+            "uid": 10001
+          }
+        },
+        "volumeMounts": [
+          {
+            "mountPath": "/var/run/secrets/buildkit",
+            "name": "buildkit-client",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/secrets/registry",
+            "name": "registry-push",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/secrets/registry-pull",
+            "name": "registry-pull",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/secrets/control-plane",
+            "name": "control-plane-auth",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/secrets/signing",
+            "name": "build-signing-key",
+            "readOnly": true,
+            "recursiveReadOnly": "Disabled"
+          },
+          {
+            "mountPath": "/var/run/praetorium-build-worker",
+            "name": "runtime-private"
+          },
+          {
+            "mountPath": "/tmp/praetorium-build-worker",
+            "name": "worker-temporary"
+          }
+        ]
+      }
+    ]
+  }
+}

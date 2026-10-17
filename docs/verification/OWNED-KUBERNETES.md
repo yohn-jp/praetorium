@@ -208,12 +208,12 @@ full seven-policy staged-apply path. Both VAPs reported generation and observed
 generation 1 with `typeChecking: {}`. Before and after the IPv6 candidate
 probe, their UIDs and generations were identical:
 
-| Canonical object | UID | Before | After |
-| --- | --- | --- | --- |
+| Canonical object                                  | UID                                    | Before                    | After                     |
+| ------------------------------------------------- | -------------------------------------- | ------------------------- | ------------------------- |
 | `praetorium-provisioner-tenant-networkpolicy` VAP | `8a9284b7-9283-4ab3-ab04-4ba860594b74` | gen 1 / observed 1 / `{}` | gen 1 / observed 1 / `{}` |
-| `praetorium-tenant-pods-restricted` VAP | `45a517e9-0374-4fc4-aa4a-0d134dd1ab78` | gen 1 / observed 1 / `{}` | gen 1 / observed 1 / `{}` |
-| NetworkPolicy VAP binding | `723b5e20-ddde-4ab5-b76f-2844c08d6b5b` | gen 1 / Deny | gen 1 / Deny |
-| Pod VAP binding | `e01b6cf2-285d-4663-aa18-8d270d361dde` | gen 1 / Deny | gen 1 / Deny |
+| `praetorium-tenant-pods-restricted` VAP           | `45a517e9-0374-4fc4-aa4a-0d134dd1ab78` | gen 1 / observed 1 / `{}` | gen 1 / observed 1 / `{}` |
+| NetworkPolicy VAP binding                         | `723b5e20-ddde-4ab5-b76f-2844c08d6b5b` | gen 1 / Deny              | gen 1 / Deny              |
+| Pod VAP binding                                   | `e01b6cf2-285d-4663-aa18-8d270d361dde` | gen 1 / Deny              | gen 1 / Deny              |
 
 The IPv6 correction under test was still on worker commit
 `522af7c99499f0e67d974f6e6043343e0c10241c`; it was not an ancestor of main
@@ -240,15 +240,15 @@ probe namespace. A readiness canary with the `/95` exclusion removed was
 denied by that exact candidate VAP/binding before the matrix began.
 The Kubernetes API then produced these results using server-side dry-run only:
 
-| Case | Result |
-| --- | --- |
-| Exact renderer output with `::fffe:0:0/95` exception | Admitted |
-| Old `::ffff:0:0/96` exception | Native API validation rejected it as not a strict subset of `::/0` |
-| Listener port 65536 | Native API validation rejected it as outside 1–65535 |
-| Named listener port | Candidate VAP denied it |
-| Missing listener port | Candidate VAP denied it |
-| Listener `endPort` range | Candidate VAP denied it |
-| `/95` exclusion removed | Candidate VAP denied it |
+| Case                                                 | Result                                                             |
+| ---------------------------------------------------- | ------------------------------------------------------------------ |
+| Exact renderer output with `::fffe:0:0/95` exception | Admitted                                                           |
+| Old `::ffff:0:0/96` exception                        | Native API validation rejected it as not a strict subset of `::/0` |
+| Listener port 65536                                  | Native API validation rejected it as outside 1–65535               |
+| Named listener port                                  | Candidate VAP denied it                                            |
+| Missing listener port                                | Candidate VAP denied it                                            |
+| Listener `endPort` range                             | Candidate VAP denied it                                            |
+| `/95` exclusion removed                              | Candidate VAP denied it                                            |
 
 All seven expected outcomes matched. The isolated candidate used an explicit
 username match and an impersonated `system:masters` API identity solely to
@@ -286,8 +286,7 @@ The archived Pod manifest (SHA-256
 `e37120b14ccbe94900eefedc87c133bd414ccd26ad6abc6ab3b50a82ec61a969`) specifies
 the restricted security profile, UID/GID/fsGroup 10001, a read-only Secret
 projection with mode `0440`, an 8 Mi memory `emptyDir`, and a 2 Gi temporary
-`emptyDir`. The kubelet confirmed the requested image digest; the Pod exited
-0. The process output observed UID/GID/groups 10001 and printed only file
+`emptyDir`. The kubelet confirmed the requested image digest; the Pod exited 0. The process output observed UID/GID/groups 10001 and printed only file
 type, mode, ownership, symlink target metadata, and whether a read-only open
 succeeded. It never read or logged Secret payload bytes.
 
@@ -377,11 +376,12 @@ The fake test registry-push configuration was subsequently changed to a
 structurally valid GHCR auth shape; no real credential was introduced. The
 preserved run-two request SHA-256 is
 `53db7221de13a59a324f31a0fbfe23519dcfa6e42b0ceace12dfc970cd546a04`. The
-run-four execution was reported to repeat the run-two command and Pod
-specification, but the committed run-four summary contains neither a request
-hash nor the spec or command, and no raw run-four request was retained. Exact
-run-two/run-four request equivalence is therefore not independently verifiable
-from this evidence bundle. Run three used a diagnostic command and request
+root coordinator independently read the live run-four Pod from the API. The
+preserved [applied Pod](evidence/owned-kubernetes-build-worker/run-04-applied-pod.json)
+and [recursive comparison](evidence/owned-kubernetes-build-worker/run-04-applied-spec-comparison.json)
+show that every field of the committed run-two request matches the actual
+run-four Pod, allowing additional API defaults. Original submitted run-four
+bytes were not retained, so byte identity remains unverified. Run three used a diagnostic command and request
 SHA-256
 `c5634c56803ddb7d3c84795495ef1d43754cd305881bc6cff7e9f6981a54945e`; each
 stage reported success. The fourth run was reported to repeat the original
@@ -401,12 +401,21 @@ successful initialization. The command did not call `runOnce`, start a queue
 loop, perform a build, or issue a service/network request. The logs contain
 only pass/fail stages and filesystem metadata, not secret payloads.
 
-| Attempt | Pod UID                                | Main result                                                              | Evidence                                                                                                                                                                                                                                                 |
-| ------- | -------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1       | `41317fd8-697f-46b5-9c6b-769072550d37` | Harness syntax error; both init containers exited 0                      | Request SHA `b597ad104a0738955784d7e4ac899c12243c2b33eb540bc8449d9594d35c00b7`; main-log SHA `cb0bafba45f1a84fa5ecb6c560208c7269088476840a861f434d76ce8fff9f29`; safe Pod summary SHA `78ffea038bdfd24cae5825b4424504b03d0b1195ea74573bb98484f584200103` |
-| 2       | `2b27685a-28b2-412b-8bf4-97a645208df3` | Generic metadata/constructor failure; unresolved                         | Main-log SHA `9171eb556ac4d819ecfd52eb92c99b78675c23099f2e334e60c8047ac0ac7e7b`; safe Pod summary SHA `ff8de84d9bb0e137f925ff4af5c2ea13bb21615244d52df3b73632853e512f19`                                                                                 |
-| 3       | `d74def6a-0e01-44a4-b609-59d9fa3278f8` | Diagnostic checks and constructor passed                                 | Main-log SHA `cb2686cf787807eb041061e7c39e95390335fb384fe713f10c2ed258164825fe`                                                                                                                                                                          |
-| 4       | `d73943fd-c716-410e-982d-bb7baf6b6d84` | Init, metadata checks, buildctl executable check, and constructor passed | Main-log SHA `b777300ff00ce001142b0d273cc2c401721b1473292e02872080e7bdd32ebf50`                                                                                                                                                                          |
+| Attempt | Pod UID                                | Main result                                                              | Evidence                                                                                                                                                                 |
+| ------- | -------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1       | `41317fd8-697f-46b5-9c6b-769072550d37` | Harness syntax error; both init containers exited 0                      | main-log SHA `cb0bafba45f1a84fa5ecb6c560208c7269088476840a861f434d76ce8fff9f29`; safe Pod summary SHA `78ffea038bdfd24cae5825b4424504b03d0b1195ea74573bb98484f584200103` |
+| 2       | `2b27685a-28b2-412b-8bf4-97a645208df3` | Generic metadata/constructor failure; unresolved                         | Main-log SHA `9171eb556ac4d819ecfd52eb92c99b78675c23099f2e334e60c8047ac0ac7e7b`; safe Pod summary SHA `ff8de84d9bb0e137f925ff4af5c2ea13bb21615244d52df3b73632853e512f19` |
+| 3       | `d74def6a-0e01-44a4-b609-59d9fa3278f8` | Diagnostic checks and constructor passed                                 | Main-log SHA `cb2686cf787807eb041061e7c39e95390335fb384fe713f10c2ed258164825fe`                                                                                          |
+| 4       | `d73943fd-c716-410e-982d-bb7baf6b6d84` | Init, metadata checks, buildctl executable check, and constructor passed | Main-log SHA `b777300ff00ce001142b0d273cc2c401721b1473292e02872080e7bdd32ebf50`                                                                                          |
+
+The run-one summary reports request SHA
+`b597ad104a0738955784d7e4ac899c12243c2b33eb540bc8449d9594d35c00b7`.
+The coordinator's contemporaneous hash and later reconstruction instead yielded
+`b597ad104a0738955784d4e7ac899c12243c2b33eb540bc8449d9594d35c00b7`.
+Original run-one request bytes were not retained; the summary's request-hash
+field is therefore disputed and does not establish original byte identity.
+The summary is preserved unchanged. Pod UID, init results and retained log
+hashes are separate evidence.
 
 All four Pods used the image config ID above. In run four, the Pod summary
 reported exit code 0 for the direct-reader check, runtime-secret preparation,

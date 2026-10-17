@@ -1,0 +1,9 @@
+{
+  "sourceRequest": "run-02-request.json",
+  "actualObservation": "run-04-applied-pod.json",
+  "podUid": "d73943fd-c716-410e-982d-bb7baf6b6d84",
+  "phase": "Succeeded",
+  "comparison": "Every requested field recursively matches the actual API Pod; additional API defaults are permitted. This does not establish identity of original submitted run-four bytes.",
+  "differences": [],
+  "rawFourthRequestBytesRetained": false
+}

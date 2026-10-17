@@ -396,10 +396,12 @@
         "tests/infra/guarded-apply.test.mjs",
         "tests/infra/static-policy-render.test.mjs",
         "tests/infra/traefik-runtime-watch.test.mjs",
-        "docs/verification/PLATFORM-SECURITY-DELTA.md"
+        "docs/verification/PLATFORM-SECURITY-DELTA.md",
+        "docs/verification/PLATFORM-SERVICE-IMAGES.md",
+        "docs/verification/OWNED-KUBERNETES.md"
       ],
       "blockers": [
-        "Owned product create/ownership verification and bounded canonical Pod/NetworkPolicy API proofs passed. Full baseline apply remains blocked by 25 operator inputs; final service images and actual Build Worker init/constructor verification are in progress.",
+        "Owned product create/ownership verification, bounded Pod/NetworkPolicy API proofs, three actual Platform service image builds, and Build Worker private-copy/init/cold-constructor checks passed in the stated component scope. Full baseline apply remains blocked by 25 operator inputs and producer interfaces; no full deployed-system acceptance is claimed.",
         "The static bundle includes seven VAPs/bindings and system NetworkPolicies. Only a two-policy canonical subset and isolated candidate API probes ran; full guard-before-bootstrap readiness, CNI and Traefik traffic remain unverified.",
         "No production infrastructure was applied."
       ],
@@ -408,7 +410,7 @@
         "infrastructure/test/deploy-workers.test.mjs",
         "docs/verification/ACCEPTANCE.md"
       ],
-      "recordStatus": "Product Kind create and ownership checks passed on an owned cluster. Real API probes validated scoped policy fixes and native Secret/emptyDir modes. Service image deployment, zod closure, packaged buildctl and private projected-secret preparation corrections are integrated through 431dbe1 with independent static review; final-image startup/init verification is still in progress. Full deployment and production apply are not certified."
+      "recordStatus": "Actual Platform service images and restricted local process checks are recorded in PLATFORM-SERVICE-IMAGES.md. Owned Kind validated the unchanged production Build Worker prepare init and cold createBuildWorker constructor with private file modes and real image identity, using corrected test-only auth shape and no queue calls; failed earlier harness/input attempts remain recorded separately. Full infrastructure deployment, CNI/provider/producer integration and production apply remain uncertified."
     },
     "T13": {
       "implementation": "present",
@@ -801,6 +803,23 @@
     "publishedPresetsVerified": true,
     "hostedS01S04": "missing",
     "hostedS05": "incomplete",
+    "productionApplied": false
+  },
+  "latestCampaignVerification": {
+    "checkedAt": "2026-10-17",
+    "mainEvidenceCut": "f7fdb88e8653ec30b737901920586d71e9b4cbd4",
+    "sourceImageCut": "431dbe1c7c86251894efea3de2cf0ec94499ca10",
+    "baselineScope": "The earlier evidenceCut and its tests are historical cuts; this field and the linked component documents record later bounded verification without changing full task acceptance.",
+    "requiredFrozenInstallAndCheck": "passed at 864adb2; 29 cached test-stage tasks plus build/lint/typecheck, boundaries and schema checks; explicit launcher ESLint/syntax/format passed",
+    "workerD1Do": "VERIFIED in fresh owned local fixed runner at 5e8d2ad; aggregate exit2, six BLOCKED/NOT_CHECKED, errors=[]",
+    "serviceImages": "three actual builds and digest/config/all-layer content readback; bounded service process evidence; independently reviewed through worker c585be27",
+    "buildWorkerProjection": "production prepare init and cold constructor-only Pod passed at source431dbe1; final Pod UID d73943fd-c716-410e-982d-bb7baf6b6d84; all containers exit0; no queue/build/service requests",
+    "buildWorkerTestInputProvenance": "Earlier generic failure used empty registry auths; before later success its owned test Secret was changed to a structurally valid dummy GHCR credential. Earlier failure was not stage-localized. No producer or real registry auth acceptance is inferred.",
+    "buildWorkerCleanup": "UID-precondition cleanup e57f4d91142af73080807da912286038ed46f285e4fa14b93541c669827d1e6f; root independently confirmed praetorium-build namespace absent",
+    "cniPacketProof": "IN_PROGRESS; readiness and kernel modules alone do not prove NetworkPolicy enforcement",
+    "producerRevision": "3f7b174ef6667b004c21e24a9ed89b8329d04c04",
+    "acceptedPlatformArtifactDigest": null,
+    "remainingMissingFixedRunners": 3,
     "productionApplied": false
   }
 }

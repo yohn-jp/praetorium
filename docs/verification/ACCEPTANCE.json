@@ -7,14 +7,15 @@
     "checkedAt": "2026-10-17",
     "repository": "yohn-jp/praetorium",
     "branch": "main",
-    "head": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
-    "integratedMainHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+    "head": "487ff55fd705890651ab84c247bc738d7f1c4e54",
+    "integratedMainHead": "487ff55fd705890651ab84c247bc738d7f1c4e54",
     "sourceRepository": "yohn-jp/arcadia-platform",
     "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
     "producerRepository": "yohn-jp/scriptorium",
-    "producerRevision": "4c163a3c8162b5d7bc4becb63f00a04617cab5dc",
+    "producerRevision": "1950ba5b729e5c1611124abe78722c70362c08b2",
     "producerArtifactDigest": null,
-    "producerArtifactDigestReason": "No current-revision published OCI reference or digest was supplied. The producer status inventory records all S01-S05 gates blocked and anonymous GHCR/GitHub package queries returned 401; this does not establish package absence."
+    "producerArtifactDigestReason": "No current-main OCI reference or digest was supplied. The newly added docs/verification/P13-MODEL-OCI-LIFECYCLE.md reports a local full-profile manifest digest sha256:7a2e4fd5d00b36f90a19cfe90b30c6c0c5e01df4f922650696be813abd006b07 for candidate source commit e85c173a318e17eed084bbfb4dde2411a2abc2cf; that report says main advanced beyond the isolated candidate, and the image remained local. It is not a digest for current main 1950ba5b729e5c1611124abe78722c70362c08b2 or a published reference. Earlier anonymous GHCR and GitHub package API lookups returned HTTP 401, which does not establish registry absence.",
+    "producerPreflightCommit": "aa3f321"
   },
   "checkedInInventory": {
     "path": "infrastructure/test/acceptance-inventory.json",
@@ -26,8 +27,8 @@
   },
   "fixedAcceptanceExecution": {
     "command": "node scripts/verify-integration.mjs --environment /tmp/praetorium-t14-workers-inventory.json",
-    "reportPath": "/tmp/praetorium-campaign-d029989-acceptance.json",
-    "reportGeneratedAt": "2026-10-16T23:52:21.516Z",
+    "reportPath": "/tmp/praetorium-487ff55-acceptance.json",
+    "reportGeneratedAt": "2026-10-17T00:20:37.570Z",
     "reportExitCode": 2,
     "status": "BLOCKED",
     "mode": "run",
@@ -41,9 +42,7 @@
       "disposable": true,
       "production": false,
       "expiresAt": "2026-10-17T00:52:16.149799Z",
-      "availableResources": [
-        "workers-d1-do"
-      ],
+      "availableResources": ["workers-d1-do"],
       "missingResources": [
         "github-access",
         "buildkit-registry",
@@ -58,14 +57,15 @@
       "status": "VERIFIED",
       "proofStatus": "VERIFIED",
       "runnerPath": "tests/integration/workers-d1-do.test.mjs",
-      "sourceHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+      "sourceHead": "487ff55fd705890651ab84c247bc738d7f1c4e54",
       "workerEntry": "apps/control-plane/src/worker.ts",
       "runtime": "Miniflare 4.20260730.0",
       "bundler": "The actual Wrangler dry-run deployment bundler produced the Worker bundle from the production entry and checked-in compatibility date and flags.",
       "d1Migrations": [
         "0001_repository_platform.sql",
         "0002_stable_release_rollouts.sql",
-        "0003_staged_configurations.sql"
+        "0003_staged_configurations.sql",
+        "0004_runtime_git_credentials.sql"
       ],
       "durableObject": "The production RepositoryCoordinator class with SQLite-backed ephemeral persistence.",
       "scope": [
@@ -76,206 +76,382 @@
         "Confirmed that an instance without an admitted image does not yield a runnable Provisioner claim.",
         "Restarted Miniflare with the same temporary persistence and verified repository and Durable Object state survived.",
         "Exercised Gateway-verified webhook metadata delivery deduplication and conflict rejection using local test data.",
-        "Exercised the real release composition constructor with local keys and a malformed manifest; no producer manifest or artifact was fabricated."
+        "Exercised the real release composition constructor with local keys and a malformed manifest; no producer manifest or artifact was fabricated.",
+        "Queried the actual repository-scoped audit route with limit=1 and followed its cursor to a distinct next event.",
+        "Triggered the real scheduled entry with configured cacheRetention and no release policy; verified the advisory build-cache.gc.planned D1 audit while the absent T11 bindings remained an explicit failure."
       ],
       "testResult": {
         "passed": 1,
         "failed": 0,
-        "runnerElapsedMs": null,
-        "elapsedMs": null,
-        "measurementNote": "The fixed machine-readable runner report records the category result but does not include per-test duration."
+        "runnerElapsedMs": 2847.46136,
+        "elapsedMs": 3095.175198,
+        "measurementNote": "Separate direct runner at the same clean source HEAD measured one passing test; fixed aggregate category report carries no duration."
       },
       "limitations": [
         "All keys, service credentials, repository identifiers, webhook metadata, and persistence were test-owned local values.",
         "No GitHub App, GitHub delivery, producer image, admitted release, real Kubernetes cluster, or production binding was used."
       ]
-    }
+    },
+    "categories": [
+      {
+        "id": "workers-d1-do",
+        "status": "VERIFIED",
+        "proofStatus": "VERIFIED",
+        "reason": "inventory is an ownership declaration, not runtime evidence",
+        "runnerStatus": "VERIFIED",
+        "runnerPath": "tests/integration/workers-d1-do.test.mjs",
+        "runnerReason": "fixed acceptance runner passed"
+      },
+      {
+        "id": "github-access",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "reason": "resource is declared missing",
+        "runnerStatus": "BLOCKED",
+        "runnerPath": "tests/integration/github-access.test.mjs",
+        "runnerReason": "resource is declared missing"
+      },
+      {
+        "id": "buildkit-registry",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "reason": "resource is declared missing",
+        "runnerStatus": "BLOCKED",
+        "runnerPath": "tests/integration/buildkit-registry.test.mjs",
+        "runnerReason": "resource is declared missing"
+      },
+      {
+        "id": "kubernetes-isolation",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "reason": "resource is declared missing",
+        "runnerStatus": "BLOCKED",
+        "runnerPath": "tests/integration/kubernetes-isolation.test.mjs",
+        "runnerReason": "resource is declared missing"
+      },
+      {
+        "id": "browser-entry",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "reason": "resource is declared missing",
+        "runnerStatus": "BLOCKED",
+        "runnerPath": "tests/e2e/browser-entry.test.mjs",
+        "runnerReason": "resource is declared missing"
+      },
+      {
+        "id": "producer-recovery",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "reason": "resource is declared missing",
+        "runnerStatus": "BLOCKED",
+        "runnerPath": "tests/integration/producer-recovery.test.mjs",
+        "runnerReason": "resource is declared missing"
+      },
+      {
+        "id": "stable-rollout",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "reason": "resource is declared missing",
+        "runnerStatus": "BLOCKED",
+        "runnerPath": "tests/integration/stable-rollout.test.mjs",
+        "runnerReason": "resource is declared missing"
+      }
+    ]
   },
-  "workspaceVerification": {
+  "latestRootVerification": {
+    "sourceHead": "487ff55fd705890651ab84c247bc738d7f1c4e54",
     "frozenInstall": {
-      "checkedHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
-      "command": "PATH=/tmp/praetorium-bin:$PATH corepack pnpm@11.18.0 install --frozen-lockfile",
-      "status": "PASS",
-      "exitCode": 0
+      "exitCode": 0,
+      "log": "/tmp/praetorium-487ff55-install.log"
     },
     "check": {
-      "checkedHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
-      "command": "PATH=/tmp/praetorium-bin:$PATH corepack pnpm@11.18.0 check",
-      "status": "PASS",
       "exitCode": 0,
-      "turboTasks": {
-        "passed": 29,
-        "total": 29,
-        "elapsedSeconds": 8.006
-      },
-      "boundaries": "PASS",
-      "contractSchemas": "PASS"
+      "turboTasks": 29,
+      "lastTestStageSeconds": 2.207,
+      "log": "/tmp/praetorium-487ff55-check.log"
+    },
+    "workersDirect": {
+      "exitCode": 0,
+      "testElapsedMs": 2847.46136,
+      "log": "/tmp/praetorium-487ff55-workers.log"
+    },
+    "gatewayPartial": {
+      "sourceHead": "6bf79ec99c646b27bfd238730deae9819b46bf49",
+      "exitCode": 0,
+      "testElapsedMs": 2047.879363,
+      "gatewaySourceUnchangedThroughEvidenceCut": true,
+      "log": "/tmp/praetorium-latest-gateway-partial.log",
+      "scope": "Actual local Gateway Worker/DO/KV Chromium cookie/session/redirect boundaries; no successful GitHub login, Instance Access, producer or stable-origin acceptance."
+    },
+    "provisionerPartial": {
+      "sourceHead": "6bf79ec99c646b27bfd238730deae9819b46bf49",
+      "exitCode": 0,
+      "testElapsedMs": 390.165474,
+      "scope": "Actual executable health200/readiness503, zero claims with missing producer capabilities, graceful termination."
+    },
+    "deploymentTests": {
+      "exitCode": 0,
+      "tests": 6
+    },
+    "workerPreflight": {
+      "exitCode": 2,
+      "templateProblems": [],
+      "migrations": 4,
+      "remoteCalls": false,
+      "secretValuesInspected": false
     }
   },
-  "categories": [
+  "runnerImplementationLimits": [
     {
-      "id": "workers-d1-do",
-      "status": "VERIFIED",
-      "proofStatus": "VERIFIED",
-      "evidence": "The fixed runner executed the actual Control Plane Worker bundle against owned Miniflare D1 and the production RepositoryCoordinator Durable Object class; see fixedAcceptanceExecution.workersD1DoRunner."
+      "category": "workers-d1-do",
+      "path": "tests/integration/workers-d1-do.test.mjs",
+      "implemented": true,
+      "status": "VERIFIED"
     },
     {
-      "id": "github-access",
-      "status": "BLOCKED",
-      "proofStatus": "NOT_CHECKED",
-      "blocker": "The owned inventory declares the category missing. No owned test GitHub App, authorized users, test repository, or scoped credentials are configured."
+      "category": "github-access",
+      "path": "tests/integration/github-access.test.mjs",
+      "implemented": false,
+      "status": "BLOCKED"
     },
     {
-      "id": "buildkit-registry",
-      "status": "BLOCKED",
-      "proofStatus": "NOT_CHECKED",
-      "blocker": "The owned inventory declares the category missing. No current Scriptorium composition or product artifact admission proof exists. A fresh disposable launcher attempt is blocked before image pull because the host denies newuidmap; earlier generic scratch/OCI results are historical substrate evidence only."
+      "category": "buildkit-registry",
+      "path": "tests/integration/buildkit-registry.test.mjs",
+      "implemented": false,
+      "status": "BLOCKED"
     },
     {
-      "id": "kubernetes-isolation",
-      "status": "BLOCKED",
-      "proofStatus": "NOT_CHECKED",
-      "blocker": "The owned inventory declares the category missing. No disposable cluster was created or used in the current evidence run. A prior kind image extraction attempt stopped with ENOSPC before cluster creation and remains historical."
+      "category": "kubernetes-isolation",
+      "path": "tests/integration/kubernetes-isolation.test.mjs",
+      "implemented": false,
+      "status": "BLOCKED"
     },
     {
-      "id": "browser-entry",
-      "status": "BLOCKED",
-      "proofStatus": "NOT_CHECKED",
-      "blocker": "The owned inventory declares the category missing. The local Gateway browser source-execution probe is partial only; there is no owned stable origin, actual Instance Access path, successful GitHub App login, or producer artifact."
+      "category": "browser-entry",
+      "path": "tests/e2e/browser-entry.test.mjs",
+      "implemented": false,
+      "status": "BLOCKED"
     },
     {
-      "id": "producer-recovery",
-      "status": "BLOCKED",
-      "proofStatus": "NOT_CHECKED",
-      "blocker": "The producer handoff at revision 4c163a3c8162b5d7bc4becb63f00a04617cab5dc marks S01-S05 missing and BLOCKED; no current-revision artifact or recovery run is available."
+      "category": "producer-recovery",
+      "path": "tests/integration/producer-recovery.test.mjs",
+      "implemented": false,
+      "status": "BLOCKED"
     },
     {
-      "id": "stable-rollout",
-      "status": "BLOCKED",
-      "proofStatus": "NOT_CHECKED",
-      "blocker": "The owned inventory declares the category missing. No real producer artifact, disposable cluster, integrated canary, or stable/pinned rollout evidence is available."
+      "category": "stable-rollout",
+      "path": "tests/integration/stable-rollout.test.mjs",
+      "implemented": false,
+      "status": "BLOCKED"
     }
   ],
-  "partialSourceExecution": {
-    "gatewayBrowser": {
-      "status": "PARTIAL_SOURCE_EXECUTION",
-      "categoryStatus": "BLOCKED",
-      "categoryProofStatus": "NOT_CHECKED",
-      "evidencePath": "docs/migration/tasks/T14-gateway-partial.md",
-      "logPath": "/tmp/praetorium-campaign-final-browser.log",
-      "sourceHead": "f82227a9b35702e33a28bc25f62911f86a351767",
-      "currentHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
-      "sourceTreeComparison": "Committed apps/gateway and apps/instance-access trees at the evidence cut are byte-identical between the partial probe source and current main.",
-      "result": {
-        "passed": 1,
-        "failed": 0,
-        "testElapsedMs": 6094.448,
-        "processElapsedMs": 6819.065,
-        "browser": "Google Chrome for Testing 156.0.8078.4",
-        "runtime": "Miniflare 4.20260730.0"
+  "historicalEvidenceAtD029": {
+    "workspaceVerification": {
+      "frozenInstall": {
+        "checkedHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+        "command": "PATH=/tmp/praetorium-bin:$PATH corepack pnpm@11.18.0 install --frozen-lockfile",
+        "status": "PASS",
+        "exitCode": 0
       },
-      "scope": [
-        "Attacker Host redirects to configured Gateway origin.",
-        "Incoming query credentials are omitted from redirect and request logs.",
-        "OAuth start uses configured callback origin and a Secure, HttpOnly, SameSite=Lax host nonce cookie.",
-        "A locally seeded session resolves through the actual Gateway Durable Object and KV path.",
-        "Duplicate session, nonce, and CSRF cookies fail closed.",
-        "Unauthenticated session API and public-only JWKS behavior."
-      ],
-      "limitations": [
-        "No owned stable origin or actual Instance Access integration.",
-        "No successful GitHub App/OAuth login or producer artifact.",
-        "The Control Plane service boundary fails closed; external OAuth navigation is blocked.",
-        "Local session setup seeded synthetic state directly into the actual local DO/KV; duplicate-cookie probes used direct Worker requests."
-      ]
+      "check": {
+        "checkedHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+        "command": "PATH=/tmp/praetorium-bin:$PATH corepack pnpm@11.18.0 check",
+        "status": "PASS",
+        "exitCode": 0,
+        "turboTasks": {
+          "passed": 29,
+          "total": 29,
+          "elapsedSeconds": 8.006
+        },
+        "boundaries": "PASS",
+        "contractSchemas": "PASS"
+      }
     },
-    "provisionerExecutable": {
-      "status": "PASS",
-      "categoryContribution": false,
-      "sourceHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
-      "testPath": "tests/integration/provisioner-capability-gate.test.mjs",
-      "logPath": "/tmp/praetorium-campaign-d029989-provisioner.log",
-      "result": {
-        "passed": 1,
-        "failed": 0,
-        "testElapsedMs": 406.46,
-        "processElapsedMs": 477.618
+    "categories": [
+      {
+        "id": "workers-d1-do",
+        "status": "VERIFIED",
+        "proofStatus": "VERIFIED",
+        "evidence": "The fixed runner executed the actual Control Plane Worker bundle against owned Miniflare D1 and the production RepositoryCoordinator Durable Object class; see fixedAcceptanceExecution.workersD1DoRunner."
       },
-      "scope": "Ran the actual built Node Provisioner executable with a local Control Plane test server that returns 503. Liveness returned 200, readiness returned 503 for missing producer capabilities, the process made no claim requests, service credentials were absent from logs, and SIGTERM exited cleanly.",
-      "limitations": [
-        "This is a local executable capability-gate probe only.",
-        "It does not prove a real Control Plane, Kubernetes, or producer integration."
-      ]
-    },
-    "controlPlaneRetirementCoverage": {
-      "status": "PASS_IN_REQUIRED_WORKSPACE_CHECK",
-      "sourceHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
-      "tests": {
-        "apps/control-plane/src/runtime-binding.test.ts": 10,
-        "apps/control-plane/src/runtime-identity-routes.test.ts": 7,
-        "total": 17
+      {
+        "id": "github-access",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "blocker": "The owned inventory declares the category missing. No owned test GitHub App, authorized users, test repository, or scoped credentials are configured."
       },
-      "scope": "The focused tests cover withdrawing observed-writer authority during retirement and fencing fresh runtime-identity issuance.",
-      "limitation": "This does not claim global or immediate revocation of previously issued stateless bearer tokens. The installation-token response validator accepts lifetimes up to 3605 seconds, so any already-issued token requires expiry or explicit provider revocation."
-    }
-  },
-  "localSubstrateEvidence": {
-    "currentLauncher": {
-      "status": "BLOCKED",
-      "sourceBranch": "worker/local-env-resume",
-      "sourceBaseHead": "f2a889ac997fd5f4bea671bb2c7f1af54fd7b93b",
-      "launcherSha256": "051f87fa5703df000101d424cab70282ec6561d1e94157845381daf2ac1c69ca",
-      "phase": "rootless Podman info, before registry pull",
-      "failure": "newuidmap could not write uid_map: Operation not permitted.",
-      "temporaryRootCleanup": "PASS",
-      "registryImagePulled": false,
-      "buildkitStarted": false,
-      "inventoryCreated": false,
-      "digestProduced": null,
-      "liveProcesses": []
+      {
+        "id": "buildkit-registry",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "blocker": "The owned inventory declares the category missing. No current Scriptorium composition or product artifact admission proof exists. A fresh disposable launcher attempt is blocked before image pull because the host denies newuidmap; earlier generic scratch/OCI results are historical substrate evidence only."
+      },
+      {
+        "id": "kubernetes-isolation",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "blocker": "The owned inventory declares the category missing. No disposable cluster was created or used in the current evidence run. A prior kind image extraction attempt stopped with ENOSPC before cluster creation and remains historical."
+      },
+      {
+        "id": "browser-entry",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "blocker": "The owned inventory declares the category missing. The local Gateway browser source-execution probe is partial only; there is no owned stable origin, actual Instance Access path, successful GitHub App login, or producer artifact."
+      },
+      {
+        "id": "producer-recovery",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "blocker": "The producer handoff at revision 4c163a3c8162b5d7bc4becb63f00a04617cab5dc marks S01-S05 missing and BLOCKED; no current-revision artifact or recovery run is available."
+      },
+      {
+        "id": "stable-rollout",
+        "status": "BLOCKED",
+        "proofStatus": "NOT_CHECKED",
+        "blocker": "The owned inventory declares the category missing. No real producer artifact, disposable cluster, integrated canary, or stable/pinned rollout evidence is available."
+      }
+    ],
+    "partialSourceExecution": {
+      "gatewayBrowser": {
+        "status": "PARTIAL_SOURCE_EXECUTION",
+        "categoryStatus": "BLOCKED",
+        "categoryProofStatus": "NOT_CHECKED",
+        "evidencePath": "docs/migration/tasks/T14-gateway-partial.md",
+        "logPath": "/tmp/praetorium-campaign-final-browser.log",
+        "sourceHead": "f82227a9b35702e33a28bc25f62911f86a351767",
+        "currentHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+        "sourceTreeComparison": "Committed apps/gateway and apps/instance-access trees at the evidence cut are byte-identical between the partial probe source and current main.",
+        "result": {
+          "passed": 1,
+          "failed": 0,
+          "testElapsedMs": 6094.448,
+          "processElapsedMs": 6819.065,
+          "browser": "Google Chrome for Testing 156.0.8078.4",
+          "runtime": "Miniflare 4.20260730.0"
+        },
+        "scope": [
+          "Attacker Host redirects to configured Gateway origin.",
+          "Incoming query credentials are omitted from redirect and request logs.",
+          "OAuth start uses configured callback origin and a Secure, HttpOnly, SameSite=Lax host nonce cookie.",
+          "A locally seeded session resolves through the actual Gateway Durable Object and KV path.",
+          "Duplicate session, nonce, and CSRF cookies fail closed.",
+          "Unauthenticated session API and public-only JWKS behavior."
+        ],
+        "limitations": [
+          "No owned stable origin or actual Instance Access integration.",
+          "No successful GitHub App/OAuth login or producer artifact.",
+          "The Control Plane service boundary fails closed; external OAuth navigation is blocked.",
+          "Local session setup seeded synthetic state directly into the actual local DO/KV; duplicate-cookie probes used direct Worker requests."
+        ]
+      },
+      "provisionerExecutable": {
+        "status": "PASS",
+        "categoryContribution": false,
+        "sourceHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+        "testPath": "tests/integration/provisioner-capability-gate.test.mjs",
+        "logPath": "/tmp/praetorium-campaign-d029989-provisioner.log",
+        "result": {
+          "passed": 1,
+          "failed": 0,
+          "testElapsedMs": 406.46,
+          "processElapsedMs": 477.618
+        },
+        "scope": "Ran the actual built Node Provisioner executable with a local Control Plane test server that returns 503. Liveness returned 200, readiness returned 503 for missing producer capabilities, the process made no claim requests, service credentials were absent from logs, and SIGTERM exited cleanly.",
+        "limitations": [
+          "This is a local executable capability-gate probe only.",
+          "It does not prove a real Control Plane, Kubernetes, or producer integration."
+        ]
+      },
+      "controlPlaneRetirementCoverage": {
+        "status": "PASS_IN_REQUIRED_WORKSPACE_CHECK",
+        "sourceHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+        "tests": {
+          "apps/control-plane/src/runtime-binding.test.ts": 10,
+          "apps/control-plane/src/runtime-identity-routes.test.ts": 7,
+          "total": 17
+        },
+        "scope": "The focused tests cover withdrawing observed-writer authority during retirement and fencing fresh runtime-identity issuance.",
+        "limitation": "This does not claim global or immediate revocation of previously issued stateless bearer tokens. The installation-token response validator accepts lifetimes up to 3605 seconds, so any already-issued token requires expiry or explicit provider revocation."
+      }
     },
-    "historicalGenericSubstrate": {
-      "status": "HISTORICAL_NOT_RERUN_AT_THIS_CUT",
-      "source": "docs/verification/LOCAL-ENVIRONMENT.json",
-      "producerAcceptance": false,
-      "limitation": "Previously recorded scratch BuildKit and generic OCI round-trips are not current live handles or current artifact verification. They do not prove Scriptorium composition, producer recovery, or product admission."
+    "localSubstrateEvidence": {
+      "currentLauncher": {
+        "status": "BLOCKED",
+        "sourceBranch": "worker/local-env-resume",
+        "sourceBaseHead": "f2a889ac997fd5f4bea671bb2c7f1af54fd7b93b",
+        "launcherSha256": "051f87fa5703df000101d424cab70282ec6561d1e94157845381daf2ac1c69ca",
+        "phase": "rootless Podman info, before registry pull",
+        "failure": "newuidmap could not write uid_map: Operation not permitted.",
+        "temporaryRootCleanup": "PASS",
+        "registryImagePulled": false,
+        "buildkitStarted": false,
+        "inventoryCreated": false,
+        "digestProduced": null,
+        "liveProcesses": []
+      },
+      "historicalGenericSubstrate": {
+        "status": "HISTORICAL_NOT_RERUN_AT_THIS_CUT",
+        "source": "docs/verification/LOCAL-ENVIRONMENT.json",
+        "producerAcceptance": false,
+        "limitation": "Previously recorded scratch BuildKit and generic OCI round-trips are not current live handles or current artifact verification. They do not prove Scriptorium composition, producer recovery, or product admission."
+      },
+      "historicalKubernetesAttempt": {
+        "status": "BLOCKED_BEFORE_CLUSTER_CREATION",
+        "result": "A prior kind node image extraction failed with ENOSPC. No cluster endpoint was created, and this attempt was not repeated at the current cut."
+      }
     },
-    "historicalKubernetesAttempt": {
-      "status": "BLOCKED_BEFORE_CLUSTER_CREATION",
-      "result": "A prior kind node image extraction failed with ENOSPC. No cluster endpoint was created, and this attempt was not repeated at the current cut."
-    }
-  },
-  "handlerInventory": {
-    "status": "SOURCE_MAPPED",
-    "path": "docs/migration/SOURCE-HANDLERS.json",
-    "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
-    "verifiedHandlerSurfaces": 65,
-    "verifiedSourceFileReferences": 72,
-    "distinctSourceFiles": 28,
-    "acceptanceProof": false
-  },
-  "producerGates": [
-    { "id": "S01", "status": "BLOCKED", "artifactDigest": null },
-    { "id": "S02", "status": "BLOCKED", "artifactDigest": null },
-    { "id": "S03", "status": "BLOCKED", "artifactDigest": null },
-    { "id": "S04", "status": "BLOCKED", "artifactDigest": null },
-    { "id": "S05", "status": "BLOCKED", "artifactDigest": null }
-  ],
-  "measurements": {
-    "requiredWorkspaceCheckSeconds": 8.006,
-    "requiredWorkspaceCheckTasks": 29,
-    "gatewayBrowserProbeTestMilliseconds": 6094.448,
-    "gatewayBrowserProbeProcessMilliseconds": 6819.065,
-    "provisionerExecutableProbeTestMilliseconds": 406.46,
-    "provisionerExecutableProbeProcessMilliseconds": 477.618,
-    "workersD1DoRunnerMilliseconds": null
-  },
-  "notes": [
-    "Overall T14 remains BLOCKED because six of the seven required integration categories are missing; the one verified category does not promote the aggregate report.",
-    "The fixed integration command exits 2 for this expected blocked aggregate report even though workers-d1-do passed and the report contains no runner errors.",
-    "The source-handler map is reconciliation against a read-only Arcadia snapshot, not runtime acceptance.",
-    "The current local substrate launcher is blocked before registry pull. Generic scratch and OCI digests in LOCAL-ENVIRONMENT.json are historical and not producer-composition evidence.",
-    "No production credential, external GitHub service, production cluster, stable product origin, Scriptorium build, release publication, or producer recovery operation was used.",
-    "No global token revocation guarantee is claimed."
-  ]
+    "handlerInventory": {
+      "status": "SOURCE_MAPPED",
+      "path": "docs/migration/SOURCE-HANDLERS.json",
+      "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
+      "verifiedHandlerSurfaces": 65,
+      "verifiedSourceFileReferences": 72,
+      "distinctSourceFiles": 28,
+      "acceptanceProof": false
+    },
+    "producerGates": [
+      {
+        "id": "S01",
+        "status": "BLOCKED",
+        "artifactDigest": null
+      },
+      {
+        "id": "S02",
+        "status": "BLOCKED",
+        "artifactDigest": null
+      },
+      {
+        "id": "S03",
+        "status": "BLOCKED",
+        "artifactDigest": null
+      },
+      {
+        "id": "S04",
+        "status": "BLOCKED",
+        "artifactDigest": null
+      },
+      {
+        "id": "S05",
+        "status": "BLOCKED",
+        "artifactDigest": null
+      }
+    ],
+    "measurements": {
+      "requiredWorkspaceCheckSeconds": 8.006,
+      "requiredWorkspaceCheckTasks": 29,
+      "gatewayBrowserProbeTestMilliseconds": 6094.448,
+      "gatewayBrowserProbeProcessMilliseconds": 6819.065,
+      "provisionerExecutableProbeTestMilliseconds": 406.46,
+      "provisionerExecutableProbeProcessMilliseconds": 477.618,
+      "workersD1DoRunnerMilliseconds": null
+    },
+    "notes": [
+      "Overall T14 remains BLOCKED because six of the seven required integration categories are missing; the one verified category does not promote the aggregate report.",
+      "The fixed integration command exits 2 for this expected blocked aggregate report even though workers-d1-do passed and the report contains no runner errors.",
+      "The source-handler map is reconciliation against a read-only Arcadia snapshot, not runtime acceptance.",
+      "The current local substrate launcher is blocked before registry pull. Generic scratch and OCI digests in LOCAL-ENVIRONMENT.json are historical and not producer-composition evidence.",
+      "No production credential, external GitHub service, production cluster, stable product origin, Scriptorium build, release publication, or producer recovery operation was used.",
+      "No global token revocation guarantee is claimed."
+    ]
+  }
 }

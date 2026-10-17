@@ -79,7 +79,7 @@ export function createCredentialRetirementBarrier(config: {
         config.gateway.fetch(
           new Request("https://gateway.internal/internal/github/retire", {
             method: "POST",
-            redirect: "error",
+            redirect: "manual",
             signal: controller.signal,
             headers: {
               Authorization: `Bearer ${config.serviceSecret}`,

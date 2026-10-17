@@ -27,7 +27,12 @@ function base64(bytes: ArrayBuffer): string {
 
 async function appPrivateKeyPem(): Promise<string> {
   const pair = await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
     true,
     ["sign", "verify"],
   );
@@ -35,10 +40,12 @@ async function appPrivateKeyPem(): Promise<string> {
   return `-----BEGIN PRIVATE KEY-----\n${der.match(/.{1,64}/gu)?.join("\n")}\n-----END PRIVATE KEY-----`;
 }
 
-async function setup(options: {
-  accessProvider?: FreshRepositoryAccessChecker;
-  githubFetchImpl?: typeof fetch;
-} = {}) {
+async function setup(
+  options: {
+    accessProvider?: FreshRepositoryAccessChecker;
+    githubFetchImpl?: typeof fetch;
+  } = {},
+) {
   const runtimePair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
     true,
@@ -106,25 +113,27 @@ async function setup(options: {
     authority: "observed-writer",
   };
   const githubCalls: { url: string; init: RequestInit }[] = [];
-  const githubFetch: typeof fetch = options.githubFetchImpl ?? (async (input, init = {}) => {
-    const url = String(input);
-    githubCalls.push({ url, init });
-    expect(url).toBe(`https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens`);
-    const body = JSON.parse(String(init.body)) as {
-      repository_ids: number[];
-      permissions: { contents: string };
-    };
-    expect(body).toEqual({
-      repository_ids: [REPOSITORY_ID],
-      permissions: { contents: "read" },
+  const githubFetch: typeof fetch =
+    options.githubFetchImpl ??
+    (async (input, init = {}) => {
+      const url = String(input);
+      githubCalls.push({ url, init });
+      expect(url).toBe(`https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens`);
+      const body = JSON.parse(String(init.body)) as {
+        repository_ids: number[];
+        permissions: { contents: string };
+      };
+      expect(body).toEqual({
+        repository_ids: [REPOSITORY_ID],
+        permissions: { contents: "read" },
+      });
+      return Response.json({
+        token: "ghs-scoped-installation-token",
+        expires_at: new Date(NOW.getTime() + 60 * 60_000).toISOString(),
+        permissions: { contents: "read" },
+        repositories: [{ id: REPOSITORY_ID }],
+      });
     });
-    return Response.json({
-      token: "ghs-scoped-installation-token",
-      expires_at: new Date(NOW.getTime() + 60 * 60_000).toISOString(),
-      permissions: { contents: "read" },
-      repositories: [{ id: REPOSITORY_ID }],
-    });
-  });
   const cpCalls: { url: string; init: RequestInit }[] = [];
   const controlPlane = {
     async fetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -132,14 +141,16 @@ async function setup(options: {
       const requestInit = init ?? {};
       cpCalls.push({ url, init: requestInit });
       expect(requestInit.method).toBe("GET");
-      expect(requestInit.redirect).toBe("error");
+      expect(requestInit.redirect).toBe("manual");
       expect(requestInit.signal).toBeInstanceOf(AbortSignal);
       if (url === `${CONTROL_PLANE_ORIGIN}/.well-known/runtime-identity-jwks.json`) {
         expect(new Headers(requestInit.headers).has("X-Control-Plane-Gateway-Auth")).toBe(false);
         return Response.json(runtimeJwks);
       }
       expect(url).toBe(`${CONTROL_PLANE_ORIGIN}/internal/runtime-bindings/${REPOSITORY_ID}`);
-      expect(new Headers(requestInit.headers).get("X-Control-Plane-Gateway-Auth")).toBe(GATEWAY_AUTH);
+      expect(new Headers(requestInit.headers).get("X-Control-Plane-Gateway-Auth")).toBe(
+        GATEWAY_AUTH,
+      );
       return Response.json(runtimeBinding);
     },
   } as unknown as Fetcher;
@@ -345,7 +356,9 @@ describe("runtime Git credential broker composition", () => {
       githubAppPrivateKeyPem: await appPrivateKeyPem(),
       repositoryBindings: {
         async getByRepositoryId() {
-          throw new Error("Repository binding lookup is reached only after current runtime binding");
+          throw new Error(
+            "Repository binding lookup is reached only after current runtime binding",
+          );
         },
       },
       accessProvider: h.accessProvider,

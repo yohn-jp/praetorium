@@ -225,7 +225,7 @@ export function createRuntimeCredentialRegistry(
     const request = (async () => {
       const response = await config.controlPlane.fetch(`${CONTROL_PLANE_ORIGIN}${path}`, {
         method: "POST",
-        redirect: "error",
+        redirect: "manual",
         signal: controller.signal,
         headers: {
           Accept: "application/json",

@@ -38,6 +38,7 @@ describe("known credential retirement barrier", () => {
       serviceSecret: "s".repeat(32),
       gateway: {
         async fetch(request) {
+          expect(request.redirect).toBe("manual");
           expect(request.headers.get("Authorization")).toBe(`Bearer ${"s".repeat(32)}`);
           expect(await request.json()).toEqual({ repositoryId: 17, runtimeEpoch: 4 });
           return Response.json({ complete: true });
@@ -47,6 +48,22 @@ describe("known credential retirement barrier", () => {
     await expect(barrier(operation)).rejects.toThrow("remain pending");
     remaining = 0;
     await expect(barrier(operation)).resolves.toBeUndefined();
+  });
+  it("does not follow redirects from the private retirement callback", async () => {
+    const barrier = createCredentialRetirementBarrier({
+      db: database(() => ({ remaining: 1 })),
+      serviceSecret: "s".repeat(32),
+      gateway: {
+        async fetch(request) {
+          expect(request.redirect).toBe("manual");
+          return new Response(null, {
+            status: 302,
+            headers: { Location: "https://untrusted.test/" },
+          });
+        },
+      },
+    });
+    await expect(barrier(operation)).rejects.toThrow("remain pending");
   });
   it("requires the retirement service for unexpired known credentials", async () => {
     const barrier = createCredentialRetirementBarrier({ db: database(() => ({ remaining: 1 })) });

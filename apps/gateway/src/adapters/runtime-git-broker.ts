@@ -89,7 +89,9 @@ function trustedHttpsOrigin(value: string, name: string): string {
 function validateTimeout(value: number | undefined, name: string, fallback: number): number {
   const timeout = value ?? fallback;
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > MAX_CONTROL_PLANE_TIMEOUT_MS)
-    throw new TypeError(`${name} must be between 1 and ${MAX_CONTROL_PLANE_TIMEOUT_MS} milliseconds`);
+    throw new TypeError(
+      `${name} must be between 1 and ${MAX_CONTROL_PLANE_TIMEOUT_MS} milliseconds`,
+    );
   return timeout;
 }
 
@@ -168,7 +170,9 @@ function createBoundedControlPlaneReader(
   gatewayAuth: string,
   timeoutMs: number,
 ): {
-  getRuntimeBinding(repositoryId: number): Promise<ReturnType<typeof RuntimeBindingMetadataSchema.parse> | null>;
+  getRuntimeBinding(
+    repositoryId: number,
+  ): Promise<ReturnType<typeof RuntimeBindingMetadataSchema.parse> | null>;
   getRuntimeIdentityJwks(): Promise<ReturnType<typeof RuntimeIdentityJwksSchema.parse>>;
 } {
   async function get(
@@ -188,7 +192,7 @@ function createBoundedControlPlaneReader(
     const request = (async () => {
       const response = await binding.fetch(`${CONTROL_PLANE_ORIGIN}${path}`, {
         method: "GET",
-        redirect: "error",
+        redirect: "manual",
         signal: controller.signal,
         headers: {
           Accept: "application/json",
@@ -243,9 +247,7 @@ function createBoundedControlPlaneReader(
  * service-binding reads. The runtime token issuer/transport remains a separate producer
  * integration; missing endpoint/key publication fails closed as broker unavailability.
  */
-export function createRuntimeGitCredentialBroker(
-  config: RuntimeGitCredentialBrokerConfig,
-) {
+export function createRuntimeGitCredentialBroker(config: RuntimeGitCredentialBrokerConfig) {
   if (
     config.controlPlaneGatewayAuth.length < 32 ||
     config.controlPlaneGatewayAuth.length > 512 ||

@@ -68,6 +68,22 @@ async function makeRegistry(
 }
 
 describe("runtime Git credential registry", () => {
+  it("rejects redirects without forwarding credentials to their target", async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.redirect).toBe("manual");
+      return new Response(null, { status: 302, headers: { Location: "https://untrusted.test/" } });
+    });
+    const revoke = vi.fn(async () => undefined);
+    const registry = await makeRegistry(binding(fetch), { revoke });
+    await expect(registry.recordIssued(IDENTITY, CREDENTIAL)).rejects.toThrow("status 302");
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(
+      fetch.mock.calls.every(([input]) =>
+        String(input).startsWith("https://control-plane.internal/"),
+      ),
+    ).toBe(true);
+  });
+
   it("registers only ciphertext and does not revoke an active token", async () => {
     let registration: unknown;
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

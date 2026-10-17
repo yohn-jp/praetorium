@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
-import { createKubernetesResourceRenderer } from "../../plugins/kubernetes/dist/index.js";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
+
+// Exercise the committed renderer source; a leftover dist must not supply evidence.
+const compiledRenderer = await build({
+  entryPoints: [
+    fileURLToPath(new URL("../../plugins/kubernetes/src/kubernetes/renderer.ts", import.meta.url)),
+  ],
+  bundle: true,
+  write: false,
+  platform: "node",
+  format: "esm",
+  target: "node24",
+});
+const { createKubernetesResourceRenderer } = await import(
+  `data:text/javascript;base64,${Buffer.from(compiledRenderer.outputFiles[0].contents).toString("base64")}`
+);
 
 const clusterId = "cluster-a";
 const hostSuffix = "instances.example.test";

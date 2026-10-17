@@ -1,0 +1,28 @@
+{
+  "sourceCommit": "8269c1fdbe483b16eadef2c41985c82a4973b9d8",
+  "attempts": [
+    {
+      "result": "FAIL before resource creation",
+      "cause": "The first invocation lacked the owned Kind provider environment, so read-only cluster inventory failed.",
+      "reportSha256": "aee0d96222719cb4018e4d844e3b28ec72bc65567a47497fdf003e34806d86e4",
+      "stdoutSha256": "a340e4a95ee765fba894923cc6b32903d4f79596f42150cb75b70db969a0bde6",
+      "reportedCleanupComplete": true,
+      "resourceCreateAttempts": 0
+    },
+    {
+      "result": "FAIL before resource creation",
+      "cause": "Podman returned the Kind node image ID as bare 64-character hex while inventory used the same digest with a sha256: prefix. Commit 7c3eb74 normalized the two representations by validated digest.",
+      "reportSha256": "1b47ab2463366928046f5e9276c98f6eba8c2b8f47d1e32cd780b35777004dd6",
+      "stdoutSha256": "7ffcf76b83448833e16dd8dc41815fc1dfae9f27f08f80bd858b68576921006b",
+      "reportedCleanupComplete": true,
+      "resourceCreateAttempts": 0
+    }
+  ],
+  "successfulAttempt": {
+    "sourceCommit": "92a681d0074229c1f7800e2a42c4a49e6861d2d8",
+    "reportSha256": "40f562b4915a1abaf6f11eb577ff9ddf216af9036060f0dad3a564c0cd2516fc",
+    "stdoutSha256": "93fdee8fb5e14357a24dcb758ea7d2810f70f20071c259456fa2ada697855fcc"
+  },
+  "independentCleanupObservationSha256": "475dfb9094ffceb25153e8e9dbf91777bb3c046b1b023ae10e04bbd9fe1f8e4f",
+  "sourceArtifactHandling": "The three original runner reports, three original stdout logs, and independent cleanup observation are included byte-for-byte and indexed in SHA256SUMS. The owner inventory and kubeconfig are excluded."
+}

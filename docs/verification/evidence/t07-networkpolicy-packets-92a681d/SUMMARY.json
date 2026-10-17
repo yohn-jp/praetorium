@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "scope": "T07 rendered NetworkPolicy real-packet component unit; not full T07 or T14 acceptance",
+  "sourceCommit": "92a681d0074229c1f7800e2a42c4a49e6861d2d8",
+  "environment": {
+    "provider": "Kind",
+    "kindVersion": "0.31.0",
+    "kubernetesVersion": "v1.35.0",
+    "disposable": true
+  },
+  "result": {
+    "status": "PASS",
+    "startedAt": "2026-10-17T04:51:31.332Z",
+    "finishedAt": "2026-10-17T04:52:38.429Z",
+    "componentDurationMs": 67097,
+    "casesPassed": 16,
+    "casesFailed": 0
+  },
+  "runtimeImage": {
+    "ref": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "pullPolicy": "Never",
+    "runtimeImageIdMatchedOwnerEvidence": true
+  },
+  "source": {
+    "rendererBundleSha256": "8fea953d347d2d696f28593f1f6906f310f5824cbe2d95bf1196e4647301dab8",
+    "rendererInputs": [
+      {
+        "path": "plugins/kubernetes/src/errors.ts",
+        "sha256": "9682004a9b90f984ca33fd5184a973b085478c2c35f6e5cd492f280c18dcc1e0"
+      },
+      {
+        "path": "plugins/kubernetes/src/kubernetes/renderer.ts",
+        "sha256": "a5ae8a7639ebc4ef8eaff9c3e15b6354e04e4627a54365314f6f62f2be4da039"
+      },
+      {
+        "path": "plugins/kubernetes/src/labels.ts",
+        "sha256": "d058beef155377847b142803b86da11c04a94a41a2d79cc72db3d77a286247ba"
+      },
+      {
+        "path": "plugins/kubernetes/src/naming.ts",
+        "sha256": "04f41b67ffad5af367048e6b62a5a4c239fd167198730d4a11722c11d45d526d"
+      }
+    ],
+    "sourceNetworkPolicyAdmissionManifestSha256": "3661165a86bc5739cba0cac2eac7d3a592997c743424253e997b44296b0db276",
+    "renderedNetworkPolicySha256": "9d47af237cbde78bf221dca4cc047c33d69352a0431e328efb0ea15e6782d3fa"
+  },
+  "admission": {
+    "podAndNetworkPolicyVapTypeChecking": "current generation, zero expression warnings",
+    "bindings": "Deny",
+    "networkPolicyVapSourceLiveDrift": {
+      "sourceMappedIpv4Exceptions": ["::fffe:0:0/95"],
+      "liveMappedIpv4Exceptions": ["::ffff:0:0/96"],
+      "matches": false,
+      "note": "The live VAP was read only and not updated; this packet unit does not prove producer ServiceAccount admission or its producer-only match condition."
+    }
+  },
+  "packetCases": [
+    {
+      "name": "praetorium-provisioner-tenant-networkpolicy-current-typecheck-and-deny-binding",
+      "passed": true
+    },
+    {
+      "name": "praetorium-tenant-pods-restricted-current-typecheck-and-deny-binding",
+      "passed": true
+    },
+    { "name": "pre-policy-allowed-ingress-peer-port", "passed": true },
+    { "name": "pre-policy-allowed-ingress-unlisted-listener-control", "passed": true },
+    { "name": "pre-policy-wrong-label-peer", "passed": true },
+    { "name": "pre-policy-other-namespace-peer", "passed": true },
+    { "name": "pre-policy-tenant-private-egress", "passed": true },
+    { "name": "pre-policy-allowed-peer-private-target-control", "passed": true },
+    { "name": "pre-policy-tenant-dns-positive", "passed": true },
+    { "name": "allowed-peer-on-rendered-listener-port", "passed": true },
+    { "name": "tenant-local-unlisted-listener-positive-control", "passed": true },
+    { "name": "wrong-namespace-peer-denied", "passed": true },
+    { "name": "wrong-pod-label-peer-denied", "passed": true },
+    { "name": "unlisted-listener-port-denied", "passed": true },
+    { "name": "private-pod-egress-denied", "passed": true },
+    { "name": "tenant-dns-allowed-by-rendered-policy", "passed": true }
+  ],
+  "networkPolicyConvergence": {
+    "converged": true,
+    "elapsedMs": 12516,
+    "allowedTrafficRemainedLive": true
+  },
+  "cleanup": {
+    "runnerCreatedNamespaces": 4,
+    "runnerCreatedProbePods": 6,
+    "namespaceDeleteRequests": 4,
+    "namespaceDeleteHttpStatus": 200,
+    "deleteMethod": "UID-preconditioned",
+    "runnerWaitedForNamespaceAbsence": true,
+    "independentReadOnlyRecheckAt": "2026-10-17T04:53:14.844494Z",
+    "independentRecheckNamespacesNotFound": 4,
+    "independentRecheckRemainingRunPods": 0,
+    "independentRecheckPerformedWrites": false
+  },
+  "notChecked": [
+    "169.254.169.254 metadata egress; no explicitly owned metadata canary and positive control were supplied, and no request was sent",
+    "public HTTPS egress; no owner-controlled endpoint and response marker were supplied",
+    "producer ServiceAccount authorization and the NetworkPolicy VAP producer-only match condition",
+    "full T07/T14 acceptance, Scriptorium artifact/runtime behavior, and production CNI or infrastructure apply"
+  ]
+}

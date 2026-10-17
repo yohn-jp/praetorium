@@ -1,0 +1,401 @@
+{
+  "schemaVersion": 1,
+  "scope": "T07 rendered NetworkPolicy real-packet component unit; not full T14 acceptance",
+  "status": "PASS",
+  "inventoryId": "praetorium-owned-kube-fresh-20261017",
+  "sourceCommit": "92a681d0074229c1f7800e2a42c4a49e6861d2d8",
+  "runId": "ad6757ac5700d5ec621ff17c7fade425",
+  "cluster": {
+    "name": "praetorium-owned-kube-fresh-20261017",
+    "context": "kind-praetorium-owned-kube-fresh-20261017",
+    "id": "clu_01M53XVA9C0V0QKDWDSV50WGPD",
+    "nodeName": "praetorium-owned-kube-fresh-20261017-control-plane",
+    "nodeUid": "ab2091e1-c844-4201-9859-2a43d97056e1",
+    "nodeContainerId": "81354689170d5502b180ab5b85b3103b2b9ffb8b394e0a1870fd8e816cfe9ba1",
+    "nodeImageRef": "kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f",
+    "nodeImageId": "sha256:17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139",
+    "nodeImageIdObservedRaw": "17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139"
+  },
+  "image": {
+    "ref": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "digest": "sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "expectedRuntimeImageId": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "runtimeImageEvidencePath": "/tmp/praetorium-owned-kube-fresh-1000-20261017/proof/buildworker-secret-fs-20261017/probe-report.json",
+    "runtimeImageEvidenceSha256": "c50180d8ffa7b3d021c0983d8aafeaa005fa9731d14bf6690d8c3395f94ed1ca",
+    "imagePullPolicy": "Never"
+  },
+  "sourceRendererSha256": "8fea953d347d2d696f28593f1f6906f310f5824cbe2d95bf1196e4647301dab8",
+  "sourceRendererInputs": [
+    {
+      "path": "plugins/kubernetes/src/errors.ts",
+      "sha256": "9682004a9b90f984ca33fd5184a973b085478c2c35f6e5cd492f280c18dcc1e0"
+    },
+    {
+      "path": "plugins/kubernetes/src/kubernetes/renderer.ts",
+      "sha256": "a5ae8a7639ebc4ef8eaff9c3e15b6354e04e4627a54365314f6f62f2be4da039"
+    },
+    {
+      "path": "plugins/kubernetes/src/labels.ts",
+      "sha256": "d058beef155377847b142803b86da11c04a94a41a2d79cc72db3d77a286247ba"
+    },
+    {
+      "path": "plugins/kubernetes/src/naming.ts",
+      "sha256": "04f41b67ffad5af367048e6b62a5a4c239fd167198730d4a11722c11d45d526d"
+    }
+  ],
+  "sourceNetworkPolicyManifestSha256": "3661165a86bc5739cba0cac2eac7d3a592997c743424253e997b44296b0db276",
+  "liveNetworkPolicyAdmission": {
+    "uid": "8a9284b7-9283-4ab3-ab04-4ba860594b74",
+    "generation": 1,
+    "observedGeneration": 1,
+    "validationsSha256": "5dd438c843865b17c30f5733881735c5f65ee80ee0076f786c478a4e9319c5af",
+    "sourceManifestSha256": "3661165a86bc5739cba0cac2eac7d3a592997c743424253e997b44296b0db276",
+    "sourceMappedIpv4Exceptions": [
+      "::fffe:0:0/95"
+    ],
+    "liveMappedIpv4Exceptions": [
+      "::ffff:0:0/96"
+    ],
+    "sourceAndLiveMappedIpv4ExclusionMatch": false
+  },
+  "renderedPolicySha256": "9d47af237cbde78bf221dca4cc047c33d69352a0431e328efb0ea15e6782d3fa",
+  "policyUid": "38cf1f6a-c9dd-4da0-9731-0226645c00ca",
+  "namespaces": [
+    {
+      "name": "praetorium-instances-6dr7t1hgbt88n63pem9xnd1v9c",
+      "uid": "208ae83a-4ec2-433d-a847-cf4f40b88683",
+      "role": "tenant"
+    },
+    {
+      "name": "traefik",
+      "uid": "80694475-e4c8-443f-b341-198d1be36276",
+      "role": "canonical-ingress-peer"
+    },
+    {
+      "name": "praetorium-t07-other-ad6757ac57",
+      "uid": "28d59423-6901-40a5-8fc4-dc7a18939a8a",
+      "role": "probe-peer"
+    },
+    {
+      "name": "praetorium-t07-private-ad6757ac57",
+      "uid": "a2c3fd11-20e7-4497-97e5-21d2bb38a48d",
+      "role": "probe-peer"
+    }
+  ],
+  "pods": [
+    {
+      "namespace": "praetorium-instances-6dr7t1hgbt88n63pem9xnd1v9c",
+      "name": "network-target",
+      "uid": "f47b6fe3-c621-4f7d-9146-43eef06b0930",
+      "role": "tenant-target",
+      "image": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+      "imagePullPolicy": "Never",
+      "podIp": "10.244.0.10",
+      "imageId": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5"
+    },
+    {
+      "namespace": "praetorium-instances-6dr7t1hgbt88n63pem9xnd1v9c",
+      "name": "tenant-client",
+      "uid": "d89666ea-df95-4325-aee0-4ceab9f9dfd1",
+      "role": "tenant-egress-source",
+      "image": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+      "imagePullPolicy": "Never",
+      "podIp": "10.244.0.11",
+      "imageId": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5"
+    },
+    {
+      "namespace": "traefik",
+      "name": "allowed-peer",
+      "uid": "c571cefd-fe1d-40a0-a533-2448f82c5bd5",
+      "role": "allowed-ingress-peer",
+      "image": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+      "imagePullPolicy": "Never",
+      "podIp": "10.244.0.12",
+      "imageId": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5"
+    },
+    {
+      "namespace": "traefik",
+      "name": "wrong-label-peer",
+      "uid": "02bcbfae-c5e9-4d03-982c-cccddbe93ec0",
+      "role": "wrong-label-peer",
+      "image": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+      "imagePullPolicy": "Never",
+      "podIp": "10.244.0.13",
+      "imageId": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5"
+    },
+    {
+      "namespace": "praetorium-t07-other-ad6757ac57",
+      "name": "other-namespace-peer",
+      "uid": "d89f64cd-4224-4609-80df-dd4e29acdc4a",
+      "role": "other-namespace-peer",
+      "image": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+      "imagePullPolicy": "Never",
+      "podIp": "10.244.0.14",
+      "imageId": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5"
+    },
+    {
+      "namespace": "praetorium-t07-private-ad6757ac57",
+      "name": "private-target",
+      "uid": "1caf32b3-229a-4e44-aecd-1ac5cd40e58b",
+      "role": "private-egress-target",
+      "image": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+      "imagePullPolicy": "Never",
+      "podIp": "10.244.0.15",
+      "imageId": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5"
+    }
+  ],
+  "cases": [
+    {
+      "name": "praetorium-provisioner-tenant-networkpolicy-current-typecheck-and-deny-binding",
+      "passed": true,
+      "generation": 1,
+      "uid": "8a9284b7-9283-4ab3-ab04-4ba860594b74",
+      "bindingUid": "723b5e20-ddde-4ab5-b76f-2844c08d6b5b"
+    },
+    {
+      "name": "praetorium-tenant-pods-restricted-current-typecheck-and-deny-binding",
+      "passed": true,
+      "generation": 1,
+      "uid": "45a517e9-0374-4fc4-aa4a-0d134dd1ab78",
+      "bindingUid": "e01b6cf2-285d-4663-aa18-8d270d361dde"
+    },
+    {
+      "name": "pre-policy-allowed-ingress-peer-port",
+      "passed": true,
+      "port": 8080,
+      "source": "allowed-ingress-peer",
+      "destination": "tenant-target",
+      "observed": {
+        "reachable": true,
+        "status": 200,
+        "marker": "t07-target-ad6757ac5700d5ec621ff17c7fade425"
+      }
+    },
+    {
+      "name": "pre-policy-allowed-ingress-unlisted-listener-control",
+      "passed": true,
+      "port": 8081,
+      "source": "allowed-ingress-peer",
+      "destination": "tenant-target",
+      "observed": {
+        "reachable": true,
+        "status": 200,
+        "marker": "t07-target-ad6757ac5700d5ec621ff17c7fade425"
+      }
+    },
+    {
+      "name": "pre-policy-wrong-label-peer",
+      "passed": true,
+      "port": 8080,
+      "source": "wrong-label-peer",
+      "destination": "tenant-target",
+      "observed": {
+        "reachable": true,
+        "status": 200,
+        "marker": "t07-target-ad6757ac5700d5ec621ff17c7fade425"
+      }
+    },
+    {
+      "name": "pre-policy-other-namespace-peer",
+      "passed": true,
+      "port": 8080,
+      "source": "other-namespace-peer",
+      "destination": "tenant-target",
+      "observed": {
+        "reachable": true,
+        "status": 200,
+        "marker": "t07-target-ad6757ac5700d5ec621ff17c7fade425"
+      }
+    },
+    {
+      "name": "pre-policy-tenant-private-egress",
+      "passed": true,
+      "port": 8080,
+      "source": "tenant-egress-source",
+      "destination": "private-egress-target",
+      "observed": {
+        "reachable": true,
+        "status": 200,
+        "marker": "t07-private-ad6757ac5700d5ec621ff17c7fade425"
+      }
+    },
+    {
+      "name": "pre-policy-allowed-peer-private-target-control",
+      "passed": true,
+      "port": 8080,
+      "source": "allowed-ingress-peer",
+      "destination": "private-egress-target",
+      "observed": {
+        "reachable": true,
+        "status": 200,
+        "marker": "t07-private-ad6757ac5700d5ec621ff17c7fade425"
+      }
+    },
+    {
+      "name": "pre-policy-tenant-dns-positive",
+      "passed": true,
+      "resolved": true,
+      "address": "10.96.0.1"
+    },
+    {
+      "name": "allowed-peer-on-rendered-listener-port",
+      "passed": true,
+      "source": "allowed-ingress-peer",
+      "destination": "tenant-target",
+      "port": 8080,
+      "observed": {
+        "reachable": true,
+        "status": 200,
+        "marker": "t07-target-ad6757ac5700d5ec621ff17c7fade425"
+      }
+    },
+    {
+      "name": "tenant-local-unlisted-listener-positive-control",
+      "passed": true,
+      "source": "tenant-target",
+      "destination": "tenant-target",
+      "port": 8081,
+      "host": "127.0.0.1",
+      "observed": {
+        "reachable": true,
+        "status": 200,
+        "marker": "t07-target-ad6757ac5700d5ec621ff17c7fade425"
+      }
+    },
+    {
+      "name": "wrong-namespace-peer-denied",
+      "passed": true,
+      "source": "other-namespace-peer",
+      "destination": "tenant-target",
+      "port": 8080,
+      "observed": {
+        "reachable": false,
+        "error": "ETIMEDOUT"
+      }
+    },
+    {
+      "name": "wrong-pod-label-peer-denied",
+      "passed": true,
+      "source": "wrong-label-peer",
+      "destination": "tenant-target",
+      "port": 8080,
+      "observed": {
+        "reachable": false,
+        "error": "ETIMEDOUT"
+      }
+    },
+    {
+      "name": "unlisted-listener-port-denied",
+      "passed": true,
+      "source": "allowed-ingress-peer",
+      "destination": "tenant-target",
+      "port": 8081,
+      "observed": {
+        "reachable": false,
+        "error": "ETIMEDOUT"
+      }
+    },
+    {
+      "name": "private-pod-egress-denied",
+      "passed": true,
+      "source": "tenant-egress-source",
+      "destination": "private-egress-target",
+      "port": 8080,
+      "observed": {
+        "reachable": false,
+        "error": "ETIMEDOUT"
+      }
+    },
+    {
+      "name": "tenant-dns-allowed-by-rendered-policy",
+      "passed": true,
+      "resolved": true,
+      "address": "10.96.0.1"
+    }
+  ],
+  "ownershipUncertainNamespaces": [],
+  "metadataEgress": "NOT_CHECKED: no explicitly owned metadata canary and positive control were provided",
+  "publicHttpsEgress": "NOT_CHECKED: no owner-controlled public HTTPS marker endpoint was provided",
+  "cleanup": [
+    {
+      "name": "praetorium-t07-private-ad6757ac57",
+      "uid": "a2c3fd11-20e7-4497-97e5-21d2bb38a48d",
+      "deleteHttpStatus": 200,
+      "deleteResponseStatus": {
+        "phase": "Terminating"
+      },
+      "result": "uid-preconditioned-delete-and-absence-verified"
+    },
+    {
+      "name": "praetorium-t07-other-ad6757ac57",
+      "uid": "28d59423-6901-40a5-8fc4-dc7a18939a8a",
+      "deleteHttpStatus": 200,
+      "deleteResponseStatus": {
+        "phase": "Terminating"
+      },
+      "result": "uid-preconditioned-delete-and-absence-verified"
+    },
+    {
+      "name": "traefik",
+      "uid": "80694475-e4c8-443f-b341-198d1be36276",
+      "deleteHttpStatus": 200,
+      "deleteResponseStatus": {
+        "phase": "Terminating"
+      },
+      "result": "uid-preconditioned-delete-and-absence-verified"
+    },
+    {
+      "name": "praetorium-instances-6dr7t1hgbt88n63pem9xnd1v9c",
+      "uid": "208ae83a-4ec2-433d-a847-cf4f40b88683",
+      "deleteHttpStatus": 200,
+      "deleteResponseStatus": {
+        "phase": "Terminating"
+      },
+      "result": "uid-preconditioned-delete-and-absence-verified"
+    }
+  ],
+  "cleanupComplete": true,
+  "startedAt": "2026-10-17T04:51:31.332Z",
+  "notes": [
+    "Only the actual NetworkPolicy returned by the current TypeScript renderer is created.",
+    "No producer image, metadata endpoint, public endpoint, cluster-wide policy, CNI, or production namespace is created or changed.",
+    "The canonical traefik namespace may be created only after an exact NotFound preflight in this owned cluster; cleanup uses its recorded UID."
+  ],
+  "namespaceDeleteTransportPreflight": {
+    "result": "private-unix-socket-proxy-started-and-stopped-before-resource-creation",
+    "apiRequestsSent": 0,
+    "pathsRestrictedTo": [
+      "praetorium-instances-6dr7t1hgbt88n63pem9xnd1v9c",
+      "traefik",
+      "praetorium-t07-other-ad6757ac57",
+      "praetorium-t07-private-ad6757ac57"
+    ]
+  },
+  "policyTypecheckEvidence": "live VAP objects reported observedGeneration=current generation and typeChecking={}; NetworkPolicy VAP source/live drift is recorded separately",
+  "networkPolicyConvergence": {
+    "converged": true,
+    "elapsedMs": 12516,
+    "trace": [
+      {
+        "at": "2026-10-17T04:51:50.726Z",
+        "allowed": true,
+        "privateTarget": true,
+        "localUnlistedListener": true,
+        "denied": [
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    ]
+  },
+  "namespaceDeleteMethod": "DELETE over an owner-private Unix-domain kubectl proxy socket using DeleteOptions.preconditions.uid; proxy paths are restricted to the recorded owned namespaces",
+  "proxyCleanup": {
+    "result": "private-unix-domain-kubectl-proxy-stopped"
+  },
+  "proxyDirectoryCleanup": "private Unix-socket directory removed",
+  "cleanupErrors": [],
+  "finishedAt": "2026-10-17T04:52:38.429Z",
+  "durationMs": 67097
+}

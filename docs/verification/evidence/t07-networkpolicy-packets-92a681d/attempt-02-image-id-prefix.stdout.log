@@ -1,0 +1,30 @@
+✖ T07: real packets follow the compiled renderer NetworkPolicy in an owned disposable Kind cluster (189.677557ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 255.138555
+
+✖ failing tests:
+
+test at tests/integration/kubernetes-network-policy.partial.test.mjs:652:1
+✖ T07: real packets follow the compiled renderer NetworkPolicy in an owned disposable Kind cluster (189.677557ms)
+  AssertionError [ERR_ASSERTION]: Kind node container image identity differs from the owned inventory
+  + actual - expected
+  
+  + '17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139'
+  - 'sha256:17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139'
+  
+      at TestContext.<anonymous> (file:///home/sophia/src/praetorium/tests/integration/kubernetes-network-policy.partial.test.mjs:880:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: '17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139',
+    expected: 'sha256:17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

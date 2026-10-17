@@ -1,0 +1,28 @@
+T07 rendered NetworkPolicy packet component unit
+Source: 92a681d0074229c1f7800e2a42c4a49e6861d2d8
+
+Run result: PASS
+The owner-pinned Node image was used with imagePullPolicy Never. The runner's
+16 admission and packet cases passed in 67,097 ms. Dataplane convergence took
+12,516 ms while allowed traffic remained live.
+
+Packet coverage included pre-policy positive controls, ingress through the
+rendered peer/port, wrong namespace and wrong Pod label denial, unlisted
+listener denial, private Pod egress denial, and continued DNS resolution.
+
+The runner UID-precondition-deleted four temporary namespaces (HTTP 200 for
+each) and waited for absence. An independent read-only check later observed
+NotFound for all four namespaces and zero remaining run-labeled Pods.
+
+Two earlier attempts at parent source 8269c1fdbe483b16eadef2c41985c82a4973b9d8
+failed before resource creation. The first lacked the owner provider environment;
+the second exposed the bare-hex versus sha256:-prefixed Podman image ID mismatch.
+The second failure led to commit 7c3eb74, included by the successful source.
+Original reports and stdout logs for all three attempts are included alongside
+this summary and indexed by SHA256SUMS.
+
+Limits: metadata egress and public HTTPS were not checked. The live
+NetworkPolicy VAP still had the older ::ffff:0:0/96 exception while source had
+::fffe:0:0/95; this run did not update that VAP or prove producer ServiceAccount
+admission. This is a bounded real-packet component result, not full T07/T14 or
+production acceptance.

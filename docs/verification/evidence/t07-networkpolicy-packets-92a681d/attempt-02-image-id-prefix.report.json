@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "scope": "T07 rendered NetworkPolicy real-packet component unit; not full T14 acceptance",
+  "status": "FAIL",
+  "inventoryId": "praetorium-owned-kube-fresh-20261017",
+  "sourceCommit": "8269c1fdbe483b16eadef2c41985c82a4973b9d8",
+  "runId": "a56120ce0694a5e0d173d5b71f43139d",
+  "cluster": {
+    "name": "praetorium-owned-kube-fresh-20261017",
+    "context": "kind-praetorium-owned-kube-fresh-20261017",
+    "id": "clu_01M53XVA9C0V0QKDWDSV50WGPD",
+    "nodeName": "praetorium-owned-kube-fresh-20261017-control-plane",
+    "nodeUid": "ab2091e1-c844-4201-9859-2a43d97056e1",
+    "nodeContainerId": "81354689170d5502b180ab5b85b3103b2b9ffb8b394e0a1870fd8e816cfe9ba1",
+    "nodeImageRef": "kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f",
+    "nodeImageId": "sha256:17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139"
+  },
+  "image": {
+    "ref": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "digest": "sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "expectedRuntimeImageId": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "runtimeImageEvidencePath": "/tmp/praetorium-owned-kube-fresh-1000-20261017/proof/buildworker-secret-fs-20261017/probe-report.json",
+    "runtimeImageEvidenceSha256": "c50180d8ffa7b3d021c0983d8aafeaa005fa9731d14bf6690d8c3395f94ed1ca",
+    "imagePullPolicy": "Never"
+  },
+  "sourceRendererSha256": null,
+  "sourceRendererInputs": [],
+  "sourceNetworkPolicyManifestSha256": null,
+  "liveNetworkPolicyAdmission": null,
+  "renderedPolicySha256": null,
+  "policyUid": null,
+  "namespaces": [],
+  "pods": [],
+  "cases": [],
+  "ownershipUncertainNamespaces": [],
+  "metadataEgress": "NOT_CHECKED: no explicitly owned metadata canary and positive control were provided",
+  "publicHttpsEgress": "NOT_CHECKED: no owner-controlled public HTTPS marker endpoint was provided",
+  "cleanup": [],
+  "cleanupComplete": true,
+  "startedAt": "2026-10-17T04:46:41.073Z",
+  "notes": [
+    "Only the actual NetworkPolicy returned by the current TypeScript renderer is created.",
+    "No producer image, metadata endpoint, public endpoint, cluster-wide policy, CNI, or production namespace is created or changed.",
+    "The canonical traefik namespace may be created only after an exact NotFound preflight in this owned cluster; cleanup uses its recorded UID."
+  ],
+  "failure": "Kind node container image identity differs from the owned inventory\n+ actual - expected\n\n+ '17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139'\n- 'sha256:17b4349087ddad8a3d8b0353c6ae032ce336cd2161d26a989c8bee9fc43c2139'\n",
+  "cleanupErrors": [],
+  "finishedAt": "2026-10-17T04:46:41.255Z",
+  "durationMs": 182
+}

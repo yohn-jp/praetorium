@@ -1,0 +1,34 @@
+{
+  "checkedAt": "2026-10-17T04:53:14.844494+00:00",
+  "sourceCommit": "92a681d0074229c1f7800e2a42c4a49e6861d2d8",
+  "runId": "ad6757ac5700d5ec621ff17c7fade425",
+  "clusterContext": "kind-praetorium-owned-kube-fresh-20261017",
+  "namespaceAbsence": [
+    {
+      "name": "praetorium-t07-private-ad6757ac57",
+      "previousUid": "a2c3fd11-20e7-4497-97e5-21d2bb38a48d",
+      "observation": "NotFound",
+      "exitCode": 1
+    },
+    {
+      "name": "praetorium-t07-other-ad6757ac57",
+      "previousUid": "28d59423-6901-40a5-8fc4-dc7a18939a8a",
+      "observation": "NotFound",
+      "exitCode": 1
+    },
+    {
+      "name": "traefik",
+      "previousUid": "80694475-e4c8-443f-b341-198d1be36276",
+      "observation": "NotFound",
+      "exitCode": 1
+    },
+    {
+      "name": "praetorium-instances-6dr7t1hgbt88n63pem9xnd1v9c",
+      "previousUid": "208ae83a-4ec2-433d-a847-cf4f40b88683",
+      "observation": "NotFound",
+      "exitCode": 1
+    }
+  ],
+  "remainingRunPods": 0,
+  "apiWrites": false
+}

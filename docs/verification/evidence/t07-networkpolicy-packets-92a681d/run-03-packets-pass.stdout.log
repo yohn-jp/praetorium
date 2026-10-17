@@ -1,0 +1,10 @@
+✔ Kind image IDs compare by digest with or without the sha256 prefix (1.107585ms)
+✔ T07: real packets follow the compiled renderer NetworkPolicy in an owned disposable Kind cluster (67104.323236ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 77165.812599

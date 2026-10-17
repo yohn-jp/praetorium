@@ -183,3 +183,36 @@ HTTPS needs an owner-controlled URL and response marker. The unit does not
 replace full T14 ingress, Scriptorium artifact, runtime, recovery, capacity,
 or production CNI validation. A passing result proves only the recorded
 NetworkPolicy packet paths on the exact disposable Kind cluster.
+
+## Recorded component run
+
+The owned Kind run at Praetorium source `92a681d0074229c1f7800e2a42c4a49e6861d2d8`
+passed all 16 admission and packet cases in 67,097 ms. The renderer input
+closure hash was `8fea953d347d2d696f28593f1f6906f310f5824cbe2d95bf1196e4647301dab8`,
+the source NetworkPolicy admission manifest hash was
+`3661165a86bc5739cba0cac2eac7d3a592997c743424253e997b44296b0db276`, and the
+rendered NetworkPolicy hash was
+`9d47af237cbde78bf221dca4cc047c33d69352a0431e328efb0ea15e6782d3fa`. Dataplane
+convergence took 12,516 ms while allowed traffic remained live.
+
+The runner removed four temporary namespaces with UID-preconditioned DELETE
+requests (HTTP 200), waited for absence, and then an independent read-only check
+observed all four as NotFound and zero remaining run-labeled Pods. This does not
+include a claim about deleting any pre-existing namespace or cluster resource.
+
+Two preceding attempts at `8269c1f` stopped before resource creation: the first
+could not inventory Kind without the owner provider environment; the second
+found Podman's bare-hex image ID did not match the inventory's prefixed form.
+The latter led to commit `7c3eb74`, included in the passing source. The evidence
+bundle includes all three original reports and stdout logs byte-for-byte.
+
+The live NetworkPolicy VAP still had its previous `::ffff:0:0/96` exclusion,
+while the passing source contained `::fffe:0:0/95`. The run reads but does not
+update that VAP, and does not prove producer ServiceAccount admission or the
+producer-only match condition. Metadata egress and public HTTPS remain
+`NOT_CHECKED`. The [sanitized result summary](evidence/t07-networkpolicy-packets-92a681d/SUMMARY.json),
+[prior attempt record](evidence/t07-networkpolicy-packets-92a681d/ATTEMPTS.json),
+[independent cleanup observation](evidence/t07-networkpolicy-packets-92a681d/root-post-cleanup-observation.json),
+and [SHA-256 index](evidence/t07-networkpolicy-packets-92a681d/SHA256SUMS)
+contain the evidence. The independent cleanup observation is also included
+byte-for-byte. The owner inventory and kubeconfig are excluded.

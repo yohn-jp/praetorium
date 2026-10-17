@@ -78,6 +78,9 @@ describe("Build worker startup configuration", () => {
         PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED: "1",
         PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN: "short",
       },
+      {
+        PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN: "n".repeat(513),
+      },
       { PRAETORIUM_BUILD_WORK_NOTIFICATION_HOST: "localhost" },
       { PRAETORIUM_BUILD_WORK_NOTIFICATION_PORT: "65536" },
     ]) {

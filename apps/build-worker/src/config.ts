@@ -175,7 +175,7 @@ export function readBuildWorkerConfig(
     isIP(notificationHost) === 0 ||
     (notificationToken !== undefined &&
       (notificationToken.length < 32 ||
-        notificationToken.length > 4096 ||
+        notificationToken.length > 512 ||
         /[^\x21-\x7e]/u.test(notificationToken))) ||
     (notificationEnabled && notificationToken === undefined)
   ) {

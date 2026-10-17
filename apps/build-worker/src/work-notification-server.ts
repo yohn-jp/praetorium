@@ -15,13 +15,18 @@ export async function startBuildWorkNotificationServer(
   if (!token) throw new TypeError("Build work notification authentication is not configured");
   const expectedToken = Buffer.from(token, "utf8");
   const server = createServer((request, response) => {
-    void handleNotification(request, response, expectedToken, availability);
+    void handleNotification(request, response, expectedToken, availability).catch(() => {
+      response.destroy();
+    });
   });
   server.headersTimeout = 5_000;
   server.requestTimeout = 10_000;
   server.timeout = 15_000;
   server.keepAliveTimeout = 1_000;
   server.maxHeadersCount = 32;
+  server.maxConnections = 64;
+  server.maxRequestsPerSocket = 64;
+  server.on("timeout", (socket) => socket.destroy());
 
   await new Promise<void>((resolve, reject) => {
     const fail = (error: Error): void => {

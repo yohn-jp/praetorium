@@ -12,6 +12,7 @@ const token = "build-notification-token".padEnd(48, "x");
 const servers: Array<Awaited<ReturnType<typeof startBuildWorkNotificationServer>>> = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(servers.splice(0).map(closeBuildWorkNotificationServer));
 });
 
@@ -55,10 +56,13 @@ describe("build work notification listener", () => {
     });
     expect(notification.status).toBe(202);
 
-    const startedAt = performance.now();
+    vi.useFakeTimers();
     const shutdown = new AbortController();
-    await availability.wait(shutdown.signal, 1000);
-    expect(performance.now() - startedAt).toBeLessThan(500);
+    let woken = false;
+    const waiting = availability.wait(shutdown.signal, 1000).then(() => (woken = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(woken).toBe(true);
+    await waiting;
     shutdown.abort();
   });
 
@@ -84,13 +88,25 @@ describe("build work notification listener", () => {
     const responses = await Promise.all([send(), send()]);
     expect(responses.map((response) => response.status)).toEqual([202, 202]);
 
+    vi.useFakeTimers();
     const controller = new AbortController();
-    const firstWaitStartedAt = performance.now();
-    await availability.wait(controller.signal, 100);
-    expect(performance.now() - firstWaitStartedAt).toBeLessThan(50);
-    const secondWaitStartedAt = performance.now();
-    await availability.wait(controller.signal, 50);
-    expect(performance.now() - secondWaitStartedAt).toBeGreaterThanOrEqual(25);
+    let firstWaitResolved = false;
+    const firstWait = availability.wait(controller.signal, 100).then(() => {
+      firstWaitResolved = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(firstWaitResolved).toBe(true);
+    await firstWait;
+
+    let secondWaitResolved = false;
+    const secondWait = availability.wait(controller.signal, 50).then(() => {
+      secondWaitResolved = true;
+    });
+    await vi.advanceTimersByTimeAsync(49);
+    expect(secondWaitResolved).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await secondWait;
+    expect(secondWaitResolved).toBe(true);
     controller.abort();
   });
 

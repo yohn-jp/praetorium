@@ -852,11 +852,6 @@ async function verifyOwnedTree(root, owner) {
     throw new Error("refusing cleanup: disposable root ownership or permissions changed");
   }
   await assertNoMountsBelow(root);
-  if (owner.schema === OWNER_SCHEMA && owner.buildkitUidMap !== null) {
-    await inspectMappedTree(root, rootInfo.dev, owner);
-    return;
-  }
-
   const pending = [root];
   const rootDevice = rootInfo.dev;
   while (pending.length > 0) {

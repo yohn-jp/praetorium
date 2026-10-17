@@ -22,6 +22,14 @@ const testRepository = {
   authorizationRevision: 7,
 };
 
+async function assertEventually(predicate) {
+  const deadline = Date.now() + 5_000;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(predicate(), "actual Worker/DO committed work must deliver the availability hint");
+}
+
 async function assertOwnedDisposableInventory() {
   const inventoryPath = process.env.PRAETORIUM_T14_INVENTORY_PATH;
   assert.ok(inventoryPath, "Run this acceptance runner through verify-integration.mjs");
@@ -61,6 +69,8 @@ function makeMiniflare(script, persistenceRoot, secrets, compatibilityDate, comp
       INSTANCE_HOST_SUFFIX: "instances.test",
       CONTROL_PLANE_ORIGIN: "https://control-plane.test",
       RUNTIME_IDENTITY_SIGNING_KEY: secrets.runtimeIdentityKey,
+      PROVISIONER_WORK_NOTIFICATION_URL: "https://provisioner-notify.test/internal/work-available",
+      PROVISIONER_WORK_NOTIFICATION_TOKEN: secrets.workNotification,
       ...(secrets.buildPolicy ? { BUILD_POLICY_JSON: secrets.buildPolicy } : {}),
       ...(secrets.releasePolicy
         ? {
@@ -79,6 +89,18 @@ function makeMiniflare(script, persistenceRoot, secrets, compatibilityDate, comp
     },
     durableObjectsPersist: path.join(persistenceRoot, "durable-objects"),
     defaultPersistRoot: path.join(persistenceRoot, "other-storage"),
+    outboundService: async (request) => {
+      assert.equal(request.url, "https://provisioner-notify.test/internal/work-available");
+      assert.equal(request.method, "POST");
+      assert.ok(
+        request.headers.get("authorization") === `Bearer ${secrets.workNotification}`,
+        "notification must authenticate with its separate test-only token",
+      );
+      const hint = await request.json();
+      assert.deepEqual(hint, { version: 1, kind: "operation" });
+      secrets.workNotifications.push(hint);
+      return new Response(null, { status: secrets.workNotificationStatus });
+    },
   });
 }
 
@@ -216,6 +238,9 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
   const secrets = {
     gateway: randomBytes(32).toString("base64url"),
     provisioner: randomBytes(32).toString("base64url"),
+    workNotification: randomBytes(32).toString("base64url"),
+    workNotifications: [],
+    workNotificationStatus: 503,
     runtimeIdentityKey: JSON.stringify({
       kid: "t14-owned-runtime-identity",
       privateKeyJwk: await webcrypto.subtle.exportKey("jwk", identityKey.privateKey),
@@ -379,6 +404,11 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
       bindingEpoch: snapshot.binding.bindingEpoch,
       authorizationRevision: snapshot.binding.authorizationRevision,
     };
+    assert.equal(
+      secrets.workNotifications.length,
+      0,
+      "reads and rejected configuration send no work hints",
+    );
     const desired = await postJson(
       miniflare,
       `/v1/instances/${instanceId}/desired`,
@@ -390,6 +420,11 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
     assert.equal(typeof desired.body.replayed, "boolean");
     const operationId = desired.body.operation?.id;
     assert.ok(typeof operationId === "string" && operationId.length > 0);
+    await assertEventually(() => secrets.workNotifications.length > 0);
+    assert.deepEqual(secrets.workNotifications[0], { version: 1, kind: "operation" });
+    // The notification endpoint deliberately failed; the committed operation
+    // must remain readable and claimable from D1 independently of delivery.
+    secrets.workNotificationStatus = 202;
 
     const publicOperationResponse = await miniflare.dispatchFetch(
       `https://control-plane.test/v1/operations/${operationId}`,

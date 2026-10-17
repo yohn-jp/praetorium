@@ -138,6 +138,14 @@ function authRegistryHost(value: string): string | null {
   }
 }
 
+function containsControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
 /**
  * Checks that BuildKit's auth session can reach only the approved frontend and
  * output registries. Credential values are parsed only to validate shape and
@@ -211,6 +219,68 @@ export async function validateRegistryAuth(config: BuildKitProviderConfig): Prom
     if (!authenticatedHosts.has(outputHost) && config.allowInsecureLoopbackRegistry !== true) {
       throw new BuildKitConfigurationError();
     }
+  } catch (error) {
+    if (error instanceof BuildKitConfigurationError) throw error;
+    throw new BuildKitConfigurationError();
+  }
+}
+
+/**
+ * Reads the registry-only publisher credential already mounted for BuildKit.
+ * The value stays in memory and is never returned to a build context or log.
+ */
+export async function readBuildKitRegistryCredential(
+  config: BuildKitProviderConfig,
+  registryHost: string,
+): Promise<{ readonly username: string; readonly password: string }> {
+  await validateRegistryAuth(config);
+  if (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$/u.test(registryHost)) {
+    throw new BuildKitConfigurationError();
+  }
+  try {
+    const configPath = path.join(config.dockerConfigDirectory, "config.json");
+    const parsed: unknown = JSON.parse(await readFile(configPath, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new BuildKitConfigurationError();
+    }
+    const auths = (parsed as Record<string, unknown>).auths;
+    if (typeof auths !== "object" || auths === null || Array.isArray(auths)) {
+      throw new BuildKitConfigurationError();
+    }
+    const entry = Object.entries(auths as Record<string, unknown>).find(
+      ([server]) => authRegistryHost(server) === registryHost,
+    )?.[1];
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new BuildKitConfigurationError();
+    }
+    const credential = entry as Record<string, unknown>;
+    let username = typeof credential.username === "string" ? credential.username : "";
+    let password = typeof credential.password === "string" ? credential.password : "";
+    if ((!username || !password) && typeof credential.auth === "string") {
+      const encoded = credential.auth;
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
+        throw new BuildKitConfigurationError();
+      }
+      const bytes = Buffer.from(encoded, "base64");
+      if (bytes.toString("base64") !== encoded) throw new BuildKitConfigurationError();
+      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const separator = decoded.indexOf(":");
+      if (separator > 0) {
+        username = decoded.slice(0, separator);
+        password = decoded.slice(separator + 1);
+      }
+    }
+    if (
+      username.length < 1 ||
+      username.length > 256 ||
+      password.length < 1 ||
+      password.length > 4096 ||
+      containsControlCharacters(username) ||
+      containsControlCharacters(password)
+    ) {
+      throw new BuildKitConfigurationError();
+    }
+    return { username, password };
   } catch (error) {
     if (error instanceof BuildKitConfigurationError) throw error;
     throw new BuildKitConfigurationError();

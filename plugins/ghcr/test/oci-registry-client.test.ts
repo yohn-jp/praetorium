@@ -431,6 +431,87 @@ describe("GHCR OCI registry adapter", () => {
     await expect(client.issuePublishAuth("praetorium/runtime-base")).rejects.toBeInstanceOf(RegistryError);
   });
 
+  it("publishes exact composition bytes only to an allowlisted owned loopback repository", async () => {
+    const bytes = encoder.encode('{"schemaVersion":"scriptorium-composition/v1"}\n');
+    const digest = await digestOf(bytes);
+    const seen: Array<{ method: string; path: string; authorization: string | null; body?: Uint8Array }> = [];
+    let uploaded = false;
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      const method = init?.method ?? "GET";
+      if (method === "HEAD") {
+        seen.push({ method, path: url.pathname, authorization: new Headers(init?.headers).get("authorization") });
+        return new Response(null, {
+          status: uploaded ? 200 : 404,
+          headers: uploaded ? { "docker-content-digest": digest } : undefined,
+        });
+      }
+      if (method === "POST") {
+        seen.push({ method, path: url.pathname, authorization: new Headers(init?.headers).get("authorization") });
+        return new Response(null, {
+          status: 202,
+          headers: { location: "/v2/" + repository + "/blobs/uploads/owned-session?state=owned" },
+        });
+      }
+      if (method === "PUT") {
+        seen.push({
+          method,
+          path: url.pathname + url.search,
+          authorization: new Headers(init?.headers).get("authorization"),
+          body: new Uint8Array(await new Response(init?.body).arrayBuffer()),
+        });
+        uploaded = true;
+        return new Response(null, { status: 201, headers: { "docker-content-digest": digest } });
+      }
+      throw new Error("unexpected registry method: " + method);
+    }) as typeof fetch;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      registryUrl: "http://127.0.0.1:35009",
+      allowInsecureLoopback: true,
+      allowedRepositories: [repository, "praetorium/runtime-base"],
+      publishRepositories: [repository],
+      fetch: fetcher,
+    });
+
+    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
+    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
+    await expect(client.publishBlob("praetorium/runtime-base", bytes)).rejects.toMatchObject({ reason: "unauthorized" });
+
+    expect(seen.map(({ method }) => method)).toEqual(["HEAD", "POST", "PUT", "HEAD"]);
+    expect(seen[0]?.authorization).toBeNull();
+    expect(seen[2]?.path).toContain("state=owned&digest=" + encodeURIComponent(digest));
+    expect(seen[2]?.body).toEqual(bytes);
+  });
+
+  it("rejects encoded or cross-repository upload locations before sending composition bytes", async () => {
+    const bytes = encoder.encode('{"schemaVersion":"scriptorium-composition/v1"}');
+    let puts = 0;
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      if (init?.method === "HEAD") return new Response(null, { status: 404 });
+      if (init?.method === "POST") {
+        return new Response(null, {
+          status: 202,
+          headers: { location: "/v2/" + repository + "/blobs/uploads/%2e%2e%2fother" },
+        });
+      }
+      if (init?.method === "PUT") puts += 1;
+      throw new Error("unexpected registry method: " + (init?.method ?? "GET"));
+    }) as typeof fetch;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      registryUrl: "http://127.0.0.1:35009",
+      allowInsecureLoopback: true,
+      allowedRepositories: [repository],
+      publishRepositories: [repository],
+      fetch: fetcher,
+    });
+
+    await expect(client.publishBlob(repository, bytes)).rejects.toMatchObject({ reason: "invalid_content" });
+    expect(puts).toBe(0);
+  });
+
   it("rejects an unallowlisted repository before network access", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [], fetch: fetcher });

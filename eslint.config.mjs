@@ -11,6 +11,7 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/.turbo/**",
       "**/coverage/**",
+      "plugins/scriptorium/vendor/build-catalog.mjs",
     ],
   },
   js.configs.recommended,

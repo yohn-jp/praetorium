@@ -39,6 +39,7 @@ export interface CompositionArtifactInspector {
       readonly imageReference: string;
       readonly image: VerifiedOciImage;
       readonly compositionManifest: CompositionManifest;
+      readonly compositionManifestDigest: Sha256Digest;
     },
     signal: AbortSignal,
   ): Promise<CompositionArtifactInspection>;
@@ -75,6 +76,7 @@ export class GhcrCandidateVerifier {
     private readonly registry: GhcrRegistryClient,
     private readonly inspector: CompositionArtifactInspector,
     private readonly clock: () => Date = () => new Date(),
+    private readonly inspectionTimeoutMs = 300_000,
   ) {}
 
   async verifyUnsignedCandidate(
@@ -177,9 +179,11 @@ export class GhcrCandidateVerifier {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
-        controller.abort();
-        reject(new CandidateVerificationError("smoke", "declared composition smoke timed out"));
-      }, compositionManifest.smoke.timeoutSeconds * 1000);
+        const error = new CandidateVerificationError("closure", "image composition inspection exceeded its configured deadline");
+        controller.abort(error);
+        reject(error);
+      }, this.inspectionTimeoutMs);
+      timeout.unref();
     });
     try {
       const inspection = await Promise.race([
@@ -187,6 +191,7 @@ export class GhcrCandidateVerifier {
           imageReference: `${registryHost}/${repository}@${candidate.manifestDigest}`,
           image,
           compositionManifest,
+          compositionManifestDigest: candidate.compositionManifest.digest,
         }, controller.signal),
         timeoutPromise,
       ]);
@@ -203,7 +208,6 @@ export class GhcrCandidateVerifier {
     } catch (error) {
       if (error instanceof CandidateVerificationError) throw error;
       if (signal.aborted) throw new CandidateVerificationError("canceled", "candidate inspection was canceled");
-      if (controller.signal.aborted) throw new CandidateVerificationError("smoke", "declared composition smoke timed out");
       throw new CandidateVerificationError("closure", "image closure inspection or smoke failed");
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);

@@ -160,6 +160,7 @@ export class BuildKitProvider implements BuildProvider {
         metadataFile,
         expectedInput: input,
         outputRepository: this.config.outputRepository,
+        signal,
       });
       if (signal.aborted) throw new BuildKitAttemptError("BUILD_CANCELED", true);
       const result = BuildCandidateSchema.parse({

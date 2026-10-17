@@ -6,34 +6,27 @@ import {
 import type { BuildCandidateVerifier, BuildQueuePort } from "@praetorium/application/builds";
 import { GhcrCandidateVerifier, GhcrRegistryClient, requireSha256Digest } from "@praetorium/ghcr";
 import type { CompositionArtifactInspector, RegistryCredential } from "@praetorium/ghcr";
-import { BuildKitProvider } from "@praetorium/buildkit";
+import {
+  BuildKitImageRootfsExporter,
+  BuildKitProvider,
+  readBuildKitRegistryCredential,
+  validateBuildKitFiles,
+} from "@praetorium/buildkit";
 import type { BuildCandidateReceiptReader } from "@praetorium/buildkit";
 import { pathToFileURL } from "node:url";
 import { readBuildWorkerConfig } from "./config.js";
 import { BuildQueueHttpClient, readBuildServiceToken } from "./http-client.js";
 import { readRegistryPullCredential } from "./registry-credential.js";
-import { validateBuildKitFiles } from "@praetorium/buildkit";
-
-export class CompositionInspectionUnavailableError extends Error {
-  constructor() {
-    super("immutable image closure inspection and producer smoke are unavailable");
-    this.name = "CompositionInspectionUnavailableError";
-  }
-}
-
-/**
- * Default entry composition refuses to sign candidates until a digest-backed
- * image closure inspector and smoke runner are installed.
- */
-export class UnavailableCompositionArtifactInspector implements CompositionArtifactInspector {
-  async inspectAndSmoke(): Promise<never> {
-    throw new CompositionInspectionUnavailableError();
-  }
-}
+import {
+  ScriptoriumBuildCandidateReceiptReader,
+  ScriptoriumCompositionArtifactInspector,
+  type BuildKitRootfsExporter,
+} from "./composition-artifacts.js";
 
 export type BuildWorkerDependencies = {
   receiptReader?: BuildCandidateReceiptReader;
   compositionInspector?: CompositionArtifactInspector;
+  rootfsExporter?: BuildKitRootfsExporter;
   registryCredential?: RegistryCredential;
   queue?: BuildQueuePort;
   signer?: Awaited<ReturnType<typeof loadFileBuilderSigner>>;
@@ -71,18 +64,28 @@ export async function createBuildWorker(
     (config.registryPullCredentialFile
       ? await readRegistryPullCredential(config.registryPullCredentialFile)
       : undefined);
+  const publishCredential =
+    registryOrigin.host === "ghcr.io"
+      ? await readBuildKitRegistryCredential(config.buildKit, registryOrigin.host)
+      : undefined;
   const registry = new GhcrRegistryClient({
     registryUrl: config.registryUrl,
     ...(config.registryAllowInsecureLoopback ? { allowInsecureLoopback: true } : {}),
     allowedRepositories: [outputRepository, compositionRepository],
+    publishRepositories: [compositionRepository],
     maxImageLayerBytes: config.maxImageLayerBytes,
     maxImageVerificationMs: config.maxImageVerificationMs,
     maxRegistryRequestMs: config.maxRegistryRequestMs,
+    maxMetadataBlobBytes: 4 * 1024 * 1024,
     ...(registryCredential ? { pullCredential: registryCredential } : {}),
+    ...(publishCredential ? { publishCredential } : {}),
   });
+  const rootfsExporter = dependencies.rootfsExporter ?? new BuildKitImageRootfsExporter(config.buildKit);
   const verifier = new GhcrCandidateVerifier(
     registry,
-    dependencies.compositionInspector ?? new UnavailableCompositionArtifactInspector(),
+    dependencies.compositionInspector ?? new ScriptoriumCompositionArtifactInspector(registry, config.buildKit, { rootfsExporter }),
+    undefined,
+    config.maxImageVerificationMs,
   );
   const candidateVerifier: BuildCandidateVerifier = {
     verify: async ({ buildKey, expected, candidate, signal }) => {
@@ -122,9 +125,13 @@ export async function createBuildWorker(
       maxResponseBytes: config.maxResponseBytes,
       leaseSeconds: config.leaseSeconds,
     });
-  const provider = new BuildKitProvider(config.buildKit, {
-    ...(dependencies.receiptReader ? { receiptReader: dependencies.receiptReader } : {}),
-  });
+  const receiptReader = dependencies.receiptReader ?? new ScriptoriumBuildCandidateReceiptReader(
+    registry,
+    config.buildKit,
+    compositionRepository,
+    { rootfsExporter },
+  );
+  const provider = new BuildKitProvider(config.buildKit, { receiptReader });
   return new BuildWorkerService(queue, provider, attestor, {
     workerId: config.workerId,
     leaseSeconds: config.leaseSeconds,

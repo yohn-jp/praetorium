@@ -24,6 +24,7 @@
     "@praetorium/buildkit": "workspace:*",
     "@praetorium/contracts": "workspace:*",
     "@praetorium/ghcr": "workspace:*",
+    "@praetorium/scriptorium": "workspace:*",
     "yaml": "2.9.1",
     "zod": "4.4.3"
   }

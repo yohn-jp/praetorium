@@ -453,6 +453,123 @@ export class GhcrRegistryClient {
     return this.fetchBlob(repo, expectedDigest, token, { maxBytes }, signal);
   }
 
+  /** Uploads one bounded digest-addressed metadata blob to an explicit derived-output repository. */
+  async publishBlob(repository: string, bytes: Uint8Array, signal?: AbortSignal): Promise<Sha256Digest> {
+    const repo = this.requireAllowedRepository(repository);
+    const anonymousLoopbackPublisher =
+      this.options.allowInsecureLoopback === true &&
+      this.baseUrl.protocol === "http:" &&
+      isLoopback(this.baseUrl.hostname);
+    if (!this.publishRepositories.has(repo) || (!this.options.publishCredential && !anonymousLoopbackPublisher)) {
+      throw new RegistryError("unauthorized", "dedicated registry publisher is not configured for this repository");
+    }
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > this.maxMetadataBlobBytes) {
+      throw new RegistryError("invalid_content", "metadata blob exceeds the configured size limit");
+    }
+    const digest = await sha256Digest(bytes);
+    const token = await this.getToken(repo, ["pull", "push"], this.options.publishCredential, signal);
+    const blobUrl = new URL(`/v2/${repo}/blobs/${encodeURIComponent(digest)}`, this.baseUrl);
+    const authorization = new Headers();
+    if (token) authorization.set("authorization", `Bearer ${token}`);
+    const alreadyPresent = await this.withRegistryRequest<boolean>(
+      blobUrl,
+      { method: "HEAD", headers: authorization, redirect: "manual" },
+      signal,
+      "blob existence check",
+      async (response) => {
+        if (response.status === 200) {
+          const headerDigest = response.headers.get("docker-content-digest");
+          if (headerDigest !== null && headerDigest !== digest) {
+            throw new RegistryError("invalid_content", "registry blob existence digest does not match requested bytes");
+          }
+          void response.body?.cancel().catch(() => undefined);
+          return true;
+        }
+        if (response.status === 404) {
+          void response.body?.cancel().catch(() => undefined);
+          return false;
+        }
+        if (response.status === 401 || response.status === 403) {
+          throw new RegistryError("unauthorized", "registry denied metadata blob access");
+        }
+        if (response.status === 429) throw new RegistryError("rate_limited", "registry rate limit exceeded");
+        throw new RegistryError("unavailable", `registry blob existence check returned ${response.status}`);
+      },
+    );
+    if (alreadyPresent) return digest;
+
+    const uploadUrl = new URL(`/v2/${repo}/blobs/uploads/`, this.baseUrl);
+    const uploadLocation = await this.withRegistryRequest<URL>(
+      uploadUrl,
+      { method: "POST", headers: authorization, redirect: "manual" },
+      signal,
+      "blob upload start",
+      async (response) => {
+        if (response.status === 401 || response.status === 403) {
+          throw new RegistryError("unauthorized", "registry denied metadata blob upload");
+        }
+        if (response.status === 429) throw new RegistryError("rate_limited", "registry rate limit exceeded");
+        if (response.status !== 202) {
+          throw new RegistryError("unavailable", `registry blob upload start returned ${response.status}`);
+        }
+        const location = response.headers.get("location");
+        if (!location || location.length > 8192) {
+          throw new RegistryError("invalid_content", "registry omitted or oversized the upload location");
+        }
+        const resolved = new URL(location, this.baseUrl);
+        const uploadPrefix = `/v2/${repo}/blobs/uploads/`;
+        const uploadId = resolved.pathname.startsWith(uploadPrefix)
+          ? resolved.pathname.slice(uploadPrefix.length).replace(/\/$/u, "")
+          : "";
+        if (
+          resolved.origin !== this.baseUrl.origin ||
+          resolved.username !== "" ||
+          resolved.password !== "" ||
+          resolved.hash !== "" ||
+          !/^[A-Za-z0-9._~-]{1,512}$/u.test(uploadId) ||
+          uploadId === "." ||
+          uploadId === ".." ||
+          resolved.search.length > 4096
+        ) {
+          throw new RegistryError("invalid_content", "registry returned an unsafe upload location");
+        }
+        void response.body?.cancel().catch(() => undefined);
+        return resolved;
+      },
+    );
+    uploadLocation.searchParams.set("digest", digest);
+    await this.withRegistryRequest(
+      uploadLocation,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/octet-stream",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: Buffer.from(bytes),
+        redirect: "manual",
+      },
+      signal,
+      "blob upload",
+      async (response) => {
+        if (response.status === 401 || response.status === 403) {
+          throw new RegistryError("unauthorized", "registry denied metadata blob upload");
+        }
+        if (response.status === 429) throw new RegistryError("rate_limited", "registry rate limit exceeded");
+        if (response.status !== 201) {
+          throw new RegistryError("unavailable", `registry blob upload returned ${response.status}`);
+        }
+        const headerDigest = response.headers.get("docker-content-digest");
+        if (headerDigest !== null && headerDigest !== digest) {
+          throw new RegistryError("invalid_content", "registry stored metadata under a different digest");
+        }
+        void response.body?.cancel().catch(() => undefined);
+        return undefined;
+      },
+    );
+    return digest;
+  }
+
   private async withAbortBudget<T>(
     parentSignal: AbortSignal | undefined,
     timeoutMs: number,

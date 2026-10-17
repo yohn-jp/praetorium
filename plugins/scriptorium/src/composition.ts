@@ -19,16 +19,8 @@ const CompositionRequestSchema = z.strictObject({
 
 export type CompositionRequest = z.infer<typeof CompositionRequestSchema>;
 
-/**
- * This seam must be backed by the producer's versioned resolver. Scriptorium
- * currently publishes no resolver for `scriptorium-build/v1`, so callers must
- * fail closed until one is available. The adapter verifies its result against
- * the catalog's declared dependency graph; it does not invent module ordering
- * or a new module contract-range implementation. The inspected producer's
- * `packages/module-runtime/src/module-plan.ts` checks exact numeric
- * `contractVersion === CONTRACT_VERSION`; it has no `contractRange` field, so
- * that legacy resolver cannot satisfy this interface for the new catalog.
- */
+/** The producer owns resolution and ships the revision-bound resolver artifact.
+ * The adapter verifies its result against the catalog dependency graph. */
 export interface ProducerCatalogResolver {
   readonly contractVersion: BuildCatalog["contractVersion"];
   readonly producerRevision: string;

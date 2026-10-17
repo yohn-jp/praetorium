@@ -6,6 +6,7 @@ import type { BuildKitProviderConfig } from "../src/types.js";
 import {
   validateBuildKitConfig,
   validateBuildKitFiles,
+  readBuildKitRegistryCredential,
   validateRegistryAuth,
 } from "../src/config.js";
 
@@ -60,6 +61,21 @@ describe("BuildKit worker configuration", () => {
     const config = await createConfig();
     expect(() => validateBuildKitConfig(config)).not.toThrow();
     await expect(validateBuildKitFiles(config)).resolves.toBeUndefined();
+  });
+
+  it("reads only a Basic registry credential from the approved private BuildKit auth file", async () => {
+    const config = await createConfig();
+    await expect(readBuildKitRegistryCredential(config, "registry.example")).resolves.toEqual({
+      username: "user",
+      password: "token",
+    });
+    await expect(readBuildKitRegistryCredential(config, "outside.example")).rejects.toThrow();
+    await writeFile(
+      path.join(config.dockerConfigDirectory, "config.json"),
+      JSON.stringify({ auths: { "registry.example": { auth: "not-base64!" } } }),
+      { mode: 0o600 },
+    );
+    await expect(readBuildKitRegistryCredential(config, "registry.example")).rejects.toThrow();
   });
 
   it("rejects non-TLS endpoints, malformed server names, unsafe repositories and excessive limits", async () => {

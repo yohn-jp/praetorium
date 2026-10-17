@@ -32,6 +32,7 @@ export interface BuildCandidateReceiptReader {
     metadataFile: string;
     expectedInput: BuildInput;
     outputRepository: string;
+    signal?: AbortSignal;
   }): Promise<{ compositionManifest: BuildCandidate["compositionManifest"] }>;
 }
 

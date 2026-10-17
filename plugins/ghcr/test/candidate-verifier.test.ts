@@ -260,4 +260,22 @@ describe("GHCR candidate verification", () => {
       .rejects.toMatchObject({ reason: "canceled" });
     expect(registry.verifyImage).not.toHaveBeenCalled();
   });
+
+  it("aborts a stalled image inspection at the configured verification deadline", async () => {
+    const { registry, candidate } = await fixture();
+    let inspectionSignal: AbortSignal | undefined;
+    const stalledInspector: CompositionArtifactInspector = {
+      inspectAndSmoke: vi.fn((_input, signal) => {
+        inspectionSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }),
+    };
+    const verifier = new GhcrCandidateVerifier(registry, stalledInspector, undefined, 5);
+
+    await expect(verifier.verifyUnsignedCandidate(candidate, approvedOutput, activeSignal))
+      .rejects.toMatchObject({ reason: "closure" });
+    expect(inspectionSignal?.aborted).toBe(true);
+  });
 });

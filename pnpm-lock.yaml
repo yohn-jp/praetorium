@@ -68,6 +68,9 @@ importers:
       '@praetorium/ghcr':
         specifier: workspace:*
         version: link:../../plugins/ghcr
+      '@praetorium/scriptorium':
+        specifier: workspace:*
+        version: link:../../plugins/scriptorium
       yaml:
         specifier: 2.9.1
         version: 2.9.1

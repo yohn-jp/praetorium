@@ -8,8 +8,8 @@ On Proxmox create two independent Linux VMs:
 
 | Guest | Function | Suggested initial allocation |
 | --- | --- | --- |
-| runtime | NixOS, K3s, Flux, cert-manager, Traefik, Praetorium deployments | 2–4 vCPU, 4–8 GiB RAM, persistent OS disk |
-| build | NixOS, rootless mTLS BuildKit, separately bounded cache device | 2–4 vCPU, 4–8 GiB RAM, persistent OS disk and separate preformatted XFS cache device |
+| runtime | Ubuntu or NixOS, K3s, Flux, cert-manager, Traefik, Praetorium deployments | 2–4 vCPU, 4–8 GiB RAM, persistent OS disk |
+| build | Ubuntu or NixOS, rootless mTLS BuildKit, separately bounded cache device | 2–4 vCPU, 4–8 GiB RAM, persistent OS disk and separate preformatted XFS cache device |
 
 The numbers are starting estimates, not tested sizing limits. A single-VM BuildKit+runtime arrangement is deliberately disallowed by the current BuildKit role; do not bypass its no-K3s assertion. Proxmox itself remains untouched. Follow [NixOS initial install](NIXOS-INSTALL.md) on each VM, or the isolated [Ubuntu 24.04 bootstrap](UBUNTU-2404.md) on fresh Ubuntu guests. Ubuntu uses its own root-owned JSON inputs and does not use `bootstrap-linux.sh` or NixOS modules.
 
@@ -21,7 +21,7 @@ cd /opt/praetorium
 git checkout --detach COMMIT
 ```
 
-Prepare an operator-specific role module **outside Git**. Copy the relevant sample from `infrastructure/nixos/examples/` to `/root/praetorium-runtime.nix` or `/root/praetorium-build.nix`, fill required source CIDRs, admin public key, cluster ID and role-specific resources. The Runtime `clusterId` must exactly match `inventory.clusterId`. Supply the BuildKit XFS device and certificate paths; the script does not format devices or mint private trust roots. Never put private key contents in Nix source.
+**Only for NixOS guests:** Prepare an operator-specific role module **outside Git**. Copy the relevant sample from `infrastructure/nixos/examples/` to `/root/praetorium-runtime.nix` or `/root/praetorium-build.nix`, fill required source CIDRs, admin public key, cluster ID and role-specific resources. The Runtime `clusterId` must exactly match `inventory.clusterId`. Supply the BuildKit XFS device and certificate paths; the script does not format devices or mint private trust roots. Never put private key contents in Nix source.
 
 ```sh
 sudo bash scripts/bootstrap-linux.sh runtime /root/praetorium-runtime.nix --check
@@ -32,6 +32,8 @@ sudo bash scripts/bootstrap-linux.sh build /root/praetorium-build.nix --apply
 ```
 
 `--check` generates/pins the host flake under `/etc/nixos` (if not already bootstrap-managed) and builds it but does not switch the operating system. `--apply` explicitly switches to the built role. Existing unrelated `/etc/nixos/flake.nix` is not overwritten. The source flake follows the repository's pinned `infrastructure/nixos/flake.lock`. Preserve `/etc/nixos` (including its generated `flake.lock`) and the source checkout revision for reproducibility.
+
+**For Ubuntu guests, use the corresponding Python commands in [UBUNTU-2404.md](UBUNTU-2404.md) instead of the NixOS commands above.**
 
 The runtime node has the `praetorium.io/cluster-id` label from the selected host role's `clusterId` setting; K3s deploy will refuse an unlabeled/different cluster. The NixOS role installs the required kubectl/Kustomize/Flux and Node 24 tools. Ubuntu operators supply pinned tools on the deployment workstation as described in the Ubuntu runbook. Start/restart the VM and check `systemctl status k3s`, `kubectl get nodes`, and on the build host `systemctl status praetorium-buildkit`. These services must be operational before the deployment command can succeed.
 
@@ -102,8 +104,8 @@ Provisioner admission depends on the live producer contract and signed compositi
 
 ### Files to preserve
 
-- Public: immutable repository revision, NixOS flake.lock, nonsecret deployment inventory, versioned container image digests, Kustomize/controller manifests and executable scripts.
-- Private: /etc/nixos generated host flake/role, private deployment inventory when it carries operator endpoints, permission-protected Secret files and manifest, Cloudflare/BuildKit/registry credentials, recovery keys, kubeconfig.
+- Public: immutable repository revision, NixOS flake.lock when applicable, nonsecret deployment inventory, versioned container image digests, Kustomize/controller manifests and executable scripts.
+- Private: OS-specific host configuration (NixOS /etc/nixos or Ubuntu /etc/praetorium), private deployment inventory when it carries operator endpoints, permission-protected Secret files and manifest, Cloudflare/BuildKit/registry credentials, recovery keys, kubeconfig.
 - Remote: Cloudflare D1/KV/DO and Workers Secrets; GHCR/OCI artifacts; selected K3s cluster state.
 
 No Proxmox host SSH, Proxmox API, container-volume deletion, disk formatting, secrets in Nix store or public release publication is performed by these scripts.

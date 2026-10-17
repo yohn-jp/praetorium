@@ -22,6 +22,9 @@ BUILD_ROOT = Path("/var/lib/praetorium-buildkit")
 BUILD_CONFIG = Path("/etc/praetorium/buildkitd.toml")
 BUILD_UNIT = Path("/etc/systemd/system/praetorium-buildkit.service")
 APPARMOR_PROFILE = Path("/etc/apparmor.d/praetorium-rootlesskit")
+DISK_CHECK = Path("/usr/local/libexec/praetorium-buildkit-disk-check.py")
+DISK_UNIT = Path("/etc/systemd/system/praetorium-buildkit-disk-check.service")
+DISK_TIMER = Path("/etc/systemd/system/praetorium-buildkit-disk-check.timer")
 K3S_CONFIG = Path("/etc/rancher/k3s/config.yaml")
 
 
@@ -184,10 +187,30 @@ def runtime_preflight(config):
     free_port(address, 6443)
 
 
+def build_storage_preflight(config):
+    for key in ("gcMaxUsedMiB", "minFreeMiB"):
+        require(type(config[key]) is int and 1024 <= config[key] <= 1048576,
+                key + " outside bounded range")
+    # A new directory on the existing ext4 OS filesystem; no device changes.
+    require(BUILD_ROOT.resolve() == BUILD_ROOT, "BuildKit cache path must not traverse symlinks")
+    if BUILD_ROOT.exists():
+        require(BUILD_ROOT.is_dir() and not any(BUILD_ROOT.iterdir()),
+                "BuildKit cache must be absent or empty; refusing to repurpose existing data")
+    parent = BUILD_ROOT if BUILD_ROOT.exists() else BUILD_ROOT.parent
+    meta = parent.stat()
+    require(meta.st_uid == 0 and (meta.st_mode & 0o022) == 0,
+            "BuildKit cache parent must be root-owned and not group/other writable")
+    require(output("findmnt", "-n", "-o", "FSTYPE", "--target", str(parent)) == "ext4",
+            "Ubuntu BuildKit cache requires the existing ext4 filesystem")
+    available = shutil.disk_usage(parent).free
+    require(available >= config["minFreeMiB"] * 1024 * 1024,
+            "insufficient free disk space for BuildKit; below minFreeMiB")
+
+
 def build_preflight(config):
     only_keys(config, ["role", "bindAddress", "listenPort", "clientCidrs",
                        "egressCidrs", "egressProxyUrl", "tls",
-                       "quotaMiB", "cpuQuota", "memoryMax", "tasksMax"], "build config")
+                       "gcMaxUsedMiB", "minFreeMiB", "cpuQuota", "memoryMax", "tasksMax"], "build config")
     address = private_ipv4(config["bindAddress"], "bindAddress")
     interface_address(address)
     require(type(config["listenPort"]) is int and 1024 <= config["listenPort"] <= 65535,
@@ -213,26 +236,19 @@ def build_preflight(config):
     pub_from_cert = output("openssl", "x509", "-in", cert, "-pubkey", "-noout")
     pub_from_key = output("openssl", "pkey", "-in", key, "-pubout")
     require(pub_from_cert == pub_from_key, "server certificate and private key do not match")
-    require(type(config["quotaMiB"]) is int and 1024 <= config["quotaMiB"] <= 1048576,
-            "quotaMiB outside bounded range")
     require(isinstance(config["cpuQuota"], str) and re.fullmatch(r"[1-9][0-9]{0,3}%", config["cpuQuota"]), "invalid cpuQuota")
     require(isinstance(config["memoryMax"], str) and re.fullmatch(r"[1-9][0-9]{0,5}[MGT]", config["memoryMax"]), "invalid memoryMax")
     require(type(config["tasksMax"]) is int and 16 <= config["tasksMax"] <= 4096, "invalid tasksMax")
-    for tool in ("rootlesskit", "slirp4netns", "buildkitd", "xfs_quota",
+    for tool in ("rootlesskit", "slirp4netns", "buildkitd", "findmnt", "python3",
                  "apparmor_parser", "useradd", "getent"):
         executable(tool)
     oci_runtime()
-    require(BUILD_ROOT.is_mount(), "dedicated XFS cache must already be mounted; never formats disks")
-    require(not any(BUILD_ROOT.iterdir()), "dedicated BuildKit cache is not empty; refusing to relabel existing data")
+    build_storage_preflight(config)
     require(not Path("/var/run/docker.sock").exists(), "privileged Docker socket exists on BuildKit host")
-    mount = output("findmnt", "-n", "-o", "FSTYPE,OPTIONS", "--mountpoint", str(BUILD_ROOT))
-    require(mount.startswith("xfs ") and
-            any(x in mount.split(" ", 1)[1].split(",") for x in ("prjquota", "pquota")),
-            "XFS project quota must be enabled on the dedicated mount")
-    require(not Path("/etc/projects").exists() and not Path("/etc/projid").exists(),
-            "existing XFS project mappings require operator review, refusing overwrite")
     require(not BUILD_CONFIG.exists() and not BUILD_UNIT.exists() and not APPARMOR_PROFILE.exists(),
             "existing BuildKit/Praetorium config; refusing replacement")
+    require(not any(p.exists() for p in (DISK_CHECK, DISK_UNIT, DISK_TIMER)),
+            "existing BuildKit disk monitor; refusing replacement")
     require(subprocess.run(["getent", "passwd", "buildkit"], capture_output=True).returncode != 0,
             "existing buildkit account; refusing to reuse")
     # Ubuntu's global unprivileged userns mitigation must not be weakened here.
@@ -297,11 +313,6 @@ def apply_build(config):
         entries = Path(filename).read_text().splitlines()
         require(any(line.startswith("buildkit:") for line in entries),
                 "buildkit subordinate IDs missing after user creation: " + filename)
-    write_new(Path("/etc/projects"), "2001:" + str(BUILD_ROOT) + "\n")
-    write_new(Path("/etc/projid"), "praetorium-buildkit:2001\n")
-    execute("xfs_quota", "-x", "-c", "project -s praetorium-buildkit",
-            "-c", "limit -p bhard=" + str(config["quotaMiB"]) + "m praetorium-buildkit",
-            str(BUILD_ROOT))
     state = BUILD_ROOT / "state"
     state.mkdir(mode=0o700, exist_ok=False)
     execute("chown", "-R", "buildkit:buildkit", str(state))
@@ -318,7 +329,8 @@ def apply_build(config):
         '[worker.oci]', '  rootless = true',
         '  binary = ' + json.dumps(runtime),
         '  max-parallelism = 1', '  gc = true',
-        '  maxUsedSpace = ' + str(config["quotaMiB"] * 1024 * 1024),
+        '  maxUsedSpace = ' + str(config["gcMaxUsedMiB"] * 1024 * 1024),
+        '  minFreeSpace = ' + str(config["minFreeMiB"] * 1024 * 1024),
         '  reservedSpace = "5%"', ''
     ]))
     # Path-scoped AppArmor accommodation, not a host-wide sysctl disable.
@@ -362,7 +374,24 @@ def apply_build(config):
         "UMask=0077", "",
         "[Install]", "WantedBy=multi-user.target", ""
     ]))
+    write_new(DISK_CHECK, Path(__file__).with_name("check-build-disk.py").read_text(), 0o755)
+    write_new(DISK_UNIT, "\n".join([
+        "[Unit]", "Description=Check free space on the shared BuildKit filesystem", "",
+        "[Service]", "Type=oneshot", "User=buildkit", "Group=buildkit",
+        "ExecStart=" + executable("python3") + " " + str(DISK_CHECK) +
+        " --cache " + str(BUILD_ROOT) + " --min-free-mib " + str(config["minFreeMiB"]),
+        "NoNewPrivileges=true", "ProtectSystem=strict", "ProtectHome=true",
+        "PrivateTmp=true", "PrivateDevices=true", "CapabilityBoundingSet=",
+        "SyslogIdentifier=praetorium-buildkit-disk", ""
+    ]))
+    write_new(DISK_TIMER, "\n".join([
+        "[Unit]", "Description=Monitor BuildKit filesystem free space every minute", "",
+        "[Timer]", "OnBootSec=1min", "OnUnitActiveSec=1min", "AccuracySec=5s", "",
+        "[Install]", "WantedBy=timers.target", ""
+    ]))
     execute("systemctl", "daemon-reload")
+    execute("systemctl", "start", "praetorium-buildkit-disk-check.service")
+    execute("systemctl", "enable", "--now", "praetorium-buildkit-disk-check.timer")
     execute("systemctl", "enable", "--now", "praetorium-buildkit.service")
     for attempt in range(12):
         if (subprocess.run(["systemctl", "is-active", "--quiet",

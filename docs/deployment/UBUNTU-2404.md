@@ -10,7 +10,7 @@ with application workloads. No changes to NixOS roles are required.
 | Guest | Role | Bootstrapped service |
 | --- | --- | --- |
 | Runtime | `runtime` | K3s server (Traefik disabled; declared by Flux), cluster identity label |
-| Build | `build` | Rootless BuildKit with mTLS, bounded XFS cache and systemd limits |
+| Build | `build` | Rootless BuildKit with mTLS, GC-managed ext4 cache and systemd limits |
 
 No VM/disk creation, disk formatting, SSH, UFW, DNS, external ingress, trust-key
 generation, container publication or production delivery is performed. The
@@ -55,16 +55,15 @@ disables bundled Traefik (the existing Flux HelmRelease owns Traefik).
 
 ### Build
 
-Before bootstrap, the operator must provision **a separate existing XFS
-filesystem**, already mounted at `/var/lib/praetorium-buildkit` with
-`prjquota`/ `pquota` enabled. The script refuses to format disks or
-repurpose a root filesystem. Ensure a project ID of 2001 is reserved for this
-new dedicated VM (the bootstrap refuses existing `/etc/projects` or
-`/etc/projid` mappings).
+BuildKit uses `/var/lib/praetorium-buildkit` on the **existing ext4 OS
+filesystem**. No extra disk, dedicated mount, XFS or Project Quota is required.
+The directory must be absent or empty before bootstrap; symlinks and existing
+cache data are rejected. The script does not format, repartition or mount a
+device and does not modify `/etc/projects` or `/etc/projid`.
 
 Install the reviewed and pinned `buildkitd`, `rootlesskit` and
 `slirp4netns` executables, and an OCI runtime (`runc` or `buildkit-runc`)
-(plus `xfsprogs`, `uidmap`,
+(plus `uidmap`,
 `apparmor-utils`/parser, `iproute2`, `python3`). Do not use mutable
 `latest` binaries. Preflight requires the OCI runtime on PATH; apply writes
 its resolved path into the BuildKit worker configuration. Certificate IP
@@ -79,8 +78,33 @@ for a mismatched IP. Fill the operator input JSON with:
   strictly outside Git in `/run/secrets` or
   `/var/lib/praetorium/credentials`. The Build Worker uses its own separate
   operator-provisioned **client** mTLS certificate and key.
-- The hard project quota in MiB, `cpuQuota` (systemd percentage), `memoryMax`
-  (systemd memory limit), and `tasksMax` (integer).
+- `gcMaxUsedMiB` (BuildKit GC cache target), `minFreeMiB` (filesystem free-space
+  target and monitor warning threshold), `cpuQuota` (systemd percentage),
+  `memoryMax` (systemd memory limit), and `tasksMax` (integer). Both disk values
+  are positive integers from 1024 through 1048576 MiB. For example, start with
+  a GC target of 8192 MiB and a minimum free-space target of 2048 MiB on a
+  suitably sized validation guest; choose values for the actual filesystem.
+
+`quotaMiB` from the initial XFS-only Ubuntu bootstrap is replaced by
+`gcMaxUsedMiB` and `minFreeMiB`; update the private input file explicitly.
+These GC settings are **not a hard disk-usage quota**. Active builds, cache
+that cannot be reclaimed, exported images, logs and other OS activity can
+exceed the cache target or consume the remaining space. CPU/memory/task
+limits do not impose a disk cap. Do not promise that ext4 prevents disk-full
+conditions.
+
+Bootstrap checks the available space before apply, then installs
+`praetorium-buildkit-disk-check.timer`, which checks filesystem free space
+every minute. Its oneshot service emits a JSON report to the journal and
+fails with `low_disk_space` below `minFreeMiB`. The monitor reports pressure;
+it does not kill builds or delete data. Connect the failed-unit/journal
+signal to the operator's alerting and respond before the OS disk fills.
+
+```sh
+sudo systemctl list-timers praetorium-buildkit-disk-check.timer
+sudo journalctl -u praetorium-buildkit-disk-check.service -n 10 --no-pager
+df -h /var/lib/praetorium-buildkit
+```
 
 This BuildKit service does not receive K3s credentials, a privileged Docker
 socket, GitHub tokens or signing keys. Ubuntu 24.04 / 26.04 normally confines

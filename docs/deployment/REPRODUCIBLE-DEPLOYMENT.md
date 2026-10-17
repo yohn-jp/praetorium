@@ -9,7 +9,7 @@ On Proxmox create two independent Linux VMs:
 | Guest | Function | Suggested initial allocation |
 | --- | --- | --- |
 | runtime | Ubuntu or NixOS, K3s, Flux, cert-manager, Traefik, Praetorium deployments | 2–4 vCPU, 4–8 GiB RAM, persistent OS disk |
-| build | Ubuntu or NixOS, rootless mTLS BuildKit, separately bounded cache device | 2–4 vCPU, 4–8 GiB RAM, persistent OS disk and separate preformatted XFS cache device |
+| build | Ubuntu or NixOS, rootless mTLS BuildKit | 2–4 vCPU, 4–8 GiB RAM; Ubuntu uses its ext4 OS disk with GC and free-space monitoring; NixOS retains its separate XFS cache device |
 
 The numbers are starting estimates, not tested sizing limits. A single-VM BuildKit+runtime arrangement is deliberately disallowed by the current BuildKit role; do not bypass its no-K3s assertion. Proxmox itself remains untouched. Follow [NixOS initial install](NIXOS-INSTALL.md) on each VM, or the isolated [Ubuntu 24.04 / 26.04 bootstrap](UBUNTU-2404.md) on fresh Ubuntu guests. Ubuntu uses its own root-owned JSON inputs and does not use `bootstrap-linux.sh` or NixOS modules.
 

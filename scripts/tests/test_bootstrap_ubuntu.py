@@ -5,7 +5,8 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 
 spec = importlib.util.spec_from_file_location(
@@ -15,6 +16,46 @@ spec.loader.exec_module(bootstrap)
 
 
 class PreflightTests(unittest.TestCase):
+    def storage_root(self):
+        root = MagicMock(spec=Path)
+        root.resolve.return_value = root
+        root.exists.return_value = False
+        root.parent.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o40755)
+        return root
+
+    def test_ext4_os_disk_needs_no_dedicated_mount_or_quota(self):
+        root = self.storage_root()
+        with patch.object(bootstrap, "BUILD_ROOT", root), \
+                patch.object(bootstrap, "output", return_value="ext4"), \
+                patch.object(bootstrap.shutil, "disk_usage", return_value=
+                             SimpleNamespace(free=4 * 1024**3)):
+            bootstrap.build_storage_preflight({"gcMaxUsedMiB": 8192, "minFreeMiB": 2048})
+        root.is_mount.assert_not_called()
+
+    def test_storage_rejects_wrong_filesystem_or_low_free_space(self):
+        for filesystem, free in (("xfs", 4 * 1024**3), ("ext4", 1024**3)):
+            with self.subTest(filesystem=filesystem, free=free), \
+                    patch.object(bootstrap, "BUILD_ROOT", self.storage_root()), \
+                    patch.object(bootstrap, "output", return_value=filesystem), \
+                    patch.object(bootstrap.shutil, "disk_usage", return_value=SimpleNamespace(free=free)):
+                with self.assertRaises(ValueError):
+                    bootstrap.build_storage_preflight({"gcMaxUsedMiB": 8192, "minFreeMiB": 2048})
+
+    def test_storage_rejects_symlinks_existing_data_or_writable_parent(self):
+        for failure in ("symlink", "data", "parent"):
+            root = self.storage_root()
+            if failure == "symlink":
+                root.resolve.return_value = Path("/somewhere/else")
+            elif failure == "data":
+                root.exists.return_value = True
+                root.is_dir.return_value = True
+                root.iterdir.return_value = iter([Path("existing-cache")])
+            else:
+                root.parent.stat.return_value.st_mode = 0o40777
+            with self.subTest(failure=failure), patch.object(bootstrap, "BUILD_ROOT", root):
+                with self.assertRaises(ValueError):
+                    bootstrap.build_storage_preflight({"gcMaxUsedMiB": 8192, "minFreeMiB": 2048})
+
     def test_supported_ubuntu_lts_releases_are_accepted(self):
         for version in ("24.04", "26.04"):
             with self.subTest(version=version), patch.object(

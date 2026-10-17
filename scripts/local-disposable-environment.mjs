@@ -761,8 +761,43 @@ async function assertNoMountsBelow(root) {
   }
 }
 
+async function inspectMappedTree(root, rootDevice, owner) {
+  const args = ["--user"];
+  for (const [inner, outer, count] of owner.buildkitUidMap)
+    args.push(`--map-users=${inner}:${outer}:${count}`);
+  for (const [inner, outer, count] of owner.buildkitGidMap)
+    args.push(`--map-groups=${inner}:${outer}:${count}`);
+  const scanner = [
+    'const fs = await import("node:fs/promises");',
+    'const path = await import("node:path");',
+    "const [root, expectedDeviceText] = process.argv.slice(1);",
+    "const expectedDevice = Number(expectedDeviceText);",
+    'if (!path.isAbsolute(root) || !Number.isSafeInteger(expectedDevice)) throw new Error("invalid scan root/device");',
+    "const pending = [root];",
+    "while (pending.length > 0) {",
+    "  const current = pending.pop();",
+    "  const info = await fs.lstat(current);",
+    '  if (info.dev !== expectedDevice) throw new Error(`filesystem boundary under owned root: ${current}`);',
+    '  if (info.uid === 65534 || info.gid === 65534) throw new Error(`unmapped or ambiguous overflow owner under owned root: ${current}`);',
+    "  if (info.isDirectory()) for (const entry of await fs.readdir(current)) pending.push(path.join(current, entry));",
+    "}",
+  ].join("\n");
+  args.push(
+    "--setuid=0",
+    "--setgid=0",
+    "--mount",
+    "--propagation",
+    "private",
+    process.execPath,
+    "-e",
+    scanner,
+    root,
+    String(rootDevice),
+  );
+  await run(TOOL.unshare, args, { env: privateEnvironment(root), captureLimit: 4_000 });
+}
+
 async function verifyOwnedTree(root, owner) {
-  await assertNoMountsBelow(root);
   const rootInfo = await lstat(root);
   if (
     !rootInfo.isDirectory() ||
@@ -772,6 +807,12 @@ async function verifyOwnedTree(root, owner) {
   ) {
     throw new Error("refusing cleanup: disposable root ownership or permissions changed");
   }
+  await assertNoMountsBelow(root);
+  if (owner.schema === OWNER_SCHEMA && owner.buildkitUidMap !== null) {
+    await inspectMappedTree(root, rootInfo.dev, owner);
+    return;
+  }
+
   const pending = [root];
   const rootDevice = rootInfo.dev;
   while (pending.length > 0) {

@@ -1,0 +1,69 @@
+{
+  "schema": "praetorium.local-disposable-cleanup-preflight/v1",
+  "helper": {
+    "path": "/tmp/praetorium-owned-CU2A6s-proof-preservation-20261017/cleanup-owned-CU2A6s.mjs",
+    "sha256": "ab487ebaa1deeff8fe0ad6a733114304858530b10f212d86c95431e22fa599ac"
+  },
+  "cleanupMap": {
+    "path": "/tmp/praetorium-owned-CU2A6s-proof-preservation-20261017/cleanup-map.json",
+    "sha256": "3be5bed6ba2495e47673454f81de01747e83e40844d408fea5dedd029c595295"
+  },
+  "preflight": {
+    "result": "READ_ONLY_PREFLIGHT_PASS",
+    "processAndEndpointCheck": {
+      "knownPidsAbsent": [179865, 179842, 179829],
+      "knownProcessGroupsAbsent": [179865, 181044],
+      "sameUidProcessCommandLinesChecked": 70,
+      "endpointPathsAbsent": [
+        "/tmp/praetorium-owned-CU2A6s/runtime/buildkit.sock",
+        "/tmp/praetorium-owned-CU2A6s/runtime/buildkit-wide.sock"
+      ],
+      "unixSocketsUnderRoot": 0,
+      "registryTcpListener": null,
+      "mountsAtOrBelowRoot": 0,
+      "mappingSource": "fcf30aa2547fdf72be891ebcd3c452a9fe9eaf76d9e94e536835f4ddd4b3ee2f"
+    },
+    "scan": {
+      "mode": "preflight",
+      "root": "/tmp/praetorium-owned-CU2A6s",
+      "device": 2066,
+      "ownerMarkerSha256": "88091ce1464e37e710abed091bef7ad8e1ba9dd0951cc26e96a656e4101118c1",
+      "uidMap": [
+        [0, 1000, 1],
+        [1, 100000, 65536]
+      ],
+      "gidMap": [
+        [0, 100, 1],
+        [1, 100000, 65536]
+      ],
+      "overflowUid": 65534,
+      "overflowGid": 65534,
+      "entriesSeen": 146921,
+      "directoriesSeen": 18080,
+      "symlinksSeen": 5117,
+      "ownerPairCounts": [
+        ["0:0", 137693],
+        ["0:4", 2],
+        ["0:42", 13],
+        ["0:43", 3],
+        ["0:50", 1],
+        ["0:8", 1],
+        ["1000:0", 1],
+        ["1000:1000", 9192],
+        ["42:0", 2],
+        ["503:50", 13]
+      ],
+      "deleted": false
+    },
+    "cleanupMapSha256": "3be5bed6ba2495e47673454f81de01747e83e40844d408fea5dedd029c595295",
+    "preservationManifestSha256": "058b6adf76c441871121e8b1af4d27635f013ad724afa2ba4005b7ed8344140c"
+  },
+  "deletion": {
+    "status": "NOT_RUN",
+    "reason": "Global quiescence could not be established: a separate read-only /proc inspection found some systemd and mapped-container descriptors unreadable. This helper does not inspect unrelated process FDs/cwd or command lines from the subordinate UID range."
+  },
+  "review": {
+    "pathScopeAndSymlinkHandling": "PASS",
+    "globalProcessQuiescence": "BLOCKED"
+  }
+}

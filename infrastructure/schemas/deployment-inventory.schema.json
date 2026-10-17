@@ -114,7 +114,7 @@
             "array",
             "null"
           ],
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 16,
           "uniqueItems": true,
           "items": {

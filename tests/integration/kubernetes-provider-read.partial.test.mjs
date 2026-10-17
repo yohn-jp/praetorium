@@ -30,6 +30,52 @@ const TEST_TIMEOUT_MS = 420_000;
 const PROCESS_TIMEOUT_MS = 30_000;
 const RESPONSE_LIMIT_BYTES = 512 * 1024;
 const KUBERNETES_UID_PATTERN = /^[0-9a-f-]{36}$/u;
+const PROVIDER_RESULT_MARKER = "praetorium-t07-provider-read-v1";
+const PROVIDER_STAGE_ALLOWLIST = new Set([
+  "service-account-token-read",
+  "service-account-ca-read",
+  "credential-validation",
+  "runtime-input-validation",
+  "provider-construction",
+  "list-managed-instances",
+  "list-result-validation",
+  "inspect-known-absent-instance",
+  "inspection-result-validation",
+  "reservation-call-validation",
+  "complete",
+]);
+const PROVIDER_ERROR_CODE_ALLOWLIST = new Set([
+  "credential-file-unavailable",
+  "validation-failed",
+  "type-error",
+  "range-error",
+  "operation-failed",
+]);
+const RUNNER_STAGE_ALLOWLIST = new Set([
+  "canonical-bootstrap-read",
+  "image-archive-load",
+  "bootstrap-resource-create",
+  "probe-pod-create",
+  "wait-for-pod",
+  "verify-provider-result",
+]);
+const RESOURCE_KIND_ALLOWLIST = new Set([
+  "Namespace",
+  "ServiceAccount",
+  "ClusterRole",
+  "ClusterRoleBinding",
+  "Pod",
+]);
+const POD_PHASE_ALLOWLIST = new Set(["Pending", "Running", "Succeeded", "Failed", "Unknown"]);
+const TERMINATION_REASON_ALLOWLIST = new Set([
+  "Completed",
+  "Error",
+  "OOMKilled",
+  "ContainerCannotRun",
+  "StartError",
+  "DeadlineExceeded",
+]);
+const RUNTIME_SCHEME_ALLOWLIST = new Set(["containerd", "docker", "cri-o", "podman"]);
 
 class KubernetesApiStatusError extends Error {
   constructor(statusCode) {
@@ -408,6 +454,84 @@ class RecoveredCreateOutcomeError extends Error {
   }
 }
 
+function safeRunnerErrorCode(error) {
+  if (error instanceof UncertainCreateOutcomeError) return "uncertain-api-outcome";
+  if (error instanceof UnreapedProcessGroupError) return "process-group-unreaped";
+  if (error instanceof KubernetesApiStatusError) return "kubernetes-api-rejected";
+  if (error instanceof assert.AssertionError) return "assertion-failed";
+  if (error instanceof Error) return "operation-failed";
+  return "unknown";
+}
+
+function resourceLedgerEntry(resource, runId) {
+  const rawName = resource.metadata?.name;
+  const rawUid = resource.metadata?.uid;
+  const rawRunLabel = resource.metadata?.labels?.["praetorium.io/t07-run-id"];
+  const validName =
+    typeof rawName === "string" && /^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$/u.test(rawName);
+  const validUid = typeof rawUid === "string" && KUBERNETES_UID_PATTERN.test(rawUid);
+  const validRunLabel = typeof rawRunLabel === "string" && /^[0-9a-f]{20}$/u.test(rawRunLabel);
+
+  return {
+    kind: RESOURCE_KIND_ALLOWLIST.has(resource.kind) ? resource.kind : "unknown",
+    name: validName ? rawName : null,
+    uid: validUid ? rawUid : null,
+    runLabel: validRunLabel ? rawRunLabel : null,
+    runLabelMatches: rawRunLabel === runId,
+  };
+}
+
+function resourceLedgerSnapshot(resources, runId) {
+  return resources.map((resource) => resourceLedgerEntry(resource, runId));
+}
+
+function providerResultFromLog(log) {
+  let parsed;
+  try {
+    parsed = JSON.parse(log);
+  } catch {
+    return { readState: "invalid-json" };
+  }
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    parsed.marker !== PROVIDER_RESULT_MARKER
+  ) {
+    return { readState: "unrecognized-result" };
+  }
+
+  const stage = PROVIDER_STAGE_ALLOWLIST.has(parsed.stage) ? parsed.stage : "unknown";
+  if (parsed.status === "failed") {
+    const errorCode = PROVIDER_ERROR_CODE_ALLOWLIST.has(parsed.errorCode)
+      ? parsed.errorCode
+      : "operation-failed";
+    return {
+      readState: "parsed",
+      result: { marker: PROVIDER_RESULT_MARKER, status: "failed", stage, errorCode },
+    };
+  }
+  if (parsed.status !== "passed") return { readState: "unrecognized-result" };
+
+  return {
+    readState: "parsed",
+    result: {
+      marker: PROVIDER_RESULT_MARKER,
+      status: "passed",
+      stage,
+      tokenProjected: parsed.tokenProjected === true,
+      managedInstances: Number.isSafeInteger(parsed.managedInstances)
+        ? parsed.managedInstances
+        : null,
+      inspectedNamespace: parsed.inspectedNamespace === "absent" ? "absent" : "other",
+      writerCensusComplete: parsed.writerCensusComplete === true,
+      reservationCalls: Number.isSafeInteger(parsed.reservationCalls)
+        ? parsed.reservationCalls
+        : null,
+    },
+  };
+}
+
 function resourceCollectionPath(resource) {
   const namespace = encodeURIComponent(resource.metadata.namespace);
   switch (resource.kind) {
@@ -541,15 +665,84 @@ async function readPodLogs(kubectl, kubeconfig, podName) {
   return stdout.trim();
 }
 
+function safeImageIdentity(imageId) {
+  const value = typeof imageId === "string" ? imageId : "";
+  const runtimeMatch = /^([a-z0-9+.-]+):\/\//iu.exec(value);
+  const runtimeCandidate = runtimeMatch?.[1]?.toLowerCase();
+  const digest = value.match(/sha256:[0-9a-f]{64}/u)?.[0] ?? null;
+  return {
+    present: value.length > 0,
+    runtime: RUNTIME_SCHEME_ALLOWLIST.has(runtimeCandidate) ? runtimeCandidate : "unknown",
+    digest,
+    matchesPreservedImage: digest === EXPECTED_CONFIG || digest === EXPECTED_MANIFEST,
+  };
+}
+
+async function collectPodDiagnostics(kubectl, kubeconfig, podName, pod) {
+  const statuses = Array.isArray(pod.status?.containerStatuses) ? pod.status.containerStatuses : [];
+  const containerStatus = statuses.find((entry) => entry.name === "provider-read");
+  const terminated = containerStatus?.state?.terminated;
+  let providerLog = { readState: "unavailable" };
+  try {
+    providerLog = providerResultFromLog(await readPodLogs(kubectl, kubeconfig, podName));
+  } catch {
+    providerLog = { readState: "read-failed" };
+  }
+
+  const rawPodName = pod.metadata?.name;
+  const rawUid = pod.metadata?.uid;
+  const rawPhase = pod.status?.phase;
+  const rawReason = terminated?.reason;
+  const rawExitCode = terminated?.exitCode;
+  return {
+    result: providerLog.result,
+    report: {
+      marker: "praetorium-t07-provider-read-pod-diagnostic-v1",
+      pod: {
+        name:
+          typeof rawPodName === "string" &&
+          /^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$/u.test(rawPodName)
+            ? rawPodName
+            : null,
+        uid: typeof rawUid === "string" && KUBERNETES_UID_PATTERN.test(rawUid) ? rawUid : null,
+        phase: POD_PHASE_ALLOWLIST.has(rawPhase) ? rawPhase : "unknown",
+        runtimeImageID: safeImageIdentity(containerStatus?.imageID),
+        exitCode:
+          Number.isInteger(rawExitCode) && rawExitCode >= -255 && rawExitCode <= 255
+            ? rawExitCode
+            : null,
+        terminationReason:
+          typeof rawReason === "string"
+            ? TERMINATION_REASON_ALLOWLIST.has(rawReason)
+              ? rawReason
+              : "other"
+            : null,
+      },
+      app: {
+        readState: providerLog.readState,
+        ...(providerLog.result ?? {}),
+      },
+    },
+  };
+}
+
 async function removeByUid(client, resource, runId) {
   assert.match(
     resource.metadata?.uid ?? "",
     KUBERNETES_UID_PATTERN,
     "cleanup ledger entry has no valid UID; refusing delete",
   );
+  const ledgerEntry = resourceLedgerEntry(resource, runId);
   const pathname = resourcePath(resource);
   const current = await getOptional(client, pathname);
-  if (current === undefined) return;
+  if (current === undefined) {
+    return {
+      ...ledgerEntry,
+      outcome: "already-absent",
+      deleteAccepted: false,
+      absenceConfirmed: true,
+    };
+  }
   assert.match(
     current.metadata?.uid ?? "",
     KUBERNETES_UID_PATTERN,
@@ -579,16 +772,23 @@ async function removeByUid(client, resource, runId) {
   );
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    if ((await getOptional(client, pathname)) === undefined) return;
+    if ((await getOptional(client, pathname)) === undefined) {
+      return {
+        ...ledgerEntry,
+        outcome: "delete-accepted-and-404-confirmed",
+        deleteAccepted: true,
+        absenceConfirmed: true,
+      };
+    }
     await delay(500);
   }
   throw new Error(`UID-preconditioned cleanup did not finish for ${resource.kind}`);
 }
 
-async function cleanup(client, created, runId) {
+async function cleanup(client, created, runId, outcomes) {
   for (const resource of [...created].reverse()) {
     try {
-      await removeByUid(client, resource, runId);
+      outcomes.push(await removeByUid(client, resource, runId));
     } catch (error) {
       throw new Error(
         `cleanup stopped at ${resource.kind}; preserve remaining resources for reconciliation: ${error instanceof Error ? error.message : "cleanup failed"}`,
@@ -607,14 +807,25 @@ import { readFile } from "node:fs/promises";
 import { createInClusterKubernetesRuntimeProvider, parseRuntimeInstanceId, parseRuntimeRepositoryId } from "@praetorium/kubernetes";
 
 const marker = "praetorium-t07-provider-read-v1";
+const allowedErrorCodes = new Set(["credential-file-unavailable", "validation-failed", "type-error", "range-error", "operation-failed"]);
+let stage = "service-account-token-read";
+function failValidation() {
+  const error = new Error();
+  error.safeCode = "validation-failed";
+  throw error;
+}
 try {
   const token = await readFile("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8");
+  stage = "service-account-ca-read";
   const ca = await readFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "utf8");
-  if (token.trim().length === 0 || ca.trim().length === 0) throw new Error();
+  stage = "credential-validation";
+  if (token.trim().length === 0 || ca.trim().length === 0) failValidation();
+  stage = "runtime-input-validation";
   const clusterId = process.env.PRAETORIUM_T07_CLUSTER_ID;
   const instanceId = parseRuntimeInstanceId(process.env.PRAETORIUM_T07_INSTANCE_ID);
   const repositoryId = parseRuntimeRepositoryId(Number(process.env.PRAETORIUM_T07_REPOSITORY_ID));
   let reservationCalls = 0;
+  stage = "provider-construction";
   const provider = createInClusterKubernetesRuntimeProvider({
     namespacePrefix: process.env.PRAETORIUM_T07_NAMESPACE_PREFIX,
     clusterId,
@@ -636,8 +847,11 @@ try {
       recordCapacitySnapshot: async () => { reservationCalls += 1; throw new Error(); },
     },
   });
+  stage = "list-managed-instances";
   const page = await provider.listManagedInstances();
-  if (page.items.length !== 0 || page.nextCursor !== undefined) throw new Error();
+  stage = "list-result-validation";
+  if (page.items.length !== 0 || page.nextCursor !== null) failValidation();
+  stage = "inspect-known-absent-instance";
   const observation = await provider.inspect({
     instanceId,
     repositoryId,
@@ -646,6 +860,7 @@ try {
     clusterId,
   });
   const expectedNamespace = "praetorium-instances-" + instanceId.slice(4).toLowerCase();
+  stage = "inspection-result-validation";
   if (
     observation.namespaceExists !== false ||
     observation.state !== "absent" ||
@@ -654,12 +869,20 @@ try {
     observation.writerCensus.scope !== "instance-repository-all-epochs" ||
     observation.writerCensus.queriedNamespace !== expectedNamespace ||
     observation.writerCensus.queriedPodCount !== 0 ||
-    observation.writerCensus.pods.length !== 0 ||
-    reservationCalls !== 0
-  ) throw new Error();
-  console.log(JSON.stringify({ marker, status: "passed", tokenProjected: true, managedInstances: 0, inspectedNamespace: "absent", writerCensusComplete: true, reservationCalls }));
-} catch {
-  console.log(JSON.stringify({ marker, status: "failed", phase: "provider-read" }));
+    observation.writerCensus.pods.length !== 0
+  ) failValidation();
+  stage = "reservation-call-validation";
+  if (reservationCalls !== 0) failValidation();
+  stage = "complete";
+  console.log(JSON.stringify({ marker, status: "passed", stage, tokenProjected: true, managedInstances: 0, inspectedNamespace: "absent", writerCensusComplete: true, reservationCalls }));
+} catch (error) {
+  let errorCode = "operation-failed";
+  if (error?.safeCode === "validation-failed") errorCode = "validation-failed";
+  else if (stage === "service-account-token-read" || stage === "service-account-ca-read") errorCode = "credential-file-unavailable";
+  else if (error instanceof TypeError) errorCode = "type-error";
+  else if (error instanceof RangeError) errorCode = "range-error";
+  if (!allowedErrorCodes.has(errorCode)) errorCode = "operation-failed";
+  console.log(JSON.stringify({ marker, status: "failed", stage, errorCode }));
   process.exitCode = 1;
 }
 `;
@@ -868,6 +1091,72 @@ test("Kind kubeconfig selection follows the context's cluster and user reference
   );
 });
 
+test("provider page probe follows the nullable RuntimePage cursor contract", async () => {
+  const repo = path.resolve(import.meta.dirname, "../..");
+  const [typesSource, clientSource, providerSource] = await Promise.all([
+    readFile(path.join(repo, "plugins/kubernetes/src/types.ts"), "utf8"),
+    readFile(path.join(repo, "plugins/kubernetes/src/kubernetes/client.ts"), "utf8"),
+    readFile(path.join(repo, "plugins/kubernetes/src/kubernetes/provider.ts"), "utf8"),
+  ]);
+  assert.match(
+    typesSource,
+    /interface RuntimePage<T>\s*\{\s*readonly items: readonly T\[\];\s*readonly nextCursor: string \| null;/u,
+  );
+  assert.match(clientSource, /nextCursor: parseResourceVersion\(metadata\?\.continue\)/u);
+  assert.match(providerSource, /return \{ items, nextCursor: page\.nextCursor \}/u);
+  const program = providerProgram();
+  assert.match(program, /page\.items\.length !== 0 \|\| page\.nextCursor !== null/u);
+  assert.doesNotMatch(program, /page\.nextCursor !== undefined/u);
+});
+
+test("diagnostic result decoder retains only allowlisted stage and error fields", () => {
+  const failed = providerResultFromLog(
+    JSON.stringify({
+      marker: PROVIDER_RESULT_MARKER,
+      status: "failed",
+      stage: "list-result-validation",
+      errorCode: "operation-failed",
+      error: "credential-like-value-must-not-escape",
+    }),
+  );
+  assert.deepEqual(failed, {
+    readState: "parsed",
+    result: {
+      marker: PROVIDER_RESULT_MARKER,
+      status: "failed",
+      stage: "list-result-validation",
+      errorCode: "operation-failed",
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(failed), /credential-like-value/u);
+  assert.deepEqual(
+    providerResultFromLog(
+      JSON.stringify({
+        marker: PROVIDER_RESULT_MARKER,
+        status: "failed",
+        stage: "private-value",
+        errorCode: "private-value",
+      }),
+    ),
+    {
+      readState: "parsed",
+      result: {
+        marker: PROVIDER_RESULT_MARKER,
+        status: "failed",
+        stage: "unknown",
+        errorCode: "operation-failed",
+      },
+    },
+  );
+});
+
+test("embedded provider probe has valid ESM syntax without executing", async () => {
+  const result = await runBounded(process.execPath, ["--input-type=module", "--check"], {
+    input: providerProgram(),
+  });
+  assert.equal(result.stdout, "");
+});
+
 test(
   "bounded command timeout kills descendants and waits for process-group exit",
   { timeout: 10_000 },
@@ -986,6 +1275,10 @@ test(
     let acceptanceProof;
     let probeFailure;
     let probeFailed = false;
+    let runnerStage = "canonical-bootstrap-read";
+    let podDiagnostics;
+    let probeFailureCode;
+    const cleanupOutcomes = [];
     try {
       const namespaceYaml = await canonicalDoc(
         repo,
@@ -1012,6 +1305,7 @@ test(
         "praetorium-provisioner-bootstrap",
       );
 
+      runnerStage = "image-archive-load";
       await runBounded(
         podmanWrapper,
         [kind, "load", "image-archive", archive, "--name", EXPECTED_CLUSTER],
@@ -1027,6 +1321,7 @@ test(
       );
       imageLoadCompleted = true;
 
+      runnerStage = "bootstrap-resource-create";
       const namespace = await createFromSource(
         client,
         kubectl,
@@ -1157,6 +1452,7 @@ test(
         },
       };
       let createdPod;
+      runnerStage = "probe-pod-create";
       try {
         createdPod = await createPod(client, pod);
       } catch (error) {
@@ -1201,7 +1497,20 @@ test(
       }
       created.push(createdPod);
       const podPath = resourcePath(createdPod);
+      runnerStage = "wait-for-pod";
       const finished = await waitForPod(client, podPath, createdPod.metadata.uid);
+      runnerStage = "verify-provider-result";
+      const diagnostics = await collectPodDiagnostics(kubectl, owner.kubeconfig, podName, finished);
+      podDiagnostics = diagnostics.report;
+      console.log(
+        JSON.stringify({
+          marker: "praetorium-t07-provider-read-diagnostic-v1",
+          event: "pod-observed",
+          runId,
+          ...diagnostics.report,
+          created: resourceLedgerSnapshot(created, runId),
+        }),
+      );
       assert.equal(
         finished.status.phase,
         "Succeeded",
@@ -1215,13 +1524,12 @@ test(
       assert.ok(imageId, "runtime did not report the provider image identity");
       assert.ok(
         [EXPECTED_CONFIG, EXPECTED_MANIFEST].some((digest) => imageId.endsWith(digest)),
-        `runtime imageID ${imageId} did not resolve to the preserved image manifest or config digest`,
+        "runtime imageID did not resolve to the preserved image manifest or config digest",
       );
-      const log = await readPodLogs(kubectl, owner.kubeconfig, podName);
-      const result = JSON.parse(log);
-      assert.deepEqual(result, {
-        marker: "praetorium-t07-provider-read-v1",
+      assert.deepEqual(diagnostics.result, {
+        marker: PROVIDER_RESULT_MARKER,
         status: "passed",
+        stage: "complete",
         tokenProjected: true,
         managedInstances: 0,
         inspectedNamespace: "absent",
@@ -1253,6 +1561,7 @@ test(
       };
     } catch (error) {
       probeFailed = true;
+      probeFailureCode = safeRunnerErrorCode(error);
       if (error instanceof RecoveredCreateOutcomeError) {
         created.push(error.resource);
         probeFailure = new Error(
@@ -1270,7 +1579,29 @@ test(
       }
     }
 
+    console.log(
+      JSON.stringify({
+        marker: "praetorium-t07-provider-read-diagnostic-v1",
+        event: "before-cleanup",
+        runId,
+        runnerStage: RUNNER_STAGE_ALLOWLIST.has(runnerStage) ? runnerStage : "unknown",
+        failureCode: probeFailed ? probeFailureCode : null,
+        cleanupState: preserveResources ? "withheld" : "pending",
+        pod: podDiagnostics ?? null,
+        created: resourceLedgerSnapshot(created, runId),
+      }),
+    );
+
     if (preserveResources) {
+      console.log(
+        JSON.stringify({
+          marker: "praetorium-t07-provider-read-diagnostic-v1",
+          event: "cleanup-outcome",
+          runId,
+          state: "withheld-for-reconciliation",
+          outcomes: cleanupOutcomes,
+        }),
+      );
       client.agent.destroy();
       throw new Error(
         "uncertain API or process outcome; automatic cleanup was withheld for reconciliation",
@@ -1279,11 +1610,24 @@ test(
     }
     let cleanupFailure;
     try {
-      await cleanup(client, created, runId);
+      await cleanup(client, created, runId, cleanupOutcomes);
     } catch (error) {
       cleanupFailure = error;
     }
     client.agent.destroy();
+    const reverseLedger = [...created].reverse();
+    console.log(
+      JSON.stringify({
+        marker: "praetorium-t07-provider-read-diagnostic-v1",
+        event: "cleanup-outcome",
+        runId,
+        state: cleanupFailure ? "incomplete" : "complete",
+        outcomes: cleanupOutcomes,
+        notCompleted: cleanupFailure
+          ? resourceLedgerSnapshot(reverseLedger.slice(cleanupOutcomes.length), runId)
+          : [],
+      }),
+    );
     if (probeFailed && cleanupFailure) {
       throw new AggregateError(
         [probeFailure, cleanupFailure],

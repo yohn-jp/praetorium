@@ -127,7 +127,7 @@ identity, and probe run ID after cleanup completes.
 `f7fdb88` was not a live run. After CNI cleanup and the API-writer handoff, Sol
 ran the integrated source twice:
 
-- At `69097c0`, four local checks passed but the live case stopped before image
+- At `69097c0`, three local checks passed but the live case stopped before image
   import or API resource creation: the harness incorrectly expected a bare
   Kind cluster name in the kubeconfig's cluster reference. The linked-context
   assertion was corrected in `c47f8c7`.
@@ -141,7 +141,9 @@ ran the integrated source twice:
   ClusterRole and ClusterRoleBinding all `NotFound`.
 
 The original [attempt logs and cleanup observation](evidence/t07-provider-read-attempts/SHA256SUMS)
-are retained byte-for-byte. Inspection also found that the harness expected
+are retained byte-for-byte, including whitespace-only lines in Node's original
+error rendering. `git diff --check` may flag those artifact lines; they are
+intentionally preserved rather than normalized. Inspection also found that the harness expected
 `undefined` for the empty page cursor, while the actual `RuntimePage` contract
 requires `null`; this is a test mismatch, not yet proof of the failed Pod's
 exact stage. Diagnostic capture and the contract-aligned assertion are being

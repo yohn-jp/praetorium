@@ -1,0 +1,64 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: praetorium-provisioner-tenant-ingressroute
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: ["traefik.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingressroutes"]
+  matchConditions:
+    - name: provisioner-runtime-writer
+      expression: request.userInfo.username == "system:serviceaccount:praetorium-system:praetorium-provisioner"
+  validations:
+    - expression: >-
+        object.metadata.namespace == namespaceObject.metadata.name &&
+        object.metadata.namespace == "praetorium-instances-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&
+        namespaceObject.metadata.labels["arcadia.io/platform"] == "arcadia-platform" &&
+        namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] == "arcadia-provisioner" &&
+        namespaceObject.metadata.labels["arcadia.io/instance-id"] == object.metadata.labels["arcadia.io/instance-id"] &&
+        namespaceObject.metadata.labels["praetorium.io/repository-id"] == object.metadata.labels["praetorium.io/repository-id"] &&
+        namespaceObject.metadata.labels["arcadia.io/ownership-version"] == "v1" &&
+        namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@" &&
+        namespaceObject.metadata.labels["kubernetes.io/metadata.name"] == namespaceObject.metadata.name &&
+        object.metadata.name == "arcadia-ins-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&
+        object.metadata.labels.size() == 10 &&
+        object.metadata.labels["arcadia.io/platform"] == "arcadia-platform" &&
+        object.metadata.labels["app.kubernetes.io/managed-by"] == "arcadia-provisioner" &&
+        object.metadata.labels["arcadia.io/instance-id"].matches("^ins_[0-9A-HJKMNP-TV-Z]{26}$") &&
+        object.metadata.labels["praetorium.io/repository-id"].matches("^[1-9][0-9]*$") &&
+        object.metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
+        object.metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
+        object.metadata.labels["arcadia.io/release-id"] != "none" &&
+        object.metadata.labels["arcadia.io/release-id"].matches("^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$") &&
+        object.metadata.labels["arcadia.io/ownership-version"] == "v1" &&
+        object.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@" &&
+        object.metadata.labels["app.kubernetes.io/name"] == "scriptorium"
+      message: IngressRoutes must belong to the provisioner's exact tenant namespace and runtime identity.
+    - expression: >-
+        object.spec.size() == 3 &&
+        object.spec.entryPoints == ["websecure"] &&
+        object.spec.routes.size() == 1 &&
+        object.spec.routes[0].size() == 4 &&
+        object.spec.routes[0].kind == "Rule" &&
+        object.spec.routes[0].match == "Host(`ins-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + ".@@INSTANCE_HOSTNAME_SUFFIX@@`)" &&
+        object.spec.routes[0].priority == 1 &&
+        object.spec.routes[0].services.size() == 1 &&
+        object.spec.routes[0].services[0].size() == 2 &&
+        object.spec.routes[0].services[0].name == "arcadia-ins-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&
+        object.spec.routes[0].services[0].port >= 1 &&
+        object.spec.routes[0].services[0].port <= 65535 &&
+        object.spec.tls.size() == 0
+      message: Tenant IngressRoutes must expose one stable HTTPS host to one same-namespace runtime service.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: praetorium-provisioner-tenant-ingressroute
+spec:
+  policyName: praetorium-provisioner-tenant-ingressroute
+  validationActions: [Deny]

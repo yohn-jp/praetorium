@@ -1,0 +1,92 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: praetorium-tenant-pods-restricted
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        arcadia.io/platform: arcadia-platform
+        app.kubernetes.io/managed-by: arcadia-provisioner
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  validations:
+    - expression: >-
+        object.spec.automountServiceAccountToken == false &&
+        object.spec.?hostNetwork.orValue(false) == false &&
+        object.spec.?hostPID.orValue(false) == false &&
+        object.spec.?hostIPC.orValue(false) == false &&
+        object.spec.?shareProcessNamespace.orValue(false) == false
+      message: Tenant pods must not receive API credentials or share host namespaces.
+    - expression: >-
+        object.spec.securityContext.runAsNonRoot == true &&
+        object.spec.securityContext.seccompProfile.type == "RuntimeDefault"
+      message: Tenant pods must run as non-root with the RuntimeDefault seccomp profile.
+    - expression: >-
+        object.spec.?volumes.orValue([]).all(volume, !has(volume.hostPath))
+      message: Host paths and host sockets are not allowed in tenant pods.
+    - expression: >-
+        object.spec.containers.all(container,
+        has(container.securityContext) &&
+          container.securityContext.runAsNonRoot == true &&
+          container.securityContext.allowPrivilegeEscalation == false &&
+          container.securityContext.?privileged.orValue(false) == false &&
+          container.securityContext.readOnlyRootFilesystem == true &&
+          has(container.securityContext.seccompProfile) &&
+          container.securityContext.seccompProfile.type == "RuntimeDefault" &&
+          has(container.securityContext.capabilities) &&
+          container.securityContext.capabilities.drop.exists(capability, capability == "ALL") &&
+          container.image.matches("^.+@sha256:[a-f0-9]{64}$") &&
+          has(container.resources.requests) &&
+          "cpu" in container.resources.requests &&
+          "memory" in container.resources.requests &&
+          "ephemeral-storage" in container.resources.requests &&
+          has(container.resources.limits) &&
+          "cpu" in container.resources.limits &&
+          "memory" in container.resources.limits &&
+          "ephemeral-storage" in container.resources.limits
+        )
+      message: Tenant containers require immutable images, bounded resources, and a restricted security context.
+    - expression: >-
+        object.spec.?initContainers.orValue([]).all(container,
+        has(container.securityContext) &&
+          container.securityContext.runAsNonRoot == true &&
+          container.securityContext.allowPrivilegeEscalation == false &&
+          container.securityContext.?privileged.orValue(false) == false &&
+          container.securityContext.readOnlyRootFilesystem == true &&
+          has(container.securityContext.seccompProfile) &&
+          container.securityContext.seccompProfile.type == "RuntimeDefault" &&
+          has(container.securityContext.capabilities) &&
+          container.securityContext.capabilities.drop.exists(capability, capability == "ALL") &&
+          container.image.matches("^.+@sha256:[a-f0-9]{64}$") &&
+          has(container.resources.requests) &&
+          "cpu" in container.resources.requests &&
+          "memory" in container.resources.requests &&
+          "ephemeral-storage" in container.resources.requests &&
+          has(container.resources.limits) &&
+          "cpu" in container.resources.limits &&
+          "memory" in container.resources.limits &&
+          "ephemeral-storage" in container.resources.limits
+        )
+      message: Tenant init containers must meet the same image, resource, and security requirements.
+    - expression: >-
+        object.spec.containers.all(container,
+          container.?ports.orValue([]).all(port, !has(port.hostPort) || port.hostPort == 0)
+        ) &&
+        object.spec.?initContainers.orValue([]).all(container,
+          container.?ports.orValue([]).all(port, !has(port.hostPort) || port.hostPort == 0)
+        )
+      message: Tenant containers may not bind host ports.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: praetorium-tenant-pods-restricted
+spec:
+  policyName: praetorium-tenant-pods-restricted
+  validationActions: [Deny]

@@ -3,6 +3,11 @@ import type { OperationRecord, RepositorySnapshot } from "@praetorium/applicatio
 import type { D1DesiredStateInput, D1PlatformStore, D1Database } from "@praetorium/persistence/d1";
 import type { ClaimedOperation } from "@praetorium/application/operations";
 import { Hono } from "hono";
+import {
+  RuntimeIdleCandidateRequestSchema,
+  RuntimeCanaryHealthDueRequestSchema,
+  RuntimeCanaryHealthDueResponseSchema,
+} from "@praetorium/contracts";
 import type { ControlCredentialIssuer } from "./control-credentials.js";
 import {
   scheduleWorkNotification,
@@ -13,6 +18,12 @@ const Id = z.string().min(1).max(128);
 const Counter = z.number().int().nonnegative();
 const PositiveCounter = z.number().int().positive();
 const RepositoryId = z.number().int().positive().safe();
+const INACTIVE_CANARY_HEALTH_DUE = {
+  active: false,
+  nextCheckAt: null,
+  sampleDueAt: null,
+  healthOperationId: null,
+} as const;
 
 const IdleCandidatesInputSchema = z.strictObject({
   workerId: Id,
@@ -48,6 +59,25 @@ interface IdleCandidateRow {
   readonly has_active_operation: number;
 }
 
+interface IdleCandidate {
+  readonly instanceId: string;
+  readonly repositoryId: number;
+  readonly generation: number;
+  readonly runtimeEpoch: number;
+  readonly clusterId: string;
+  readonly desiredState: string;
+  readonly bindingSuspended: boolean;
+  readonly hasActiveOperation: boolean;
+  readonly currentRuntime: unknown;
+  readonly healthOperationId: string | null;
+  readonly activeCanaryHealth: boolean;
+  readonly healthNextCheckAt: number | null;
+}
+
+type IdleCandidateResolution =
+  | { readonly kind: "candidate"; readonly candidate: IdleCandidate }
+  | { readonly kind: "unavailable" };
+
 export interface ProvisionerIdleRoutesDependencies {
   readonly db: D1Database;
   readonly store: Pick<
@@ -60,6 +90,18 @@ export interface ProvisionerIdleRoutesDependencies {
   readonly now: () => number;
   readonly newOperationId: () => string;
   readonly notifyWorkAvailable?: WorkNotificationDispatcher;
+  readonly canaryHealthSchedule?: (input: {
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly generation: number;
+    readonly runtimeEpoch: number;
+    readonly clusterId: string;
+    readonly now: number;
+  }) => Promise<{
+    readonly healthOperationId: string;
+    readonly nextCheckAt: number;
+    readonly sampleDueAt: number | null;
+  } | null>;
   readonly resolveCurrentRuntime: (
     snapshot: RepositorySnapshot,
     revision: NonNullable<ClaimedOperation["currentDeploymentRevision"]>,
@@ -72,58 +114,30 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
   const scopeMatches = (input: { readonly workerId: string; readonly clusterId: string }) =>
     input.workerId === deps.workerId && input.clusterId === deps.clusterId;
 
-  app.post("/idle-candidates", async (c) => {
-    const input = IdleCandidatesInputSchema.parse(await readBoundedJson(c.req.raw));
-    if (!scopeMatches(input)) return scopeMismatch(c);
-
-    const rows = await deps.db
-      .prepare(
-        `SELECT i.instance_id, i.repository_id, i.generation, i.runtime_epoch,
-                r.cluster_id,
-                EXISTS (
-                  SELECT 1 FROM operations o
-                  WHERE o.instance_id = i.instance_id AND o.status IN ('pending', 'claimed', 'running')
-                ) AS has_active_operation
-         FROM logical_instances i
-         JOIN repository_bindings b
-           ON b.repository_id = i.repository_id AND b.instance_id = i.instance_id
-         JOIN runtime_reservations r
-           ON r.instance_id = i.instance_id
-          AND r.runtime_epoch = i.observed_runtime_epoch
-          AND r.status IN ('reserved', 'allocated')
-         WHERE r.cluster_id = ?
-           AND i.observed_state = 'ready'
-           AND i.observed_generation = i.generation
-           AND i.observed_runtime_epoch = i.runtime_epoch
-           AND (? IS NULL OR i.instance_id > ?)
-         ORDER BY i.instance_id
-         LIMIT ?`,
-      )
-      .bind(input.clusterId, input.cursor, input.cursor, input.limit + 1)
-      .all<IdleCandidateRow>();
-    const hasMore = rows.results.length > input.limit;
-    const candidates = rows.results.slice(0, input.limit);
-    const items = [];
-    for (const row of candidates) {
-      const snapshot = await deps.store.getByInstanceId(row.instance_id);
-      if (!isCurrentCandidate(snapshot, row, input.clusterId)) continue;
-      const revisionId = snapshot.instance.observedRevisionId;
-      if (!revisionId) return unavailable(c, "RUNTIME_CONTEXT_UNAVAILABLE");
-      const revision = await deps.store.getDeploymentRevision(revisionId);
-      if (!revision) return unavailable(c, "RUNTIME_CONTEXT_UNAVAILABLE");
-      let currentRuntime: unknown;
-      try {
-        currentRuntime = await deps.resolveCurrentRuntime(snapshot, revision);
-      } catch {
-        return unavailable(c, "RUNTIME_CONTEXT_UNAVAILABLE");
-      }
-      if (currentRuntime === null || currentRuntime === undefined)
-        return unavailable(c, "RUNTIME_CONTEXT_UNAVAILABLE");
-      const healthOperation = await deps.db
+  const resolveCandidate = async (
+    row: IdleCandidateRow,
+    clusterId: string,
+  ): Promise<IdleCandidateResolution | null> => {
+    const snapshot = await deps.store.getByInstanceId(row.instance_id);
+    if (!isCurrentCandidate(snapshot, row, clusterId)) return null;
+    const revisionId = snapshot.instance.observedRevisionId;
+    if (!revisionId) return { kind: "unavailable" };
+    const revision = await deps.store.getDeploymentRevision(revisionId);
+    if (!revision) return { kind: "unavailable" };
+    let currentRuntime: unknown;
+    try {
+      currentRuntime = await deps.resolveCurrentRuntime(snapshot, revision);
+    } catch {
+      return { kind: "unavailable" };
+    }
+    if (currentRuntime === null || currentRuntime === undefined)
+      return { kind: "unavailable" };
+    const [healthOperation, canaryHealth] = await Promise.all([
+      deps.db
         .prepare(
           `SELECT operation_id FROM operations WHERE instance_id=? AND repository_id=?
-         AND runtime_epoch=? AND deployment_revision_id=? AND status='succeeded'
-         AND kind IN ('start','update','redeploy') ORDER BY updated_at DESC LIMIT 1`,
+           AND runtime_epoch=? AND deployment_revision_id=? AND status='succeeded'
+           AND kind IN ('start','update','redeploy') ORDER BY updated_at DESC LIMIT 1`,
         )
         .bind(
           snapshot.instance.instanceId,
@@ -131,24 +145,98 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
           snapshot.instance.observedRuntimeEpoch,
           revisionId,
         )
-        .first<{ operation_id: string }>();
-      items.push({
+        .first<{ operation_id: string }>(),
+      deps.canaryHealthSchedule?.({
         instanceId: snapshot.instance.instanceId,
         repositoryId: snapshot.binding.repositoryId,
         generation: snapshot.instance.generation,
         runtimeEpoch: snapshot.instance.runtimeEpoch,
-        clusterId: input.clusterId,
+        clusterId,
+        now: deps.now(),
+      }) ?? Promise.resolve(null),
+    ]);
+    return {
+      kind: "candidate",
+      candidate: {
+        instanceId: snapshot.instance.instanceId,
+        repositoryId: snapshot.binding.repositoryId,
+        generation: snapshot.instance.generation,
+        runtimeEpoch: snapshot.instance.runtimeEpoch,
+        clusterId,
         desiredState: snapshot.instance.desiredState,
         bindingSuspended: snapshot.binding.suspended,
         hasActiveOperation: row.has_active_operation === 1,
         currentRuntime,
-        healthOperationId: healthOperation?.operation_id ?? null,
-      });
+        healthOperationId: canaryHealth?.healthOperationId ?? healthOperation?.operation_id ?? null,
+        activeCanaryHealth: canaryHealth !== null,
+        healthNextCheckAt: canaryHealth?.sampleDueAt ?? canaryHealth?.nextCheckAt ?? null,
+      },
+    };
+  };
+
+  app.post("/idle-candidates", async (c) => {
+    const input = IdleCandidatesInputSchema.parse(await readBoundedJson(c.req.raw));
+    if (!scopeMatches(input)) return scopeMismatch(c);
+
+    const candidateRows = await readIdleCandidateRows(deps.db, {
+      clusterId: input.clusterId,
+      cursor: input.cursor,
+      limit: input.limit + 1,
+    });
+    const hasMore = candidateRows.length > input.limit;
+    const candidates = candidateRows.slice(0, input.limit);
+    const items: IdleCandidate[] = [];
+    for (const row of candidates) {
+      const resolution = await resolveCandidate(row, input.clusterId);
+      if (resolution === null) continue;
+      if (resolution.kind === "unavailable") return unavailable(c, "RUNTIME_CONTEXT_UNAVAILABLE");
+      items.push(resolution.candidate);
     }
     return c.json({
       items,
       nextCursor: hasMore ? (candidates.at(-1)?.instance_id ?? null) : null,
     });
+  });
+
+  app.post("/idle-candidate", async (c) => {
+    const input = RuntimeIdleCandidateRequestSchema.parse(await readBoundedJson(c.req.raw));
+    if (!scopeMatches(input)) return scopeMismatch(c);
+    const [row] = await readIdleCandidateRows(deps.db, {
+      clusterId: input.clusterId,
+      instanceId: input.instanceId,
+    });
+    if (!row) return c.json(null);
+    const resolution = await resolveCandidate(row, input.clusterId);
+    if (!resolution) return c.json(null);
+    if (resolution.kind === "unavailable") return unavailable(c, "RUNTIME_CONTEXT_UNAVAILABLE");
+    return c.json(resolution.candidate);
+  });
+
+  app.post("/runtime-health-due", async (c) => {
+    const input = RuntimeCanaryHealthDueRequestSchema.parse(await readBoundedJson(c.req.raw));
+    if (!scopeMatches(input)) return scopeMismatch(c);
+    const snapshot = await deps.store.getByInstanceId(input.instanceId);
+    if (!isCurrentHealthScheduleAssignment(snapshot, input))
+      return c.json(INACTIVE_CANARY_HEALTH_DUE);
+    if (!deps.canaryHealthSchedule) return c.json(INACTIVE_CANARY_HEALTH_DUE);
+    const now = deps.now();
+    if (!Number.isSafeInteger(now) || now < 0) throw new TypeError("invalid idle route clock");
+    const schedule = await deps.canaryHealthSchedule({
+      instanceId: input.instanceId,
+      repositoryId: input.repositoryId,
+      generation: input.expectedGeneration,
+      runtimeEpoch: input.expectedRuntimeEpoch,
+      clusterId: input.clusterId,
+      now,
+    });
+    if (!schedule) return c.json(INACTIVE_CANARY_HEALTH_DUE);
+    const response = RuntimeCanaryHealthDueResponseSchema.parse({
+      active: true,
+      nextCheckAt: schedule.nextCheckAt,
+      sampleDueAt: schedule.sampleDueAt,
+      healthOperationId: schedule.healthOperationId,
+    });
+    return c.json(response);
   });
 
   app.post("/idle-stop", async (c) => {
@@ -234,7 +322,7 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
     const result = await deps.store.requestDesiredStateWithFence(desiredState, [fence]);
     if (!result?.operation) return conflict(c);
     try {
-      scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation");
+      scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation", input.instanceId);
     } catch {
       // The fenced idle-stop operation was durably accepted already.
     }
@@ -296,6 +384,51 @@ async function readBoundedJson(request: Request): Promise<unknown> {
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
 }
 
+async function readIdleCandidateRows(
+  db: D1Database,
+  input: {
+    readonly clusterId: string;
+    readonly cursor?: string | null;
+    readonly limit?: number;
+    readonly instanceId?: string;
+  },
+): Promise<readonly IdleCandidateRow[]> {
+  const instanceFilter = input.instanceId === undefined
+    ? "AND (? IS NULL OR i.instance_id > ?)"
+    : "AND i.instance_id = ?";
+  const statement = db.prepare(
+    `SELECT i.instance_id, i.repository_id, i.generation, i.runtime_epoch,
+            r.cluster_id,
+            EXISTS (
+              SELECT 1 FROM operations o
+              WHERE o.instance_id = i.instance_id AND o.status IN ('pending', 'claimed', 'running')
+            ) AS has_active_operation
+       FROM logical_instances i
+       JOIN repository_bindings b
+         ON b.repository_id = i.repository_id AND b.instance_id = i.instance_id
+       JOIN runtime_reservations r
+         ON r.instance_id = i.instance_id
+        AND r.runtime_epoch = i.observed_runtime_epoch
+        AND r.status IN ('reserved', 'allocated')
+       WHERE r.cluster_id = ?
+         AND i.observed_state = 'ready'
+         AND i.observed_generation = i.generation
+         AND i.observed_runtime_epoch = i.runtime_epoch
+         ${instanceFilter}
+       ORDER BY i.instance_id
+       LIMIT ?`,
+  );
+  const rows =
+    input.instanceId === undefined
+      ? await statement
+          .bind(input.clusterId, input.cursor ?? null, input.cursor ?? null, input.limit ?? 26)
+          .all<IdleCandidateRow>()
+      : await statement
+          .bind(input.clusterId, input.instanceId, 1)
+          .all<IdleCandidateRow>();
+  return rows.results;
+}
+
 function isCurrentCandidate(
   snapshot: RepositorySnapshot | null,
   row: IdleCandidateRow,
@@ -332,6 +465,27 @@ function isStopCandidate(
     snapshot.instance.desiredState === "running" &&
     snapshot.instance.observedState === "ready" &&
     !snapshot.binding.suspended
+  );
+}
+
+function isCurrentHealthScheduleAssignment(
+  snapshot: RepositorySnapshot | null,
+  input: z.infer<typeof RuntimeCanaryHealthDueRequestSchema>,
+): snapshot is RepositorySnapshot {
+  return Boolean(
+    snapshot &&
+      !snapshot.binding.suspended &&
+      snapshot.binding.instanceId === input.instanceId &&
+      snapshot.binding.repositoryId === input.repositoryId &&
+      snapshot.instance.instanceId === input.instanceId &&
+      snapshot.instance.repositoryId === input.repositoryId &&
+      snapshot.instance.generation === input.expectedGeneration &&
+      snapshot.instance.observedGeneration === input.expectedGeneration &&
+      snapshot.instance.runtimeEpoch === input.expectedRuntimeEpoch &&
+      snapshot.instance.observedRuntimeEpoch === input.expectedRuntimeEpoch &&
+      snapshot.instance.desiredState === "running" &&
+      snapshot.instance.observedState === "ready" &&
+      snapshot.instance.clusterId === input.clusterId,
   );
 }
 

@@ -149,7 +149,12 @@ export function createConfigurationRoutes(options: ConfigurationRoutesOptions) {
         scheduleWorkNotification(c.executionCtx, options.notifyWorkAvailable, "build");
       }
       if (result.operation?.status === "pending") {
-        scheduleWorkNotification(c.executionCtx, options.notifyWorkAvailable, "operation");
+        scheduleWorkNotification(
+          c.executionCtx,
+          options.notifyWorkAvailable,
+          "operation",
+          instanceId,
+        );
       }
     } catch {
       // The desired revision and any associated work were committed already.

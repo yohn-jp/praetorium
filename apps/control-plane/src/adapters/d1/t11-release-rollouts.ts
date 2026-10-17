@@ -129,6 +129,47 @@ type ClusterLeaseRow = {
   readonly active_operation_id: string | null;
 };
 
+export type CanaryHealthScheduleInput = {
+  readonly instanceId: string;
+  readonly repositoryId: number;
+  readonly generation: number;
+  readonly runtimeEpoch: number;
+  readonly clusterId: string;
+  readonly now: number;
+};
+
+export type CanaryHealthSchedule = {
+  readonly healthOperationId: string;
+  readonly nextCheckAt: number;
+  readonly sampleDueAt: number | null;
+};
+
+export type CanaryHealthProgressState =
+  | { readonly kind: "due"; readonly releaseId: string }
+  | { readonly kind: "leased"; readonly releaseId: string; readonly leaseExpiresAt: number }
+  | { readonly kind: "consumed" | "inactive" };
+
+type CanaryHealthScheduleRow = {
+  readonly release_id: string;
+  readonly canary_operation_id: string;
+  readonly operation_status: string;
+  readonly operation_created_at: number;
+  readonly health_observed_at: number | null;
+  readonly has_active_operation: number;
+};
+
+type CanaryHealthProgressRow = {
+  readonly release_id: string;
+  readonly state: CandidateWorkflow["state"];
+  readonly revision: number;
+  readonly canary_operation_id: string | null;
+  readonly next_attempt_at: number | null;
+  readonly lease_owner: string | null;
+  readonly lease_expires_at: number | null;
+  readonly last_healthy_at: number | null;
+  readonly health_observed_at: number | null;
+};
+
 const ACTIVE_ROLLOUT_STATES = [
   "pending",
   "building",
@@ -136,6 +177,7 @@ const ACTIVE_ROLLOUT_STATES = [
   "dispatch_pending",
   "operation_pending",
 ] as const;
+const CANARY_HEALTH_SAMPLE_INTERVAL_MS = 5 * 60 * 1_000;
 
 function parseJson(value: string): unknown {
   return JSON.parse(value) as unknown;
@@ -308,6 +350,197 @@ export class D1T11ReleaseRolloutStore
     private readonly stagedActivator: StagedRolloutActivator,
     private readonly createOperationId: () => string = () => crypto.randomUUID(),
   ) {}
+
+  async getCanaryHealthSchedule(
+    input: CanaryHealthScheduleInput,
+  ): Promise<CanaryHealthSchedule | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT w.release_id, w.canary_operation_id, o.status AS operation_status,
+                o.created_at AS operation_created_at, h.observed_at AS health_observed_at,
+                EXISTS (
+                  SELECT 1 FROM operations active
+                  WHERE active.instance_id = i.instance_id
+                    AND active.status IN ('pending', 'claimed', 'running')
+                ) AS has_active_operation
+           FROM release_candidate_workflows w
+           JOIN operations o ON o.operation_id = w.canary_operation_id
+           JOIN logical_instances i ON i.instance_id = o.instance_id
+           JOIN repository_bindings b
+             ON b.instance_id = i.instance_id AND b.repository_id = i.repository_id
+           JOIN runtime_reservations r
+             ON r.instance_id = i.instance_id AND r.runtime_epoch = i.observed_runtime_epoch
+           LEFT JOIN runtime_health_observations h
+             ON h.instance_id = i.instance_id AND h.repository_id = i.repository_id
+            AND h.operation_id = o.operation_id
+            AND h.runtime_epoch = i.runtime_epoch AND h.generation = i.generation
+            AND h.cluster_id = r.cluster_id
+          WHERE w.state = 'canary_observing'
+            AND w.canary_runtime_id = i.instance_id
+            AND i.instance_id = ? AND i.repository_id = ?
+            AND i.generation = ? AND i.observed_generation = i.generation
+            AND i.runtime_epoch = ? AND i.observed_runtime_epoch = i.runtime_epoch
+            AND i.desired_state = 'running' AND i.observed_state = 'ready'
+            AND b.suspended = 0
+            AND r.repository_id = i.repository_id AND r.generation = i.generation
+            AND r.cluster_id = ? AND r.status IN ('reserved', 'allocated')
+            AND o.repository_id = i.repository_id AND o.generation = i.generation
+            AND o.runtime_epoch = i.runtime_epoch
+            AND o.deployment_revision_id = i.observed_revision_id
+            AND o.cluster_id = r.cluster_id
+            AND o.kind IN ('start', 'update', 'redeploy')
+          ORDER BY w.updated_at DESC, w.release_id LIMIT 1`,
+      )
+      .bind(
+        input.instanceId,
+        input.repositoryId,
+        input.generation,
+        input.runtimeEpoch,
+        input.clusterId,
+      )
+      .first<CanaryHealthScheduleRow>();
+    if (!row) return null;
+    const sampleDueAt =
+      (row.health_observed_at ?? row.operation_created_at) + CANARY_HEALTH_SAMPLE_INTERVAL_MS;
+    if (!Number.isSafeInteger(sampleDueAt) || sampleDueAt < 0) {
+      throw new TypeError("canary health schedule timestamp is invalid");
+    }
+    const sampleable = row.operation_status === "succeeded" && row.has_active_operation === 0;
+    const due = sampleable && sampleDueAt <= input.now;
+    const boundedCheckAt = input.now + CANARY_HEALTH_SAMPLE_INTERVAL_MS;
+    return {
+      healthOperationId: row.canary_operation_id,
+      nextCheckAt: due
+        ? boundedCheckAt
+        : sampleable
+          ? sampleDueAt
+          : sampleDueAt <= input.now
+            ? boundedCheckAt
+            : Math.min(sampleDueAt, boundedCheckAt),
+      sampleDueAt: due ? sampleDueAt : null,
+    };
+  }
+
+  async prepareCanaryHealthProgress(input: {
+    readonly operationId: string;
+    readonly now: number;
+  }): Promise<CanaryHealthProgressState> {
+    const row = await this.db
+      .prepare(
+        `SELECT w.release_id, w.state, w.revision, w.canary_operation_id,
+                w.next_attempt_at, w.lease_owner, w.lease_expires_at,
+                w.last_healthy_at, h.observed_at AS health_observed_at
+           FROM release_candidate_workflows w
+           LEFT JOIN runtime_health_observations h
+             ON h.instance_id = w.canary_runtime_id AND h.operation_id = w.canary_operation_id
+          WHERE w.canary_operation_id = ?
+          ORDER BY w.updated_at DESC, w.release_id LIMIT 1`,
+      )
+      .bind(input.operationId)
+      .first<CanaryHealthProgressRow>();
+    if (
+      !row ||
+      row.state !== "canary_observing" ||
+      row.canary_operation_id !== input.operationId
+    ) {
+      return { kind: "inactive" };
+    }
+    if (
+      row.health_observed_at === null ||
+      (row.last_healthy_at !== null && row.health_observed_at <= row.last_healthy_at)
+    ) {
+      return { kind: "consumed" };
+    }
+    if (row.lease_owner !== null && row.lease_expires_at !== null && row.lease_expires_at > input.now) {
+      return {
+        kind: "leased",
+        releaseId: row.release_id,
+        leaseExpiresAt: row.lease_expires_at,
+      };
+    }
+    if (row.next_attempt_at !== null && row.next_attempt_at <= input.now) {
+      return { kind: "due", releaseId: row.release_id };
+    }
+    const result = await this.db
+      .prepare(
+        `UPDATE release_candidate_workflows
+            SET next_attempt_at = ?, revision = revision + 1, updated_at = ?
+          WHERE release_id = ? AND state = 'canary_observing'
+            AND revision = ? AND canary_operation_id = ?
+            AND (next_attempt_at IS NULL OR next_attempt_at > ?)
+            AND (lease_owner IS NULL OR lease_expires_at <= ?)
+            AND EXISTS (
+              SELECT 1 FROM runtime_health_observations h
+               WHERE h.instance_id = release_candidate_workflows.canary_runtime_id
+                 AND h.operation_id = release_candidate_workflows.canary_operation_id
+                 AND h.observed_at > COALESCE(release_candidate_workflows.last_healthy_at, -1)
+            )`,
+      )
+      .bind(
+        input.now,
+        input.now,
+        row.release_id,
+        row.revision,
+        input.operationId,
+        input.now,
+        input.now,
+      )
+      .run();
+    if (result.meta.changes === 1) return { kind: "due", releaseId: row.release_id };
+
+    const refreshed = await this.prepareCanaryHealthProgressWithoutUpdate(input.operationId);
+    if (
+      refreshed?.lease_owner &&
+      refreshed.lease_expires_at !== null &&
+      refreshed.lease_expires_at > input.now
+    ) {
+      return {
+        kind: "leased",
+        releaseId: refreshed.release_id,
+        leaseExpiresAt: refreshed.lease_expires_at,
+      };
+    }
+    if (
+      !refreshed ||
+      refreshed.state !== "canary_observing" ||
+      refreshed.health_observed_at === null ||
+      (refreshed.last_healthy_at !== null &&
+        refreshed.health_observed_at <= refreshed.last_healthy_at)
+    ) {
+      return { kind: "consumed" };
+    }
+    return { kind: "due", releaseId: refreshed.release_id };
+  }
+
+  private async prepareCanaryHealthProgressWithoutUpdate(
+    operationId: string,
+  ): Promise<CanaryHealthProgressRow | null> {
+    return this.db
+      .prepare(
+        `SELECT w.release_id, w.state, w.revision, w.canary_operation_id,
+                w.next_attempt_at, w.lease_owner, w.lease_expires_at,
+                w.last_healthy_at, h.observed_at AS health_observed_at
+           FROM release_candidate_workflows w
+           LEFT JOIN runtime_health_observations h
+             ON h.instance_id = w.canary_runtime_id AND h.operation_id = w.canary_operation_id
+          WHERE w.canary_operation_id = ?
+          ORDER BY w.updated_at DESC, w.release_id LIMIT 1`,
+      )
+      .bind(operationId)
+      .first<CanaryHealthProgressRow>();
+  }
+
+  async findCanaryReleaseId(operationId: string): Promise<string | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT release_id FROM release_candidate_workflows
+          WHERE state = 'canary_observing' AND canary_operation_id = ?
+          ORDER BY updated_at DESC, release_id LIMIT 1`,
+      )
+      .bind(operationId)
+      .first<{ release_id: string }>();
+    return row?.release_id ?? null;
+  }
 
   async findById(id: string): Promise<ReleaseCandidate | null> {
     const row = await this.db
@@ -620,9 +853,21 @@ export class D1T11ReleaseRolloutStore
     readonly now: number;
     readonly leaseMs: number;
     readonly limit: number;
+    readonly releaseId?: string;
   }): Promise<readonly CandidateWorkLease[]> {
     const limit = Math.max(1, Math.min(10, Math.trunc(input.limit)));
     const expiresAt = input.now + input.leaseMs;
+    const releaseFilter = input.releaseId ? "AND release_id = ?" : "";
+    const claimValues: D1BindValue[] = [
+      input.owner,
+      expiresAt,
+      input.now,
+      input.now,
+      input.now,
+      ...(input.releaseId ? [input.releaseId] : []),
+      limit,
+      input.now,
+    ];
     const results = await this.db.batch([
       this.db
         .prepare(
@@ -633,12 +878,13 @@ export class D1T11ReleaseRolloutStore
                WHERE state NOT IN ('complete', 'blocked', 'rejected', 'superseded')
                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                  AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+                 ${releaseFilter}
                ORDER BY COALESCE(next_attempt_at, 0), release_id LIMIT ?
             )
               AND state NOT IN ('complete', 'blocked', 'rejected', 'superseded')
               AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`,
         )
-        .bind(input.owner, expiresAt, input.now, input.now, input.now, limit, input.now),
+        .bind(...claimValues),
       this.db
         .prepare(
           `SELECT c.release_id, c.image_digest, c.status, c.candidate_json,

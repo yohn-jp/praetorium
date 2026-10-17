@@ -48,6 +48,7 @@ export function createRuntimeHealthRoutes(deps: {
   workerId: string;
   clusterId: string;
   now?: () => number;
+  onCanaryHealthRecorded?: (operationId: string) => Promise<void>;
 }) {
   const app = new Hono();
   app.post("/internal/provisioner/runtime-health", async (c) => {
@@ -117,9 +118,23 @@ export function createRuntimeHealthRoutes(deps: {
         input.operationId,
       )
       .run();
-    return result.meta?.changes === 1
-      ? c.json({ recorded: true })
-      : c.json({ error: { code: "RUNTIME_HEALTH_FENCED" } }, 409);
+    if (result.meta?.changes !== 1)
+      return c.json({ error: { code: "RUNTIME_HEALTH_FENCED" } }, 409);
+    if (deps.onCanaryHealthRecorded) {
+      const work = Promise.resolve()
+        .then(() => deps.onCanaryHealthRecorded?.(input.operationId))
+        .then(
+          () => undefined,
+          () => undefined,
+        );
+      try {
+        c.executionCtx.waitUntil(work);
+      } catch {
+        // The observation is already durable; startup and Cron remain recovery paths.
+        void work;
+      }
+    }
+    return c.json({ recorded: true });
   });
   return app;
 }

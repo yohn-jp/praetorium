@@ -219,6 +219,7 @@ export interface ReleasePromotionRepository extends ReleaseCatalogRepository {
     readonly now: number;
     readonly leaseMs: number;
     readonly limit: number;
+    readonly releaseId?: string;
   }): Promise<readonly CandidateWorkLease[]>;
   saveCandidateWorkflow(input: {
     readonly lease: CandidateWorkLease;

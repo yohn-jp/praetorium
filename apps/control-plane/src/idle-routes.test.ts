@@ -12,7 +12,10 @@ import {
   createControlCredentialIssuer,
   type ControlCredentialIssuer,
 } from "./control-credentials.js";
-import { createProvisionerIdleRoutes } from "./idle-routes.js";
+import {
+  createProvisionerIdleRoutes,
+  type ProvisionerIdleRoutesDependencies,
+} from "./idle-routes.js";
 import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 
 const schemaUrl = new URL("../../../docs/migration/tasks/T03-schema.sql", import.meta.url);
@@ -172,6 +175,113 @@ describe("Control Plane provisioner idle routes", () => {
       nextCursor: null,
     });
     expect(h.resolveCurrentRuntime).toHaveBeenCalledTimes(3);
+  });
+
+  it("looks up one current idle candidate by instance without scanning the inventory", async () => {
+    const h = createHarness();
+    await h.addReadyInstance("ins_point", 77);
+    await h.addReadyInstance("ins_other_point", 78);
+
+    const found = await h.request("/internal/provisioner/idle-candidate", {
+      workerId: WORKER_ID,
+      clusterId: CLUSTER_ID,
+      instanceId: "ins_point",
+    });
+    expect(found.status).toBe(200);
+    await expect(found.json()).resolves.toMatchObject({
+      instanceId: "ins_point",
+      repositoryId: 77,
+      generation: 1,
+      runtimeEpoch: 1,
+      clusterId: CLUSTER_ID,
+      desiredState: "running",
+      bindingSuspended: false,
+      hasActiveOperation: false,
+      currentRuntime: { instanceId: "ins_point", repositoryId: 77 },
+    });
+    expect(h.resolveCurrentRuntime).toHaveBeenCalledTimes(1);
+
+    const missing = await h.request("/internal/provisioner/idle-candidate", {
+      workerId: WORKER_ID,
+      clusterId: CLUSTER_ID,
+      instanceId: "ins_missing",
+    });
+    expect(missing.status).toBe(200);
+    await expect(missing.json()).resolves.toBeNull();
+    expect(h.resolveCurrentRuntime).toHaveBeenCalledTimes(1);
+
+    const wrongCluster = await h.request("/internal/provisioner/idle-candidate", {
+      workerId: WORKER_ID,
+      clusterId: "cluster-b",
+      instanceId: "ins_point",
+    });
+    expect(wrongCluster.status).toBe(403);
+  });
+
+  it("advertises and revalidates a persisted canary health deadline by exact assignment", async () => {
+    const h = createHarness();
+    await h.addReadyInstance("ins_canary", 76);
+    const schedule = vi.fn(async () => ({
+      healthOperationId: "op-canary-health",
+      nextCheckAt: NOW + 5 * 60_000,
+      sampleDueAt: NOW - 1,
+    }));
+    const inventory = await h.request(
+      "/internal/provisioner/idle-candidates",
+      { workerId: WORKER_ID, clusterId: CLUSTER_ID, limit: 25, cursor: null },
+      schedule,
+    );
+    expect(inventory.status).toBe(200);
+    await expect(inventory.json()).resolves.toMatchObject({
+      items: [
+        {
+          instanceId: "ins_canary",
+          healthOperationId: "op-canary-health",
+          activeCanaryHealth: true,
+          healthNextCheckAt: NOW - 1,
+        },
+      ],
+    });
+
+    const due = await h.request(
+      "/internal/provisioner/runtime-health-due",
+      {
+        workerId: WORKER_ID,
+        clusterId: CLUSTER_ID,
+        instanceId: "ins_canary",
+        repositoryId: 76,
+        expectedGeneration: 1,
+        expectedRuntimeEpoch: 1,
+      },
+      schedule,
+    );
+    expect(due.status).toBe(200);
+    await expect(due.json()).resolves.toEqual({
+      active: true,
+      nextCheckAt: NOW + 5 * 60_000,
+      sampleDueAt: NOW - 1,
+      healthOperationId: "op-canary-health",
+    });
+
+    const stale = await h.request(
+      "/internal/provisioner/runtime-health-due",
+      {
+        workerId: WORKER_ID,
+        clusterId: CLUSTER_ID,
+        instanceId: "ins_canary",
+        repositoryId: 76,
+        expectedGeneration: 1,
+        expectedRuntimeEpoch: 2,
+      },
+      schedule,
+    );
+    await expect(stale.json()).resolves.toEqual({
+      active: false,
+      nextCheckAt: null,
+      sampleDueAt: null,
+      healthOperationId: null,
+    });
+    expect(schedule).toHaveBeenCalledTimes(2);
   });
 
   it("requests an ordinary provisioner stop with atomic current-state and no-active-operation fences", async () => {
@@ -379,6 +489,7 @@ function createHarness() {
         return { token: "unused", expiresAt: new Date(NOW + 30_000).toISOString() };
       },
     },
+    canaryHealthSchedule?: ProvisionerIdleRoutesDependencies["canaryHealthSchedule"],
   ) => {
     const idle = createProvisionerIdleRoutes({
       db,
@@ -388,6 +499,7 @@ function createHarness() {
       clusterId: CLUSTER_ID,
       now: () => NOW,
       newOperationId: () => `op_idle_${String(++operationNumber).padStart(3, "0")}`,
+      ...(canaryHealthSchedule ? { canaryHealthSchedule } : {}),
       resolveCurrentRuntime,
     });
     const app = new Hono();
@@ -405,8 +517,12 @@ function createHarness() {
     store,
     resolveCurrentRuntime,
     makeRoutes,
-    async request(path: string, body: unknown) {
-      const app = makeRoutes();
+    async request(
+      path: string,
+      body: unknown,
+      canaryHealthSchedule?: ProvisionerIdleRoutesDependencies["canaryHealthSchedule"],
+    ) {
+      const app = makeRoutes(undefined, canaryHealthSchedule);
       return app.request(path, {
         method: "POST",
         headers: { "content-type": "application/json" },

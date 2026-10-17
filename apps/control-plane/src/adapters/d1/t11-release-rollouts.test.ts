@@ -163,9 +163,68 @@ function installSchema(db: SQLiteD1) {
   for (const migration of [
     "../../../migrations/0001_repository_platform.sql",
     "../../../migrations/0002_stable_release_rollouts.sql",
+    "../../../migrations/0005_runtime_health_observations.sql",
   ]) {
     db.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
   }
+}
+
+function seedCanaryHealthFixture(
+  db: SQLiteD1,
+  releaseId: string,
+  nextAttemptAt: number | null,
+): void {
+  db.database.exec(`
+    INSERT INTO logical_instances (
+      instance_id, repository_id, generation, runtime_epoch, desired_state, policy,
+      observed_generation, observed_runtime_epoch, observed_sequence, observed_state,
+      desired_revision_id, observed_revision_id, reservation_state, reservation_id,
+      created_at, updated_at
+    ) VALUES (
+      'canary-instance', 101, 7, 4, 'running', 'stable', 7, 4, 1, 'ready',
+      'canary-revision', 'canary-revision', 'allocated', 'canary-reservation', ${NOW}, ${NOW}
+    );
+    INSERT INTO repository_bindings (
+      repository_id, instance_id, installation_id, owner, name, authorization_revision,
+      binding_epoch, suspended, created_at, updated_at
+    ) VALUES (101, 'canary-instance', 201, 'owner', 'repo', 3, 2, 0, ${NOW}, ${NOW});
+    INSERT INTO builds (build_id, build_key, build_input_json, status, created_at, updated_at)
+    VALUES ('canary-build', 'canary-build-key', '{}', 'succeeded', ${NOW}, ${NOW});
+    INSERT INTO deployment_revisions (
+      revision_id, instance_id, repository_id, generation, build_key, build_id,
+      selection_json, resource_requirements_json, runtime_metadata_json, artifact_digest,
+      status, actor_id, created_at
+    ) VALUES (
+      'canary-revision', 'canary-instance', 101, 7, 'canary-build-key', 'canary-build',
+      '{}', '{}', '{}', NULL, 'admitted', 'test', ${NOW}
+    );
+    INSERT INTO runtime_reservations (
+      reservation_id, instance_id, repository_id, runtime_epoch, generation, cluster_id,
+      status, capacity_snapshot_epoch, cpu_milli, memory_mib, ephemeral_storage_mib,
+      created_at, updated_at
+    ) VALUES (
+      'canary-reservation', 'canary-instance', 101, 4, 7, 'cluster-canary',
+      'allocated', 1, 100, 128, 256, ${NOW}, ${NOW}
+    );
+    INSERT INTO operations (
+      operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status,
+      phase, cluster_id, reservation_id, deployment_revision_id, idempotency_scope,
+      idempotency_key, request_hash, actor_id, authorization_revision, created_at, updated_at
+    ) VALUES (
+      'canary-operation', 'canary-instance', 101, 7, 4, 'start', 'succeeded', 'complete',
+      'cluster-canary', 'canary-reservation', 'canary-revision', 'canary-test',
+      'canary-operation', 'hash', 'test', 3, ${NOW}, ${NOW}
+    );
+  `);
+  db.database
+    .prepare(
+      `UPDATE release_candidate_workflows
+          SET state = 'canary_observing', revision = 1, next_attempt_at = ?,
+              canary_artifact_digest = ?, canary_build_key = ?, canary_runtime_id = ?,
+              canary_operation_id = ?, updated_at = ?
+        WHERE release_id = ?`,
+    )
+    .run(nextAttemptAt, DIGEST, BUILD_KEY, "canary-instance", "canary-operation", NOW, releaseId);
 }
 
 function follower(instanceId: string, clusterId = "cluster-1"): StableFollower {
@@ -190,6 +249,109 @@ function follower(instanceId: string, clusterId = "cluster-1"): StableFollower {
 }
 
 describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
+  it("keeps the durable canary sample token through Cron and progresses health written during its lease", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const release = candidate();
+    const releases = store(db);
+    await releases.createCandidate(release);
+    const sampleAt = NOW + 5 * 60_000;
+    seedCanaryHealthFixture(db, release.id, sampleAt);
+    const activeCheckAt = sampleAt + 10 * 60_000;
+    db.database
+      .prepare("UPDATE operations SET status = 'running' WHERE operation_id = 'canary-operation'")
+      .run();
+    await expect(
+      releases.getCanaryHealthSchedule({
+        instanceId: "canary-instance",
+        repositoryId: 101,
+        generation: 7,
+        runtimeEpoch: 4,
+        clusterId: "cluster-canary",
+        now: activeCheckAt,
+      }),
+    ).resolves.toMatchObject({
+      nextCheckAt: activeCheckAt + 5 * 60_000,
+      sampleDueAt: null,
+    });
+    db.database
+      .prepare("UPDATE operations SET status = 'succeeded' WHERE operation_id = 'canary-operation'")
+      .run();
+
+    const schedule = await releases.getCanaryHealthSchedule({
+      instanceId: "canary-instance",
+      repositoryId: 101,
+      generation: 7,
+      runtimeEpoch: 4,
+      clusterId: "cluster-canary",
+      now: sampleAt,
+    });
+    expect(schedule).toEqual({
+      healthOperationId: "canary-operation",
+      nextCheckAt: sampleAt + 5 * 60_000,
+      sampleDueAt: sampleAt,
+    });
+
+    const cronLease = (
+      await releases.claimCandidateWork({
+        owner: "cron-worker",
+        now: sampleAt,
+        leaseMs: 60_000,
+        limit: 1,
+        releaseId: release.id,
+      })
+    )[0]!;
+    expect(cronLease.workflow.state).toBe("canary_observing");
+
+    db.database
+      .prepare(
+        `INSERT INTO runtime_health_observations (
+           instance_id, repository_id, runtime_epoch, generation, cluster_id, operation_id,
+           provider_observation_id, observed_at, evidence_json
+         ) VALUES ('canary-instance', 101, 4, 7, 'cluster-canary', 'canary-operation',
+                   'provider-sample-1', ?, '{}')`,
+      )
+      .run(sampleAt + 1);
+    await expect(
+      releases.prepareCanaryHealthProgress({
+        operationId: "canary-operation",
+        now: sampleAt + 2,
+      }),
+    ).resolves.toMatchObject({ kind: "leased", releaseId: release.id });
+
+    const cronSnapshot = {
+      ...cronLease.workflow,
+      updatedAt: new Date(sampleAt + 3).toISOString(),
+    };
+    expect(
+      await releases.saveCandidateWorkflow({
+        lease: cronLease,
+        next: cronSnapshot,
+        releaseLease: true,
+      }),
+    ).toBe("saved");
+    expect(
+      db.database
+        .prepare("SELECT next_attempt_at FROM release_candidate_workflows WHERE release_id = ?")
+        .get(release.id),
+    ).toEqual({ next_attempt_at: sampleAt });
+
+    await expect(
+      releases.prepareCanaryHealthProgress({
+        operationId: "canary-operation",
+        now: sampleAt + 4,
+      }),
+    ).resolves.toEqual({ kind: "due", releaseId: release.id });
+    const targeted = await releases.claimCandidateWork({
+      owner: "health-event-worker",
+      now: sampleAt + 4,
+      leaseMs: 60_000,
+      limit: 1,
+      releaseId: release.id,
+    });
+    expect(targeted.map(({ candidate: item }) => item.id)).toEqual([release.id]);
+  });
+
   it("rolls back candidate and audit if atomic admission cannot create its workflow", async () => {
     const db = new SQLiteD1();
     installSchema(db);

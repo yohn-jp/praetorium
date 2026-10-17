@@ -5,6 +5,7 @@ import type {
 import type { InstanceService } from "@praetorium/application/instances";
 import type { OperationService } from "@praetorium/application/operations";
 import {
+  advanceStablePromotions,
   ServiceBackedDisposableCanary,
   createRegistryBackedReleaseVerifier,
   type CanaryConfigurationService,
@@ -27,6 +28,7 @@ import {
 import { D1StableFollowerRepository } from "./adapters/d1/stable-followers.js";
 import {
   D1T11ReleaseRolloutStore,
+  type CanaryHealthProgressState,
   type StagedRolloutActivator,
   type T11D1Database,
 } from "./adapters/d1/t11-release-rollouts.js";
@@ -64,9 +66,9 @@ export type T11RolloutCompositionDependencies = RegistryBackedReleaseVerifierDep
  */
 export function createT11RolloutComposition(deps: T11RolloutCompositionDependencies) {
   const verifier = createRegistryBackedReleaseVerifier(deps);
-  const notifyWork = async (kind: "build" | "operation") => {
+  const notifyWork = async (kind: "build" | "operation", instanceId?: string) => {
     try {
-      await deps.notifyWorkAvailable?.(kind);
+      await deps.notifyWorkAvailable?.(kind, instanceId);
     } catch {
       // A hint never changes the durable release or rollout result.
     }
@@ -91,7 +93,9 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     async plan(input) {
       const receipt = await deps.canaryConfigurations.plan(input);
       if (receipt.revision.status === "building") await notifyWork("build");
-      if (receipt.operation?.status === "pending") await notifyWork("operation");
+      if (receipt.operation?.status === "pending") {
+        await notifyWork("operation", receipt.operation.instanceId);
+      }
       return receipt;
     },
     findByIdempotency(repositoryId, idempotencyKey) {
@@ -104,7 +108,9 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     },
     async requestDesiredState(input) {
       const receipt = await deps.instances.requestDesiredState(input);
-      if (receipt.operation?.status === "pending") await notifyWork("operation");
+      if (receipt.operation?.status === "pending") {
+        await notifyWork("operation", receipt.operation.instanceId);
+      }
       return receipt;
     },
   };
@@ -144,8 +150,17 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     rolloutPlanner: createStableRolloutPlanner(rolloutDependencies),
     clock: deps.clock,
     workerId: deps.workerId,
+    notifyCanaryHealthScheduleAvailable: (instanceId: string) =>
+      notifyWork("operation", instanceId),
   };
   const scheduled = { promotions, rollouts: rolloutDependencies };
+  const progressCanaryHealth = (operationId: string) =>
+    progressCanaryHealthAfterEvidence({
+      findReleaseId: () => releases.findCanaryReleaseId(operationId),
+      prepare: () => releases.prepareCanaryHealthProgress({ operationId, now: deps.clock.nowMs() }),
+      advance: async (releaseId) =>
+        (await advanceStablePromotions(promotions, { limit: 1, releaseId })).claimed,
+    });
   const operatorReleaseAdmission = createOperatorReleaseAdmissionRoutes({
     releases,
     registry: deps.registry,
@@ -164,14 +179,54 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     releases,
     followers,
     scheduled,
+    getCanaryHealthSchedule: (input: Parameters<typeof releases.getCanaryHealthSchedule>[0]) =>
+      releases.getCanaryHealthSchedule(input),
+    progressCanaryHealth,
     operatorReleaseAdmission,
   };
+}
+
+const CANARY_HEALTH_PROGRESS_TIMEOUT_MS = 15_000;
+const CANARY_HEALTH_PROGRESS_MAX_ATTEMPTS = 8;
+const CANARY_HEALTH_PROGRESS_RETRY_DELAYS_MS = [200, 400, 800, 1_600, 3_200] as const;
+
+/** Retries fresh canary evidence while a concurrent rollout lease is settling. */
+export async function progressCanaryHealthAfterEvidence(input: {
+  readonly findReleaseId: () => Promise<string | null>;
+  readonly prepare: () => Promise<CanaryHealthProgressState>;
+  readonly advance: (releaseId: string) => Promise<number>;
+  readonly monotonicNow?: () => number;
+  readonly wait?: (milliseconds: number) => Promise<void>;
+}): Promise<void> {
+  const releaseId = await input.findReleaseId();
+  if (!releaseId) return;
+
+  const monotonicNow = input.monotonicNow ?? Date.now;
+  const wait =
+    input.wait ??
+    ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const startedAt = monotonicNow();
+  for (let attempt = 0; attempt < CANARY_HEALTH_PROGRESS_MAX_ATTEMPTS; attempt += 1) {
+    if (monotonicNow() - startedAt >= CANARY_HEALTH_PROGRESS_TIMEOUT_MS) return;
+    const state = await input.prepare();
+    if (state.kind === "inactive" || state.kind === "consumed") return;
+    if (state.kind === "due" && (await input.advance(releaseId)) > 0) return;
+
+    const elapsed = monotonicNow() - startedAt;
+    const remaining = CANARY_HEALTH_PROGRESS_TIMEOUT_MS - elapsed;
+    if (attempt + 1 >= CANARY_HEALTH_PROGRESS_MAX_ATTEMPTS || remaining <= 0) return;
+    const delay =
+      CANARY_HEALTH_PROGRESS_RETRY_DELAYS_MS[
+        Math.min(attempt, CANARY_HEALTH_PROGRESS_RETRY_DELAYS_MS.length - 1)
+      ] ?? 3_200;
+    await wait(Math.min(delay, remaining));
+  }
 }
 
 function createStableFollowerComposition(
   configurations: T11RolloutCompositionDependencies["configurations"],
   clock: ReleaseClock,
-  notifyWork: (kind: "build" | "operation") => Promise<void>,
+  notifyWork: (kind: "build" | "operation", instanceId?: string) => Promise<void>,
 ): CompositionProvider {
   return {
     async compose({ release, follower, idempotencyKey }) {

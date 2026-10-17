@@ -464,6 +464,45 @@ describe("stable release candidate application", () => {
     expect(final.followerPlanningComplete).toBe(true);
   });
 
+  it("announces the canary schedule after its checkpoint and preserves missing-sample retries", async () => {
+    const store = new MemoryReleaseStore();
+    const clock = new MutableClock();
+    const item = candidate();
+    store.candidates.set(item.id, item);
+    await store.commitDiscoveryPage({
+      expectedRevision: 0,
+      expectedCursor: null,
+      page: { items: [item], nextCursor: null },
+      at: clock.now(),
+    });
+    const checkpointStates: string[] = [];
+    const notifiedInstances: string[] = [];
+    const deps = promotionDeps(store, clock, {
+      canaryRuntime: {
+        ensureRunning: async () => ({ runtimeId: "canary-instance", operationId: "canary-op" }),
+        observe: async () => ({ kind: "unknown" }),
+        stop: async () => ({ kind: "pending" }),
+      },
+      notifyCanaryHealthScheduleAvailable: async (instanceId) => {
+        notifiedInstances.push(instanceId);
+        checkpointStates.push(store.workflows.get(item.id)!.state);
+      },
+    });
+
+    for (let tick = 0; tick < 3; tick += 1) await advanceOnce(store, deps);
+    expect(notifiedInstances).toEqual(["canary-instance"]);
+    expect(checkpointStates).toEqual(["canary_observing"]);
+    const firstDeadline = store.workflows.get(item.id)!.nextAttemptAt;
+    expect(firstDeadline).not.toBeNull();
+
+    clock.value = firstDeadline!;
+    await advanceOnce(store, deps);
+    expect(store.workflows.get(item.id)).toMatchObject({
+      state: "canary_observing",
+      nextAttemptAt: firstDeadline,
+    });
+  });
+
   it("does not count the same provider observation twice toward the canary window", async () => {
     const store = new MemoryReleaseStore();
     const clock = new MutableClock();

@@ -54,7 +54,8 @@ export interface ControlPlaneEnv extends WorkNotificationEnv {
   RELEASE_OPERATOR_TOKEN?: string;
 }
 function composeServices(env: ControlPlaneEnv) {
-  const notifyWork = (kind: "build" | "operation") => notifyWorkAvailable(env, kind);
+  const notifyWork = (kind: "build" | "operation", instanceId?: string) =>
+    notifyWorkAvailable(env, kind, fetch, instanceId);
   const store = new D1PlatformStore(env.CONTROL_PLANE_DB);
   const registry = new RepositoryRegistryService(store, () =>
     newInstanceId(Date.now(), crypto.getRandomValues(new Uint8Array(10))),
@@ -123,6 +124,9 @@ function composeServices(env: ControlPlaneEnv) {
             db: env.CONTROL_PLANE_DB,
             workerId: required(env.PROVISIONER_WORKER_ID),
             clusterId: required(env.PROVISIONER_CLUSTER_ID),
+            ...(releases
+              ? { onCanaryHealthRecorded: releases.progressCanaryHealth }
+              : {}),
           }),
         }
       : {}),
@@ -185,6 +189,7 @@ function composeServices(env: ControlPlaneEnv) {
             now: Date.now,
             newOperationId: () =>
               newOperationId(Date.now(), crypto.getRandomValues(new Uint8Array(10))),
+            ...(releases ? { canaryHealthSchedule: releases.getCanaryHealthSchedule } : {}),
             resolveCurrentRuntime: async (snapshot, revision) =>
               resolveAdmittedRuntime(
                 snapshot,

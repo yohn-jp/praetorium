@@ -234,7 +234,12 @@ export function createOperationAdminRoutes(deps: OperationAdminDependencies) {
       }
       if (replay.operation.status === "pending") {
         try {
-          scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation");
+          scheduleWorkNotification(
+            c.executionCtx,
+            deps.notifyWorkAvailable,
+            "operation",
+            instanceId,
+          );
         } catch {
           // Retry was already durably accepted.
         }
@@ -264,7 +269,12 @@ export function createOperationAdminRoutes(deps: OperationAdminDependencies) {
     }
     if (result.operation.status === "pending") {
       try {
-        scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation");
+        scheduleWorkNotification(
+          c.executionCtx,
+          deps.notifyWorkAvailable,
+          "operation",
+          instanceId,
+        );
       } catch {
         // Retry was already durably accepted.
       }

@@ -1,6 +1,9 @@
 import type { WorkNotification } from "@praetorium/contracts";
 
-export type WorkNotificationDispatcher = (kind: WorkNotification["kind"]) => Promise<unknown>;
+export type WorkNotificationDispatcher = (
+  kind: WorkNotification["kind"],
+  instanceId?: string,
+) => Promise<unknown>;
 
 export interface WorkNotificationExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
@@ -11,12 +14,13 @@ export function scheduleWorkNotification(
   context: WorkNotificationExecutionContext,
   dispatch: WorkNotificationDispatcher | undefined,
   kind: WorkNotification["kind"],
+  instanceId?: string,
 ): void {
   if (!dispatch) return;
   try {
     context.waitUntil(
       Promise.resolve()
-        .then(() => dispatch(kind))
+        .then(() => dispatch(kind, instanceId))
         .then(
           () => undefined,
           () => undefined,

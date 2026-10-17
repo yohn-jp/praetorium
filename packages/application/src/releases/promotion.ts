@@ -59,6 +59,8 @@ export interface ReleasePromotionDeps {
   readonly healthWindowMs?: number;
   readonly maxHealthGapMs?: number;
   readonly retryMs?: number;
+  /** Best-effort hint after the durable canary-observing checkpoint commits. */
+  readonly notifyCanaryHealthScheduleAvailable?: (instanceId: string) => Promise<void>;
 }
 
 export type PromotionBatchResult = {
@@ -243,7 +245,7 @@ async function advanceCandidate(
       artifactDigest: workflow.canaryArtifactDigest,
       idempotencyKey: `stable-canary-runtime:${candidate.id}`,
     });
-    return (await save(deps, lease, {
+    const saved = await save(deps, lease, {
       state: "canary_observing",
       canaryRuntimeId: canary.runtimeId,
       canaryOperationId: canary.operationId,
@@ -252,9 +254,14 @@ async function advanceCandidate(
       lastHealthEvidence: null,
       nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000),
       failureCode: null,
-    }))
-      ? "advanced"
-      : "stale";
+    });
+    if (!saved) return "stale";
+    try {
+      await deps.notifyCanaryHealthScheduleAvailable?.(canary.runtimeId);
+    } catch {
+      // The workflow checkpoint is durable; the hint is best-effort.
+    }
+    return "advanced";
   }
 
   if (workflow.state === "canary_observing") {
@@ -283,9 +290,8 @@ async function advanceCandidate(
         : "stale";
     }
     if (health.kind === "unknown") {
-      return (await save(deps, lease, { nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000) }))
-        ? "retried"
-        : "stale";
+      // Keep the retry deadline stable until a new observation is recorded.
+      return (await save(deps, lease, {})) ? "retried" : "stale";
     }
 
     const maxGap = deps.maxHealthGapMs ?? 2 * 5 * 60 * 1_000;
@@ -301,9 +307,8 @@ async function advanceCandidate(
       nowMs - parsedEvidence.data.observedAt > maxGap ||
       (workflow.lastHealthyAt !== null && parsedEvidence.data.observedAt <= workflow.lastHealthyAt)
     ) {
-      return (await save(deps, lease, { nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000) }))
-        ? "retried"
-        : "stale";
+      // Missing, duplicate, or rejected evidence does not consume this deadline.
+      return (await save(deps, lease, {})) ? "retried" : "stale";
     }
     const healthySince =
       workflow.healthySince === null ||
@@ -505,7 +510,11 @@ async function advanceCandidate(
 /** Advances a bounded number of durable promotion workflows. */
 export async function advanceStablePromotions(
   deps: ReleasePromotionDeps,
-  input: { readonly limit?: number; readonly leaseMs?: number } = {},
+  input: {
+    readonly limit?: number;
+    readonly leaseMs?: number;
+    readonly releaseId?: string;
+  } = {},
 ): Promise<PromotionBatchResult> {
   const limit = Math.max(1, Math.min(10, Math.trunc(input.limit ?? 2)));
   const leases = await deps.releases.claimCandidateWork({
@@ -513,6 +522,7 @@ export async function advanceStablePromotions(
     now: deps.clock.nowMs(),
     leaseMs: Math.max(10_000, Math.min(5 * 60 * 1_000, input.leaseMs ?? CANDIDATE_LEASE_MS)),
     limit,
+    ...(input.releaseId === undefined ? {} : { releaseId: input.releaseId }),
   });
   const result = { claimed: leases.length, advanced: 0, retried: 0, terminal: 0 };
   for (const lease of leases) {

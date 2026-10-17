@@ -2,8 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { ReleaseCandidateSchema } from "@praetorium/application/releases";
 import { stableRolloutStageIdempotencyKey } from "@praetorium/application/rollouts";
 import type { ConfigurationStageReceipt } from "@praetorium/application/configurations";
-import type { T11D1Database } from "./adapters/d1/t11-release-rollouts.js";
-import { createT11RolloutComposition } from "./rollout-composition.js";
+import type {
+  CanaryHealthProgressState,
+  T11D1Database,
+} from "./adapters/d1/t11-release-rollouts.js";
+import {
+  createT11RolloutComposition,
+  progressCanaryHealthAfterEvidence,
+} from "./rollout-composition.js";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const PRODUCER = "a".repeat(40);
@@ -161,6 +167,59 @@ function follower() {
     platform: "linux/amd64" as const,
   };
 }
+
+describe("canary health progress retry", () => {
+  it("rechecks automatically after a concurrent rollout lease clears", async () => {
+    let elapsed = 0;
+    const prepare = vi.fn(async (): Promise<CanaryHealthProgressState> =>
+      elapsed < 600
+        ? { kind: "leased", releaseId: "release-2", leaseExpiresAt: now + 1_000 }
+        : { kind: "due", releaseId: "release-2" },
+    );
+    const advance = vi.fn(async () => 1);
+    const waits: number[] = [];
+
+    await progressCanaryHealthAfterEvidence({
+      findReleaseId: async () => "release-2",
+      prepare,
+      advance,
+      monotonicNow: () => elapsed,
+      wait: async (milliseconds) => {
+        waits.push(milliseconds);
+        elapsed += milliseconds;
+      },
+    });
+
+    expect(prepare).toHaveBeenCalledTimes(3);
+    expect(waits).toEqual([200, 400]);
+    expect(advance).toHaveBeenCalledExactlyOnceWith("release-2");
+  });
+
+  it("caps D1 rechecks and uses exponential delays when the lease remains active", async () => {
+    let elapsed = 0;
+    const prepare = vi.fn(async (): Promise<CanaryHealthProgressState> => ({
+      kind: "leased",
+      releaseId: "release-2",
+      leaseExpiresAt: now + 60_000,
+    }));
+    const waits: number[] = [];
+
+    await progressCanaryHealthAfterEvidence({
+      findReleaseId: async () => "release-2",
+      prepare,
+      advance: vi.fn(async () => 0),
+      monotonicNow: () => elapsed,
+      wait: async (milliseconds) => {
+        waits.push(milliseconds);
+        elapsed += milliseconds;
+      },
+    });
+
+    expect(prepare).toHaveBeenCalledTimes(8);
+    expect(waits).toEqual([200, 400, 800, 1_600, 3_200, 3_200, 3_200]);
+    expect(elapsed).toBe(12_600);
+  });
+});
 
 describe("T11 rollout production composition", () => {
   it("stages a stable follower through ConfigurationService without planning or mutating desired state", async () => {

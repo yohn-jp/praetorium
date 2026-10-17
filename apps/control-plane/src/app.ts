@@ -176,7 +176,12 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
     });
     if (result.operation?.status === "pending") {
       try {
-        scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation");
+        scheduleWorkNotification(
+          c.executionCtx,
+          deps.notifyWorkAvailable,
+          "operation",
+          snapshot.instance.instanceId,
+        );
       } catch {
         // The desired-state transaction already committed.
       }

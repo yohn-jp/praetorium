@@ -1,5 +1,7 @@
 # Reproducible Praetorium deployment
 
+> **Runbook for operator-authorized deployment.** System ownership and the split between D1, DO, K3s, Build Worker and BuildKit are mapped in [SYSTEM.md](../architecture/SYSTEM.md). Passing a host preflight or this static deploy does not certify end-to-end Hosted login/edit/save/recovery. Historical architectural assumptions in this runbook are under review in [REVIEW.md](../architecture/REVIEW.md).
+
 This is the operator runbook for **NixOS or dedicated Ubuntu 24.04 / 26.04 guest roles**, the Cloudflare Workers and the K3s application plane. It does not use SOPS, require Proxmox host modifications, install a new GitHub App, or deploy from locally edited source files. Every deploy is tied to a checked-out Git commit, a complete owner-supplied nonsecret inventory and private file-backed credentials.
 
 ## 0. Bootstrap sequence (one-time)

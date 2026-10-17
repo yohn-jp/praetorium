@@ -62,13 +62,35 @@ function readyPolicy(policy, index = 0) {
   };
 }
 
-function readerMaps({ policyOverrides = new Map(), bindingOverrides = new Map() } = {}) {
+function apiDefaultedPolicy(policy, index = 0) {
+  const copy = readyPolicy(policy, index);
+  const matchConstraints = copy.spec.matchConstraints;
+  matchConstraints.namespaceSelector ??= {};
+  if (matchConstraints.namespaceSelector.matchLabels) {
+    matchConstraints.namespaceSelector.matchLabels = Object.fromEntries(
+      Object.entries(matchConstraints.namespaceSelector.matchLabels).sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0,
+      ),
+    );
+  }
+  matchConstraints.objectSelector = {};
+  for (const resourceRule of matchConstraints.resourceRules) resourceRule.scope = "*";
+  return copy;
+}
+
+function readerMaps({
+  policyOverrides = new Map(),
+  bindingOverrides = new Map(),
+  apiDefaulted = false,
+} = {}) {
   const policies = new Map(
     sourcePolicies.map((policy, index) => [
       policy.metadata.name,
       policyOverrides.has(policy.metadata.name)
         ? policyOverrides.get(policy.metadata.name)
-        : readyPolicy(policy, index),
+        : apiDefaulted
+          ? apiDefaultedPolicy(policy, index)
+          : readyPolicy(policy, index),
     ]),
   );
   const bindings = new Map(
@@ -124,6 +146,24 @@ test("readiness waits for the seven source policies and same-name bindings", asy
     readers.calls.bindings.sort(),
     sourceBindings.map(({ metadata }) => metadata.name).sort(),
   );
+});
+
+test("readiness accepts v1.35.5 defaulted scopes and empty selectors", async () => {
+  const readers = readerMaps({ apiDefaulted: true });
+  await waitForAdmissionGuards(readers);
+  for (const policy of readers.policies.values()) {
+    const matchConstraints = policy.spec.matchConstraints;
+    assert.deepEqual(matchConstraints.objectSelector, {});
+    assert.ok(Object.hasOwn(matchConstraints, "namespaceSelector"));
+    assert.ok(matchConstraints.resourceRules.every((resourceRule) => resourceRule.scope === "*"));
+  }
+  const podPolicy = readers.policies.get("praetorium-tenant-pods-restricted");
+  assert.deepEqual(podPolicy.spec.matchConstraints.namespaceSelector, {
+    matchLabels: {
+      "arcadia.io/platform": "arcadia-platform",
+      "app.kubernetes.io/managed-by": "arcadia-provisioner",
+    },
+  });
 });
 
 test("stale generation and incomplete type checking poll only until the deadline", async () => {
@@ -220,7 +260,71 @@ test("wrong writer identity and changed resource scope fail before waiting", asy
       now: () => 0,
       sleep: async () => assert.fail("must not sleep"),
     }),
-    /unexpected matchPolicy/u,
+    /unexpected matchConstraints fields/u,
+  );
+});
+
+test("restrictive scope and non-empty default selectors fail immediately", async () => {
+  const first = sourcePolicies[0];
+  const cases = [
+    {
+      mutate(policy) {
+        policy.spec.matchConstraints.resourceRules[0].scope = "Namespaced";
+      },
+      expected: /unexpected resource rules/u,
+    },
+    {
+      mutate(policy) {
+        policy.spec.matchConstraints.resourceRules[0].scope = "Cluster";
+      },
+      expected: /unexpected resource rules/u,
+    },
+    {
+      mutate(policy) {
+        policy.spec.matchConstraints.namespaceSelector = { matchLabels: { environment: "prod" } };
+      },
+      expected: /unexpected namespaceSelector/u,
+    },
+    {
+      mutate(policy) {
+        policy.spec.matchConstraints.objectSelector = { matchLabels: { protected: "true" } };
+      },
+      expected: /unexpected objectSelector/u,
+    },
+  ];
+  for (const { mutate, expected } of cases) {
+    const restricted = readyPolicy(first);
+    mutate(restricted);
+    const readers = readerMaps({
+      apiDefaulted: true,
+      policyOverrides: new Map([[first.metadata.name, restricted]]),
+    });
+    await assert.rejects(
+      waitForAdmissionGuards({
+        ...readers,
+        now: () => 0,
+        sleep: async () => assert.fail("must not sleep"),
+      }),
+      expected,
+    );
+  }
+
+  const pod = sourcePolicies.find(
+    (policy) => policy.metadata.name === "praetorium-tenant-pods-restricted",
+  );
+  const restrictedPod = readyPolicy(pod);
+  restrictedPod.spec.matchConstraints.namespaceSelector.matchLabels.environment = "prod";
+  const podReaders = readerMaps({
+    apiDefaulted: true,
+    policyOverrides: new Map([[pod.metadata.name, restrictedPod]]),
+  });
+  await assert.rejects(
+    waitForAdmissionGuards({
+      ...podReaders,
+      now: () => 0,
+      sleep: async () => assert.fail("must not sleep"),
+    }),
+    /unexpected namespaceSelector/u,
   );
 });
 

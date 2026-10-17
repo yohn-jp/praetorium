@@ -111,7 +111,13 @@ function normalizeRule(value) {
   if (!isRecord(value)) return null;
   const keys = Object.keys(value).sort();
   const expectedKeys = ["apiGroups", "apiVersions", "operations", "resources"];
-  if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)) return null;
+  const scopedKeys = [...expectedKeys, "scope"];
+  if (
+    JSON.stringify(keys) !== JSON.stringify(expectedKeys) &&
+    JSON.stringify(keys) !== JSON.stringify(scopedKeys)
+  ) {
+    return null;
+  }
   if (
     !["apiGroups", "apiVersions", "operations", "resources"].every((key) =>
       Array.isArray(value[key]),
@@ -119,6 +125,7 @@ function normalizeRule(value) {
   ) {
     return null;
   }
+  if (Object.hasOwn(value, "scope") && value.scope !== "*") return null;
   return {
     apiGroups: value.apiGroups,
     apiVersions: value.apiVersions,
@@ -128,7 +135,44 @@ function normalizeRule(value) {
 }
 
 function sameJson(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  const canonicalize = (value) => {
+    if (Array.isArray(value)) return value.map(canonicalize);
+    if (isRecord(value)) {
+      return Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [key, canonicalize(value[key])]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+}
+
+function isMatchAllSelector(selector) {
+  if (!isRecord(selector)) return false;
+  if (Object.keys(selector).some((key) => !["matchLabels", "matchExpressions"].includes(key))) {
+    return false;
+  }
+  if (
+    Object.hasOwn(selector, "matchLabels") &&
+    (!isRecord(selector.matchLabels) || Object.keys(selector.matchLabels).length > 0)
+  ) {
+    return false;
+  }
+  if (
+    Object.hasOwn(selector, "matchExpressions") &&
+    (!Array.isArray(selector.matchExpressions) || selector.matchExpressions.length > 0)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function selectorIsAllowed(constraints, key, expected) {
+  if (!Object.hasOwn(constraints, key)) return expected === undefined;
+  if (expected !== undefined) return sameJson(constraints[key], expected);
+  return isMatchAllSelector(constraints[key]);
 }
 
 function validatePolicyGuard(policy, expected) {
@@ -156,14 +200,19 @@ function validatePolicyGuard(policy, expected) {
 
   const matchConstraints = policy.spec.matchConstraints;
   if (!isRecord(matchConstraints)) fail(`policy ${expected.name} has no matchConstraints`);
-  const expectedConstraintKeys =
-    expected.namespaceSelector === undefined
-      ? ["matchPolicy", "resourceRules"]
-      : ["matchPolicy", "namespaceSelector", "resourceRules"];
-  if (!sameJson(Object.keys(matchConstraints).sort(), expectedConstraintKeys.sort())) {
-    fail(`policy ${expected.name} has an unexpected matchPolicy`);
+  const allowedConstraintKeys = [
+    "matchPolicy",
+    "namespaceSelector",
+    "objectSelector",
+    "resourceRules",
+  ];
+  if (
+    !Object.hasOwn(matchConstraints, "resourceRules") ||
+    Object.keys(matchConstraints).some((key) => !allowedConstraintKeys.includes(key))
+  ) {
+    fail(`policy ${expected.name} has unexpected matchConstraints fields`);
   }
-  if (matchConstraints.matchPolicy !== "Equivalent") {
+  if (matchConstraints.matchPolicy !== undefined && matchConstraints.matchPolicy !== "Equivalent") {
     fail(`policy ${expected.name} has an unexpected matchPolicy`);
   }
 
@@ -174,12 +223,11 @@ function validatePolicyGuard(policy, expected) {
     fail(`policy ${expected.name} has unexpected resource rules`);
   }
 
-  if (expected.namespaceSelector === undefined) {
-    if (Object.hasOwn(matchConstraints, "namespaceSelector")) {
-      fail(`policy ${expected.name} has an unexpected namespaceSelector`);
-    }
-  } else if (!sameJson(matchConstraints.namespaceSelector, expected.namespaceSelector)) {
+  if (!selectorIsAllowed(matchConstraints, "namespaceSelector", expected.namespaceSelector)) {
     fail(`policy ${expected.name} has an unexpected namespaceSelector`);
+  }
+  if (!selectorIsAllowed(matchConstraints, "objectSelector", undefined)) {
+    fail(`policy ${expected.name} has an unexpected objectSelector`);
   }
 
   const actualConditions = policy.spec.matchConditions;

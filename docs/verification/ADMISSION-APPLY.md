@@ -41,6 +41,13 @@ scope, binding action, or expression warnings fail immediately. Missing
 objects, missing status, stale `observedGeneration`, or absent type-checking
 status are retried until the bounded deadline.
 
+The live-object check accepts Kubernetes API server defaults that preserve
+match-all behavior: resource rule `scope: "*"`, an equivalent match policy,
+and empty namespace/object selectors. It rejects a cluster/namespaced rule
+scope, any non-empty selector outside the Pod policy's exact namespace
+selector, and unrecognized matching fields. These defaults are applied by the
+versioned [Kubernetes v1.35.5 admissionregistration defaulting code](https://github.com/kubernetes/kubernetes/blob/v1.35.5/pkg/apis/admissionregistration/v1/defaults.go).
+
 This status gate establishes that the API server has observed and type-checked
 the stored policy generation. It does not establish that the admission plugin
 is enabled or enforcing requests, validate policy behavior through the API

@@ -3,13 +3,16 @@
 import {
   access,
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   open,
+  readlink,
   readFile,
   realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -26,7 +29,12 @@ const TOOL = Object.freeze({
   podman: "/nix/store/ml8x1jki0s2s18923xp603wiz731s871-podman-5.8.8/bin/podman",
   runc: "/nix/store/hyq7l7806idfdy8jg0nl8ffhx5dz696z-docker-runc-29.5.3/bin/runc",
   slirp4netns: "/nix/store/458z7r5nixqv9c3k4dq88x6x90il48jh-slirp4netns-1.3.3/bin/slirp4netns",
+  netavark: "/nix/store/49ans93h0nqrcwci50hgix54qq1q4qk3-netavark-1.17.2/bin/netavark",
   unshare: "/run/current-system/sw/bin/unshare",
+});
+const USERNS_HELPERS = Object.freeze({
+  newuidmap: "/run/wrappers/bin/newuidmap",
+  newgidmap: "/run/wrappers/bin/newgidmap",
 });
 
 const REGISTRY_IMAGE =
@@ -48,15 +56,15 @@ function cli(argv) {
 }
 
 function privateEnvironment(root) {
-  const systemPaths = ["/run/wrappers/bin", "/run/current-system/sw/bin"];
+  const helperDirectory = path.join(root, "config", "userns-helpers");
+  const systemPaths = ["/run/current-system/sw/bin"];
   return {
-    // Prefer NixOS's setuid shadow wrappers; the system profile also exposes
-    // non-setuid newuidmap/newgidmap binaries under current-system/sw/bin.
+    // Expose only the two root-owned UID-map helpers needed by rootless Podman.
     PATH: [
       ...new Set([
-        systemPaths[0],
+        helperDirectory,
         ...Object.values(TOOL).map((binary) => path.dirname(binary)),
-        ...systemPaths.slice(1),
+        ...systemPaths,
       ]),
     ].join(path.delimiter),
     HOME: root,
@@ -75,6 +83,49 @@ function privateEnvironment(root) {
     REGISTRY_AUTH_FILE: path.join(root, "config", "containers", "auth.json"),
     CONTAINERS_REGISTRIES_CONF: path.join(root, "config", "containers", "registries.conf"),
   };
+}
+
+async function ensureUsernsHelpers(root) {
+  const configDirectory = path.join(root, "config");
+  const configInfo = await lstat(configDirectory);
+  if (
+    !configInfo.isDirectory() ||
+    configInfo.uid !== process.getuid() ||
+    (configInfo.mode & 0o077) !== 0
+  ) {
+    throw new Error("refusing userns helper setup outside a private owned config directory");
+  }
+
+  const helperDirectory = path.join(configDirectory, "userns-helpers");
+  try {
+    await mkdir(helperDirectory, { mode: 0o700 });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  const helperInfo = await lstat(helperDirectory);
+  if (
+    !helperInfo.isDirectory() ||
+    helperInfo.uid !== process.getuid() ||
+    (helperInfo.mode & 0o077) !== 0
+  ) {
+    throw new Error("refusing userns helper setup in a non-private or unowned directory");
+  }
+
+  for (const [name, target] of Object.entries(USERNS_HELPERS)) {
+    const targetInfo = await stat(target);
+    if (targetInfo.uid !== 0 || (targetInfo.mode & 0o4000) === 0 || (targetInfo.mode & 0o111) === 0)
+      throw new Error(`refusing non-root-owned or non-setuid userns helper: ${target}`);
+
+    const helperPath = path.join(helperDirectory, name);
+    try {
+      const linkInfo = await lstat(helperPath);
+      if (!linkInfo.isSymbolicLink() || (await readlink(helperPath)) !== target)
+        throw new Error(`refusing unexpected userns helper entry: ${helperPath}`);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await symlink(target, helperPath);
+    }
+  }
 }
 
 function podmanArgs(root) {
@@ -157,6 +208,7 @@ async function createRoot() {
   for (const directory of [
     "config/containers",
     "config/docker",
+    "config/userns-helpers",
     "config/podman-network",
     "config/buildkit",
     "cache",
@@ -175,7 +227,11 @@ async function createRoot() {
   await chmod(path.join(root, "runtime"), 0o700);
   await chmod(path.join(root, "t"), 0o700);
 
-  const config = `[containers]\nlog_driver = "k8s-file"\npids_limit = 65536\n\n[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\nruntime = "${TOOL.runc}"\nnetwork_cmd_path = "${TOOL.slirp4netns}"\ntmp_dir = "${path.join(root, "t")}"\n\n[network]\nnetwork_backend = "netavark"\nnetwork_config_dir = "${path.join(root, "config", "podman-network")}"\n`;
+  const helperDirectories = [
+    path.join(root, "config", "userns-helpers"),
+    path.dirname(TOOL.netavark),
+  ];
+  const config = `[containers]\nlog_driver = "k8s-file"\npids_limit = 65536\n\n[engine]\nhelper_binaries_dir = ${JSON.stringify(helperDirectories)}\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\nruntime = "${TOOL.runc}"\nnetwork_cmd_path = "${TOOL.slirp4netns}"\ntmp_dir = "${path.join(root, "t")}"\n\n[network]\nnetwork_backend = "netavark"\nnetwork_config_dir = "${path.join(root, "config", "podman-network")}"\n`;
   await writeFile(path.join(root, "config", "containers", "containers.conf"), config, {
     mode: 0o600,
   });
@@ -499,6 +555,7 @@ async function stopOwnedServices(root, owner) {
 
 async function cleanup(root) {
   const { root: actualRoot, owner } = await readOwnerRecord(root);
+  if (owner.podmanInitialized) await ensureUsernsHelpers(actualRoot);
   await stopOwnedServices(actualRoot, owner);
   await rm(actualRoot, { recursive: true, force: true });
   return actualRoot;
@@ -565,6 +622,7 @@ async function launch(keep) {
     writeFile(ownerPath, `${JSON.stringify(owner, null, 2)}\n`, { mode: 0o600 });
   await persistOwner();
   try {
+    await ensureUsernsHelpers(root);
     const infoText = await run(TOOL.podman, [...podmanArgs(root), "info", "--format", "json"], {
       env,
       logPath: path.join(root, "logs", "podman-info.json"),

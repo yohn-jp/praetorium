@@ -3,48 +3,27 @@
   "evidenceCut": {
     "checkedAt": "2026-10-17",
     "repository": "yohn-jp/praetorium",
-    "targetWorktree": "/tmp/praetorium-coverage-resume",
-    "targetBranch": "detached from main",
-    "targetHead": "80fe6d5fed0926e42706dfd8fafbc2adb1658943",
+    "targetWorktree": "/tmp/praetorium-coverage-resume-d029",
+    "targetBranch": "worker/coverage-resume-d029",
+    "targetHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
     "sourceRepository": "yohn-jp/arcadia-platform",
     "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
     "sourceSnapshotPath": "/tmp/praetorium-campaign-source",
-    "sourceSnapshotGitMetadata": "unavailable; pinned revision follows PLAN.md and SOURCE-HANDLERS.json",
+    "sourceSnapshotGitMetadata": "unavailable; source revision is pinned in docs/migration/PLAN.md and SOURCE-HANDLERS.json",
+    "producerRevision": "4c163a3c8162b5d7bc4becb63f00a04617cab5dc",
     "testsRunForThisLedger": [
-      "PATH=/tmp/praetorium-pnpm11:$PATH corepack pnpm@11.18.0 check",
-      "node --test tests/integration/verify-integration.test.mjs"
+      "corepack pnpm@11.18.0 install --frozen-lockfile (pass)",
+      "PATH=/tmp/praetorium-pnpm11:$PATH corepack pnpm@11.18.0 check (pass, 29/29 Turbo tasks; provider boundaries and schema drift pass)",
+      "node --test tests/integration/verify-integration.test.mjs (pass, 9/9)",
+      "node scripts/verify-integration.mjs --environment /tmp/praetorium-a2bea-local-workers-d1-do-inventory.json (exit 2; exact d029 rerun BLOCKED, workers-d1-do VERIFIED only)",
+      "node --test tests/e2e/gateway-worker-security.partial.test.mjs (pass, partial only at f82227a; Gateway source unchanged through d029)",
+      "node scripts/deploy-workers.mjs plan --inventory infrastructure/test/disposable-inventory.json (exit 2; effect-free, missing external project inputs)",
+      "node scripts/deploy-workers.mjs preflight --inventory infrastructure/test/disposable-inventory.json (exit 2; effect-free, external bindings/artifacts not supplied)"
     ],
     "frozenInstallRunForThisLedger": true,
-    "rootCheckRunForThisLedger": true
-  },
-  "rootWorktreeObservation": {
-    "repository": "yohn-jp/praetorium",
-    "branch": "main",
-    "head": "80fe6d5fed0926e42706dfd8fafbc2adb1658943",
-    "state": "dirty; excluded from integrated evidence",
-    "modifiedTrackedPaths": [
-      "packages/application/src/builds/index.ts",
-      "packages/persistence/src/d1/index.ts",
-      "pnpm-lock.yaml",
-      "tests/integration/workers-d1-do.test.mjs"
-    ],
-    "untrackedCandidatePaths": [
-      "apps/control-plane/migrations/0002_stable_release_rollouts.sql",
-      "apps/control-plane/package.json",
-      "apps/control-plane/src/app.ts",
-      "apps/control-plane/src/build-composition.ts",
-      "apps/control-plane/src/control-credentials.test.ts",
-      "apps/control-plane/src/control-credentials.ts",
-      "apps/control-plane/src/index.ts",
-      "apps/control-plane/src/provisioner-routes.ts",
-      "apps/control-plane/src/runtime-context.ts",
-      "apps/control-plane/src/worker.ts",
-      "apps/control-plane/tsconfig.json",
-      "apps/control-plane/wrangler.toml",
-      "packages/persistence/package.json",
-      "packages/persistence/tsconfig.json"
-    ],
-    "disposition": "Candidate files were inspected only as unintegrated working-tree evidence and were excluded from COVERAGE target/proofs."
+    "rootCheckRunForThisLedger": true,
+    "frozenInstallStatus": "pass",
+    "rootCheckStatus": "pass: exact d029 check exited 0, 29/29 Turbo tasks; provider boundaries and contract schema drift passed"
   },
   "statusLegend": {
     "implementation": [
@@ -63,241 +42,288 @@
       "not_run",
       "unverified"
     ],
-    "meaning": "present means relevant code/schema exists in assessed HEAD; integrated means it is on the target branch, not that acceptance has passed. No task is called complete from leaf tests or worker reports."
+    "meaning": "Implementation is code/schema presence; integration is production-path composition in this exact target HEAD; realAcceptance records only the bounded environment evidence stated per task. Unit/package tests do not constitute producer or deployed-system acceptance. T14 full acceptance is blocked."
   },
   "producerPreflight": {
-    "requestedRevisionLabel": "new969",
-    "statusAtEvidenceCut": "unverified",
-    "artifactStatus": "unverified",
-    "artifactDigestRecordedByTargetDocs": null,
-    "olderTargetStatusDocument": {
-      "path": "docs/migration/PRODUCER-STATUS.json",
-      "producerRevision": "c90e95d9711e859799f9674138b2db42efad6bc3",
-      "note": "This is older than the requested new969 preflight and is not used to assert S01-S05 missing."
-    },
+    "checkedInStatusPath": "docs/migration/PRODUCER-STATUS.json",
+    "producerRevision": "4c163a3c8162b5d7bc4becb63f00a04617cab5dc",
+    "statusAtEvidenceCut": "missing",
+    "gate": "BLOCKED",
+    "producerModified": false,
+    "artifactDigest": null,
     "gates": [
       {
         "id": "S01",
-        "status": "unverified"
+        "status": "missing",
+        "gate": "BLOCKED"
       },
       {
         "id": "S02",
-        "status": "unverified"
+        "status": "missing",
+        "gate": "BLOCKED"
       },
       {
         "id": "S03",
-        "status": "unverified"
+        "status": "missing",
+        "gate": "BLOCKED"
       },
       {
         "id": "S04",
-        "status": "unverified"
+        "status": "missing",
+        "gate": "BLOCKED"
       },
       {
         "id": "S05",
-        "status": "unverified"
+        "status": "missing",
+        "gate": "BLOCKED"
       }
-    ]
+    ],
+    "note": "Current read-only producer preflight at revision 4c163a3c8162b5d7bc4becb63f00a04617cab5dc marks S01-S05 missing/BLOCKED with artifactDigest null. No real producer artifact/conformance acceptance exists; no fixture is counted."
   },
   "tasks": {
     "T00": {
       "implementation": "present",
       "integration": "integrated",
-      "realAcceptance": "blocked",
+      "realAcceptance": "passed",
       "evidence": [
         "package.json",
         "pnpm-workspace.yaml",
         "docs/migration/BASELINE.json"
       ],
-      "blockers": [
-        "Frozen install failed on missing workspace dependency entries; root check passed only after pnpm locally refreshed those entries, and its lockfile diff was restored."
-      ],
+      "blockers": [],
       "recordedCheckDocs": [
         "docs/migration/BASELINE.json"
       ],
-      "recordStatus": "Historical foundation check record; not freshly rerun at targetHead."
+      "recordStatus": "Fresh frozen install and root build/lint/typecheck/test/provider-boundary/schema-drift checks passed at targetHead. This is local foundation verification, not runtime/product acceptance."
     },
     "T01": {
       "implementation": "present",
       "integration": "integrated",
-      "realAcceptance": "unverified",
+      "realAcceptance": "blocked",
       "evidence": [
         "packages/contracts/src",
         "packages/contracts/schemas/contracts.json",
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "The requested new969 producer preflight result and immutable producer artifact are absent from this evidence cut."
+        "Current producer 4c163a3c8162b5d7bc4becb63f00a04617cab5dc preflight marks S01-S05 missing/BLOCKED; artifactDigest is null. Target consumer contracts cannot turn that producer gate green."
       ],
       "recordedCheckDocs": [
         "docs/migration/PRODUCER-STATUS.json"
       ],
-      "recordStatus": "Checked-in producer status is pinned to an older revision and is not the requested new969 preflight."
+      "recordStatus": "Producer status is current at 4c163a3c8162b5d7bc4becb63f00a04617cab5dc; no artifact or producer conformance run is recorded."
     },
     "T02": {
-      "implementation": "present",
+      "implementation": "partial",
       "integration": "partial",
       "realAcceptance": "blocked",
       "evidence": [
         "packages/auth/src",
-        "plugins/github/src"
+        "plugins/github/src",
+        "apps/gateway/src/router.ts",
+        "apps/gateway/src/context.ts",
+        "apps/control-plane/src/runtime-binding.ts",
+        "apps/control-plane/src/runtime-identity-routes.ts",
+        "apps/gateway/src/adapters/runtime-git-broker.ts",
+        "apps/gateway/test/runtime-git-broker.test.ts"
       ],
       "blockers": [
-        "Gateway route/Worker composition is absent; no explicitly owned GitHub App and test repository were available in the evidence cut."
+        "Gateway production context and Control Plane Worker compose the App-scoped runtime Git credential broker and runtime identity issuance from configured secrets; local Worker and focused route/binding tests pass.",
+        "Known-issued-token revocation during retirement is not implemented: d029 withdraws new issuance authority but stores no encrypted registry of already-issued GitHub tokens to revoke. A minted token may remain usable until its GitHub expiry (validated ceiling 3605 seconds); no global/instant revocation claim is made.",
+        "No owned GitHub App, authorized test users, private test repository, or producer S02/S03 credential renewal/revocation acceptance was run."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T02.md"
       ],
-      "recordStatus": "Worker checkpoint report; it records package checks at its task HEAD, not a fresh root acceptance at targetHead."
+      "recordStatus": "Runtime broker/identity issuance and post-retirement stop-issuance are integrated and locally tested; M04 known-token revocation remains unimplemented at d029. Owned App and producer interoperability remain blocked."
     },
     "T03": {
       "implementation": "present",
-      "integration": "partial",
-      "realAcceptance": "blocked",
+      "integration": "integrated",
+      "realAcceptance": "passed",
       "evidence": [
-        "packages/application/src/instances",
-        "packages/application/src/configurations",
-        "packages/application/src/operations",
+        "apps/control-plane/src/worker.ts",
+        "apps/control-plane/src/app.ts",
+        "apps/control-plane/migrations",
         "packages/persistence/src/d1",
-        "apps/control-plane/migrations/0001_repository_platform.sql"
+        "packages/application/src/instances",
+        "packages/application/src/operations"
       ],
       "blockers": [
-        "Production Control Plane Worker/DO composition is absent; Cloudflare D1/DO acceptance was not run; audit query adapter remains missing."
+        "Local Wrangler bundle + Miniflare D1 and persistent SQLite DO check passed; no Cloudflare deployment, production D1/DO, or full GitHub/runtime acceptance."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T03.md",
-        "docs/migration/tasks/T03-config-build.md",
-        "docs/migration/tasks/T03-schema.sql"
+        "tests/integration/workers-d1-do.test.mjs"
       ],
-      "recordStatus": "Leaf SQLite report is not Cloudflare D1/DO acceptance; config/build report says Miniflare integration remains unrun."
+      "recordStatus": "The exact d029 production Wrangler Worker passed the owned local Miniflare D1/persistent SQLite DO runner for migrations, repository resolution, operation coordination, webhook metadata persistence and runtime identity/release composition gates. No Cloudflare deployment, production D1/DO or full T14 acceptance.",
+      "acceptanceScope": "Actual Wrangler-built Control Plane Worker; local D1 migrations and persistent DO; repository resolve/read, desired operations, webhook metadata/persistence and Worker restart. No external Cloudflare environment."
     },
     "T04": {
       "implementation": "present",
-      "integration": "partial",
-      "realAcceptance": "unverified",
+      "integration": "integrated",
+      "realAcceptance": "blocked",
       "evidence": [
         "plugins/scriptorium/src",
         "packages/contracts/src/producer.ts",
-        "plugins/scriptorium/test/fixtures"
+        "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "The consumer adapter is present, but current producer contract/artifact acceptance depends on the unverified new969 preflight."
+        "S01-S05 producer contracts/artifact proofs are missing at revision 4c163a3c8162b5d7bc4becb63f00a04617cab5dc; consumer fixture tests are not producer acceptance."
       ],
       "recordedCheckDocs": [
-        "docs/migration/tasks/T04.md"
+        "docs/migration/tasks/T04.md",
+        "docs/migration/PRODUCER-STATUS.json"
       ],
-      "recordStatus": "Consumer tests use labeled synthetic fixtures; producer preflight/artifact remains unverified at this cut."
+      "recordStatus": "Current producer status controls the gate; task tests are fixture-only."
     },
     "T05": {
       "implementation": "present",
-      "integration": "partial",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
         "plugins/ghcr/src",
         "packages/application/src/artifacts",
-        "packages/application/src/build-cache"
+        "packages/application/src/build-cache",
+        "packages/persistence/src/d1/artifact-cache-store.ts",
+        "apps/control-plane/src/build-composition.ts",
+        "apps/control-plane/src/releases/operator-admission.ts"
       ],
       "blockers": [
-        "Production artifact admission is not composed into a Control Plane Worker; cache GC has a planner but no deletion executor/call site; no verified producer artifact is available."
+        "No current producer composition or immutable artifact is available for admission at revision 4c163a3c8162b5d7bc4becb63f00a04617cab5dc.",
+        "Cache planner and D1 pin snapshot exist, but there is no production invocation enforcing explicit bounded retention policy; no separate OCI delete executor is required by the current contract."
       ],
       "recordedCheckDocs": [
-        "docs/migration/tasks/T05.md"
+        "docs/migration/tasks/T05.md",
+        "docs/migration/tasks/T05-cache.md"
       ],
-      "recordStatus": "Recorded substrate evidence is generic OCI/BuildKit and does not establish a real producer composition at targetHead."
+      "recordStatus": "Root package checks cover local admission/cache tests; real source artifact/GHCR acceptance remains blocked."
     },
     "T06": {
       "implementation": "present",
-      "integration": "partial",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
         "apps/build-worker/src",
         "plugins/buildkit/src",
-        "packages/application/src/builds"
+        "packages/application/src/builds",
+        "apps/control-plane/src/build-routes.ts",
+        "apps/control-plane/src/build-composition.ts"
       ],
       "blockers": [
-        "Build worker and queue leaves exist, but the target has no Control Plane claim/report routes and the actual producer frontend/artifact handoff is unverified."
+        "S01 producer catalog/recipe and immutable artifact handoff are missing at revision 4c163a3c8162b5d7bc4becb63f00a04617cab5dc; no owned disposable BuildKit/OCI registry environment."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T06.md"
       ],
-      "recordStatus": "Worker report documents missing approved producer handoff; no current integrated acceptance run."
+      "recordStatus": "Local build/worker tests are not a real producer recipe/registry round-trip."
     },
     "T07": {
       "implementation": "present",
-      "integration": "partial",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
-        "plugins/kubernetes/src/kubernetes"
+        "plugins/kubernetes/src/kubernetes",
+        "apps/provisioner/src/kubernetes-lifecycle-adapter.ts",
+        "apps/control-plane/src/provisioner-routes.ts"
       ],
       "blockers": [
-        "No explicitly owned disposable Kubernetes cluster or live scheduling/isolation evidence is present."
+        "No explicitly owned disposable Kubernetes cluster; no real scheduling, isolation, ingress, writer-absence or partition acceptance.",
+        "Indefinite not-ready/unreachable tolerations prevent the default automatic node-eviction path but are not host fencing. Operator force deletion/node removal can erase API evidence before a process terminates; no force-delete was performed."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T07.md"
       ],
-      "recordStatus": "Worker report says package tests passed but cluster acceptance was not run; not freshly rerun at targetHead."
+      "recordStatus": "Provider/renderer/capacity unit tests ran in root check; no cluster acceptance."
     },
     "T08": {
-      "implementation": "partial",
-      "integration": "missing",
+      "implementation": "present",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
-        "packages/auth/src/handoff",
-        "apps/gateway/src/ui"
+        "apps/gateway/src/router.ts",
+        "apps/gateway/src/services/portal-service.ts",
+        "apps/instance-access/src/handler.ts",
+        "apps/instance-access/src/worker.ts",
+        "apps/gateway/wrangler.toml",
+        "apps/instance-access/wrangler.toml",
+        "tests/e2e/gateway-worker-security.partial.test.mjs"
       ],
       "blockers": [
-        "No Gateway route/Worker or apps/instance-access service exists in targetHead; current UI/auth leaves do not establish direct stopped-origin wake or browser handoff acceptance."
+        "A local partial Gateway Worker/Miniflare Chromium security probe passed at f82227a (Gateway sources unchanged through d029), but it intentionally fails closed at the Control Plane boundary and does not exercise Instance Access or an owned stable origin.",
+        "No successful owned GitHub App flow, real stable-origin browser handoff/cookie behavior, deployed Worker service binding, or producer S02 grant acceptance."
       ],
-      "recordedCheckDocs": [],
-      "recordStatus": "No T08 task report or integrated Gateway/Instance Access path exists in targetHead."
+      "recordedCheckDocs": [
+        "docs/migration/tasks/T08.md"
+      ],
+      "recordStatus": "The fixed real-browser-entry gate is BLOCKED. A narrower local Gateway Worker security/browser probe passed at f82227a (Gateway source unchanged through d029) but intentionally stops at the Control Plane boundary and does not exercise Instance Access or a stable origin."
     },
     "T09": {
-      "implementation": "partial",
-      "integration": "missing",
+      "implementation": "present",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
-        "packages/application/src/lifecycle",
-        "apps/provisioner/src/health.ts",
+        "apps/provisioner/src/main.ts",
+        "apps/provisioner/src/lifecycle-executor.ts",
         "apps/provisioner/src/worker.ts",
-        "plugins/kubernetes/src/kubernetes/provider.ts"
+        "apps/control-plane/src/provisioner-routes.ts",
+        "packages/application/src/lifecycle",
+        "apps/control-plane/src/runtime-binding.ts",
+        "apps/control-plane/src/runtime-identity-routes.ts",
+        "apps/control-plane/src/runtime-binding.test.ts",
+        "apps/control-plane/src/runtime-identity-routes.test.ts"
       ],
       "blockers": [
-        "Target lacks apps/provisioner/src/main.ts, runtime-executor.ts, production Control Plane provisioner routes and a live disposable runtime."
+        "Production Provisioner composition injects unavailable S02 auth-probe and S03 assignment transports; readiness remains false and no operation is claimed. Current producer S04 status/quiesce/resume and S05 activity/persistence contracts are missing.",
+        "No live disposable cluster or producer quiesce/resume/lease/rollback acceptance; typed idle feed and compatible rollback evidence remain unavailable.",
+        "Retirement does not yet revoke known already-issued GitHub installation tokens (M04); do not treat lease expiry or stopped issuance as proof of token revocation."
       ],
-      "recordedCheckDocs": [],
-      "recordStatus": "No T09 task report or production Provisioner/Control Plane composition exists in targetHead."
+      "recordedCheckDocs": [
+        "docs/migration/tasks/T09.md"
+      ],
+      "recordStatus": "Provisioner composition is integrated but execution is intentionally gated on producer contracts. Runtime binding fences stop new credential issuance at retirement; known issued-token revocation is still pending (M04), with no global revocation claim."
     },
     "T10": {
-      "implementation": "partial",
-      "integration": "partial",
+      "implementation": "present",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
-        "apps/gateway/src/ui"
+        "apps/gateway/src/ui",
+        "apps/gateway/src/services/portal-service.ts",
+        "apps/gateway/src/router.ts",
+        "apps/control-plane/src/management-routes.ts",
+        "apps/gateway/test/runtime-git-broker.test.ts",
+        "apps/gateway/src/ui/portal.test.ts"
       ],
       "blockers": [
-        "Portal UI leaf exists, but Gateway Worker/router and production PortalService composition are absent; no integrated browser acceptance was run."
+        "The authorized portal retry action now invokes the Control Plane retry path and has focused UI/service/route tests.",
+        "No full real-browser management acceptance, owned GitHub App, producer composition/build, or live runtime lifecycle acceptance was run."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T10.md"
       ],
-      "recordStatus": "UI report explicitly leaves router/service and real-browser integration to Gateway/T14."
+      "recordStatus": "Portal routes, management APIs and retry are production-composed and covered by local tests; these do not substitute for the real-browser T10/T14 acceptance."
     },
     "T11": {
-      "implementation": "partial",
-      "integration": "partial",
+      "implementation": "present",
+      "integration": "integrated",
       "realAcceptance": "blocked",
       "evidence": [
-        "packages/application/src/releases",
-        "packages/application/src/rollouts",
+        "apps/control-plane/src/release-composition.ts",
+        "apps/control-plane/src/rollout-composition.ts",
         "apps/control-plane/src/scheduled.ts",
-        "apps/control-plane/src/adapters/d1/t11-release-rollouts.ts"
+        "apps/control-plane/src/worker.ts",
+        "apps/control-plane/src/releases/operator-admission.ts",
+        "apps/control-plane/migrations/0002_stable_release_rollouts.sql"
       ],
       "blockers": [
-        "T11 state and adapter leaves are not wired by a production Worker; migration 0002 is untracked in the observed root worktree; no canary/follower run exists."
+        "Current producer S01 metadata and immutable artifact at revision 4c163a3c8162b5d7bc4becb63f00a04617cab5dc are missing; composition retries without metadata.",
+        "No real canary, ten-minute health window, writer-absence observation, stable follower rollout or persisted canary observation is available; the current preflight marks S02/S05 canary evidence blocked."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T11.md"
       ],
-      "recordStatus": "State-machine/adapter report says migration and production composition are not applied."
+      "recordStatus": "Scheduled and operator admission Worker composition is integrated and local tests pass; current producer metadata/artifact and canary observations remain unavailable, with no fixture completion claim."
     },
     "T12": {
       "implementation": "present",
@@ -306,15 +332,18 @@
       "evidence": [
         "infrastructure",
         "scripts/preflight-integration.mjs",
-        "infrastructure/test/acceptance-inventory.json"
+        "docs/deployment/README.md",
+        "apps/control-plane/wrangler.toml",
+        "apps/gateway/wrangler.toml"
       ],
       "blockers": [
-        "The acceptance inventory has unresolved ownership/missing categories; no named disposable infrastructure was applied."
+        "Only the owned local Miniflare D1/DO resource was available; no disposable GitHub, registry, Kubernetes, browser/stable-origin, producer or rollout environment was declared/applied.",
+        "No production infrastructure was applied."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T12.md"
       ],
-      "recordStatus": "Preflight report records an unowned inventory and no cluster/Worker/production application."
+      "recordStatus": "Worker deploy plan/preflight were run against the disposable local inventory: templates and migrations 0001-0003 matched with no template problems, but preflight correctly returned blocked for absent external origins, App/build inputs and immutable image digests. remoteCalls=false; no apply ran. Local D1/DO acceptance is separate and passed."
     },
     "T13": {
       "implementation": "present",
@@ -322,16 +351,15 @@
       "realAcceptance": "not_run",
       "evidence": [
         "plugins/legacy-recovery/src",
-        "plugins/legacy-recovery/test/recovery.test.mjs",
         "docs/migration/tasks/T13.md"
       ],
       "blockers": [
-        "No real legacy D1/PVC backup or restore was run; old PVCs and unpublished data were left untouched."
+        "No real source Platform metadata export, legacy backup, or isolated restore was available or run; old PVCs and unpublished data were preserved."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T13.md"
       ],
-      "recordStatus": "Worker report records CLI/unit checks with process fakes; no real legacy backup/restore."
+      "recordStatus": "Offline tooling/fixture tests are not a real legacy recovery acceptance."
     },
     "T14": {
       "implementation": "partial",
@@ -339,88 +367,164 @@
       "realAcceptance": "blocked",
       "evidence": [
         "scripts/verify-integration.mjs",
+        "tests/integration/workers-d1-do.test.mjs",
         "tests/integration/verify-integration.test.mjs",
-        "docs/verification/ACCEPTANCE.json",
-        "infrastructure/test/acceptance-inventory.json"
+        "/tmp/praetorium-coverage-resume-d029-acceptance.json"
       ],
       "blockers": [
-        "The checked-in T14 report records a different HEAD; at targetHead the Control Plane Worker and several assigned production surfaces are absent, inventory ownership/resources are unresolved, and producer artifact status is unverified."
+        "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout.",
+        "Producer S01-S05 are missing at revision 4c163a3c8162b5d7bc4becb63f00a04617cab5dc and no immutable artifact is available; the stale checked-in docs/verification/ACCEPTANCE.json is not used as current evidence.",
+        "The target also lacks M04 known-issued-token revocation during retirement; no credential revoke path was exercised in the local Worker category."
       ],
       "recordedCheckDocs": [
-        "docs/verification/ACCEPTANCE.json"
+        "docs/migration/PRODUCER-STATUS.json",
+        "docs/migration/tasks/T14.md"
       ],
-      "recordStatus": "Stale T14 branch report at HEAD 4538bc3; integratedMainHead is d98f2b6, both differ from targetHead."
+      "recordStatus": "At exact d029 cut, the fixed acceptance runner VERIFIED workers-d1-do only and returned BLOCKED with six categories BLOCKED/NOT_CHECKED and errors=[]; no category is inferred from a fixture. The local Worker proof does not exercise M04 token revocation."
     },
     "T15": {
       "implementation": "missing",
       "integration": "missing",
       "realAcceptance": "not_run",
-      "evidence": [],
+      "evidence": [
+        "docs/migration/PLAN.md"
+      ],
       "blockers": [
-        "No independent final review/certification at targetHead was included in this evidence cut."
+        "No independent read-only final review or final-HEAD certification exists in this evidence cut."
       ],
       "recordedCheckDocs": [],
-      "recordStatus": "No independent final review record exists at targetHead."
+      "recordStatus": "No final independent read-only campaign review/certification is recorded in this evidence cut."
     }
   },
   "unimplementedOrPartialCapabilities": [
     {
       "id": "M01",
-      "capability": "repository-scoped audit history query",
-      "coverageEntry": "C03",
-      "state": "pending",
-      "evidence": "D1 audit inserts exist; the query port has no D1 adapter, and the Control Plane route/Worker is absent."
-    },
-    {
-      "id": "M02",
-      "capability": "authorized idempotent retry of an eligible operation",
-      "coverageEntry": "G26",
-      "state": "pending",
-      "evidence": "No application OperationService retry method or integrated Gateway/Control Plane retry handler exists at targetHead.",
-      "relatedCoverageEntries": [
-        "C05"
-      ]
+      "capability": "repository-scoped audit history query and pagination",
+      "coverageEntry": "M01",
+      "state": "partial",
+      "evidence": "The route is mounted and focused SQLite-backed route tests pass, but the d029 Miniflare Worker acceptance did not call this audit endpoint; no Worker-D1 query acceptance is claimed."
     },
     {
       "id": "M03",
-      "capability": "safe bounded artifact/cache garbage collection",
-      "coverageEntry": "A16",
+      "capability": "bounded artifact-cache retention planning with live-reference protection",
+      "coverageEntry": "M03",
       "state": "partial",
-      "evidence": "A planner exists at packages/application/src/build-cache/gc.ts; current main has no call site, reference transaction/lease integration, or registry deletion executor."
+      "evidence": "A bounded planner and D1 live-reference snapshot exist, but no production caller invokes retention policy. PLAN/PLATFORM do not require a remote OCI delete executor."
+    },
+    {
+      "id": "M04",
+      "capability": "revoke known issued GitHub installation tokens during runtime retirement",
+      "coverageEntry": "M04",
+      "state": "pending",
+      "evidence": "PLATFORM §2 line 49 requires revoking known tokens. At d029, fresh issuance is fenced by current runtime binding, but the broker stores no issued-token registry/revocation record. Existing tokens can remain valid to their GitHub expiry, up to the validated 3605-second ceiling; instantaneous/global revocation is not claimed."
+    },
+    {
+      "id": "S01-S05",
+      "capability": "producer catalog, hosted access, Git credentials, quiesce and immutable composition evidence",
+      "state": "blocked",
+      "evidence": "docs/migration/PRODUCER-STATUS.json at 4c163a3c8162b5d7bc4becb63f00a04617cab5dc marks each producer gate missing/BLOCKED and artifactDigest null."
+    },
+    {
+      "id": "T09-runtime",
+      "capability": "producer-assigned executable lifecycle operations",
+      "state": "blocked",
+      "evidence": "Production Provisioner injects unavailable S02 auth-probe and S03 assignment transports; S04 status/quiesce/resume and S05 activity/persistence conformance are missing, so readiness remains false and no operations are claimed."
+    },
+    {
+      "id": "T14-environments",
+      "capability": "remaining six real integration categories",
+      "state": "blocked",
+      "evidence": "The owned local inventory supports only workers-d1-do; GitHub, BuildKit/registry, Kubernetes, browser-entry, producer recovery and stable rollout resources are missing."
+    },
+    {
+      "id": "T15-review",
+      "capability": "final independent campaign review and certification",
+      "state": "not_run",
+      "evidence": "No final independent read-only campaign review/certification is recorded at this evidence cut."
     }
   ],
   "legacyDataDisposition": {
-    "oldPvcDeletion": "not_performed",
-    "unpublishedDataDeletion": "not_performed",
+    "oldPvcDeletion": "not_performed; legacy PVC preservation is explicit in PLAN/PLATFORM/T07/T13",
+    "unpublishedDataDeletion": "not_performed; no producer export/publication or old-service cutover was performed",
     "productionInfrastructureChanges": "not_performed",
-    "perUserInstanceAcl": "excluded from the new API; user identity is authorization actor/audit provenance only",
-    "duplicateUserInstanceAcl": "not retained",
-    "ownerExcludedAutomation": "GitHub Actions, template sync, and Inari not implemented or run"
+    "releasesOrPackagesPublished": "not_performed",
+    "perUserInstanceAcl": "excluded from the new API; numeric GitHub repository ID is the binding, user identity is fresh authorization actor/audit provenance only",
+    "duplicateUserInstanceAcl": "not_retained",
+    "ownerExcludedAutomation": "GitHub Actions, template sync, and Inari were not implemented or run"
   },
   "verification": {
     "frozenInstall": {
       "command": "corepack pnpm@11.18.0 install --frozen-lockfile",
-      "status": "failed",
-      "checkedHead": "80fe6d5fed0926e42706dfd8fafbc2adb1658943",
-      "failure": "pnpm-lock.yaml is missing workspace dependency entries for apps/build-worker and plugins/buildkit (@praetorium/application and @praetorium/contracts)."
+      "status": "passed",
+      "checkedHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+      "checkedWorktree": "/tmp/praetorium-coverage-resume-d029",
+      "details": "Frozen install completed with pnpm v11.18.0; lockfile was accepted and no tracked lockfile update was made."
     },
     "rootCheck": {
-      "initialCommand": "corepack pnpm@11.18.0 check",
-      "initialStatus": "failed_before_build",
-      "initialFailure": "Nested pnpm resolved to host v12.10.1 and rejected the repository packageManager v11.18.0.",
-      "passingCommand": "PATH=/tmp/praetorium-pnpm11:$PATH corepack pnpm@11.18.0 check",
-      "status": "passed_after_local_lock_refresh",
-      "checkedHead": "80fe6d5fed0926e42706dfd8fafbc2adb1658943",
-      "details": "20 Turbo build/lint/typecheck/test tasks passed; boundary and generated contract-schema checks passed. pnpm auto-added two workspace importer entries during the check; that lockfile diff was restored because the lockfile is Sol-owned.",
-      "limitation": "Unit/package checks only. No Gateway/Control Plane integration harness or producer/live-runtime acceptance was executed."
+      "requiredCommand": "corepack pnpm@11.18.0 check",
+      "status": "passed",
+      "checkedHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+      "checkedWorktree": "/tmp/praetorium-coverage-resume-d029",
+      "log": "/tmp/praetorium-campaign-d029989-check.log",
+      "details": "Fresh exact-cut check exited 0: 29/29 Turbo build/lint/typecheck/test tasks; provider boundaries and generated contract schema drift passed. The required command was also run with the pnpm 11 PATH wrapper to keep nested pnpm scripts at 11.18.0."
     },
-    "integrationHarness": {
+    "handlerMappingHarness": {
       "command": "node --test tests/integration/verify-integration.test.mjs",
       "status": "passed",
-      "checkedHead": "80fe6d5fed0926e42706dfd8fafbc2adb1658943",
+      "checkedHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
       "passed": 9,
       "failed": 0,
-      "scope": "strict inventory/preflight safety and source-handler-to-existing-coverage-parent mapping; not producer/runtime acceptance"
+      "scope": "Expanded 65 source handler surfaces map to existing coverage IDs; safety and fixture tests are mapping/preflight only, not producer/runtime acceptance."
+    },
+    "workersD1Do": {
+      "command": "node scripts/verify-integration.mjs --environment /tmp/praetorium-a2bea-local-workers-d1-do-inventory.json",
+      "overallStatus": "BLOCKED",
+      "exitCode": 2,
+      "checkedHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+      "report": "/tmp/praetorium-coverage-resume-d029-acceptance.json",
+      "inventoryId": "praetorium-a2bea-local-workers-d1-do",
+      "passedCategory": "workers-d1-do",
+      "passedRunner": "tests/integration/workers-d1-do.test.mjs",
+      "passedTests": 1,
+      "failedTests": 0,
+      "blockedCategories": [
+        "github-access",
+        "buildkit-registry",
+        "kubernetes-isolation",
+        "browser-entry",
+        "producer-recovery",
+        "stable-rollout"
+      ],
+      "errors": [],
+      "scope": "Actual Wrangler-built Control Plane Worker on owned local Miniflare D1 and persistent SQLite DO, including migrations, repository operations, webhook metadata persistence, runtime identity issue/fail-closed behavior and release-composition gates. No Cloudflare deployment; no M04 token revocation test.",
+      "details": "Re-run at exact d029 against the explicitly owned, disposable local inventory; actual Wrangler-built Control Plane Worker on Miniflare D1 and persistent SQLite DO passed. The overall T14 report remains BLOCKED with six categories blocked and errors=[]; no Cloudflare deployment or M04 token revocation test."
+    },
+    "gatewayPartialBrowserProbe": {
+      "command": "node --test tests/e2e/gateway-worker-security.partial.test.mjs",
+      "status": "passed_partial_only",
+      "sourceHead": "f82227a9b35702e33a28bc25f62911f86a351767",
+      "targetHead": "d029989dbc6b78024bd401ed37e07e63336c1f6c",
+      "log": "/tmp/praetorium-campaign-final-browser.log",
+      "passed": 1,
+      "failed": 0,
+      "scope": "Gateway Worker local Miniflare/Chromium security probe; Gateway source unchanged between sourceHead and targetHead. It does not exercise stable-origin Instance Access, successful GitHub App OAuth or producer runtime."
+    },
+    "workerDeploymentPlan": {
+      "commands": [
+        "node scripts/deploy-workers.mjs plan --inventory infrastructure/test/disposable-inventory.json",
+        "node scripts/deploy-workers.mjs preflight --inventory infrastructure/test/disposable-inventory.json"
+      ],
+      "status": "blocked_inputs",
+      "exitCodes": [
+        2,
+        2
+      ],
+      "scope": "Both are effect-free with remoteCalls=false. Worker templates and migrations 0001-0003 are present and match; external origins, App/build inputs and immutable image digests were not supplied. No apply ran."
+    },
+    "productionEffects": {
+      "status": "none",
+      "details": "No production GitHub/Cloudflare/Kubernetes/registry or external service was accessed or changed; no old data/PVC was deleted; no release/package was published."
     }
-  }
+  },
+  "taskSpecificEvidence": {}
 }

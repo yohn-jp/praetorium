@@ -61,6 +61,7 @@ async function createProjection(
   const generationName = `..2026_10_17_00_00_${name}`;
   const generation = path.join(mount, generationName);
   await mkdir(generation);
+  await chmod(generation, 0o2755);
   for (const [file, content] of Object.entries(files)) {
     const filePath = path.join(generation, file);
     await writeFile(filePath, content, { mode: 0o440 });
@@ -106,14 +107,15 @@ async function fixture(): Promise<Fixture> {
   for (const [name, files] of Object.entries(sourceFiles)) {
     const sourceMount = path.join(root, "sources", name);
     await mkdir(sourceMount, { recursive: true });
+    await chmod(sourceMount, 0o3777);
     await createProjection(sourceMount, "000000000", files);
     sourceMounts[name] = sourceMount;
   }
 
   const destinationMount = path.join(root, "destination-mount");
   const temporaryMount = path.join(root, "temporary-mount");
-  await mkdir(destinationMount, { mode: 0o770 });
-  await mkdir(temporaryMount, { mode: 0o770 });
+  await mkdir(destinationMount, { mode: 0o2777 });
+  await mkdir(temporaryMount, { mode: 0o2777 });
   await chmod(destinationMount, 0o2777);
   await chmod(temporaryMount, 0o2777);
   return {

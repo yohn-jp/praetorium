@@ -60,10 +60,10 @@ probe image, ingress/public markers and owned metadata canary. The GitHub partia
 probe is deliberately not registered as the fixed `github-access` runner and
 cannot certify expiry-backed runtime credential renewal.
 
-Observed producer checkpoint is `fc4eea880ef895decf6161bf4f45cc958e9700b3`;
+Observed producer checkpoint is `eab0fad7c811aeedabe29fcd214598dc5207c178`;
 accepted Platform artifactDigest is null. S01–S04 hosted contracts and S05 hosted
 composition/conformance remain missing. Local Core/full component digests and
-limitations are recorded in [PRODUCER-fc4eea8.md](PRODUCER-fc4eea8.md). Supplying
+limitations are recorded in [PRODUCER-eab0fad.md](PRODUCER-eab0fad.md). Supplying
 those contracts plus explicitly owned environments is required before the
 remaining implementations and real gates can finish. T15 full certification is
 blocked. No production deployment, key change, release/package publication or

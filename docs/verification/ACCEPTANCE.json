@@ -479,18 +479,17 @@
     }
   ],
   "latestProducerPreflight": {
-    "producerRevision": "fc4eea880ef895decf6161bf4f45cc958e9700b3",
+    "producerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
     "artifactDigest": null,
-    "artifactDigestReason": "No current-fc4 accepted hosted composition or published artifact locator is recorded. New local full-profile model/worker evidence reports manifest sha256:510d8398fcee71015bcd3be2489ff69fd7976bb4c06d0e852c47579c81e427bf at source8804edc9/tree45809bd2, with image inputs matching539375c; currentfc4 adds a production Semantic browser polling fix beyond that image. Core recovery digest79d592 remains local to sourcef3ef4d34 with inputs matching the historical539 checkpoint. Neither binds hosted assignment/composition metadata or supplies Platform conformance. S05 remains incomplete; accepted artifactDigest null. Registry absence is not inferred.",
+    "artifactDigestReason": "At observed eab0fad the packaged application source matches frozen fc4; docs/verification and the migration-ledger verifier changed, not hosted interfaces. New local Core8661aa25, Full startup03cb0ddc and exact-tree Full modelac8aaf8f manifest evidence includes the final polling fix; P12 now passed. Producer records whole-verify final-stage ENOSPC followed by a successful unchanged-stage retry, not an original zero exit. Images remained local, with some duplicate images later removed; no published locator or hosted assignment/composition conformance is supplied. Accepted Platform artifactDigest remains null. See docs/verification/PRODUCER-eab0fad.md.",
     "producerModified": false,
-    "note": "Separate read-only delta audit. S01-S05 interfaces unchanged; recent-activity migration is private user progress. Original production/test evidence cut is retained; no new producer runtime acceptance was run.",
-    "producerTree": "7a56bd432597b7f31588af69f12a4e3a14243b46",
-    "documentPath": "docs/verification/PRODUCER-fc4eea8.md",
-    "evidenceDocument": "docs/verification/PRODUCER-fc4eea8.md",
-    "previousProducerRevision": "539375c925754c6ec6f5c445051a32b7293a0724",
-    "previousProducerTree": "62b9351539579a17cbd7f00127c1ab218d29c51b",
-    "previousDocumentPath": "docs/verification/PRODUCER-539375c.md",
-    "documentCommit": "69bd25c"
+    "note": "Separate read-only delta audit: hosted S01-S05 interfaces remain unfulfilled; new producer-local component evidence is recorded separately. Original Platform production/test evidence cut is retained; no new Platform-to-producer conformance was run.",
+    "producerTree": "0721e2441b3f680a3c6785e73d5f8b70857e87ef",
+    "documentPath": "docs/verification/PRODUCER-eab0fad.md",
+    "evidenceDocument": "docs/verification/PRODUCER-eab0fad.md",
+    "previousProducerRevision": "fc4eea880ef895decf6161bf4f45cc958e9700b3",
+    "previousProducerTree": "7a56bd432597b7f31588af69f12a4e3a14243b46",
+    "previousDocumentPath": "docs/verification/PRODUCER-fc4eea8.md"
   },
   "latestPlatformDelta": {
     "head": "0cdf51e36d1c2fac894c3a9fc5fcf4b61347a48f",

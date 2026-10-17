@@ -220,3 +220,16 @@ remains incomplete and the accepted artifact digest stays null. Whole verify/P12
 also remain pending in the committed record. See
 [the exact audit](../verification/PRODUCER-fc4eea8.md). Existing handoffs and
 producer ownership are unchanged.
+
+## 15. Read-only producer evidence at `eab0fad7` (2026-10-17)
+
+Observed main `eab0fad7c811aeedabe29fcd214598dc5207c178` changes evidence and the
+migration verifier after frozen fc4 application code. Its new terminal component
+records include passed P12 and a final Full OCI retry after ENOSPC, plus exact-tree
+Full model manifest `sha256:ac8aaf8f17843b91b3168c69e02bfdf9169deef8895c6ae5093cbb83c5edde48`
+and final Core manifest `sha256:8661aa25c6a0e2f3f6ef517f094d9edc03909c927ee9b2c749f88a8fc5d238d1`.
+These are local component images, not an original whole-verify zero exit, hosted
+assignment/composition metadata or Platform conformance. S01–S04 interfaces are
+unchanged; S05 hosted acceptance remains incomplete and accepted artifactDigest
+is null. [Exact audit and limitations](../verification/PRODUCER-eab0fad.md).
+Existing producer ownership and implementation handoffs remain unchanged.

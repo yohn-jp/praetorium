@@ -448,7 +448,7 @@ describe("runtime identity routes", () => {
     expect(reservationResponse.status).toBe(409);
   });
 
-  it("requires a current owned operation lease for a target after writer absence and bounds expiry by the lease", async () => {
+  it("requires a live owned target lease at issuance and preserves the renewable identity lifetime", async () => {
     const h = await harness(true);
     const targetRequest = baseRequest({
       runtimeId: TARGET_RESERVATION_ID,
@@ -473,8 +473,8 @@ describe("runtime identity routes", () => {
       runtimeEpoch: 5,
       leaseId: TARGET_RESERVATION_ID,
     });
-    expect(claims.exp).toBe(Math.floor(NOW / 1000) + 17);
-    expect(issued.expiresAt).toBe(new Date((Math.floor(NOW / 1000) + 17) * 1000).toISOString());
+    expect(claims.exp).toBe(Math.floor(NOW / 1000) + 300);
+    expect(issued.expiresAt).toBe(new Date((Math.floor(NOW / 1000) + 300) * 1000).toISOString());
 
     for (const overrides of [
       { leaseToken: "wrong-token-".padEnd(64, "x") },
@@ -499,6 +499,16 @@ describe("runtime identity routes", () => {
       body: JSON.stringify(targetRequest),
     });
     expect(staleLease.status).toBe(409);
+
+    h.db.database
+      .prepare("UPDATE operations SET lease_epoch = 4, lease_expires_at = ? WHERE operation_id = ?")
+      .run(NOW - 1, OPERATION_ID);
+    const expiredLease = await h.app.request("/internal/provisioner/runtime-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(targetRequest),
+    });
+    expect(expiredLease.status).toBe(409);
   });
 
   it("enforces the actual streamed JSON body limit", async () => {

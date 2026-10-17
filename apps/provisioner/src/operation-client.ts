@@ -1,4 +1,7 @@
-import type { LifecyclePhase } from "@praetorium/application/lifecycle";
+import type {
+  LifecyclePhase,
+  LifecycleReadinessEvidence,
+} from "@praetorium/application/lifecycle";
 
 export type ProvisionerOperationKind = "start" | "stop" | "redeploy" | "update";
 export type ProvisionerOperationStatus =
@@ -134,6 +137,17 @@ export interface ProvisionerResolvedRuntime {
     readonly imageDigest: string;
     readonly compositionManifestDigest: string;
     readonly enabledModuleIds: readonly string[];
+    readonly persistence?: {
+      readonly contractVersion: "scriptorium-persistence/v1";
+      readonly readable: readonly {
+        readonly formatId: string;
+        readonly versions: readonly number[];
+      }[];
+      readonly writable: readonly {
+        readonly formatId: string;
+        readonly version: number;
+      }[];
+    };
     readonly credentialBrokerLocator: string;
     readonly grantPolicy: ProvisionerAuthenticationPolicy;
     readonly controlServicePolicy: ProvisionerAuthenticationPolicy;
@@ -164,6 +178,7 @@ export interface ProvisionerIdleCandidate {
   readonly desiredState: "running" | "stopped";
   readonly bindingSuspended: boolean;
   readonly hasActiveOperation: boolean;
+  readonly healthOperationId: string | null;
   readonly currentRuntime: ProvisionerResolvedRuntime;
 }
 
@@ -240,6 +255,54 @@ export interface ControlCredentialRequest {
 export interface ControlCredentialResponse {
   readonly token: string;
   readonly expiresAt: string;
+}
+
+export interface RuntimeBindingMetadata {
+  readonly repositoryId: number;
+  readonly installationId: number;
+  readonly instanceId: string;
+  readonly runtimeId: string;
+  readonly runtimeEpoch: number;
+  readonly leaseId: string;
+  readonly clusterId: string;
+  readonly active: true;
+  readonly authority: "observed-writer" | "post-absence-target";
+}
+
+export interface RuntimeIdentityRequest {
+  readonly runtimeId: string;
+  readonly instanceId: string;
+  readonly repositoryId: number;
+  readonly installationId: number;
+  readonly runtimeEpoch: number;
+  readonly leaseId: string;
+  readonly workerId: string;
+  readonly clusterId: string;
+  readonly operationId?: string;
+  readonly leaseToken?: string;
+  readonly leaseEpoch?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface RuntimeIdentityResponse {
+  readonly token: string;
+  readonly expiresAt: string;
+}
+
+export interface RuntimeHealthObservationInput {
+  readonly workerId: string;
+  readonly clusterId: string;
+  readonly operationId: string;
+  readonly readinessEvidence: LifecycleReadinessEvidence;
+  readonly signal?: AbortSignal;
+}
+
+export interface RuntimeIdentityProvisionerService {
+  readRuntimeBinding(input: {
+    readonly repositoryId: number;
+    readonly signal?: AbortSignal;
+  }): Promise<RuntimeBindingMetadata | null>;
+  issueRuntimeIdentity(input: RuntimeIdentityRequest): Promise<RuntimeIdentityResponse>;
 }
 
 export interface HttpOperationServiceOptions {
@@ -329,6 +392,7 @@ export interface ProvisionerOperationService {
     input: CapacitySnapshotInput & { readonly signal?: AbortSignal },
   ): Promise<number | null>;
   issueControlCredential(input: ControlCredentialRequest): Promise<ControlCredentialResponse>;
+  recordRuntimeHealth?(input: RuntimeHealthObservationInput): Promise<{ readonly recorded: true }>;
   releaseRuntime(input: {
     readonly reservationId: string;
     readonly operationId: string;
@@ -465,6 +529,48 @@ function parseResources(input: unknown, message: string): RuntimeResources {
   };
 }
 
+function parsePersistenceDeclaration(input: unknown): NonNullable<
+  ProvisionerResolvedRuntime["assignment"]["persistence"]
+> {
+  const value = object(input, "runtime persistence declaration invalid");
+  if (value.contractVersion !== "scriptorium-persistence/v1")
+    throw new TypeError("runtime persistence declaration version invalid");
+  if (!Array.isArray(value.readable) || value.readable.length > 128)
+    throw new TypeError("runtime readable persistence formats invalid");
+  if (!Array.isArray(value.writable) || value.writable.length > 128)
+    throw new TypeError("runtime writable persistence formats invalid");
+  const readableIds = new Set<string>();
+  const readable = value.readable.map((entry) => {
+    const item = object(entry, "runtime readable persistence format invalid");
+    const formatId = nonEmptyString(item.formatId, "runtime persistence format ID invalid");
+    if (!/^[a-z][a-z0-9.-]{0,127}$/u.test(formatId) || readableIds.has(formatId))
+      throw new TypeError("runtime readable persistence format ID invalid");
+    readableIds.add(formatId);
+    if (
+      !Array.isArray(item.versions) ||
+      item.versions.length < 1 ||
+      item.versions.length > 64 ||
+      item.versions.some((version) => !Number.isSafeInteger(version) || (version as number) < 1) ||
+      new Set(item.versions).size !== item.versions.length
+    )
+      throw new TypeError("runtime readable persistence versions invalid");
+    return { formatId, versions: [...item.versions] as number[] };
+  });
+  const writablePairs = new Set<string>();
+  const writable = value.writable.map((entry) => {
+    const item = object(entry, "runtime writable persistence format invalid");
+    const formatId = nonEmptyString(item.formatId, "runtime persistence format ID invalid");
+    const version = positiveInteger(item.version, "runtime persistence version invalid");
+    if (!/^[a-z][a-z0-9.-]{0,127}$/u.test(formatId))
+      throw new TypeError("runtime writable persistence format ID invalid");
+    const pair = `${formatId}\u0000${version}`;
+    if (writablePairs.has(pair)) throw new TypeError("duplicate runtime writable persistence format");
+    writablePairs.add(pair);
+    return { formatId, version };
+  });
+  return { contractVersion: "scriptorium-persistence/v1", readable, writable };
+}
+
 function parsePolicy(input: unknown, message: string): ProvisionerAuthenticationPolicy {
   const value = object(input, message);
   const issuer = nonEmptyString(value.issuer, message);
@@ -483,6 +589,39 @@ function parsePolicy(input: unknown, message: string): ProvisionerAuthentication
     }
   }
   return { issuer, jwksUrl, audience };
+}
+
+function parseRuntimeBinding(input: unknown): RuntimeBindingMetadata {
+  const value = object(input, "runtime binding metadata invalid");
+  const expected = [
+    "active",
+    "authority",
+    "clusterId",
+    "installationId",
+    "instanceId",
+    "leaseId",
+    "repositoryId",
+    "runtimeEpoch",
+    "runtimeId",
+  ];
+  if (Object.keys(value).sort().join(",") !== expected.sort().join(","))
+    throw new TypeError("runtime binding metadata has an unsupported shape");
+  if (value.active !== true) throw new TypeError("runtime binding is not active");
+  return {
+    repositoryId: positiveInteger(value.repositoryId, "runtime binding repository invalid"),
+    installationId: positiveInteger(value.installationId, "runtime binding installation invalid"),
+    instanceId: nonEmptyString(value.instanceId, "runtime binding instance invalid"),
+    runtimeId: nonEmptyString(value.runtimeId, "runtime binding ID invalid"),
+    runtimeEpoch: positiveInteger(value.runtimeEpoch, "runtime binding epoch invalid"),
+    leaseId: nonEmptyString(value.leaseId, "runtime binding lease invalid"),
+    clusterId: nonEmptyString(value.clusterId, "runtime binding cluster invalid"),
+    active: true,
+    authority: enumValue(
+      value.authority,
+      ["observed-writer", "post-absence-target"],
+      "runtime binding authority invalid",
+    ),
+  };
 }
 
 function parseRuntimeMetadata(input: unknown): ProvisionerResolvedRuntime["metadata"] {
@@ -587,6 +726,10 @@ function parseResolvedRuntime(input: unknown): ProvisionerResolvedRuntime {
     "runtime resource profile missing",
   );
   if (!moduleId.test(resourceProfileId)) throw new TypeError("runtime resource profile invalid");
+  const persistence =
+    assignment.persistence === undefined
+      ? undefined
+      : parsePersistenceDeclaration(assignment.persistence);
   return {
     revisionId: nonEmptyString(value.revisionId, "runtime revision ID missing"),
     artifactRef,
@@ -607,6 +750,7 @@ function parseResolvedRuntime(input: unknown): ProvisionerResolvedRuntime {
       imageDigest,
       compositionManifestDigest,
       enabledModuleIds: [...enabledModuleIds] as string[],
+      ...(persistence === undefined ? {} : { persistence }),
       credentialBrokerLocator: nonEmptyString(
         assignment.credentialBrokerLocator,
         "credential broker locator missing",
@@ -640,6 +784,10 @@ function parseIdleCandidate(input: unknown): ProvisionerIdleCandidate {
     throw new TypeError("idle candidate eligibility flags invalid");
   }
   const currentRuntime = parseResolvedRuntime(value.currentRuntime);
+  const healthOperationId =
+    value.healthOperationId === undefined || value.healthOperationId === null
+      ? null
+      : nonEmptyString(value.healthOperationId, "idle candidate health operation ID invalid");
   if (
     currentRuntime.assignment.instanceId !== instanceId ||
     currentRuntime.assignment.repositoryId !== repositoryId ||
@@ -656,6 +804,7 @@ function parseIdleCandidate(input: unknown): ProvisionerIdleCandidate {
     desiredState,
     bindingSuspended: value.bindingSuspended,
     hasActiveOperation: value.hasActiveOperation,
+    healthOperationId,
     currentRuntime,
   };
 }
@@ -1066,7 +1215,9 @@ function normalizeBaseUrl(value: string): string {
   return value.replace(/\/+$/u, "");
 }
 
-export class OperationServiceHttpClient implements ProvisionerOperationService {
+export class OperationServiceHttpClient
+  implements ProvisionerOperationService, RuntimeIdentityProvisionerService
+{
   private readonly baseUrl: string;
   private readonly fetchImplementation: typeof fetch;
   private readonly timeoutMs: number;
@@ -1277,6 +1428,57 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     return { token, expiresAt };
   }
 
+  async readRuntimeBinding(input: {
+    readonly repositoryId: number;
+    readonly signal?: AbortSignal;
+  }): Promise<RuntimeBindingMetadata | null> {
+    try {
+      return parseRuntimeBinding(
+        await this.get(
+          `/runtime-bindings/${encodeURIComponent(String(input.repositoryId))}`,
+          input.signal,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof OperationServiceHttpError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  async issueRuntimeIdentity(input: RuntimeIdentityRequest): Promise<RuntimeIdentityResponse> {
+    const value = object(
+      await this.post("/runtime-identity", withoutSignal(input), input.signal),
+      "invalid runtime identity response",
+    );
+    if (Object.keys(value).sort().join(",") !== "expiresAt,token")
+      throw new TypeError("runtime identity response has an unsupported shape");
+    const token = nonEmptyString(value.token, "runtime identity token missing");
+    const expiresAt = nonEmptyString(value.expiresAt, "runtime identity expiry missing");
+    const expiryMs = Date.parse(expiresAt);
+    const now = Date.now();
+    if (
+      token.length > 8192 ||
+      /[\r\n]/u.test(token) ||
+      !Number.isFinite(expiryMs) ||
+      expiryMs <= now ||
+      expiryMs > now + 300_000
+    )
+      throw new TypeError("runtime identity response is invalid or outside its lifetime");
+    return { token, expiresAt };
+  }
+
+  async recordRuntimeHealth(
+    input: RuntimeHealthObservationInput,
+  ): Promise<{ readonly recorded: true }> {
+    const value = object(
+      await this.post("/runtime-health", withoutSignal(input), input.signal),
+      "invalid runtime health response",
+    );
+    if (Object.keys(value).length !== 1 || value.recorded !== true)
+      throw new TypeError("runtime health observation was not recorded");
+    return { recorded: true };
+  }
+
   async releaseRuntime(input: {
     readonly reservationId: string;
     readonly operationId: string;
@@ -1314,7 +1516,20 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     });
   }
 
-  private async post(path: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
+  private post(path: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
+    return this.request("POST", path, body, signal);
+  }
+
+  private get(path: string, signal?: AbortSignal): Promise<unknown> {
+    return this.request("GET", path, undefined, signal);
+  }
+
+  private async request(
+    method: "GET" | "POST",
+    path: string,
+    body: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     const requestSignal =
       signal === undefined
         ? AbortSignal.timeout(this.timeoutMs)
@@ -1322,13 +1537,13 @@ export class OperationServiceHttpClient implements ProvisionerOperationService {
     let response: Response;
     try {
       response = await this.fetchImplementation(`${this.baseUrl}${SERVICE_PATH}${path}`, {
-        method: "POST",
+        method,
         headers: {
           accept: "application/json",
           authorization: `Bearer ${this.options.credential}`,
-          "content-type": "application/json",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
         },
-        body: JSON.stringify(body),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         redirect: "error",
         cache: "no-store",
         signal: requestSignal,

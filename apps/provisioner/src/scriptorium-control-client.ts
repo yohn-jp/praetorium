@@ -8,6 +8,7 @@ import type {
   LifecycleAuthProbeProvider,
   LifecycleProducerProvider,
   ProducerStatus,
+  RuntimePersistenceObservation,
   QuiesceReceipt,
   QuiesceRequest,
   RuntimeAssignment,
@@ -119,10 +120,22 @@ export class IdleObservationRuntimeControlCredentialProvider
 
 export interface RuntimeAuthAcceptanceProbe {
   readonly available: boolean;
+  withEndpointResolver(
+    resolveEndpoint: (assignment: RuntimeAssignment, signal?: AbortSignal) => Promise<string>,
+  ): RuntimeAuthAcceptanceProbe;
   verify(
     assignment: RuntimeAssignment,
     signal?: AbortSignal,
   ): ReturnType<LifecycleAuthProbeProvider["verify"]>;
+  verifyObserved(
+    assignment: RuntimeAssignment,
+    operationId: string,
+    signal?: AbortSignal,
+  ): ReturnType<LifecycleAuthProbeProvider["verify"]>;
+  forLease(
+    claim: ClaimedProvisionerOperation,
+    workerId?: string,
+  ): LifecycleAuthProbeProvider;
 }
 
 export interface ScriptoriumControlClientOptions {
@@ -180,8 +193,36 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[], mess
   }
 }
 
+function parsePersistenceObservation(input: unknown): RuntimePersistenceObservation {
+  const value = object(input, "runtime persistence observation is invalid");
+  exactKeys(value, ["state", "observedRemoteCommit", "formats"], "runtime persistence shape invalid");
+  if (value.state !== "verified" && value.state !== "unknown")
+    throw new TypeError("runtime persistence state is invalid");
+  if (!Array.isArray(value.formats) || value.formats.length > 256)
+    throw new TypeError("runtime persistence formats are invalid");
+  const seen = new Set<string>();
+  const formats = value.formats.map((entry) => {
+    const format = object(entry, "runtime persistence format is invalid");
+    exactKeys(format, ["formatId", "version"], "runtime persistence format shape invalid");
+    const formatId = text(format.formatId, "runtime persistence format ID is invalid", 128);
+    const version = integer(format.version, "runtime persistence format version is invalid");
+    if (!/^[a-z][a-z0-9.-]{0,127}$/u.test(formatId) || version < 1)
+      throw new TypeError("runtime persistence format is invalid");
+    const pair = `${formatId}\u0000${version}`;
+    if (seen.has(pair)) throw new TypeError("duplicate runtime persistence format");
+    seen.add(pair);
+    return { formatId, version };
+  });
+  return {
+    state: value.state,
+    observedRemoteCommit: revision(value.observedRemoteCommit, "runtime persistence commit is invalid"),
+    formats,
+  };
+}
+
 function parseStatus(input: unknown): ProducerStatus {
   const value = object(input, "runtime status response is invalid");
+  const hasPersistence = Object.hasOwn(value, "persistence");
   exactKeys(
     value,
     [
@@ -196,6 +237,7 @@ function parseStatus(input: unknown): ProducerStatus {
       "activity",
       "lastConfirmedRemoteRevision",
       "observedAt",
+      ...(hasPersistence ? ["persistence"] : []),
     ],
     "runtime status response has an unsupported shape",
   );
@@ -272,6 +314,7 @@ function parseStatus(input: unknown): ProducerStatus {
       value.lastConfirmedRemoteRevision,
       "remote revision is invalid",
     ),
+    ...(hasPersistence ? { persistence: parsePersistenceObservation(value.persistence) } : {}),
     observedAt: timestamp(value.observedAt, "runtime observation timestamp is invalid"),
   };
 }
@@ -474,6 +517,8 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
       parseRuntimeInstanceId(assignment.instanceId),
     );
     const service = runtimeResourceName(parseRuntimeInstanceId(assignment.instanceId));
+    const serviceHost = `${service}.${namespace}.svc.cluster.local`;
+    const recoveryServiceHost = `${service}-control.${namespace}.svc.cluster.local`;
     const port = assignment.deployment.runtimeMetadata.listenerPort;
     const paths = assignment.deployment.runtimeMetadata;
     const path =
@@ -485,7 +530,7 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
     const base = new URL(await this.options.resolveEndpoint(assignment, signal));
     if (
       base.protocol !== "http:" ||
-      base.hostname !== `${service}.${namespace}.svc.cluster.local` ||
+      (base.hostname !== serviceHost && base.hostname !== recoveryServiceHost) ||
       base.port !== String(port) ||
       base.pathname !== "/" ||
       base.search !== "" ||
@@ -564,8 +609,20 @@ export class UnavailableRuntimeAuthAcceptanceProbe
 {
   readonly available = false;
 
-  async verify(): ReturnType<LifecycleAuthProbeProvider["verify"]> {
-    throw new Error("runtime_grant_auth_probe_transport_unavailable");
+  withEndpointResolver(): RuntimeAuthAcceptanceProbe {
+    return this;
+  }
+
+  verify(): ReturnType<LifecycleAuthProbeProvider["verify"]> {
+    return Promise.reject(new Error("runtime_grant_auth_probe_transport_unavailable"));
+  }
+
+  verifyObserved(): ReturnType<LifecycleAuthProbeProvider["verify"]> {
+    return Promise.reject(new Error("runtime_grant_auth_probe_transport_unavailable"));
+  }
+
+  forLease(): LifecycleAuthProbeProvider {
+    return this;
   }
 }
 

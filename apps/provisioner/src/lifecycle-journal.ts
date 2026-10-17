@@ -79,6 +79,9 @@ function deploymentOf(runtime: ProvisionerResolvedRuntime): RuntimeDeployment {
     platformManifestDigest: runtime.platformManifestDigest,
     compositionManifestDigest: runtime.assignment.compositionManifestDigest,
     enabledModuleIds: runtime.assignment.enabledModuleIds,
+    ...(runtime.assignment.persistence === undefined
+      ? {}
+      : { persistence: runtime.assignment.persistence }),
     credentialBrokerLocator: runtime.assignment.credentialBrokerLocator,
     grantPolicy: runtime.assignment.grantPolicy,
     controlServicePolicy: runtime.assignment.controlServicePolicy,
@@ -189,7 +192,12 @@ function persistedOperation(
     )
       throw new TypeError("persisted writer absence proof identity changed");
   }
-  return result;
+  return {
+    ...result,
+    readinessEvidence: result.readinessEvidence ?? null,
+    rollbackCompatibilityEvidence: result.rollbackCompatibilityEvidence ?? null,
+    rollbackCompatible: result.rollbackCompatible ?? null,
+  };
 }
 
 function initialOperation(claim: ClaimedProvisionerOperation): LifecycleOperation {
@@ -228,6 +236,9 @@ function initialOperation(claim: ClaimedProvisionerOperation): LifecycleOperatio
     quiesceRequest: null,
     quiesceReceipt: null,
     writerAbsenceProof: null,
+    readinessEvidence: null,
+    rollbackCompatibilityEvidence: null,
+    rollbackCompatible: null,
     buildId: operation.buildId,
     failureCode: null,
     failureReason: null,

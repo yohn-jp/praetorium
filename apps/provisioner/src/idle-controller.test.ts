@@ -84,6 +84,7 @@ function candidate(overrides: Partial<ProvisionerIdleCandidate> = {}): Provision
     desiredState: "running",
     bindingSuspended: false,
     hasActiveOperation: false,
+    healthOperationId: null,
     currentRuntime: resolvedRuntime(),
     ...overrides,
   };

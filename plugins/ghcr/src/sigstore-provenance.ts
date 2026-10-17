@@ -15,6 +15,11 @@ export interface ProvenanceVerificationResult {
   readonly verified: boolean;
   readonly signerIdentity?: string;
   readonly evidence: readonly string[];
+  readonly attestation?: {
+    readonly bundleRef: string;
+    readonly predicateType: string;
+    readonly subjects: readonly { readonly name: string; readonly sha256: string }[];
+  };
 }
 
 export interface SignerIdentityAllowlistEntry {
@@ -33,8 +38,17 @@ export interface SigstoreProvenanceVerifierOptions {
 }
 
 interface InTotoStatement {
-  readonly subject?: readonly { readonly digest?: { readonly sha256?: string } }[];
+  readonly _type?: string;
+  readonly predicateType?: string;
+  readonly subject?: readonly {
+    readonly name?: string;
+    readonly digest?: { readonly sha256?: string };
+  }[];
 }
+
+const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
+const IN_TOTO_STATEMENT_V1 = "https://in-toto.io/Statement/v1";
+const MAX_ATTESTED_SUBJECTS = 256;
 
 async function readBoundedBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<Uint8Array> {
   const headerLength = response.headers.get("content-length");
@@ -224,8 +238,16 @@ export class SigstoreProvenanceVerifier {
       return { verified: false, evidence: ["provenance bundle has an invalid Sigstore format"] };
     }
     const statement = decodeStatement(bundle);
+    const subjects = parseSubjects(statement?.subject);
+    if (
+      statement?._type !== IN_TOTO_STATEMENT_V1 ||
+      statement.predicateType !== SLSA_PROVENANCE_V1 ||
+      subjects === null
+    ) {
+      return { verified: false, evidence: ["provenance statement has an invalid SLSA predicate or subject list"] };
+    }
     const expectedDigest = input.imageDigest.slice("sha256:".length);
-    if (!statement?.subject?.some((subject) => subject.digest?.sha256 === expectedDigest)) {
+    if (!subjects.some((subject) => subject.sha256 === expectedDigest)) {
       return { verified: false, evidence: ["provenance subject does not cover the requested artifact digest"] };
     }
 
@@ -242,6 +264,11 @@ export class SigstoreProvenanceVerifier {
             "provenance subject digest matches the immutable artifact digest",
             "producer signer matches the configured identity allowlist",
           ],
+          attestation: {
+            bundleRef,
+            predicateType: statement.predicateType,
+            subjects,
+          },
         };
       } catch (error) {
         lastError = error;
@@ -252,4 +279,32 @@ export class SigstoreProvenanceVerifier {
       evidence: [lastError === undefined ? "no valid signer identity is configured" : "signature or producer identity verification failed"],
     };
   }
+}
+
+function parseSubjects(
+  input: InTotoStatement["subject"],
+): readonly { readonly name: string; readonly sha256: string }[] | null {
+  if (!Array.isArray(input) || input.length === 0 || input.length > MAX_ATTESTED_SUBJECTS) {
+    return null;
+  }
+  const subjects: { name: string; sha256: string }[] = [];
+  for (const candidate of input) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof candidate.name !== "string" ||
+      candidate.name.length === 0 ||
+      candidate.name.length > 512 ||
+      typeof candidate.digest !== "object" ||
+      candidate.digest === null ||
+      Array.isArray(candidate.digest)
+    ) {
+      return null;
+    }
+    const sha256 = candidate.digest.sha256;
+    if (sha256 === undefined) continue;
+    if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(sha256)) return null;
+    subjects.push({ name: candidate.name, sha256 });
+  }
+  return subjects;
 }

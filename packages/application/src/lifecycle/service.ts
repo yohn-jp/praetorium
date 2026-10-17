@@ -5,11 +5,13 @@ import {
   type LifecyclePhase,
   type LifecycleReadinessEvidence,
   type LifecycleResult,
+  type ProducerStatus,
   type QuiesceReceipt,
   type QuiesceRequest,
   type RuntimeAssignment,
   type RuntimeDeployment,
   type RuntimeEpoch,
+  type RollbackCompatibilityEvidence,
   type WriterAbsenceProof,
   type WriterCensus,
   SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
@@ -55,6 +57,112 @@ function validIsoTimestamp(value: string): boolean {
 
 function validRemoteRevision(value: string | null): boolean {
   return value === null || /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value);
+}
+
+function rollbackEvidenceFromStatus(
+  assignment: RuntimeAssignment,
+  receipt: QuiesceReceipt,
+  status: ProducerStatus,
+  census: WriterCensus,
+  now: number,
+): RollbackCompatibilityEvidence | null {
+  const persistence = status.persistence;
+  const observedAt = Date.parse(status.observedAt);
+  const providerObservedAt = Date.parse(census.observedAt);
+  const quiescedAt = Date.parse(receipt.observedAt);
+  const commit = persistence?.observedRemoteCommit ?? null;
+  if (
+    persistence === undefined ||
+    persistence.state !== "verified" ||
+    commit === null ||
+    !validRemoteRevision(commit) ||
+    status.lastConfirmedRemoteRevision !== commit ||
+    receipt.lastConfirmedRemoteRevision !== commit ||
+    status.instanceId !== assignment.instanceId ||
+    status.repositoryId !== assignment.repositoryId ||
+    status.runtimeEpoch !== assignment.runtimeEpoch ||
+    status.imageDigest !== assignment.deployment.imageDigest ||
+    status.compositionManifestDigest !== assignment.deployment.compositionManifestDigest ||
+    !sameStrings(status.enabledModuleIds, assignment.deployment.enabledModuleIds) ||
+    status.activity.activeMutations !== 0 ||
+    status.activity.activeJobs !== 0 ||
+    status.activity.pendingCheckpoints !== 0 ||
+    status.activity.uncertainPublication ||
+    receipt.disposition !== "safe" ||
+    census.providerObservationId.length === 0 ||
+    !censusIsComplete(census) ||
+    !Number.isFinite(observedAt) ||
+    !Number.isFinite(providerObservedAt) ||
+    !Number.isFinite(quiescedAt) ||
+    providerObservedAt < quiescedAt ||
+    providerObservedAt > observedAt ||
+    providerObservedAt > now ||
+    now - providerObservedAt > DEFAULT_READINESS_EVIDENCE_MAX_AGE_MS ||
+    observedAt < quiescedAt ||
+    observedAt > now ||
+    now - observedAt > DEFAULT_READINESS_EVIDENCE_MAX_AGE_MS ||
+    !Array.isArray(persistence.formats) ||
+    persistence.formats.length > 256
+  )
+    return null;
+  const seen = new Set<string>();
+  const formats: { formatId: string; version: number }[] = [];
+  for (const item of persistence.formats) {
+    if (
+      !/^[a-z][a-z0-9.-]{0,127}$/u.test(item.formatId) ||
+      !Number.isSafeInteger(item.version) ||
+      item.version < 1
+    )
+      return null;
+    const pair = `${item.formatId}\u0000${item.version}`;
+    if (seen.has(pair)) return null;
+    seen.add(pair);
+    formats.push({ formatId: item.formatId, version: item.version });
+  }
+  return {
+    contractVersion: "praetorium-rollback-compatibility/v1",
+    instanceId: assignment.instanceId,
+    repositoryId: assignment.repositoryId,
+    runtimeEpoch: assignment.runtimeEpoch,
+    imageDigest: assignment.deployment.imageDigest,
+    compositionManifestDigest: assignment.deployment.compositionManifestDigest,
+    providerObservationId: census.providerObservationId,
+    providerObservedAt: census.observedAt,
+    observedAt: status.observedAt,
+    observedRemoteCommit: commit,
+    quiesceRevision: receipt.quiesceRevision,
+    quiesceRemoteCommit: commit,
+    formats,
+  };
+}
+
+function rollbackEvidenceMatches(
+  evidence: RollbackCompatibilityEvidence | null,
+  assignment: RuntimeAssignment,
+  receipt: QuiesceReceipt | null,
+): evidence is RollbackCompatibilityEvidence {
+  return (
+    evidence !== null &&
+    typeof evidence === "object" &&
+    receipt !== null &&
+    evidence.contractVersion === "praetorium-rollback-compatibility/v1" &&
+    evidence.instanceId === assignment.instanceId &&
+    evidence.repositoryId === assignment.repositoryId &&
+    evidence.runtimeEpoch === assignment.runtimeEpoch &&
+    evidence.imageDigest === assignment.deployment.imageDigest &&
+    evidence.compositionManifestDigest === assignment.deployment.compositionManifestDigest &&
+    typeof evidence.providerObservationId === "string" &&
+    evidence.providerObservationId.length > 0 &&
+    Number.isFinite(Date.parse(evidence.providerObservedAt)) &&
+    Date.parse(evidence.providerObservedAt) >= Date.parse(receipt.observedAt) &&
+    Date.parse(evidence.providerObservedAt) <= Date.parse(evidence.observedAt) &&
+    evidence.quiesceRevision === receipt.quiesceRevision &&
+    evidence.quiesceRemoteCommit === receipt.lastConfirmedRemoteRevision &&
+    evidence.observedRemoteCommit === receipt.lastConfirmedRemoteRevision &&
+    Number.isFinite(Date.parse(evidence.observedAt)) &&
+    Date.parse(evidence.observedAt) >= Date.parse(receipt.observedAt) &&
+    receipt.disposition === "safe"
+  );
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
@@ -510,6 +618,31 @@ export class LifecycleService {
       if (operation.rollbackEpoch !== null) {
         return await this.resumeRollback(operation, context, checkpoint, setOutcome);
       }
+      if (
+        operation.quiesceRequest?.reason === "rollback" &&
+        operation.target !== null &&
+        operation.targetEpoch !== null
+      ) {
+        // A worker may exit after persisting rollback quiesce/evidence but
+        // before allocating the fresh rollback epoch. Resume retirement of
+        // the failed target instead of treating its live writer as the
+        // operation's old current runtime.
+        const failedAssignment = assignmentFor(
+          operation,
+          operation.target,
+          operation.targetEpoch,
+          operation.targetReservationId,
+        );
+        return await this.tryRollback(
+          operation,
+          failedAssignment,
+          operation.target,
+          operation.failureCode ?? "target_readiness_failure_recovery",
+          context,
+          checkpoint,
+          setOutcome,
+        );
+      }
 
       const resolution = await this.resolveTarget(operation, context, checkpoint);
       if (resolution.status !== "resolved") return resolution.result;
@@ -547,6 +680,7 @@ export class LifecycleService {
           try {
             const evidence = await this.verifyReadiness(operation.current, context);
             if (evidence !== null) {
+              await checkpoint({ readinessEvidence: evidence });
               await context.assertLease();
               await this.dependencies.routes.activate(
                 operation.current,
@@ -709,7 +843,7 @@ export class LifecycleService {
         return rollback;
       }
 
-      await checkpoint({ phase: "target-ready" });
+      await checkpoint({ phase: "target-ready", readinessEvidence });
       await context.assertLease();
       await this.dependencies.routes.activate(
         targetAssignment,
@@ -824,11 +958,29 @@ export class LifecycleService {
         "rollback checkpoint lacks its admitted runtime identity",
       );
     }
-    if (!(await this.dependencies.builds.isRollbackCompatible(previous.deployment, failedTarget))) {
+    const failedAssignment = assignmentFor(
+      operation,
+      failedTarget,
+      operation.targetEpoch ?? operation.runtimeEpoch,
+      operation.targetReservationId,
+    );
+    if (
+      operation.rollbackCompatible !== true ||
+      !rollbackEvidenceMatches(
+        operation.rollbackCompatibilityEvidence,
+        failedAssignment,
+        operation.quiesceReceipt,
+      ) ||
+      !(await this.dependencies.builds.isRollbackCompatible(
+        previous.deployment,
+        failedTarget,
+        operation.rollbackCompatibilityEvidence,
+      ))
+    ) {
       return setOutcome(
         "unknown",
         "rollback_compatibility_unconfirmed",
-        "the admitted previous runtime is no longer confirmed compatible",
+        "fresh persisted post-quiesce data evidence does not prove the previous runtime can read and write this target state",
       );
     }
 
@@ -886,7 +1038,7 @@ export class LifecycleService {
         "previous admitted runtime failed fresh readiness checks",
       );
     }
-    await checkpoint({ phase: "target-ready" });
+    await checkpoint({ phase: "target-ready", readinessEvidence: rollbackReadiness });
     await context.assertLease();
     await this.dependencies.routes.activate(
       rollbackAssignment,
@@ -925,6 +1077,7 @@ export class LifecycleService {
     reason: QuiesceRequest["reason"],
     context: LifecycleExecutionContext,
     checkpoint: (patch: Partial<Omit<LifecycleOperation, "id" | "version">>) => Promise<void>,
+    beforeStop?: (receipt: QuiesceReceipt) => Promise<LifecycleResult | null>,
   ): Promise<
     | { readonly status: "retired"; readonly proof: WriterAbsenceProof }
     | { readonly status: "blocked"; readonly result: LifecycleResult }
@@ -1056,6 +1209,10 @@ export class LifecycleService {
       };
     }
     await checkpoint({ phase: "old-quiesced", quiesceReceipt: receipt });
+    if (beforeStop !== undefined) {
+      const rejected = await beforeStop(receipt);
+      if (rejected !== null) return { status: "blocked", result: rejected };
+    }
     await context.assertLease();
     await checkpoint({ phase: "stopping-old" });
     try {
@@ -1208,6 +1365,8 @@ export class LifecycleService {
       auth.wrongEpochGrantRejected &&
       auth.invalidServiceCredentialRejected &&
       auth.applicationProbeId.length > 0 &&
+      auth.uiApiMcpProbeId.length > 0 &&
+      auth.persistenceProbeId.length > 0 &&
       auth.validGrantProbeId.length > 0 &&
       auth.wrongRepositoryProbeId.length > 0 &&
       auth.wrongEpochProbeId.length > 0 &&
@@ -1222,10 +1381,17 @@ export class LifecycleService {
       compositionManifestDigest: producer.compositionManifestDigest,
       enabledModuleIds: [...producer.enabledModuleIds].sort(),
       applicationProbeId: auth.applicationProbeId,
+      uiApiMcpProbeId: auth.uiApiMcpProbeId,
+      persistenceProbeId: auth.persistenceProbeId,
       validGrantProbeId: auth.validGrantProbeId,
       wrongRepositoryProbeId: auth.wrongRepositoryProbeId,
       wrongEpochProbeId: auth.wrongEpochProbeId,
       invalidServiceCredentialProbeId: auth.invalidServiceCredentialProbeId,
+      persistence: producer.persistence ?? {
+        state: "unknown",
+        observedRemoteCommit: null,
+        formats: [],
+      },
       verifiedAt: auth.observedAt,
     };
   }
@@ -1265,17 +1431,17 @@ export class LifecycleService {
     ) => Promise<LifecycleResult>,
   ): Promise<LifecycleResult> {
     const previous = operation.current;
-    if (
-      previous === null ||
-      !(await this.dependencies.builds.isRollbackCompatible(previous.deployment, target))
-    ) {
+    if (previous === null) {
       return setOutcome(
         "unknown",
         "target_readiness_failed_no_compatible_rollback",
-        `new runtime failed readiness (${boundReason(readinessReason)}); no compatible admitted rollback is available`,
+        `new runtime failed readiness (${boundReason(readinessReason)}); no prior admitted runtime is available`,
       );
     }
 
+    let compatibilityEvidence = operation.rollbackCompatibilityEvidence;
+    let rollbackCompatible = operation.rollbackCompatible;
+    let quiesceReceipt = operation.quiesceReceipt;
     const retirement = await this.retireAssignment(
       operation,
       failedAssignment,
@@ -1283,8 +1449,84 @@ export class LifecycleService {
       "rollback",
       context,
       checkpoint,
+      async (receipt) => {
+        quiesceReceipt = receipt;
+        let census: WriterCensus;
+        let status: ProducerStatus;
+        try {
+          await context.assertLease();
+          census = await this.dependencies.runtime.censusWriters(
+            operation.instanceId,
+            operation.repositoryId,
+            context.signal,
+          );
+          if (
+            !censusIsComplete(census) ||
+            census.writers.length !== 1 ||
+            census.writers[0]?.runtimeEpoch !== failedAssignment.runtimeEpoch
+          ) {
+            return setOutcome(
+              "unknown",
+              "rollback_writer_observation_unproven",
+              "post-quiesce provider observation did not identify exactly the failed target writer",
+            );
+          }
+          status = await this.dependencies.producer.status(failedAssignment, context.signal);
+        } catch {
+          return setOutcome(
+            "unknown",
+            "rollback_persistence_observation_unavailable",
+            "fresh producer persistence status could not be read after quiesce; the failed writer remains untouched",
+          );
+        }
+        compatibilityEvidence = rollbackEvidenceFromStatus(
+          failedAssignment,
+          receipt,
+          status,
+          census,
+          this.now(),
+        );
+        if (compatibilityEvidence === null) {
+          return setOutcome(
+            "unknown",
+            "rollback_persistence_evidence_unproven",
+            "post-quiesce status did not prove a fresh, safe, confirmed remote persistence state",
+          );
+        }
+        await checkpoint({ rollbackCompatibilityEvidence: compatibilityEvidence });
+        const compatible = await this.dependencies.builds.isRollbackCompatible(
+          previous.deployment,
+          target,
+          compatibilityEvidence,
+        );
+        await checkpoint({ rollbackCompatible: compatible });
+        rollbackCompatible = compatible;
+        if (!compatible) {
+          return setOutcome(
+            "unknown",
+            "target_readiness_failed_no_compatible_rollback",
+            `new runtime failed readiness (${boundReason(readinessReason)}); the previous manifest cannot safely read and write the proven target state`,
+          );
+        }
+        return null;
+      },
     );
     if (retirement.status !== "retired") return retirement.result;
+    if (
+      rollbackCompatible !== true ||
+      !rollbackEvidenceMatches(compatibilityEvidence, failedAssignment, quiesceReceipt) ||
+      !(await this.dependencies.builds.isRollbackCompatible(
+        previous.deployment,
+        target,
+        compatibilityEvidence,
+      ))
+    ) {
+      return setOutcome(
+        "unknown",
+        "rollback_compatibility_unconfirmed",
+        "a persisted fresh post-quiesce persistence proof is required before retiring the failed writer",
+      );
+    }
 
     let rollbackEpoch = operation.rollbackEpoch;
     if (rollbackEpoch === null) {
@@ -1344,7 +1586,7 @@ export class LifecycleService {
         "previous admitted runtime failed fresh readiness checks",
       );
     }
-    await checkpoint({ phase: "target-ready" });
+    await checkpoint({ phase: "target-ready", readinessEvidence: rollbackReadiness });
     await context.assertLease();
     await this.dependencies.routes.activate(
       rollbackAssignment,

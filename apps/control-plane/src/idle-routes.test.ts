@@ -13,6 +13,7 @@ import {
   type ControlCredentialIssuer,
 } from "./control-credentials.js";
 import { createProvisionerIdleRoutes } from "./idle-routes.js";
+import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 
 const schemaUrl = new URL("../../../docs/migration/tasks/T03-schema.sql", import.meta.url);
 const activeDatabases: DatabaseSync[] = [];
@@ -25,6 +26,82 @@ afterEach(() => {
 });
 
 describe("Control Plane provisioner idle routes", () => {
+  it("records fresh current-writer health and rejects replay, stale epoch and changed image", async () => {
+    const h = createHarness();
+    await h.addReadyInstance("ins_health", 701);
+    h.database.exec(
+      readFileSync(
+        new URL("../migrations/0005_runtime_health_observations.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    h.database
+      .prepare(
+        `INSERT INTO operations (
+      operation_id,instance_id,repository_id,generation,runtime_epoch,kind,status,phase,
+      deployment_revision_id,idempotency_scope,idempotency_key,request_hash,actor_id,authorization_revision,created_at,updated_at
+    ) VALUES ('op-health','ins_health',701,1,1,'start','succeeded','complete',
+      'revision-ins_health','health','health','health','user-1',3,?,?)`,
+      )
+      .run(NOW, NOW);
+    const route = createRuntimeHealthRoutes({
+      db: new SqliteD1Database(h.database),
+      workerId: WORKER_ID,
+      clusterId: CLUSTER_ID,
+      now: () => NOW,
+    });
+    const body = {
+      workerId: WORKER_ID,
+      clusterId: CLUSTER_ID,
+      operationId: "op-health",
+      readinessEvidence: {
+        assignment: {
+          instanceId: "ins_health",
+          repositoryId: 701,
+          runtimeEpoch: 1,
+          generation: 1,
+          clusterId: CLUSTER_ID,
+          deployment: {
+            revisionId: "revision-ins_health",
+            imageDigest: `sha256:${(701).toString(16).padStart(64, "0")}`,
+            platformManifestDigest: `sha256:${"c".repeat(64)}`,
+            compositionManifestDigest: `sha256:${"d".repeat(64)}`,
+          },
+        },
+        providerObservationId: "provider-observation-1",
+        actualImageDigest: `sha256:${"c".repeat(64)}`,
+        producerObservedAt: new Date(NOW - 1).toISOString(),
+        compositionManifestDigest: `sha256:${"d".repeat(64)}`,
+        enabledModuleIds: [],
+        applicationProbeId: "application-1",
+        validGrantProbeId: "valid-1",
+        wrongRepositoryProbeId: "wrong-repo-1",
+        wrongEpochProbeId: "wrong-epoch-1",
+        invalidServiceCredentialProbeId: "invalid-1",
+        uiApiMcpProbeId: "ui-1",
+        persistenceProbeId: "persistence-1",
+        persistence: { state: "verified", observedRemoteCommit: "f".repeat(40), formats: [] },
+        verifiedAt: new Date(NOW).toISOString(),
+      },
+    };
+    const request = (input: unknown) =>
+      route.request("/internal/provisioner/runtime-health", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
+    expect((await request(body)).status).toBe(200);
+    expect((await request(body)).status).toBe(409);
+    body.readinessEvidence.providerObservationId = "provider-observation-2";
+    body.readinessEvidence.assignment.runtimeEpoch = 2;
+    expect((await request(body)).status).toBe(409);
+    body.readinessEvidence.assignment.runtimeEpoch = 1;
+    body.readinessEvidence.assignment.deployment.imageDigest = `sha256:${"b".repeat(64)}`;
+    expect((await request(body)).status).toBe(409);
+    expect(
+      h.database.prepare("SELECT COUNT(*) AS count FROM runtime_health_observations").get(),
+    ).toMatchObject({ count: 1 });
+  });
   it("lists only current ready runtimes in the worker cluster with bounded keyset pagination", async () => {
     const h = createHarness();
     await h.addReadyInstance("ins_a", 71);

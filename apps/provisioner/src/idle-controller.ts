@@ -4,6 +4,8 @@ import {
   IdleLifecycle,
   type IdleObservation,
   type RuntimeAssignment,
+  type LifecycleReadinessEvidence,
+  type RuntimePersistenceObservation,
 } from "@praetorium/application/lifecycle";
 import {
   parseRuntimeInstanceId,
@@ -23,7 +25,9 @@ import { KubernetesLifecycleRuntimeAdapter } from "./kubernetes-lifecycle-adapte
 import {
   IdleObservationRuntimeControlCredentialProvider,
   ScriptoriumControlHttpClient,
+  type RuntimeAuthAcceptanceProbe,
 } from "./scriptorium-control-client.js";
+import type { RuntimeIdentityAssignmentTransport } from "./runtime-identity.js";
 
 const CONTROL_PAGE_SIZE = 25;
 const DEFAULT_SCAN_INTERVAL_MS = 60_000;
@@ -38,6 +42,10 @@ export interface IdleRuntimeInspector {
   ): Promise<RuntimePage<ManagedRuntimeSummary>>;
   inspect(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<RuntimeObservation>;
   controlEndpoint(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<string>;
+  refreshRuntimeIdentity?(
+    assignment: RuntimeAssignment,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
 }
 
 export interface ProvisionerIdleControllerOptions {
@@ -52,16 +60,20 @@ export interface ProvisionerIdleControllerOptions {
   readonly logger?: ProvisionerLogger;
   readonly metrics?: ProvisionerMetrics;
   readonly fetch?: typeof fetch;
+  readonly identityTransport?: RuntimeIdentityAssignmentTransport;
+  readonly authProbe?: RuntimeAuthAcceptanceProbe;
   /** Narrow seam for deterministic unit tests; production uses the T07 adapter. */
   readonly createInspector?: (candidate: ProvisionerIdleCandidate) => IdleRuntimeInspector;
 }
 
-function isEligible(candidate: ProvisionerIdleCandidate, clusterId: string): boolean {
+function isCurrentRuntimeCandidate(
+  candidate: ProvisionerIdleCandidate,
+  clusterId: string,
+): boolean {
   return (
     candidate.clusterId === clusterId &&
     candidate.desiredState === "running" &&
     !candidate.bindingSuspended &&
-    !candidate.hasActiveOperation &&
     candidate.currentRuntime.assignment.instanceId === candidate.instanceId &&
     candidate.currentRuntime.assignment.repositoryId === candidate.repositoryId &&
     candidate.currentRuntime.assignment.runtimeEpoch === candidate.runtimeEpoch
@@ -202,6 +214,7 @@ export class ProvisionerIdleController {
               options.operations.currentReservations({ clusterId }),
             recordCapacitySnapshot: (input) => options.operations.recordCapacitySnapshot(input),
           },
+          options.identityTransport,
         );
         return {
           listManagedInstances: (cursor, signal) =>
@@ -218,6 +231,8 @@ export class ProvisionerIdleController {
               signal,
             ),
           controlEndpoint: (assignment, signal) => adapter.controlEndpoint(assignment, signal),
+          refreshRuntimeIdentity: (assignment, signal) =>
+            adapter.refreshRuntimeIdentity(assignment, async () => undefined, signal),
         };
       });
   }
@@ -258,7 +273,7 @@ export class ProvisionerIdleController {
     }
 
     const candidates = this.candidatePage.items.filter((candidate) =>
-      isEligible(candidate, this.options.clusterId),
+      isCurrentRuntimeCandidate(candidate, this.options.clusterId),
     );
     if (candidates.length === 0) {
       this.finishCandidatePage();
@@ -307,17 +322,28 @@ export class ProvisionerIdleController {
     try {
       const runtimeObservation = await inspector.inspect(assignment, signal);
       const providerObservedAt = this.now();
-      if (
-        !observationMatches(
-          runtimeObservation,
-          candidate,
-          assignment,
-          providerObservedAt,
-          this.statusMaxAgeMs,
-        )
-      ) {
+      const providerReady = observationMatches(
+        runtimeObservation,
+        candidate,
+        assignment,
+        providerObservedAt,
+        this.statusMaxAgeMs,
+      );
+      if (!providerReady) {
         this.metrics?.increment("idle_runtime_not_ready");
         return;
+      }
+
+      if (inspector.refreshRuntimeIdentity !== undefined) {
+        try {
+          if (await inspector.refreshRuntimeIdentity(assignment, signal))
+            this.metrics?.increment("runtime_identity_refreshed");
+        } catch (error) {
+          if (signal?.aborted) throw signal.reason ?? error;
+          this.metrics?.increment("runtime_identity_refresh_failed");
+          this.logger?.warn("runtime_identity_refresh_failed", { code: errorCode(error) });
+          return;
+        }
       }
 
       const producer = new ScriptoriumControlHttpClient(
@@ -349,6 +375,26 @@ export class ProvisionerIdleController {
         this.metrics?.increment("idle_producer_status_stale_or_mismatched");
         return;
       }
+
+      if (
+        !candidate.hasActiveOperation &&
+        candidate.healthOperationId !== null &&
+        this.options.authProbe !== undefined &&
+        this.options.operations.recordRuntimeHealth !== undefined
+      ) {
+        await this.recordHealthSample(
+          candidate,
+          assignment,
+          runtimeObservation,
+          status,
+          this.options.authProbe.withEndpointResolver((runtimeAssignment, endpointSignal) =>
+            inspector.controlEndpoint(runtimeAssignment, endpointSignal),
+          ),
+          signal,
+        );
+      }
+
+      if (candidate.hasActiveOperation) return;
 
       const activity = status.activity;
       const observation: IdleObservation = {
@@ -408,6 +454,90 @@ export class ProvisionerIdleController {
       this.metrics?.increment("idle_observation_unavailable");
       this.logger?.warn("idle_observation_unavailable", { code: errorCode(error) });
     }
+  }
+
+  private async recordHealthSample(
+    candidate: ProvisionerIdleCandidate,
+    assignment: RuntimeAssignment,
+    observation: RuntimeObservation,
+    producer: Awaited<ReturnType<ScriptoriumControlHttpClient["status"]>>,
+    authProbe: RuntimeAuthAcceptanceProbe,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const recordHealth = this.options.operations.recordRuntimeHealth;
+    const operationId = candidate.healthOperationId;
+    const actualImageDigest = observation.observedImageDigest;
+    if (
+      authProbe === undefined ||
+      recordHealth === undefined ||
+      operationId === null ||
+      actualImageDigest !== assignment.deployment.platformManifestDigest
+    )
+      return;
+    const auth = await authProbe.verifyObserved(assignment, operationId, signal);
+    const now = this.now();
+    const verifiedAt = Date.parse(auth.observedAt);
+    const producerAt = Date.parse(producer.observedAt);
+    const evidenceIsFresh =
+      Number.isFinite(verifiedAt) &&
+      verifiedAt <= now &&
+      now - verifiedAt <= this.statusMaxAgeMs &&
+      Number.isFinite(producerAt) &&
+      producerAt <= verifiedAt &&
+      verifiedAt - producerAt <= this.statusMaxAgeMs;
+    if (
+      !evidenceIsFresh ||
+      !auth.grantPolicyMatched ||
+      !auth.controlServicePolicyMatched ||
+      !auth.validGrantAccepted ||
+      !auth.wrongRepositoryGrantRejected ||
+      !auth.wrongEpochGrantRejected ||
+      !auth.invalidServiceCredentialRejected ||
+      !auth.applicationProbeId ||
+      !auth.uiApiMcpProbeId ||
+      !auth.persistenceProbeId ||
+      !auth.validGrantProbeId ||
+      !auth.wrongRepositoryProbeId ||
+      !auth.wrongEpochProbeId ||
+      !auth.invalidServiceCredentialProbeId
+    ) {
+      this.metrics?.increment("runtime_health_evidence_unverified");
+      return;
+    }
+    const persistence: RuntimePersistenceObservation = producer.persistence ?? {
+      state: "unknown",
+      observedRemoteCommit: null,
+      formats: [],
+    };
+    if (persistence.state !== "verified" || persistence.observedRemoteCommit === null) {
+      this.metrics?.increment("runtime_health_persistence_unverified");
+      return;
+    }
+    const readinessEvidence: LifecycleReadinessEvidence = {
+      assignment,
+      providerObservationId: observation.observationId,
+      actualImageDigest,
+      producerObservedAt: producer.observedAt,
+      compositionManifestDigest: producer.compositionManifestDigest,
+      enabledModuleIds: [...producer.enabledModuleIds].sort(),
+      applicationProbeId: auth.applicationProbeId,
+      uiApiMcpProbeId: auth.uiApiMcpProbeId,
+      persistenceProbeId: auth.persistenceProbeId,
+      validGrantProbeId: auth.validGrantProbeId,
+      wrongRepositoryProbeId: auth.wrongRepositoryProbeId,
+      wrongEpochProbeId: auth.wrongEpochProbeId,
+      invalidServiceCredentialProbeId: auth.invalidServiceCredentialProbeId,
+      persistence,
+      verifiedAt: auth.observedAt,
+    };
+    const result = await recordHealth.call(this.options.operations, {
+      workerId: this.options.workerId,
+      clusterId: this.options.clusterId,
+      operationId,
+      readinessEvidence,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (result.recorded) this.metrics?.increment("runtime_health_sample_recorded");
   }
 
   private finishCandidatePage(): void {

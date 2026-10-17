@@ -4,6 +4,11 @@ import { createRegistryBackedReleaseVerifier } from "./verifier.js";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const PRODUCER = "a".repeat(40);
+const attestation = {
+  bundleRef: "https://evidence.example/signature",
+  predicateType: "https://slsa.dev/provenance/v1",
+  subjects: [{ name: "runtime", sha256: "a".repeat(64) }],
+} as const;
 
 function manifest(): ReleaseCandidateManifest {
   return {
@@ -62,6 +67,7 @@ describe("registry-backed release verifier", () => {
             verified: true,
             signerIdentity: "release-signer",
             evidence: ["sigstore verified"],
+            attestation,
           };
         },
       },
@@ -86,6 +92,9 @@ describe("registry-backed release verifier", () => {
       producerRevision: PRODUCER,
       catalog: input.catalog,
       runtimeMetadata: input.runtimeMetadata,
+      signatureRef: input.signatureRef,
+      provenanceRef: input.provenanceRef,
+      attestation,
     });
     if (result.kind === "verified") {
       expect(result.evidence).toContain("producer contract attested");

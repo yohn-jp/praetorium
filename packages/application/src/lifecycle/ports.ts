@@ -31,6 +31,27 @@ export type ScriptoriumRuntimePolicy = {
   readonly audience: string;
 };
 
+export interface RuntimePersistenceDeclaration {
+  readonly contractVersion: "scriptorium-persistence/v1";
+  readonly readable: readonly {
+    readonly formatId: string;
+    readonly versions: readonly number[];
+  }[];
+  readonly writable: readonly {
+    readonly formatId: string;
+    readonly version: number;
+  }[];
+}
+
+export interface RuntimePersistenceObservation {
+  readonly state: "verified" | "unknown";
+  readonly observedRemoteCommit: string | null;
+  readonly formats: readonly {
+    readonly formatId: string;
+    readonly version: number;
+  }[];
+}
+
 export interface RuntimeDeployment {
   readonly revisionId: string;
   readonly repositoryId: number;
@@ -40,6 +61,8 @@ export interface RuntimeDeployment {
   readonly artifactRef: string;
   readonly platformManifestDigest: string;
   readonly compositionManifestDigest: string;
+  /** Missing declarations are legacy and cannot prove rollback compatibility. */
+  readonly persistence?: RuntimePersistenceDeclaration;
   readonly enabledModuleIds: readonly string[];
   readonly credentialBrokerLocator: string;
   readonly grantPolicy: ScriptoriumRuntimePolicy;
@@ -121,6 +144,8 @@ export interface ProducerStatus {
     readonly uncertainPublication: boolean;
   };
   readonly lastConfirmedRemoteRevision: string | null;
+  /** Missing or unknown persistence observations are never rollback proof. */
+  readonly persistence?: RuntimePersistenceObservation;
   readonly observedAt: string;
 }
 
@@ -195,6 +220,10 @@ export interface LifecycleOperation {
   readonly quiesceRequest: QuiesceRequest | null;
   readonly quiesceReceipt: QuiesceReceipt | null;
   readonly writerAbsenceProof: WriterAbsenceProof | null;
+  readonly readinessEvidence: LifecycleReadinessEvidence | null;
+  readonly rollbackCompatibilityEvidence: RollbackCompatibilityEvidence | null;
+  /** Persisted decision made only after the checker accepts fresh evidence. */
+  readonly rollbackCompatible: boolean | null;
   readonly buildId: string | null;
   readonly failureCode: string | null;
   readonly failureReason: string | null;
@@ -224,7 +253,32 @@ export interface LifecycleBuildProvider {
     beforeEffect: BeforeLifecycleEffect,
     signal?: AbortSignal,
   ): Promise<BuildResolution>;
-  isRollbackCompatible(previous: RuntimeDeployment, target: RuntimeDeployment): Promise<boolean>;
+  isRollbackCompatible(
+    previous: RuntimeDeployment,
+    target: RuntimeDeployment,
+    evidence: RollbackCompatibilityEvidence,
+  ): Promise<boolean>;
+}
+
+/** Fresh, post-quiesce evidence of the exact target data state used to admit a
+ * rollback. It is checkpointed before the failed writer can be retired. */
+export interface RollbackCompatibilityEvidence {
+  readonly contractVersion: "praetorium-rollback-compatibility/v1";
+  readonly instanceId: string;
+  readonly repositoryId: number;
+  readonly runtimeEpoch: RuntimeEpoch;
+  readonly imageDigest: string;
+  readonly compositionManifestDigest: string;
+  readonly providerObservationId: string;
+  readonly providerObservedAt: string;
+  readonly observedAt: string;
+  readonly observedRemoteCommit: string;
+  readonly quiesceRevision: string;
+  readonly quiesceRemoteCommit: string;
+  readonly formats: readonly {
+    readonly formatId: string;
+    readonly version: number;
+  }[];
 }
 
 export interface LifecycleCapacityProvider {
@@ -264,6 +318,8 @@ export interface LifecycleAuthProbeProvider {
     signal?: AbortSignal,
   ): Promise<{
     readonly applicationProbeId: string;
+    readonly uiApiMcpProbeId: string;
+    readonly persistenceProbeId: string;
     readonly grantPolicyMatched: boolean;
     readonly controlServicePolicyMatched: boolean;
     readonly validGrantAccepted: boolean;
@@ -286,10 +342,13 @@ export interface LifecycleReadinessEvidence {
   readonly compositionManifestDigest: string;
   readonly enabledModuleIds: readonly string[];
   readonly applicationProbeId: string;
+  readonly uiApiMcpProbeId: string;
+  readonly persistenceProbeId: string;
   readonly validGrantProbeId: string;
   readonly wrongRepositoryProbeId: string;
   readonly wrongEpochProbeId: string;
   readonly invalidServiceCredentialProbeId: string;
+  readonly persistence: RuntimePersistenceObservation;
   readonly verifiedAt: string;
 }
 

@@ -148,12 +148,14 @@ function runtimeProjection(
     assignment.runtimeEpoch !== spec.runtimeEpoch ||
     spec.release === null ||
     assignment.imageDigest !== spec.release.imageDigest
-  ) failInvalid("hosted runtime assignment does not match the admitted image and identity");
+  )
+    failInvalid("hosted runtime assignment does not match the admitted image and identity");
   if (
     proof.length < 16 ||
     proof.length > 4_096 ||
     !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(proof)
-  ) failInvalid("hosted runtime identity proof is invalid");
+  )
+    failInvalid("hosted runtime identity proof is invalid");
 
   const namespaceName = namespace(spec, options.namespacePrefix);
   const baseName = runtimeResourceName(spec.instanceId);
@@ -466,6 +468,7 @@ function deployment(
                 ? {
                     env: [
                       { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
+                      { name: "SCRIPTORIUM_TRUST_PROXY", value: "1" },
                       {
                         name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
                         value: "/run/scriptorium/runtime-assignment.json",
@@ -570,7 +573,12 @@ export function createKubernetesResourceRenderer(
     },
     renderStopped(spec: StoppedInstanceSpec) {
       if (spec.release === null) return baseResources(options, spec);
-      return [...baseResources(options, spec), deployment(options, spec, 0)];
+      const projection = runtimeProjection(options, spec);
+      return [
+        ...baseResources(options, spec),
+        ...(projection ? [projection.resource] : []),
+        deployment(options, spec, 0),
+      ];
     },
     renderRelease(spec: ReleaseSpec) {
       const projection = runtimeProjection(options, spec);

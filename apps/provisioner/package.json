@@ -20,6 +20,7 @@
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
+    "@praetorium/contracts": "workspace:*",
     "@praetorium/application": "workspace:*",
     "@praetorium/kubernetes": "workspace:*"
   },

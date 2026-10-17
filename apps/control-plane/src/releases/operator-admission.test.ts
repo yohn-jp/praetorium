@@ -127,6 +127,8 @@ describe("operator release admission route", () => {
       producerRevision,
       catalog: input.catalog,
       runtimeMetadata: input.runtimeMetadata,
+      signatureRef: input.signatureRef,
+      provenanceRef: input.provenanceRef,
     });
     expect(await response.json()).toEqual({
       release: {

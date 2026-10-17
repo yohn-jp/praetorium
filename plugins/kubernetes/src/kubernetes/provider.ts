@@ -635,7 +635,7 @@ function runtimeIdentityExpiry(token: string): string | null {
   if (parts.length !== 3 || !parts.every((part) => /^[A-Za-z0-9_-]+$/u.test(part))) return null;
   try {
     const payload = parts[1]!.replaceAll("-", "+").replaceAll("_", "/");
-    const binary = atob(payload + "=".repeat((4 - payload.length % 4) % 4));
+    const binary = atob(payload + "=".repeat((4 - (payload.length % 4)) % 4));
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     const claims: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     const exp = record(claims)?.exp;
@@ -816,32 +816,45 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     validateIdentity(identity, this.options.clusterId);
     const namespaceName = this.namespaceFor(identity.instanceId);
     const secretName = `${runtimeResourceName(identity.instanceId)}-runtime`;
-    const value = await this.getOptional({ kind: "Secret", namespace: namespaceName, name: secretName }, signal);
+    const value = await this.getOptional(
+      { kind: "Secret", namespace: namespaceName, name: secretName },
+      signal,
+    );
     if (value === undefined) return null;
     const metadata = assertObjectOwned(value, identity, namespaceName, secretName);
     if (!targetMatches(metadata, identity)) {
-      throw new RuntimeProviderError("conflict", "Hosted runtime projection belongs to another epoch", "retryable");
+      throw new RuntimeProviderError(
+        "conflict",
+        "Hosted runtime projection belongs to another epoch",
+        "retryable",
+      );
     }
     const object = record(value);
     const data = record(object?.data);
     const stringData = record(object?.stringData);
-    const assignmentText = typeof stringData?.["runtime-assignment.json"] === "string"
-      ? stringData["runtime-assignment.json"] as string
-      : secretText(data?.["runtime-assignment.json"]);
-    const proof = typeof stringData?.["runtime-identity.jwt"] === "string"
-      ? stringData["runtime-identity.jwt"] as string
-      : secretText(data?.["runtime-identity.jwt"]);
-    if (
-      assignmentText === null ||
-      proof === null ||
-      proof.length < 16 ||
-      proof.length > 4_096
-    ) throw new RuntimeProviderError("invalid_response", "Hosted runtime projection is incomplete", "retryable");
+    const assignmentText =
+      typeof stringData?.["runtime-assignment.json"] === "string"
+        ? (stringData["runtime-assignment.json"] as string)
+        : secretText(data?.["runtime-assignment.json"]);
+    const proof =
+      typeof stringData?.["runtime-identity.jwt"] === "string"
+        ? (stringData["runtime-identity.jwt"] as string)
+        : secretText(data?.["runtime-identity.jwt"]);
+    if (assignmentText === null || proof === null || proof.length < 16 || proof.length > 4_096)
+      throw new RuntimeProviderError(
+        "invalid_response",
+        "Hosted runtime projection is incomplete",
+        "retryable",
+      );
     let assignment: RuntimeAssignment;
     try {
       assignment = RuntimeAssignmentSchema.parse(JSON.parse(assignmentText) as unknown);
     } catch {
-      throw new RuntimeProviderError("invalid_response", "Hosted runtime assignment is invalid", "retryable");
+      throw new RuntimeProviderError(
+        "invalid_response",
+        "Hosted runtime assignment is invalid",
+        "retryable",
+      );
     }
     const expiresAt = runtimeIdentityExpiry(proof);
     const deploymentName = runtimeResourceName(identity.instanceId);
@@ -850,19 +863,34 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       signal,
     );
     if (deployment === undefined)
-      throw new RuntimeProviderError("invalid_response", "Hosted runtime deployment is missing", "retryable");
-    const deploymentMetadata = assertObjectOwned(deployment, identity, namespaceName, deploymentName);
+      throw new RuntimeProviderError(
+        "invalid_response",
+        "Hosted runtime deployment is missing",
+        "retryable",
+      );
+    const deploymentMetadata = assertObjectOwned(
+      deployment,
+      identity,
+      namespaceName,
+      deploymentName,
+    );
     if (
       assignment.instanceId !== identity.instanceId ||
       assignment.repositoryId !== identity.repositoryId ||
       assignment.runtimeEpoch !== identity.runtimeEpoch ||
       assignment.imageDigest !== deploymentMetadata.annotations["arcadia.io/release-digest"] ||
       expiresAt === null
-    ) throw new RuntimeProviderError("invalid_response", "Hosted runtime projection binding is invalid", "retryable");
+    )
+      throw new RuntimeProviderError(
+        "invalid_response",
+        "Hosted runtime projection binding is invalid",
+        "retryable",
+      );
     return { identity, assignment, runtimeIdentityProof: proof, expiresAt };
   }
 
-  /** Renews only the existing Secret mounted into a ready writer; the Pod is not restarted. */
+  /** Renews the existing Secret of the exact live writer, including a runtime
+   * still cloning before readiness. The Pod is not restarted. */
   async refreshRuntimeIdentity(
     spec: RunningInstanceSpec,
     proof: string,
@@ -872,34 +900,70 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     this.validateRunningSpec(spec);
     const observation = await this.inspect(spec, signal);
     if (!this.isDesiredAndReady(observation, spec)) {
-      throw new RuntimeProviderError("conflict", "Hosted identity refresh requires the current ready writer", "retryable");
+      // Readiness can depend on Git operations that themselves need renewed
+      // identity. The recovery Service verifies the full, exact live writer
+      // census and actual image before allowing this startup refresh.
+      await this.getRecoveryControlEndpoint(spec, signal);
     }
     const expiresAt = runtimeIdentityExpiry(proof);
     if (
       expiresAt === null ||
       Date.parse(expiresAt) <= this.now() ||
       Date.parse(expiresAt) - this.now() > 300_000
-    ) throw new RuntimeProviderError("invalid_spec", "Hosted runtime identity proof lifetime is invalid", "terminal");
+    )
+      throw new RuntimeProviderError(
+        "invalid_spec",
+        "Hosted runtime identity proof lifetime is invalid",
+        "terminal",
+      );
     const rendered = this.options.renderer.renderRunning({ ...spec, runtimeIdentityProof: proof });
-    const secret = rendered.find((resource) => resource.kind === "Secret" && resource.metadata.name === `${runtimeResourceName(spec.instanceId)}-runtime`);
-    if (!secret) throw new RuntimeProviderError("invalid_spec", "Hosted runtime assignment is required for identity refresh", "terminal");
-    const reference = { kind: "Secret", namespace: secret.metadata.namespace, name: secret.metadata.name } as const;
+    const secret = rendered.find(
+      (resource) =>
+        resource.kind === "Secret" &&
+        resource.metadata.name === `${runtimeResourceName(spec.instanceId)}-runtime`,
+    );
+    if (!secret)
+      throw new RuntimeProviderError(
+        "invalid_spec",
+        "Hosted runtime assignment is required for identity refresh",
+        "terminal",
+      );
+    const reference = {
+      kind: "Secret",
+      namespace: secret.metadata.namespace,
+      name: secret.metadata.name,
+    } as const;
     const current = await this.getOptional(reference, signal);
-    if (current === undefined) throw new RuntimeProviderError("conflict", "Hosted runtime identity projection is missing", "retryable");
+    if (current === undefined)
+      throw new RuntimeProviderError(
+        "conflict",
+        "Hosted runtime identity projection is missing",
+        "retryable",
+      );
     const metadata = assertObjectOwned(current, spec, reference.namespace, reference.name);
     if (!targetMatches(metadata, spec))
-      throw new RuntimeProviderError("conflict", "Hosted runtime identity projection belongs to another epoch", "retryable");
+      throw new RuntimeProviderError(
+        "conflict",
+        "Hosted runtime identity projection belongs to another epoch",
+        "retryable",
+      );
     const currentObject = record(current);
     const currentData = record(currentObject?.data);
     const currentStringData = record(currentObject?.stringData);
     const desiredStringData = record(secret.stringData);
-    const currentAssignment = typeof currentStringData?.["runtime-assignment.json"] === "string"
-      ? currentStringData["runtime-assignment.json"] as string
-      : secretText(currentData?.["runtime-assignment.json"]);
+    const currentAssignment =
+      typeof currentStringData?.["runtime-assignment.json"] === "string"
+        ? (currentStringData["runtime-assignment.json"] as string)
+        : secretText(currentData?.["runtime-assignment.json"]);
     if (
       currentAssignment === null ||
       desiredStringData?.["runtime-assignment.json"] !== currentAssignment
-    ) throw new RuntimeProviderError("conflict", "Hosted runtime assignment changed during identity refresh", "retryable");
+    )
+      throw new RuntimeProviderError(
+        "conflict",
+        "Hosted runtime assignment changed during identity refresh",
+        "retryable",
+      );
     await this.applyOwnedResource(secret, current, spec, signal, beforeEffect);
   }
 
@@ -1285,9 +1349,16 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     }
 
     const serviceName = `${runtimeResourceName(spec.instanceId)}-control`;
-    const service = await this.getOptional({ kind: "Service", namespace: namespaceName, name: serviceName }, signal);
+    const service = await this.getOptional(
+      { kind: "Service", namespace: namespaceName, name: serviceName },
+      signal,
+    );
     if (service === undefined)
-      throw new RuntimeProviderError("unavailable", "owned recovery Service is not observed", "retryable");
+      throw new RuntimeProviderError(
+        "unavailable",
+        "owned recovery Service is not observed",
+        "retryable",
+      );
     const metadata = assertObjectOwned(service, spec, namespaceName, serviceName);
     const serviceSpec = record(record(service)?.spec);
     const ports = Array.isArray(serviceSpec?.ports) ? serviceSpec.ports : [];

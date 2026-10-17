@@ -193,7 +193,7 @@ export function createRuntimeIdentityRoutes(deps: RuntimeIdentityRoutesDependenc
     if (!binding || !matchesBinding(input, binding, deps.clusterId))
       return context.json({ error: { code: "RUNTIME_IDENTITY_FENCED" } }, 409);
 
-    let ttlSeconds = 300;
+    const ttlSeconds = 300;
     if (binding.authority === "post-absence-target") {
       if (
         input.operationId === undefined ||
@@ -203,11 +203,9 @@ export function createRuntimeIdentityRoutes(deps: RuntimeIdentityRoutesDependenc
         return context.json({ error: { code: "RUNTIME_IDENTITY_FENCED" } }, 409);
       const targetLease = await verifyTargetLease(deps, input, binding, nowMs);
       if (!targetLease) return context.json({ error: { code: "RUNTIME_IDENTITY_FENCED" } }, 409);
-      ttlSeconds = Math.min(
-        300,
-        Math.floor(targetLease.leaseExpiresAt / 1000) - Math.floor(nowMs / 1000),
-      );
-      if (ttlSeconds < 1) return context.json({ error: { code: "RUNTIME_IDENTITY_FENCED" } }, 409);
+      // This proves identity, not continuing operation authority. Brokerage
+      // re-reads the current binding and live target lease on every request.
+      // Keep enough lifetime for image pulls and projected Secret propagation.
     } else if (
       input.operationId !== undefined ||
       input.leaseToken !== undefined ||

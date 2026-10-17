@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { SigstoreProvenanceVerifier } from "@praetorium/ghcr/provenance";
 import { createT11RolloutComposition } from "./rollout-composition.js";
+import { verifyReleaseProducerMetadata } from "./release-producer-metadata.js";
+import { createReleaseCanaryObservationReader } from "./release-canary-observations.js";
 import { equalSecret } from "./app.js";
 import type { composeBuildServices } from "./build-composition.js";
 import type { D1Database } from "@praetorium/persistence/d1";
@@ -52,16 +54,7 @@ export function composeReleaseServices(input: {
     instances: input.instances,
     operations: input.operations,
     canaryBinding: policy.canary,
-    // S02/S05 do not yet publish authenticated UI/API/MCP and persistence
-    // conformance observations. A generic ready Pod is not this evidence.
-    canaryObservations: {
-      async latestHealth() {
-        return null;
-      },
-      async writerAbsence() {
-        return null;
-      },
-    },
+    canaryObservations: createReleaseCanaryObservationReader(input.operations, input.db),
     defaultClusterId: policy.clusterId,
     clock: { nowMs: Date.now, now: () => new Date().toISOString() },
     ids: { newReleaseId: () => `rel_${crypto.randomUUID()}` },
@@ -82,12 +75,6 @@ export function composeReleaseServices(input: {
         }),
       ),
     }),
-    // S01 lacks the immutable catalog/runtime-metadata attestation ABI.
-    // A verified OCI digest or caller-supplied catalog cannot substitute for it.
-    producerMetadata: {
-      async verify() {
-        return { kind: "retry", reason: "S01 immutable producer metadata attestation unavailable" };
-      },
-    },
+    producerMetadata: { verify: verifyReleaseProducerMetadata },
   });
 }

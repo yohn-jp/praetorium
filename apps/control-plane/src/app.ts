@@ -60,6 +60,8 @@ export type ControlPlaneDependencies = {
   operatorAdmission?: Hono;
   operatorToken?: string;
   runtimeIdentity?: Hono;
+  runtimeHealth?: Hono;
+  runtimeAuthProbe?: Hono;
   runtimeCredentials?: Hono;
   credentialRetirementSecret?: string;
   now?: () => number;
@@ -184,6 +186,8 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
   if (deps.operationAdmin) app.route("/", createOperationAdminRoutes(deps.operationAdmin));
   if (deps.webhook) app.route("/", createGitHubWebhookRoutes(deps.webhook));
   if (deps.runtimeIdentity) app.route("/", deps.runtimeIdentity);
+  if (deps.runtimeHealth) app.route("/", deps.runtimeHealth);
+  if (deps.runtimeAuthProbe) app.route("/internal/provisioner", deps.runtimeAuthProbe);
   if (deps.runtimeCredentials) app.route("/", deps.runtimeCredentials);
   if (deps.operatorAdmission) app.route("/v1/operator/releases", deps.operatorAdmission);
   if (deps.builds) app.route("/", createBuildRoutes(deps.builds));

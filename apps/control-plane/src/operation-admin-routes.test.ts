@@ -23,6 +23,32 @@ afterEach(() => {
 });
 
 describe("Control Plane operation admin routes against migrated SQLite D1", () => {
+  it("projects only schema-validated operation evidence without arbitrary checkpoint secrets", async () => {
+    const h = createHarness();
+    const resolved = await h.registry.resolveOrCreate(registryInput(71, "instance-evidence"));
+    const failed = await makeFailedStart(h.database, h.instances, resolved.binding);
+    h.database
+      .prepare("UPDATE operations SET checkpoint_json=? WHERE operation_id=?")
+      .run(
+        JSON.stringify({
+          lifecycle: {
+            readinessEvidence: { leaseToken: "must-not-leak" },
+            rollbackCompatibilityEvidence: { secret: "must-not-leak" },
+          },
+          privateKey: "must-not-leak",
+        }),
+        failed.id,
+      );
+    const response = await h.routes.request(`/v1/operations/${failed.id}/evidence`);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain("must-not-leak");
+    expect(JSON.parse(text)).toMatchObject({
+      operation: { id: failed.id },
+      readinessEvidence: null,
+      rollbackCompatibilityEvidence: null,
+    });
+  });
   it("pages at most 50 instance audit events and returns only the action allowlist", async () => {
     const { database, registry, routes } = createHarness();
     const first = await registry.resolveOrCreate(registryInput(71, "instance-a"));

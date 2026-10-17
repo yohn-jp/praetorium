@@ -15,6 +15,7 @@ const requiredMigrations = [
   "0002_stable_release_rollouts.sql",
   "0003_staged_configurations.sql",
   "0004_runtime_git_credentials.sql",
+  "0005_runtime_health_observations.sql",
 ];
 
 function usage() {

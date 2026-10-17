@@ -299,12 +299,19 @@ describe("Instance Access production handler", () => {
     expect(fetchRequest.status).toBe(400);
     expect(fetchRequest.headers.getSetCookie()).toHaveLength(0);
 
+    const crossSite = await handler(new Request(`${origin}/_platform/reauth`, {
+      headers: { Host: host, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "cross-site" },
+    }));
+    expect(crossSite.status).toBe(400);
+    expect(crossSite.headers.getSetCookie()).toHaveLength(0);
+
     const navigation = await handler(new Request(`${origin}/_platform/reauth`, {
       headers: {
         Host: host,
         Accept: "text/html",
         "Sec-Fetch-Mode": "navigate",
         "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Site": "same-origin",
       },
     }));
     expect(navigation.status).toBe(302);

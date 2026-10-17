@@ -13,7 +13,9 @@ import {
   type RuntimeResourceProfile,
   type RuntimeWriterPodIdentity,
 } from "@praetorium/kubernetes";
+import type { RuntimeAssignment as ScriptoriumRuntimeAssignment } from "@praetorium/contracts";
 import type {
+  BeforeLifecycleEffect,
   LifecycleReadinessEvidence,
   LifecycleRouteProvider,
   LifecycleRuntimeProvider,
@@ -22,6 +24,7 @@ import type {
   WriterCensus,
 } from "@praetorium/application/lifecycle";
 import type { ProvisionerOperationService, RuntimeResources } from "./operation-client.js";
+import type { RuntimeIdentityAssignmentTransport } from "./runtime-identity.js";
 
 const DEFAULT_CONVERGENCE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -90,7 +93,10 @@ function resourceProfile(assignment: RuntimeAssignment): RuntimeResourceProfile 
   };
 }
 
-function runtimeSpec(assignment: RuntimeAssignment): RuntimeInstanceSpec {
+function runtimeSpec(
+  assignment: RuntimeAssignment,
+  hosted?: { readonly assignment: ScriptoriumRuntimeAssignment; readonly proof: string },
+): RuntimeInstanceSpec {
   if (assignment.clusterId.length === 0 || assignment.deployment.hostname.length === 0) {
     throw new TypeError("runtime assignment lacks an admitted cluster or hostname");
   }
@@ -105,9 +111,13 @@ function runtimeSpec(assignment: RuntimeAssignment): RuntimeInstanceSpec {
     },
     resourceProfile: resourceProfile(assignment),
     hostname: assignment.deployment.hostname,
-    // T07's renderer does not consume this value. The structured assignment
-    // transport is intentionally not synthesized into an undocumented env map.
     runtimeConfig: {},
+    ...(hosted === undefined
+      ? {}
+      : {
+          scriptoriumAssignment: hosted.assignment,
+          runtimeIdentityProof: hosted.proof,
+        }),
     application: applicationRequirements(assignment),
   };
 }
@@ -198,6 +208,8 @@ export class KubernetesLifecycleRuntimeAdapter
   private readonly now: () => number;
   private readonly convergenceTimeoutMs: number;
   private readonly pollIntervalMs: number;
+  private identityRenewalController: AbortController | undefined;
+  private identityRenewalTask: Promise<void> | undefined;
 
   constructor(
     options: InClusterRuntimeOptions,
@@ -210,6 +222,7 @@ export class KubernetesLifecycleRuntimeAdapter
         input: Parameters<ProvisionerOperationService["recordCapacitySnapshot"]>[0],
       ) => ReturnType<ProvisionerOperationService["recordCapacitySnapshot"]>;
     },
+    private readonly identityTransport?: RuntimeIdentityAssignmentTransport,
   ) {
     this.now = options.now ?? Date.now;
     this.convergenceTimeoutMs = options.convergenceTimeoutMs ?? DEFAULT_CONVERGENCE_TIMEOUT_MS;
@@ -271,19 +284,22 @@ export class KubernetesLifecycleRuntimeAdapter
     beforeEffect: () => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const spec = runtimeSpec(assignment);
-    if (spec.release === null)
-      throw new TypeError("runtime start requires an admitted immutable artifact");
     const deadline = this.now() + this.convergenceTimeoutMs;
     do {
       await beforeEffect();
+      const spec = await this.projectedRuntimeSpec(assignment, signal);
+      if (spec.release === null)
+        throw new TypeError("runtime start requires an admitted immutable artifact");
       const runningSpec = { ...spec, release: spec.release };
       const result = await this.provider.ensureRunning(
         runningSpec,
         signal ?? new AbortController().signal,
         beforeEffect,
       );
-      if (result.status === "applied" || result.status === "unchanged") return;
+      if (result.status === "applied" || result.status === "unchanged") {
+        this.startIdentityRenewal(assignment, beforeEffect, signal);
+        return;
+      }
       await pause(this.pollIntervalMs, signal);
     } while (this.now() < deadline);
     throw new Error("runtime_start_convergence_timeout");
@@ -325,7 +341,90 @@ export class KubernetesLifecycleRuntimeAdapter
     if (spec.release === null || spec.application === undefined) {
       throw new TypeError("runtime control endpoint requires an admitted application runtime");
     }
-    return this.provider.getControlEndpoint({ ...spec, release: spec.release }, signal);
+    const runningSpec = { ...spec, release: spec.release };
+    try {
+      return await this.provider.getControlEndpoint(runningSpec, signal);
+    } catch {
+      // Producer control calls are the only consumers of this endpoint. After
+      // a readiness failure, status/quiesce/resume may use the separate
+      // provider-owned Service while retaining the exact live writer/image
+      // census and assignment-scoped control credential.
+      return this.provider.getRecoveryControlEndpoint(runningSpec, signal);
+    }
+  }
+
+  async refreshRuntimeIdentity(
+    assignment: RuntimeAssignment,
+    beforeEffect: BeforeLifecycleEffect,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (this.identityTransport === undefined) return false;
+    const identity = parseIdentity(assignment);
+    const existing = await this.provider.readRuntimeIdentityProjection(identity, signal);
+    if (existing === null) throw new Error("hosted_runtime_identity_projection_missing");
+    const expectedAssignment = this.identityTransport.canonicalAssignment(assignment);
+    if (JSON.stringify(existing.assignment) !== JSON.stringify(expectedAssignment)) {
+      throw new Error("hosted_runtime_identity_assignment_mismatch");
+    }
+    const expiresAt = Date.parse(existing.expiresAt);
+    if (!Number.isFinite(expiresAt))
+      throw new Error("hosted_runtime_identity_proof_expiry_invalid");
+    if (expiresAt - this.now() > 90_000) return false;
+
+    this.identityTransport.invalidate(assignment);
+    const material = await this.identityTransport.project(assignment, signal);
+    const spec = runtimeSpec(assignment, material);
+    if (spec.release === null)
+      throw new TypeError("runtime identity refresh requires a running artifact");
+    await this.provider.refreshRuntimeIdentity(
+      { ...spec, release: spec.release },
+      material.proof,
+      signal ?? new AbortController().signal,
+      beforeEffect,
+    );
+    return true;
+  }
+
+  private async projectedRuntimeSpec(
+    assignment: RuntimeAssignment,
+    signal?: AbortSignal,
+  ): Promise<RuntimeInstanceSpec> {
+    if (this.identityTransport === undefined) return runtimeSpec(assignment);
+    const material = await this.identityTransport.project(assignment, signal);
+    return runtimeSpec(assignment, material);
+  }
+
+  async close(): Promise<void> {
+    this.identityRenewalController?.abort();
+    await this.identityRenewalTask?.catch(() => undefined);
+    this.identityRenewalController = undefined;
+    this.identityRenewalTask = undefined;
+  }
+
+  private startIdentityRenewal(
+    assignment: RuntimeAssignment,
+    beforeEffect: BeforeLifecycleEffect,
+    operationSignal?: AbortSignal,
+  ): void {
+    if (this.identityTransport === undefined || this.identityRenewalTask !== undefined) return;
+    const controller = new AbortController();
+    this.identityRenewalController = controller;
+    const signal =
+      operationSignal === undefined
+        ? controller.signal
+        : AbortSignal.any([controller.signal, operationSignal]);
+    this.identityRenewalTask = (async () => {
+      while (!signal.aborted) {
+        await pause(30_000, signal).catch(() => undefined);
+        if (signal.aborted) return;
+        try {
+          await this.refreshRuntimeIdentity(assignment, beforeEffect, signal);
+        } catch {
+          if (signal.aborted) return;
+          await pause(5_000, signal).catch(() => undefined);
+        }
+      }
+    })();
   }
 
   async activate(

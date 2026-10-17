@@ -1,4 +1,10 @@
-import { PublicOperationSchema } from "@praetorium/contracts";
+import {
+  DigestSchema,
+  PersistenceCompatibilitySchema,
+  PersistenceObservationSchema,
+  PublicOperationSchema,
+} from "@praetorium/contracts";
+import { RuntimeHealthEvidenceSchema } from "./runtime-health-routes.js";
 import type { InstanceService } from "@praetorium/application/instances";
 import type { OperationRecord } from "@praetorium/application/instances";
 import { OPERATION_PHASES } from "@praetorium/application/operations";
@@ -21,6 +27,26 @@ const RetryRequestSchema = z.strictObject({
 const CursorSchema = z.strictObject({
   occurredAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   eventId: z.string().min(1).max(512),
+});
+const RollbackEvidenceSchema = z.strictObject({
+  contractVersion: z.literal("praetorium-rollback-compatibility/v1"),
+  instanceId: PathId,
+  repositoryId: z.number().int().positive().safe(),
+  runtimeEpoch: z.number().int().positive().safe(),
+  imageDigest: DigestSchema,
+  compositionManifestDigest: DigestSchema,
+  providerObservationId: z.string().min(1).max(512),
+  providerObservedAt: z.iso.datetime(),
+  observedAt: z.iso.datetime(),
+  observedRemoteCommit: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u),
+  quiesceRevision: z.string().min(1).max(512),
+  quiesceRemoteCommit: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u),
+  formats: PersistenceObservationSchema.shape.formats,
+});
+const DeclarationEvidenceSchema = z.object({
+  imageDigest: DigestSchema,
+  compositionManifestDigest: DigestSchema,
+  persistence: PersistenceCompatibilitySchema,
 });
 
 const AUDIT_METADATA_KEYS = new Map<string, readonly string[]>([
@@ -61,6 +87,46 @@ export type OperationAdminDependencies = {
  */
 export function createOperationAdminRoutes(deps: OperationAdminDependencies) {
   const app = new Hono();
+
+  app.get("/v1/operations/:operationId/evidence", async (c) => {
+    const operation = await deps.operations.getById(PathId.parse(c.req.param("operationId")));
+    if (!operation) return c.json({ error: { code: "OPERATION_NOT_FOUND" } }, 404);
+    const lifecycle = operation.checkpoint?.lifecycle;
+    const checkpoint =
+      lifecycle && typeof lifecycle === "object" && !Array.isArray(lifecycle)
+        ? (lifecycle as Record<string, unknown>)
+        : {};
+    const readiness = RuntimeHealthEvidenceSchema.safeParse(checkpoint.readinessEvidence);
+    const rollback = RollbackEvidenceSchema.safeParse(checkpoint.rollbackCompatibilityEvidence);
+    const current =
+      checkpoint.current &&
+      typeof checkpoint.current === "object" &&
+      !Array.isArray(checkpoint.current)
+        ? (checkpoint.current as Record<string, unknown>)
+        : {};
+    const previousDeclaration = DeclarationEvidenceSchema.safeParse(current.deployment);
+    const targetDeclaration = DeclarationEvidenceSchema.safeParse(checkpoint.target);
+    const bound = (value: { instanceId: string; repositoryId: number }) =>
+      value.instanceId === operation.instanceId && value.repositoryId === operation.repositoryId;
+    // Deliberately project parsed metadata only, never arbitrary checkpoints,
+    // broker locators, operation lease tokens or other service credentials.
+    return c.json({
+      operation: publicOperation(operation),
+      readinessEvidence:
+        readiness.success && bound(readiness.data.assignment) ? readiness.data : null,
+      rollbackCompatibilityEvidence:
+        rollback.success && bound(rollback.data) ? rollback.data : null,
+      rollbackCompatible:
+        typeof checkpoint.rollbackCompatible === "boolean" ? checkpoint.rollbackCompatible : null,
+      rollbackDeclarations:
+        previousDeclaration.success && targetDeclaration.success
+          ? {
+              previous: previousDeclaration.data,
+              target: targetDeclaration.data,
+            }
+          : null,
+    });
+  });
 
   app.get("/v1/instances/:instanceId/audit", async (c) => {
     const instanceId = PathId.parse(c.req.param("instanceId"));

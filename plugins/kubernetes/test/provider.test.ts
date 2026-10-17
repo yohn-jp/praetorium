@@ -153,10 +153,8 @@ function assignment(epoch = 1): RuntimeAssignment {
 }
 
 function unsignedProof(expiresAtSeconds: number): string {
-  const encode = (value: unknown) => btoa(JSON.stringify(value))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
   return `${encode({ alg: "ES256", kid: "test" })}.${encode({ exp: expiresAtSeconds })}.signature`;
 }
 
@@ -608,7 +606,7 @@ describe("Kubernetes runtime provider", () => {
 
   it("projects the canonical Hosted assignment and renewable proof as a read-only runtime mount", () => {
     const hosted = hostedSpec();
-    const resources = createKubernetesResourceRenderer({
+    const renderer = createKubernetesResourceRenderer({
       namespacePrefix: PREFIX,
       clusterId: CLUSTER_ID,
       ingressNamespace: "traefik",
@@ -617,7 +615,18 @@ describe("Kubernetes runtime provider", () => {
       controlNamespace: "praetorium-system",
       controlService: "provisioner",
       maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
-    }).renderRunning(hosted);
+    });
+    const resources = renderer.renderRunning(hosted);
+    const stopped = renderer.renderStopped(hosted);
+    expect(
+      stopped.some(
+        (resource) =>
+          resource.kind === "Secret" && resource.metadata.name === `${DEPLOYMENT}-runtime`,
+      ),
+    ).toBe(true);
+    expect(record(stopped.find((resource) => resource.kind === "Deployment")?.spec).replicas).toBe(
+      0,
+    );
     const secret = resources.find((resource) => resource.kind === "Secret");
     const deployment = resources.find((resource) => resource.kind === "Deployment");
     const podSpec = record(record(record(deployment).spec).template).spec;
@@ -633,6 +642,7 @@ describe("Kubernetes runtime provider", () => {
     expect(record(secret?.stringData)["runtime-identity.jwt"]).toBe(hosted.runtimeIdentityProof);
     expect(container.env).toEqual([
       { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
+      { name: "SCRIPTORIUM_TRUST_PROXY", value: "1" },
       {
         name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
         value: "/run/scriptorium/runtime-assignment.json",
@@ -648,7 +658,8 @@ describe("Kubernetes runtime provider", () => {
       secret: { secretName: `${DEPLOYMENT}-runtime`, defaultMode: 0o444 },
     });
     const recoveryService = resources.find(
-      (resource) => resource.kind === "Service" && resource.metadata.name === `${DEPLOYMENT}-control`,
+      (resource) =>
+        resource.kind === "Service" && resource.metadata.name === `${DEPLOYMENT}-control`,
     );
     expect(record(recoveryService?.spec)).toMatchObject({
       type: "ClusterIP",
@@ -1238,6 +1249,29 @@ describe("Kubernetes runtime provider", () => {
       runtimeIdentityProof: unsignedProof(650),
       expiresAt: new Date(650_000).toISOString(),
     });
+    const podKey = key("Pod", NAMESPACE, "writer-1");
+    const pod = record(api.objects.get(podKey));
+    const status = record(pod.status);
+    api.objects.set(podKey, {
+      ...pod,
+      status: {
+        ...status,
+        conditions: (status.conditions as unknown[]).map((condition) =>
+          record(condition).type === "Ready"
+            ? { ...record(condition), status: "False" }
+            : condition,
+        ),
+      },
+    });
+    await runtime.refreshRuntimeIdentity(
+      hosted,
+      unsignedProof(700),
+      new AbortController().signal,
+      () => undefined,
+    );
+    expect(record(record(api.objects.get(reference)).stringData)["runtime-identity.jwt"]).toBe(
+      unsignedProof(700),
+    );
   });
 
   it("resolves recovery control only for the exact live writer without requiring app readiness", async () => {

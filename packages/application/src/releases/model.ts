@@ -268,7 +268,20 @@ export interface ReleaseProducerMetadataVerifier {
     readonly producerRevision: string;
     readonly catalog: BuildCatalog;
     readonly runtimeMetadata: RuntimeMetadata;
+    readonly signatureRef: string;
+    readonly provenanceRef: string;
+    readonly attestation?: VerifiedReleaseAttestation;
   }): Promise<ReleaseAdmissionResult>;
+}
+
+export interface VerifiedReleaseAttestation {
+  readonly bundleRef: string;
+  readonly predicateType: string;
+  readonly subjects: readonly {
+    readonly name: string;
+    /** In-toto digest values are plain lowercase hex, without an algorithm prefix. */
+    readonly sha256: string;
+  }[];
 }
 
 export interface ReleaseClock {

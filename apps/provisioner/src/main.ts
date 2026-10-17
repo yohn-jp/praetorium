@@ -7,10 +7,8 @@ import { readProvisionerCredential } from "./credentials.js";
 import { LifecycleProvisionerExecutor } from "./lifecycle-executor.js";
 import { DEFAULT_IDLE_TIMEOUT_MS } from "@praetorium/application/lifecycle";
 import { ProvisionerIdleController } from "./idle-controller.js";
-import {
-  UnavailableRuntimeAssignmentTransport,
-  UnavailableRuntimeAuthAcceptanceProbe,
-} from "./scriptorium-control-client.js";
+import { HttpRuntimeAuthAcceptanceProbe } from "./runtime-auth-probe.js";
+import { RuntimeIdentityAssignmentTransport } from "./runtime-identity.js";
 import type { InClusterRuntimeOptions } from "./kubernetes-lifecycle-adapter.js";
 
 interface ProvisionerConfig {
@@ -105,14 +103,23 @@ async function main(): Promise<void> {
     baseUrl: config.controlPlaneUrl,
     credential,
   });
+  const authProbe = new HttpRuntimeAuthAcceptanceProbe({
+    controlPlaneUrl: config.controlPlaneUrl,
+    provisionerCredential: credential,
+    workerId: config.workerId,
+    clusterId: config.clusterId,
+  });
+  const assignmentTransport = new RuntimeIdentityAssignmentTransport({
+    operations,
+    workerId: config.workerId,
+    clusterId: config.clusterId,
+  });
   const executor = new LifecycleProvisionerExecutor({
     operations,
     workerId: config.workerId,
     runtime: config.runtime,
-    // The producer assignment ABI and S02 grant-probe transport are not yet
-    // available. The worker keeps readiness false and claims no operations.
-    authProbe: new UnavailableRuntimeAuthAcceptanceProbe(),
-    assignmentTransport: new UnavailableRuntimeAssignmentTransport(),
+    authProbe,
+    assignmentTransport,
   });
   const shutdown = new AbortController();
   let live = true;
@@ -158,6 +165,8 @@ async function main(): Promise<void> {
       clusterId: config.clusterId,
       runtime: config.runtime,
       idleTimeoutMs: config.idleTimeoutMs,
+      identityTransport: assignmentTransport,
+      authProbe,
       metrics,
       logger,
     });

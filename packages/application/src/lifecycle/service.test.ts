@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LifecycleService } from "./service.js";
-import { SCRIPTORIUM_PLATFORM_CONTRACT_VERSION } from "./ports.js";
+import { isPersistenceRollbackCompatible, SCRIPTORIUM_PLATFORM_CONTRACT_VERSION } from "./index.js";
 import type {
   LifecycleAuthProbeProvider,
   LifecycleDependencies,
@@ -15,6 +15,7 @@ import type {
   RuntimeDeployment,
   RuntimeEpoch,
   RuntimeReadiness,
+  RollbackCompatibilityEvidence,
   WriterCensus,
 } from "./ports.js";
 
@@ -32,6 +33,24 @@ function deployment(revisionId = "rev-a", imageDigest = digestA): RuntimeDeploym
     artifactRef: `ghcr.io/praetorium/scriptorium@${imageDigest}`,
     platformManifestDigest: platformDigest,
     compositionManifestDigest: digestB,
+    persistence: {
+      contractVersion: "scriptorium-persistence/v1",
+      readable: [
+        { formatId: "scriptorium.git-operations", versions: [1] },
+        { formatId: "scriptorium.git-publications", versions: [1] },
+        { formatId: "scriptorium.git-proposal-legacy", versions: [1] },
+        { formatId: "scriptorium.git-proposal-binding", versions: [2] },
+        { formatId: "scriptorium.git-proposal-complete", versions: [2] },
+        { formatId: "scriptorium.browser-recovery-indexeddb", versions: [3] },
+      ],
+      writable: [
+        { formatId: "scriptorium.git-operations", version: 1 },
+        { formatId: "scriptorium.git-publications", version: 1 },
+        { formatId: "scriptorium.git-proposal-binding", version: 2 },
+        { formatId: "scriptorium.git-proposal-complete", version: 2 },
+        { formatId: "scriptorium.browser-recovery-indexeddb", version: 3 },
+      ],
+    },
     enabledModuleIds: ["core", "notes"],
     credentialBrokerLocator: "platform://credential-broker",
     grantPolicy: {
@@ -95,6 +114,9 @@ function operation(overrides: Partial<LifecycleOperation> = {}): LifecycleOperat
     quiesceRequest: null,
     quiesceReceipt: null,
     writerAbsenceProof: null,
+    readinessEvidence: null,
+    rollbackCompatibilityEvidence: null,
+    rollbackCompatible: null,
     buildId: null,
     failureCode: null,
     failureReason: null,
@@ -203,6 +225,16 @@ function harness(options: HarnessOptions = {}) {
       uncertainPublication: false,
     },
     lastConfirmedRemoteRevision: "a".repeat(40),
+    persistence: {
+      state: "verified",
+      observedRemoteCommit: "a".repeat(40),
+      formats: [
+        { formatId: "scriptorium.git-operations", version: 1 },
+        { formatId: "scriptorium.git-publications", version: 1 },
+        { formatId: "scriptorium.git-proposal-binding", version: 2 },
+        { formatId: "scriptorium.git-proposal-complete", version: 2 },
+      ],
+    },
     observedAt:
       typeof options.producerObservedAt === "function"
         ? options.producerObservedAt()
@@ -266,6 +298,8 @@ function harness(options: HarnessOptions = {}) {
       const prefix = `auth-${value.runtimeEpoch}`;
       return {
         applicationProbeId: `app-${prefix}`,
+        uiApiMcpProbeId: `ui-api-mcp-${prefix}`,
+        persistenceProbeId: `persistence-${prefix}`,
         grantPolicyMatched: true,
         controlServicePolicyMatched: true,
         validGrantAccepted: true,
@@ -286,8 +320,11 @@ function harness(options: HarnessOptions = {}) {
       async resolveOrBuild() {
         return { status: "admitted", deployment: deployment() };
       },
-      async isRollbackCompatible() {
-        return options.compatibleRollback ?? false;
+      async isRollbackCompatible(previous, target, evidence) {
+        return (
+          options.compatibleRollback === true &&
+          isPersistenceRollbackCompatible(previous, target, evidence)
+        );
       },
     },
     capacity: {
@@ -723,8 +760,8 @@ describe("LifecycleService", () => {
         async resolveOrBuild() {
           return { status: "admitted", deployment: deployment("rev-b", digestB) };
         },
-        async isRollbackCompatible() {
-          return true;
+        async isRollbackCompatible(previous, target, evidence) {
+          return isPersistenceRollbackCompatible(previous, target, evidence);
         },
       },
       readinessTimeoutMs: 40,
@@ -766,6 +803,66 @@ describe("LifecycleService", () => {
       { operationId: "op-01", runtimeEpoch: 4 },
       { operationId: "op-01:rollback", runtimeEpoch: 5 },
     ]);
+    expect(h.journal.value.rollbackCompatibilityEvidence).toMatchObject({
+      runtimeEpoch: 5,
+      imageDigest: digestB,
+      compositionManifestDigest: digestB,
+      observedRemoteCommit: "a".repeat(40),
+      quiesceRemoteCommit: "a".repeat(40),
+    });
+    expect(h.journal.value.rollbackCompatible).toBe(true);
+  });
+
+  it("resumes failed-target retirement when a worker exits after rollback quiesce", async () => {
+    let oldQuiescedReports = 0;
+    const h = harness({
+      operation: operation({
+        kind: "update",
+        reason: "update",
+        runtimeEpoch: 5,
+        targetRevisionId: "rev-b",
+      }),
+      build: {
+        async resolveOrBuild() {
+          return { status: "admitted", deployment: deployment("rev-b", digestB) };
+        },
+        async isRollbackCompatible(previous, target, evidence) {
+          return isPersistenceRollbackCompatible(previous, target, evidence);
+        },
+      },
+      readinessTimeoutMs: 20,
+      quiesceTimeoutMs: 20,
+      readiness: (value) => ({
+        status: value.deployment.revisionId === "rev-b" ? "not-ready" : "ready",
+        assignment: value,
+        providerObservationId: `observation-${value.runtimeEpoch}`,
+        actualImageDigest:
+          value.deployment.revisionId === "rev-b" ? null : value.deployment.platformManifestDigest,
+        imageIdentityVerified: value.deployment.revisionId !== "rev-b",
+        producer: null,
+      }),
+    });
+    const crashAtRollbackQuiesce = {
+      ...h.context,
+      async report(phase: string) {
+        if (phase === "old-quiesced" && ++oldQuiescedReports === 2)
+          throw new Error("simulated worker exit after rollback quiesce");
+      },
+    };
+
+    await expect(h.service.execute("op-01", crashAtRollbackQuiesce)).rejects.toThrow(
+      "simulated worker exit after rollback quiesce",
+    );
+    expect(h.journal.value.quiesceRequest?.reason).toBe("rollback");
+    expect(h.journal.value.rollbackCompatible).toBeNull();
+
+    const recovered = await h.service.execute("op-01", h.context);
+
+    expect(recovered.status).toBe("failed");
+    expect(h.journal.value.rollbackCompatible).toBe(true);
+    expect(h.journal.value.rollbackEpoch).toBe(6);
+    expect(h.counters.stops).toEqual([4, 5]);
+    expect(h.counters.starts).toEqual([5, 6]);
   });
 
   it("finishes a compatible rollback after a worker exits just after starting its fresh epoch", async () => {
@@ -781,8 +878,8 @@ describe("LifecycleService", () => {
         async resolveOrBuild() {
           return { status: "admitted", deployment: deployment("rev-b", digestB) };
         },
-        async isRollbackCompatible() {
-          return true;
+        async isRollbackCompatible(previous, target, evidence) {
+          return isPersistenceRollbackCompatible(previous, target, evidence);
         },
       },
       crashAfterStartEpoch: 6,
@@ -811,5 +908,111 @@ describe("LifecycleService", () => {
     expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([6]);
     expect(h.counters.starts).toEqual([5, 6]);
     expect(h.counters.activations.map(({ assignment: value }) => value.runtimeEpoch)).toEqual([6]);
+  });
+});
+
+describe("persistence rollback compatibility", () => {
+  function evidence(
+    target: RuntimeDeployment,
+    overrides: Partial<RollbackCompatibilityEvidence> = {},
+  ): RollbackCompatibilityEvidence {
+    return {
+      contractVersion: "praetorium-rollback-compatibility/v1",
+      instanceId: "ins_01",
+      repositoryId: target.repositoryId,
+      runtimeEpoch: 5,
+      imageDigest: target.imageDigest,
+      compositionManifestDigest: target.compositionManifestDigest,
+      providerObservationId: "pods-rv-17",
+      providerObservedAt: "2026-10-17T00:00:01.000Z",
+      observedAt: "2026-10-17T00:00:02.000Z",
+      observedRemoteCommit: "a".repeat(40),
+      quiesceRevision: "q-op-01-5",
+      quiesceRemoteCommit: "a".repeat(40),
+      formats: [
+        { formatId: "scriptorium.git-operations", version: 1 },
+        { formatId: "scriptorium.git-publications", version: 1 },
+        { formatId: "scriptorium.git-proposal-legacy", version: 1 },
+        { formatId: "scriptorium.git-proposal-binding", version: 2 },
+        { formatId: "scriptorium.git-proposal-complete", version: 2 },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("accepts exact target writes and observed read-only legacy data", () => {
+    const previous = deployment("rev-a", digestA);
+    const target = deployment("rev-b", digestB);
+
+    expect(isPersistenceRollbackCompatible(previous, target, evidence(target))).toBe(true);
+  });
+
+  it("rejects persisted versions the previous image cannot read", () => {
+    const previous = deployment("rev-a", digestA);
+    const target = deployment("rev-b", digestB);
+
+    expect(
+      isPersistenceRollbackCompatible(
+        previous,
+        target,
+        evidence(target, {
+          formats: [{ formatId: "scriptorium.git-proposal-legacy", version: 2 }],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a target write version the previous image cannot read", () => {
+    const previous = deployment("rev-a", digestA);
+    const target = deployment("rev-b", digestB);
+    const incompatibleTarget = {
+      ...target,
+      persistence: {
+        ...target.persistence!,
+        writable: [
+          ...target.persistence!.writable,
+          { formatId: "scriptorium.git-proposal-binding", version: 3 },
+        ],
+      },
+    };
+
+    expect(
+      isPersistenceRollbackCompatible(previous, incompatibleTarget, evidence(incompatibleTarget)),
+    ).toBe(false);
+  });
+
+  it("allows the previous image to keep writing its own version after reading target writes", () => {
+    const previous = deployment("rev-a", digestA);
+    const target = deployment("rev-b", digestB);
+    const { persistence: previousPersistence, ...previousWithoutPersistence } = previous;
+    const directionalPrevious: RuntimeDeployment = {
+      ...previousWithoutPersistence,
+      persistence: {
+        ...previousPersistence!,
+        writable: previousPersistence!.writable.filter(
+          (item) => item.formatId !== "scriptorium.git-proposal-binding",
+        ),
+      },
+    };
+
+    expect(isPersistenceRollbackCompatible(directionalPrevious, target, evidence(target))).toBe(
+      true,
+    );
+  });
+
+  it("rejects missing legacy manifest declarations and a remote commit mismatch", () => {
+    const previous = deployment("rev-a", digestA);
+    const target = deployment("rev-b", digestB);
+    const legacyPrevious = { ...previous };
+    delete legacyPrevious.persistence;
+
+    expect(isPersistenceRollbackCompatible(legacyPrevious, target, evidence(target))).toBe(false);
+    expect(
+      isPersistenceRollbackCompatible(
+        previous,
+        target,
+        evidence(target, { observedRemoteCommit: "b".repeat(40) }),
+      ),
+    ).toBe(false);
   });
 });

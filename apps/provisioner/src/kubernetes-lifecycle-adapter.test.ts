@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeAssignment } from "@praetorium/application/lifecycle";
 import type { ProvisionerOperationService } from "./operation-client.js";
-import { LifecycleReservationAdapter } from "./kubernetes-lifecycle-adapter.js";
-import type { KubernetesLifecycleRuntimeAdapter } from "./kubernetes-lifecycle-adapter.js";
+import {
+  LifecycleReservationAdapter,
+  KubernetesLifecycleRuntimeAdapter,
+} from "./kubernetes-lifecycle-adapter.js";
+import { RuntimeIdentityAssignmentTransport } from "./runtime-identity.js";
+import type { RuntimeIdentityProvisionerService } from "./operation-client.js";
 
 const now = 1_800_000_000_000;
 const request = { cpuMilli: 600, memoryMiB: 600, ephemeralStorageMiB: 600 };
@@ -169,5 +173,72 @@ describe("LifecycleReservationAdapter", () => {
       capacity.reserve("op_target", "ins_target", deployment(), async () => undefined),
     ).resolves.toEqual({ status: "pending" });
     expect(reserveRuntime).not.toHaveBeenCalled();
+  });
+});
+
+describe("runtime identity renewal after a controller outage", () => {
+  it("replaces an expired projection only after rereading current authority", async () => {
+    const assignment: RuntimeAssignment = {
+      instanceId: "ins_00000000000000000000000001",
+      repositoryId: 123456,
+      runtimeEpoch: 5,
+      generation: 2,
+      clusterId: "cluster-a",
+      reservationId: "res_target",
+      deployment: deployment(),
+    };
+    const readRuntimeBinding = vi.fn(async () => ({
+      active: true as const,
+      authority: "observed-writer" as const,
+      repositoryId: assignment.repositoryId,
+      installationId: 789,
+      instanceId: assignment.instanceId,
+      runtimeId: "res_target",
+      runtimeEpoch: assignment.runtimeEpoch,
+      leaseId: "res_target",
+      clusterId: assignment.clusterId,
+    }));
+    const issueRuntimeIdentity = vi.fn(async () => ({
+      token: "renewed.header.signature",
+      expiresAt: new Date(now + 300_000).toISOString(),
+    }));
+    const transport = new RuntimeIdentityAssignmentTransport({
+      operations: {
+        readRuntimeBinding,
+        issueRuntimeIdentity,
+      } as unknown as RuntimeIdentityProvisionerService,
+      workerId: "worker-a",
+      clusterId: assignment.clusterId,
+      now: () => now,
+    });
+    const projected = transport.canonicalAssignment(assignment);
+    const refreshRuntimeIdentity = vi.fn(async () => undefined);
+    const runtime = Object.assign(Object.create(KubernetesLifecycleRuntimeAdapter.prototype), {
+      provider: {
+        readRuntimeIdentityProjection: vi.fn(async () => ({
+          assignment: projected,
+          expiresAt: new Date(now - 600_000).toISOString(),
+        })),
+        refreshRuntimeIdentity,
+      },
+      identityTransport: transport,
+      now: () => now,
+    }) as KubernetesLifecycleRuntimeAdapter;
+    const beforeEffect = vi.fn(async () => undefined);
+    expect(await runtime.refreshRuntimeIdentity(assignment, beforeEffect)).toBe(true);
+    expect(readRuntimeBinding).toHaveBeenCalledOnce();
+    expect(issueRuntimeIdentity).toHaveBeenCalledOnce();
+    expect(refreshRuntimeIdentity).toHaveBeenCalledWith(
+      expect.objectContaining({ scriptoriumAssignment: projected }),
+      "renewed.header.signature",
+      expect.any(AbortSignal),
+      beforeEffect,
+    );
+    readRuntimeBinding.mockResolvedValueOnce(null as never);
+    await expect(runtime.refreshRuntimeIdentity(assignment, beforeEffect)).rejects.toThrow(
+      "binding_unavailable_or_mismatched",
+    );
+    expect(issueRuntimeIdentity).toHaveBeenCalledOnce();
+    expect(refreshRuntimeIdentity).toHaveBeenCalledOnce();
   });
 });

@@ -1,11 +1,12 @@
 import {
   LifecycleService,
-  type LifecycleAuthProbeProvider,
   type BuildResolution,
   type LifecycleBuildProvider,
   type LifecycleOperation,
   type LifecycleResult,
+  type RollbackCompatibilityEvidence,
   type RuntimeDeployment,
+  isPersistenceRollbackCompatible,
 } from "@praetorium/application/lifecycle";
 import type {
   ClaimedProvisionerOperation,
@@ -23,6 +24,7 @@ import {
   ScriptoriumControlHttpClient,
   type RuntimeAuthAcceptanceProbe,
 } from "./scriptorium-control-client.js";
+import type { RuntimeIdentityAssignmentTransport } from "./runtime-identity.js";
 
 /** T03 already claims only an admitted immutable revision. This adapter binds
  * that resolution to the application state machine and never starts a build or
@@ -50,10 +52,12 @@ class ClaimedArtifactBuildProvider implements LifecycleBuildProvider {
     };
   }
 
-  /** The admitted revision projection currently carries no schema/data rollback
-   * compatibility proof, so automatic rollback remains disabled. */
-  async isRollbackCompatible(): Promise<boolean> {
-    return false;
+  async isRollbackCompatible(
+    previous: RuntimeDeployment,
+    target: RuntimeDeployment,
+    evidence: RollbackCompatibilityEvidence,
+  ): Promise<boolean> {
+    return isPersistenceRollbackCompatible(previous, target, evidence);
   }
 }
 
@@ -70,6 +74,9 @@ export function deploymentFromResolvedRuntime(
     platformManifestDigest: runtime.platformManifestDigest,
     compositionManifestDigest: runtime.assignment.compositionManifestDigest,
     enabledModuleIds: runtime.assignment.enabledModuleIds,
+    ...(runtime.assignment.persistence === undefined
+      ? {}
+      : { persistence: runtime.assignment.persistence }),
     credentialBrokerLocator: runtime.assignment.credentialBrokerLocator,
     grantPolicy: runtime.assignment.grantPolicy,
     controlServicePolicy: runtime.assignment.controlServicePolicy,
@@ -95,8 +102,8 @@ export interface LifecycleProvisionerExecutorOptions {
   readonly operations: ProvisionerOperationService;
   readonly workerId: string;
   readonly runtime: InClusterRuntimeOptions;
-  readonly authProbe: LifecycleAuthProbeProvider & Pick<RuntimeAuthAcceptanceProbe, "available">;
-  readonly assignmentTransport: { readonly available: boolean };
+  readonly authProbe: RuntimeAuthAcceptanceProbe;
+  readonly assignmentTransport: RuntimeIdentityAssignmentTransport;
   readonly now?: () => number;
   readonly idleTimeoutMs?: number;
 }
@@ -132,7 +139,7 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
         this.options.operations.currentReservations({ clusterId, signal: context.signal }),
       recordCapacitySnapshot: (input) =>
         this.options.operations.recordCapacitySnapshot({ ...input, signal: context.signal }),
-    });
+    }, this.options.assignmentTransport.forClaim(claim));
     const currentAssignment =
       claim.runtimeContext.current === null
         ? null
@@ -208,12 +215,18 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
       builds: new ClaimedArtifactBuildProvider(claim),
       capacity,
       producer,
-      authProbe: this.options.authProbe,
+      authProbe: this.options.authProbe
+        .withEndpointResolver((assignment, signal) => runtime.controlEndpoint(assignment, signal))
+        .forLease(claim, this.options.workerId),
       runtime,
       routes: runtime,
       now: this.now,
     });
-    return service.execute(operation.id, context);
+    try {
+      return await service.execute(operation.id, context);
+    } finally {
+      await runtime.close();
+    }
   }
 }
 

@@ -454,7 +454,8 @@ export function createInstanceAccessHandler(
     }
 
     if (request.method === "GET" && url.pathname === "/_platform/reauth") {
-      if (!isHtmlNavigation(request)) return problem(400, "REAUTH_REQUIRES_NAVIGATION");
+      if (!isHtmlNavigation(request) || request.headers.get("Sec-Fetch-Site") !== "same-origin")
+        return problem(400, "REAUTH_REQUIRES_NAVIGATION");
       return withCookies(fallbackEntry(instance, config), [
         expiredCookie(ACCESS_COOKIE, "/", true),
         expiredCookie(REFRESH_COOKIE, "/_platform", true),

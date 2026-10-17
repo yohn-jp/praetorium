@@ -8,12 +8,20 @@ const digest = `sha256:${"a".repeat(64)}`;
 const payloadType = "application/vnd.in-toto+json";
 const identity = "https://scriptorium.example/releases";
 
-function signedBundle(subjectDigestHex: string): Bundle {
+function signedBundle(
+  subjectDigestHex: string,
+  predicateType = "https://slsa.dev/provenance/v1",
+  statementType = "https://in-toto.io/Statement/v1",
+): Bundle {
   const { privateKey } = generateKeyPairSync("ed25519");
   const payload = Buffer.from(JSON.stringify({
-    _type: "https://in-toto.io/Statement/v1",
-    subject: [{ name: "scriptorium", digest: { sha256: subjectDigestHex } }],
-    predicateType: "https://slsa.dev/provenance/v1",
+    _type: statementType,
+    subject: [
+      { name: "scriptorium", digest: { sha256: subjectDigestHex } },
+      { name: "scriptorium-build/v1/catalog.json", digest: { sha256: "b".repeat(64) } },
+      { name: "scriptorium-platform/v1/runtime-metadata.json", digest: { sha256: "c".repeat(64) } },
+    ],
+    predicateType,
     predicate: {},
   }), "utf8");
   const signature = sign(null, dsse.preAuthEncoding(payloadType, payload), privateKey);
@@ -26,6 +34,38 @@ function fetchBundle(bundle: Bundle): typeof fetch {
 }
 
 describe("source Sigstore provenance verification", () => {
+  it("rejects non-SLSA statements before treating their subjects as producer metadata", async () => {
+    const verify = vi.fn(() => ({ identity: { subjectAlternativeName: identity } }));
+    const verifier = new SigstoreProvenanceVerifier({
+      signerIdentityAllowlist: [{ subjectAlternativeName: identity }],
+      verifier: { verify } as never,
+      fetch: fetchBundle(signedBundle(digest.slice("sha256:".length), "https://example.com/other")),
+    });
+    const result = await verifier.verify({ imageDigest: digest, signatureRef: "https://example.com/bundle", provenanceRef: null });
+
+    expect(result).toEqual({
+      verified: false,
+      evidence: ["provenance statement has an invalid SLSA predicate or subject list"],
+    });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("requires the signed payload to use the in-toto Statement v1 contract", async () => {
+    const verify = vi.fn(() => ({ identity: { subjectAlternativeName: identity } }));
+    const verifier = new SigstoreProvenanceVerifier({
+      signerIdentityAllowlist: [{ subjectAlternativeName: identity }],
+      verifier: { verify } as never,
+      fetch: fetchBundle(signedBundle(digest.slice("sha256:".length), undefined, "https://example.com/other")),
+    });
+    const result = await verifier.verify({ imageDigest: digest, signatureRef: "https://example.com/bundle", provenanceRef: null });
+
+    expect(result).toEqual({
+      verified: false,
+      evidence: ["provenance statement has an invalid SLSA predicate or subject list"],
+    });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it("requires a configured producer identity allowlist", async () => {
     const verifier = new SigstoreProvenanceVerifier({ signerIdentityAllowlist: [] });
     const result = await verifier.verify({ imageDigest: digest, signatureRef: "https://example.com/bundle", provenanceRef: null });
@@ -61,6 +101,15 @@ describe("source Sigstore provenance verification", () => {
 
     expect(result.verified).toBe(true);
     expect(result.signerIdentity).toBe(identity);
+    expect(result.attestation).toEqual({
+      bundleRef: "https://example.com/bundle",
+      predicateType: "https://slsa.dev/provenance/v1",
+      subjects: [
+        { name: "scriptorium", sha256: digest.slice("sha256:".length) },
+        { name: "scriptorium-build/v1/catalog.json", sha256: "b".repeat(64) },
+        { name: "scriptorium-platform/v1/runtime-metadata.json", sha256: "c".repeat(64) },
+      ],
+    });
     expect(verify).toHaveBeenCalledWith(expect.anything(), {
       subjectAlternativeName: identity,
       extensions: { issuer: "https://issuer.example" },

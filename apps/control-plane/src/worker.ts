@@ -1,4 +1,6 @@
 import { BuildInputSchema } from "@praetorium/contracts";
+import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
+import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js";
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
 import { createScheduledHandler } from "./scheduled.js";
@@ -92,6 +94,31 @@ function composeServices(env: ControlPlaneEnv) {
         })
       : undefined;
   const app = createControlPlaneApp({
+    ...(env.GATEWAY_SERVICE && env.PROVISIONER_AUTH_TOKEN
+      ? {
+          runtimeAuthProbe: createProvisionerRuntimeAuthProbeRoutes({
+            db: env.CONTROL_PLANE_DB,
+            operations,
+            instances,
+            gateway: env.GATEWAY_SERVICE,
+            gatewaySecret: env.CONTROL_PLANE_GATEWAY_AUTH,
+            gatewayOrigin: required(env.GATEWAY_ORIGIN),
+            controlPlaneOrigin: required(env.CONTROL_PLANE_ORIGIN),
+            instanceHostSuffix: required(env.INSTANCE_HOST_SUFFIX),
+            workerId: required(env.PROVISIONER_WORKER_ID),
+            clusterId: required(env.PROVISIONER_CLUSTER_ID),
+          }),
+        }
+      : {}),
+    ...(env.PROVISIONER_AUTH_TOKEN
+      ? {
+          runtimeHealth: createRuntimeHealthRoutes({
+            db: env.CONTROL_PLANE_DB,
+            workerId: required(env.PROVISIONER_WORKER_ID),
+            clusterId: required(env.PROVISIONER_CLUSTER_ID),
+          }),
+        }
+      : {}),
     ...(env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH
       ? { credentialRetirementSecret: env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH }
       : {}),

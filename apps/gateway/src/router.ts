@@ -1,3 +1,4 @@
+import { createRuntimeAuthProbeRoutes } from "./runtime-auth-probes.js";
 import {
   buildExpiredSessionCookie,
   buildSessionCookie,
@@ -889,6 +890,7 @@ function publicJwks(context: GatewayContext): Response {
 
 export function createGatewayRouter(context: GatewayContext): Hono {
   const app = new Hono();
+  app.route("/", createRuntimeAuthProbeRoutes(context));
   app.post("/internal/github/retire", async (c) => {
     const secret = context.env.RUNTIME_CREDENTIAL_RETIREMENT_AUTH;
     if (!secret || !/^[\x21-\x7e]{32,4096}$/u.test(secret))

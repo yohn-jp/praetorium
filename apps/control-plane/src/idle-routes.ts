@@ -114,6 +114,19 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
       }
       if (currentRuntime === null || currentRuntime === undefined)
         return unavailable(c, "RUNTIME_CONTEXT_UNAVAILABLE");
+      const healthOperation = await deps.db
+        .prepare(
+          `SELECT operation_id FROM operations WHERE instance_id=? AND repository_id=?
+         AND runtime_epoch=? AND deployment_revision_id=? AND status='succeeded'
+         AND kind IN ('start','update','redeploy') ORDER BY updated_at DESC LIMIT 1`,
+        )
+        .bind(
+          snapshot.instance.instanceId,
+          snapshot.binding.repositoryId,
+          snapshot.instance.observedRuntimeEpoch,
+          revisionId,
+        )
+        .first<{ operation_id: string }>();
       items.push({
         instanceId: snapshot.instance.instanceId,
         repositoryId: snapshot.binding.repositoryId,
@@ -124,6 +137,7 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
         bindingSuspended: snapshot.binding.suspended,
         hasActiveOperation: row.has_active_operation === 1,
         currentRuntime,
+        healthOperationId: healthOperation?.operation_id ?? null,
       });
     }
     return c.json({

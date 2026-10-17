@@ -4,6 +4,7 @@ import type {
   ReleaseCandidateManifest,
   ReleaseCandidateVerifier,
   ReleaseProducerMetadataVerifier,
+  VerifiedReleaseAttestation,
 } from "./model.js";
 
 export interface ImmutableReleaseImageVerifier {
@@ -27,6 +28,7 @@ export interface SourceProvenanceVerifier {
     readonly verified: boolean;
     readonly signerIdentity?: string;
     readonly evidence: readonly string[];
+    readonly attestation?: VerifiedReleaseAttestation;
   }>;
 }
 
@@ -128,6 +130,9 @@ export function createRegistryBackedReleaseVerifier(
           producerRevision: manifest.catalog.producerRevision,
           catalog: manifest.catalog,
           runtimeMetadata: manifest.runtimeMetadata,
+          signatureRef: manifest.signatureRef,
+          provenanceRef: manifest.provenanceRef,
+          ...(provenance.attestation ? { attestation: provenance.attestation } : {}),
         });
       } catch {
         return { kind: "retry", reason: "producer metadata verifier is unavailable" };

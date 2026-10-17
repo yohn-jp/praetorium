@@ -89,8 +89,37 @@ function installSchema(db: SQLiteD1): void {
     "../migrations/0001_repository_platform.sql",
     "../migrations/0002_stable_release_rollouts.sql",
     "../migrations/0003_staged_configurations.sql",
+    "../migrations/0004_runtime_git_credentials.sql",
   ])
     db.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
+}
+
+function seedRuntimeGitCredential(
+  db: SQLiteD1,
+  options: {
+    readonly status: "active" | "revocation_pending" | "revoked";
+    readonly expiresAt?: number;
+    readonly instanceId?: string;
+    readonly runtimeEpoch?: number;
+  },
+): void {
+  db.database
+    .prepare(
+      `INSERT INTO runtime_git_credentials (
+         token_id, repository_id, installation_id, instance_id, runtime_id,
+         runtime_epoch, lease_id, permission, expires_at, encrypted_secret_json,
+         status, created_at, updated_at
+       ) VALUES (?, 7001, 9001, ?, 'res_current-4', ?, 'res_current-4', 'read', ?, '{}', ?, ?, ?)`,
+    )
+    .run(
+      "a".repeat(64),
+      options.instanceId ?? "ins_repo-7001",
+      options.runtimeEpoch ?? 4,
+      options.expiresAt ?? NOW + 60_000,
+      options.status,
+      NOW - 1,
+      NOW - 1,
+    );
 }
 
 function seedInstance(
@@ -145,7 +174,8 @@ function seedInstance(
   const proof = {
     instanceId: "ins_repo-7001",
     repositoryId,
-    retiredRuntimeEpoch: options.proofRetiredRuntimeEpoch ?? 4,
+    retiredRuntimeEpoch:
+      options.proofRetiredRuntimeEpoch === undefined ? 4 : options.proofRetiredRuntimeEpoch,
     providerObservationId: "provider-observation-61",
     censusObservedAt: new Date(NOW - 500).toISOString(),
     remainingWriters: 0,
@@ -443,6 +473,56 @@ describe("Control Plane runtime binding metadata", () => {
       active: true,
       authority: "post-absence-target",
     });
+  });
+
+  it.each(["active", "revocation_pending"] as const)(
+    "withholds target authority while an unexpired retired-runtime credential is %s",
+    async (status) => {
+      const db = createDatabase();
+      seedRuntimeGitCredential(db, { status });
+
+      await expect(
+        createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001),
+      ).resolves.toBeNull();
+    },
+  );
+
+  it.each([
+    { name: "revoked", status: "revoked" as const, expiresAt: NOW + 60_000 },
+    { name: "expired", status: "revocation_pending" as const, expiresAt: NOW - 1 },
+  ])("allows target authority when the retired-runtime credential is $name", async (credential) => {
+    const db = createDatabase();
+    seedRuntimeGitCredential(db, credential);
+
+    await expect(
+      createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001),
+    ).resolves.toMatchObject({ runtimeEpoch: 5, authority: "post-absence-target" });
+  });
+
+  it.each([
+    { name: "another epoch", runtimeEpoch: 3, instanceId: "ins_repo-7001" },
+    { name: "another instance", runtimeEpoch: 4, instanceId: "ins_other" },
+  ])("does not block on a credential from $name", async (credential) => {
+    const db = createDatabase();
+    seedRuntimeGitCredential(db, { status: "active", ...credential });
+
+    await expect(
+      createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001),
+    ).resolves.toMatchObject({ runtimeEpoch: 5, authority: "post-absence-target" });
+  });
+
+  it("does not add a credential retirement gate when the absence proof has no retired epoch", async () => {
+    const db = createDatabase({ proofRetiredRuntimeEpoch: null });
+    db.database
+      .prepare(
+        "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
+      )
+      .run("ins_repo-7001");
+    seedRuntimeGitCredential(db, { status: "active" });
+
+    await expect(
+      createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001),
+    ).resolves.toMatchObject({ runtimeEpoch: 5, authority: "post-absence-target" });
   });
 
   it("rejects stale epochs, another repository, suspended bindings, and stale reservations", async () => {

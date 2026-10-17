@@ -99,6 +99,7 @@ function installSchema(db: SQLiteD1): void {
     "../migrations/0001_repository_platform.sql",
     "../migrations/0002_stable_release_rollouts.sql",
     "../migrations/0003_staged_configurations.sql",
+    "../migrations/0004_runtime_git_credentials.sql",
   ])
     db.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
 }

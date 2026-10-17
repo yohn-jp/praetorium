@@ -211,6 +211,17 @@ export function createRuntimeBindingMetadataReader(
                    OR json_extract(latest.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = i.observed_runtime_epoch
                  ))
                )
+               AND (
+                 json_extract(latest.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') IS NULL
+                 OR NOT EXISTS (
+                   SELECT 1 FROM runtime_git_credentials pending_credential
+                   WHERE pending_credential.repository_id = b.repository_id
+                     AND pending_credential.instance_id = i.instance_id
+                     AND pending_credential.runtime_epoch = json_extract(latest.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch')
+                     AND pending_credential.status IN ('active', 'revocation_pending')
+                     AND pending_credential.expires_at > ?
+                 )
+               )
                AND o.cluster_id IS NOT NULL AND r.cluster_id = o.cluster_id
                AND i.reservation_id = r.reservation_id
                AND r.status IN ('reserved', 'allocated')
@@ -284,7 +295,7 @@ export function createRuntimeBindingMetadataReader(
            )
            SELECT * FROM candidates ORDER BY priority LIMIT 1`,
         )
-        .bind(repositoryId, nowMs, nowText, nowText, repositoryId, nowText)
+        .bind(repositoryId, nowMs, nowMs, nowText, nowText, repositoryId, nowText)
         .first<RuntimeBindingRow>();
 
       if (!result) return null;

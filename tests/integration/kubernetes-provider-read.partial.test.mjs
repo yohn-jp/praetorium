@@ -29,6 +29,7 @@ const SYSTEM_NAMESPACE = "praetorium-system";
 const TEST_TIMEOUT_MS = 420_000;
 const PROCESS_TIMEOUT_MS = 30_000;
 const RESPONSE_LIMIT_BYTES = 512 * 1024;
+const KUBERNETES_UID_PATTERN = /^[0-9a-f-]{36}$/u;
 
 class KubernetesApiStatusError extends Error {
   constructor(statusCode) {
@@ -445,7 +446,7 @@ async function createFromSource(client, kubectl, kubeconfig, yaml, kind, name, r
     const created = await apiRequest(client, "POST", resourceCollectionPath(resource), resource, [
       201,
     ]);
-    assert.match(created.metadata?.uid ?? "", /^[0-9a-f-]{36}$/u);
+    assert.match(created.metadata?.uid ?? "", KUBERNETES_UID_PATTERN);
     assert.equal(created.metadata?.labels?.["praetorium.io/t07-run-id"], runId);
     return created;
   } catch (error) {
@@ -470,7 +471,11 @@ async function createFromSource(client, kubectl, kubeconfig, yaml, kind, name, r
       observed !== undefined &&
       observed.metadata?.labels?.["praetorium.io/t07-run-id"] === runId
     ) {
-      assert.match(observed.metadata?.uid ?? "", /^[0-9a-f-]{36}$/u);
+      if (!KUBERNETES_UID_PATTERN.test(observed.metadata?.uid ?? "")) {
+        throw new UncertainCreateOutcomeError(
+          `source create outcome is uncertain for ${kind}/${name}; recovered object has no valid UID`,
+        );
+      }
       throw new RecoveredCreateOutcomeError(observed);
     }
     throw new UncertainCreateOutcomeError(
@@ -530,9 +535,19 @@ async function readPodLogs(kubectl, kubeconfig, podName) {
 }
 
 async function removeByUid(client, resource, runId) {
+  assert.match(
+    resource.metadata?.uid ?? "",
+    KUBERNETES_UID_PATTERN,
+    "cleanup ledger entry has no valid UID; refusing delete",
+  );
   const pathname = resourcePath(resource);
   const current = await getOptional(client, pathname);
   if (current === undefined) return;
+  assert.match(
+    current.metadata?.uid ?? "",
+    KUBERNETES_UID_PATTERN,
+    "current resource has no valid UID; refusing delete",
+  );
   assert.equal(
     current.metadata?.uid,
     resource.metadata.uid,
@@ -1125,6 +1140,11 @@ test(
               `probe Pod ${podName} create result is uncertain; existing target is not owned`,
             );
           }
+          if (!KUBERNETES_UID_PATTERN.test(observed.metadata?.uid ?? "")) {
+            throw new UncertainCreateOutcomeError(
+              `probe Pod ${podName} create result is uncertain; marked object has no valid UID`,
+            );
+          }
           created.push(observed);
           throw new Error(
             `probe Pod ${podName} create response was uncertain; recovered its owned UID and will stop acceptance`,
@@ -1134,8 +1154,12 @@ test(
           `probe Pod ${podName} create result is uncertain after one 404; preserve resources for manual reconciliation`,
         );
       }
+      if (!KUBERNETES_UID_PATTERN.test(createdPod.metadata?.uid ?? "")) {
+        throw new UncertainCreateOutcomeError(
+          `probe Pod ${podName} create response has no valid UID; preserve resources for reconciliation`,
+        );
+      }
       created.push(createdPod);
-      assert.equal(createdPod.metadata?.uid?.length, 36);
       const podPath = resourcePath(createdPod);
       const finished = await waitForPod(client, podPath, createdPod.metadata.uid);
       assert.equal(

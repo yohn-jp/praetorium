@@ -82,7 +82,8 @@ server error, a single 404 lookup is treated as uncertain because the server
 may still be processing it; all automatic cleanup is withheld for
 reconciliation. If a lookup finds the exact random run label, the runner
 captures that object's UID, aborts acceptance, and uses the UID/label-guarded
-cleanup. A definitive client-side rejection does not create an ownership
+cleanup. A marked object without a valid UID remains uncertain and prevents
+automatic cleanup. A definitive client-side rejection does not create an ownership
 record, so cleanup proceeds only for earlier resources whose UIDs were
 captured. Only HTTP 400, 401, 403, 404, 405, 409, 410, 413, 415, and 422 are
 treated as definitive; 408, 429, server errors, and transport failures follow

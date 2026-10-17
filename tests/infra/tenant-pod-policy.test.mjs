@@ -70,6 +70,11 @@ test("tenant Pod policy matches the labels and security properties the runtime e
     }
   }
 
+  assert.equal(
+    policy.split("has(container.resources)").length - 1,
+    2,
+    "both regular and init containers must require the resources object",
+  );
   assert.doesNotMatch(policy, /container\.resources\.(?:requests|limits)/);
   assert.doesNotMatch(policy, /\bdyn\s*\(\s*container\s*\)/);
 

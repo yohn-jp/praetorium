@@ -761,7 +761,26 @@ async function assertNoMountsBelow(root) {
   }
 }
 
-async function inspectMappedTree(root, rootDevice, owner) {
+async function readKernelOverflowIds() {
+  const [overflowUidText, overflowGidText] = await Promise.all([
+    readFile("/proc/sys/kernel/overflowuid", "utf8"),
+    readFile("/proc/sys/kernel/overflowgid", "utf8"),
+  ]);
+  const overflowUid = Number(overflowUidText.trim());
+  const overflowGid = Number(overflowGidText.trim());
+  if (
+    !Number.isSafeInteger(overflowUid) ||
+    overflowUid < 0 ||
+    !Number.isSafeInteger(overflowGid) ||
+    overflowGid < 0
+  ) {
+    throw new Error("refusing cleanup: kernel overflow UID/GID values are invalid");
+  }
+  return { overflowUid, overflowGid };
+}
+
+async function removeMappedOwnedRoot(root, rootDevice, owner) {
+  const overflowIds = await readKernelOverflowIds();
   const args = ["--user"];
   for (const [inner, outer, count] of owner.buildkitUidMap)
     args.push(`--map-users=${inner}:${outer}:${count}`);
@@ -770,17 +789,35 @@ async function inspectMappedTree(root, rootDevice, owner) {
   const scanner = [
     'const fs = await import("node:fs/promises");',
     'const path = await import("node:path");',
-    "const [root, expectedDeviceText] = process.argv.slice(1);",
+    'const [root, expectedDeviceText, expectedOwnerText, expectedOverflowUidText, expectedOverflowGidText] = process.argv.slice(1);',
     "const expectedDevice = Number(expectedDeviceText);",
-    'if (!path.isAbsolute(root) || !Number.isSafeInteger(expectedDevice)) throw new Error("invalid scan root/device");',
+    "const expectedOwner = JSON.parse(expectedOwnerText);",
+    "const expectedOverflowUid = Number(expectedOverflowUidText);",
+    "const expectedOverflowGid = Number(expectedOverflowGidText);",
+    'if (!path.isAbsolute(root) || !Number.isSafeInteger(expectedDevice) || process.getuid() !== 0 || process.getgid() !== 0) throw new Error("invalid mapped cleanup namespace or root/device");',
+    'const parseMap = async (kind) => (await fs.readFile(`/proc/self/${kind}_map`, "utf8")).trim().split("\\n").map((line) => line.trim().split(/\\s+/u).map(Number));',
+    'if (JSON.stringify(await parseMap("uid")) !== JSON.stringify(expectedOwner.buildkitUidMap) || JSON.stringify(await parseMap("gid")) !== JSON.stringify(expectedOwner.buildkitGidMap)) throw new Error("cleanup namespace UID/GID maps do not match owner record");',
+    'const [overflowUidText, overflowGidText] = await Promise.all([fs.readFile("/proc/sys/kernel/overflowuid", "utf8"), fs.readFile("/proc/sys/kernel/overflowgid", "utf8")]);',
+    'if (Number(overflowUidText.trim()) !== expectedOverflowUid || Number(overflowGidText.trim()) !== expectedOverflowGid) throw new Error("kernel overflow UID/GID changed before mapped cleanup");',
+    'const rootInfo = await fs.lstat(root);',
+    'if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || rootInfo.dev !== expectedDevice || rootInfo.uid !== 0 || rootInfo.gid !== 0 || (rootInfo.mode & 0o077) !== 0) throw new Error("mapped cleanup root identity, mode, or device changed");',
+    'const ownerPath = path.join(root, "owner.json");',
+    'const ownerInfo = await fs.lstat(ownerPath);',
+    'if (!ownerInfo.isFile() || ownerInfo.isSymbolicLink() || ownerInfo.uid !== 0 || ownerInfo.gid !== 0 || (ownerInfo.mode & 0o077) !== 0) throw new Error("mapped cleanup owner marker identity or mode changed");',
+    'const owner = JSON.parse(await fs.readFile(ownerPath, "utf8"));',
+    'if (JSON.stringify(owner) !== JSON.stringify(expectedOwner) || owner.schema !== "praetorium.local-disposable-owner/v2" || owner.root !== root || owner.disposable !== true || owner.production !== false || owner.ownerUid !== expectedOwner.ownerUid || owner.ownerGid !== expectedOwner.ownerGid || owner.buildkitSocket !== path.join(root, "runtime", "buildkit.sock")) throw new Error("mapped cleanup owner marker does not match the prevalidated ownership record");',
+    'const mountInfo = await fs.readFile("/proc/self/mountinfo", "utf8");',
+    'for (const line of mountInfo.split("\\n")) { if (!line) continue; const [mountFields] = line.split(" - ", 1); const fields = mountFields?.split(" "); if (!fields || fields.length < 5) throw new Error("could not parse cleanup namespace mount information"); const mountPoint = path.resolve(fields[4].replace(/\\\\([0-7]{3})/gu, (_escape, octal) => String.fromCharCode(Number.parseInt(octal, 8))); const relative = path.relative(root, mountPoint); if (relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) throw new Error(`refusing mapped cleanup: mountpoint under owned root: ${mountPoint}`); }',
+    'const mapped = (id, entries) => entries.some(([inner, _outer, count]) => id >= inner && id < inner + count);',
     "const pending = [root];",
     "while (pending.length > 0) {",
     "  const current = pending.pop();",
     "  const info = await fs.lstat(current);",
     '  if (info.dev !== expectedDevice) throw new Error(`filesystem boundary under owned root: ${current}`);',
-    '  if (info.uid === 65534 || info.gid === 65534) throw new Error(`unmapped or ambiguous overflow owner under owned root: ${current}`);',
+    '  if (info.uid === expectedOverflowUid || info.gid === expectedOverflowGid || !mapped(info.uid, expectedOwner.buildkitUidMap) || !mapped(info.gid, expectedOwner.buildkitGidMap)) throw new Error(`unmapped or ambiguous overflow owner under owned root: ${current}`);',
     "  if (info.isDirectory()) for (const entry of await fs.readdir(current)) pending.push(path.join(current, entry));",
     "}",
+    'await fs.rm(root, { recursive: true, force: true });',
   ].join("\n");
   args.push(
     "--setuid=0",
@@ -793,6 +830,9 @@ async function inspectMappedTree(root, rootDevice, owner) {
     scanner,
     root,
     String(rootDevice),
+    JSON.stringify(owner),
+    String(overflowIds.overflowUid),
+    String(overflowIds.overflowGid),
   );
   await run(TOOL.unshare, args, { env: privateEnvironment(root), captureLimit: 4_000 });
 }
@@ -834,27 +874,19 @@ async function verifyOwnedTree(root, owner) {
 }
 
 async function removeOwnedRoot(root, owner) {
-  await verifyOwnedTree(root, owner);
+  const rootInfo = await lstat(root);
+  if (
+    !rootInfo.isDirectory() ||
+    rootInfo.uid !== owner.ownerUid ||
+    rootInfo.gid !== owner.ownerGid ||
+    (rootInfo.mode & 0o077) !== 0
+  ) {
+    throw new Error("refusing cleanup: disposable root ownership or permissions changed");
+  }
   if (owner.schema === OWNER_SCHEMA && owner.buildkitUidMap !== null) {
-    const args = ["--user"];
-    for (const [inner, outer, count] of owner.buildkitUidMap)
-      args.push(`--map-users=${inner}:${outer}:${count}`);
-    for (const [inner, outer, count] of owner.buildkitGidMap)
-      args.push(`--map-groups=${inner}:${outer}:${count}`);
-    args.push(
-      "--setuid=0",
-      "--setgid=0",
-      "--mount",
-      "--propagation",
-      "private",
-      TOOL.rm,
-      "--recursive",
-      "--force",
-      "--",
-      root,
-    );
-    await run(TOOL.unshare, args, { env: privateEnvironment(root) });
+    await removeMappedOwnedRoot(root, rootInfo.dev, owner);
   } else {
+    await verifyOwnedTree(root, owner);
     await rm(root, { recursive: true, force: true });
   }
   try {

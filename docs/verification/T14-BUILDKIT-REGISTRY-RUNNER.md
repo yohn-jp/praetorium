@@ -51,8 +51,7 @@ and the current user as owner. The exact schema is:
     "PRAETORIUM_BUILD_SERVICE_TOKEN_FILE": "/absolute/path/to/private-build-service-token",
     "PRAETORIUM_BUILD_SIGNING_KEY_FILE": "/absolute/path/to/private-builder-signing-key",
     "PRAETORIUM_BUILD_SIGNING_KEY_ID": "the-admitted-builder-key-id",
-    "PRAETORIUM_BUILD_REGISTRY_URL": "http://127.0.0.1:35009",
-    "PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY": "1",
+    "PRAETORIUM_BUILD_REGISTRY_URL": "https://127.0.0.1:35009",
     "PRAETORIUM_BUILD_COMPOSITION_REPOSITORY": "praetorium/compositions",
     "PRAETORIUM_BUILD_MAX_IMAGE_LAYER_BYTES": "1073741824",
     "PRAETORIUM_BUILD_MAX_IMAGE_VERIFICATION_MS": "60000",
@@ -79,14 +78,27 @@ rejects other keys. The TLS endpoint and client material must belong to the
 owned disposable BuildKit environment. The runner does not treat a generic
 BuildKit socket check or fixture image as producer acceptance.
 
+The registry CA is separate from BuildKit's inbound mTLS client certificate
+and key. Pass its absolute PEM path explicitly to the fixed verifier. The
+verifier requires a current-UID-owned regular file no larger than 256 KiB,
+rejects symlinks and private-key PEM blocks, and passes that selected path to
+each fixed runner as `NODE_EXTRA_CA_CERTS`. It does not inherit ambient
+`NODE_EXTRA_CA_CERTS` or `NODE_OPTIONS`.
+
 Build the workspace before running the fixed suite so workspace package entry
 points exist, then run the verifier with the owner's inventory:
 
 ```sh
 corepack pnpm@11.18.0 install --frozen-lockfile
 corepack pnpm@11.18.0 build
-node scripts/verify-integration.mjs --environment /absolute/path/to/acceptance-inventory.json
+node scripts/verify-integration.mjs --environment /absolute/path/to/acceptance-inventory.json \
+  --ca-file /absolute/path/to/owner-registry-ca.pem
 ```
+
+For endpoints already trusted by Node, omit `--ca-file`. For the owned private
+registry and Control Plane, pass the owner's certificate-only CA file. Leave
+TLS verification enabled and omit
+`PRAETORIUM_BUILD_ALLOW_INSECURE_LOOPBACK_REGISTRY`.
 
 The runner writes private evidence to the configured `evidencePath` only after
 all three builds, cache reuse and stale-report assertions pass. It never writes

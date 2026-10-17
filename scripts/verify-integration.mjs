@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdtemp, open, readFile, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, open, readFile, realpath, rm } from "node:fs/promises";
 import { constants } from "node:fs";
+import { X509Certificate } from "node:crypto";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -9,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_INVENTORY_BYTES = 64 * 1024;
+const MAX_CA_FILE_BYTES = 256 * 1024;
 const RUNNER_REASON_CODES = Object.freeze({
   OWNER_INPUT_MISSING: ["BLOCKED", "Required owner input is unavailable"],
   OWNED_ENVIRONMENT_UNAVAILABLE: ["BLOCKED", "Owned disposable environment is unavailable"],
@@ -79,6 +81,7 @@ function isUnassigned(value) {
 function parseCli(argv) {
   let planOnly = false;
   let inventoryPath;
+  let caFile;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--plan") {
@@ -93,6 +96,17 @@ function parseCli(argv) {
       index += 1;
       continue;
     }
+    if (argument === "--ca-file") {
+      if (caFile !== undefined || !argv[index + 1] || argv[index + 1].startsWith("--")) {
+        throw new Error("--ca-file requires exactly one absolute owner CA PEM path");
+      }
+      caFile = argv[index + 1];
+      if (!path.isAbsolute(caFile)) {
+        throw new Error("--ca-file must be an absolute path");
+      }
+      index += 1;
+      continue;
+    }
     if (argument === "--help" || argument === "-h") {
       return { help: true };
     }
@@ -101,7 +115,69 @@ function parseCli(argv) {
   if (inventoryPath === undefined) {
     throw new Error("--environment <explicit-owned-test-inventory.json> is required");
   }
-  return { planOnly, inventoryPath };
+  return { planOnly, inventoryPath, caFile };
+}
+
+async function validateCaFile(caFile) {
+  if (!path.isAbsolute(caFile)) throw new Error("--ca-file must be an absolute path");
+  if (typeof process.getuid !== "function") {
+    throw new Error("cannot verify the owner UID for --ca-file on this platform");
+  }
+
+  let handle;
+  try {
+    const beforeOpen = await lstat(caFile);
+    if (beforeOpen.isSymbolicLink()) throw new Error("--ca-file must not be a symlink");
+    handle = await open(caFile, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = await handle.stat();
+    if (
+      !info.isFile() ||
+      info.uid !== process.getuid() ||
+      (info.mode & 0o022) !== 0 ||
+      info.size === 0 ||
+      info.size > MAX_CA_FILE_BYTES ||
+      info.dev !== beforeOpen.dev ||
+      info.ino !== beforeOpen.ino
+    ) {
+      throw new Error("--ca-file must be a bounded regular file owned by the current UID without group/world write");
+    }
+
+    const contents = Buffer.alloc(info.size + 1);
+    const { bytesRead } = await handle.read(contents, 0, contents.length, 0);
+    if (bytesRead !== info.size) throw new Error("--ca-file changed while being read");
+    const pem = contents.subarray(0, bytesRead).toString("utf8");
+    if (/-----BEGIN [^-]*PRIVATE KEY-----/u.test(pem)) {
+      throw new Error("--ca-file must contain certificates and no private keys");
+    }
+
+    const certificatePattern = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/gu;
+    let offset = 0;
+    let count = 0;
+    for (const match of pem.matchAll(certificatePattern)) {
+      const [certificatePem] = match;
+      const start = match.index;
+      if (pem.slice(offset, start).trim() !== "") {
+        throw new Error("--ca-file must contain only PEM certificates and whitespace");
+      }
+      try {
+        new X509Certificate(certificatePem);
+      } catch {
+        throw new Error("--ca-file contains an invalid PEM certificate");
+      }
+      offset = start + certificatePem.length;
+      count += 1;
+    }
+    if (count === 0 || pem.slice(offset).trim() !== "") {
+      throw new Error("--ca-file must contain at least one valid PEM certificate");
+    }
+  } catch (error) {
+    if (error.message.startsWith("--ca-file")) throw error;
+    if (error.code === "ENOENT") throw new Error("--ca-file does not exist");
+    if (error.code === "ELOOP") throw new Error("--ca-file must not be a symlink");
+    throw new Error("cannot read or validate --ca-file");
+  } finally {
+    await handle?.close();
+  }
 }
 
 function validateInventory(inventory) {
@@ -298,7 +374,13 @@ function createReport({ inventoryId = null, mode, validation, runnerResults = nu
   };
 }
 
-function createRunnerEnvironment(inventoryPath, category, isolatedHome, source = process.env) {
+function createRunnerEnvironment(
+  inventoryPath,
+  category,
+  isolatedHome,
+  source = process.env,
+  caFile,
+) {
   return {
     PATH: source.PATH ?? "",
     ...(source.SystemRoot ? { SystemRoot: source.SystemRoot } : {}),
@@ -308,6 +390,7 @@ function createRunnerEnvironment(inventoryPath, category, isolatedHome, source =
     PRAETORIUM_T14_INVENTORY_PATH: inventoryPath,
     PRAETORIUM_T14_CATEGORY: category,
     PRAETORIUM_T14_RESULT_PATH: path.join(isolatedHome, "runner-result.json"),
+    ...(caFile ? { NODE_EXTRA_CA_CERTS: caFile } : {}),
   };
 }
 
@@ -380,7 +463,7 @@ async function readInventory(inventoryPath) {
   return parsed;
 }
 
-async function executeFixedRunners(categories, inventoryPath) {
+async function executeFixedRunners(categories, inventoryPath, caFile) {
   const results = [];
   for (const category of categories) {
     if (category.status === "BLOCKED") {
@@ -429,7 +512,7 @@ async function executeFixedRunners(categories, inventoryPath) {
     try {
       result = spawnSync(process.execPath, ["--test", runnerPath], {
         cwd: REPOSITORY_ROOT,
-        env: createRunnerEnvironment(inventoryPath, category.id, isolatedHome),
+        env: createRunnerEnvironment(inventoryPath, category.id, isolatedHome, process.env, caFile),
         encoding: "utf8",
         stdio: "ignore",
         shell: false,
@@ -472,9 +555,20 @@ async function main(argv = process.argv.slice(2)) {
   }
   if (cli.help) {
     process.stdout.write(
-      "Usage: node scripts/verify-integration.mjs --environment <explicit-owned-test-inventory.json> [--plan]\n",
+      "Usage: node scripts/verify-integration.mjs --environment <explicit-owned-test-inventory.json> [--ca-file <absolute-owner-ca.pem>] [--plan]\n",
     );
     return 0;
+  }
+
+  if (cli.caFile !== undefined) {
+    try {
+      await validateCaFile(cli.caFile);
+    } catch (error) {
+      const validation = { errors: [error.message] };
+      const report = createReport({ mode: cli.planOnly ? "plan" : "preflight", validation });
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      return 2;
+    }
   }
 
   let inventory;
@@ -491,7 +585,7 @@ async function main(argv = process.argv.slice(2)) {
   const inventoryPath = await realpath(path.resolve(process.cwd(), cli.inventoryPath));
   const runnerResults =
     !cli.planOnly && validation.errors.length === 0
-      ? await executeFixedRunners(validation.categories, inventoryPath)
+      ? await executeFixedRunners(validation.categories, inventoryPath, cli.caFile)
       : null;
   const report = createReport({
     inventoryId: nonEmptyString(inventory?.inventoryId) ? inventory.inventoryId : null,
@@ -530,5 +624,6 @@ export {
   createRunnerEnvironment,
   classifyRunnerResult,
   parseCli,
+  validateCaFile,
   validateInventory,
 };

@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, chown, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { rootCertificates } from "node:tls";
 import test from "node:test";
 import {
   classifyRunnerResult,
   createRunnerEnvironment,
+  parseCli,
   REQUIRED_CATEGORIES,
+  validateCaFile,
 } from "../../scripts/verify-integration.mjs";
 
 const scriptPath = path.resolve("scripts/verify-integration.mjs");
@@ -186,6 +189,7 @@ test("fixed runners do not inherit ambient credentials or machine configuration"
       KUBECONFIG: "/home/operator/.kube/config",
       AWS_PROFILE: "default",
       NODE_OPTIONS: "--require /tmp/untrusted-preload.cjs",
+      NODE_EXTRA_CA_CERTS: "/tmp/ambient-ca.pem",
     },
   );
   assert.deepEqual(environment, {
@@ -198,6 +202,103 @@ test("fixed runners do not inherit ambient credentials or machine configuration"
     PRAETORIUM_T14_CATEGORY: "github-access",
     PRAETORIUM_T14_RESULT_PATH: "/temporary/isolated-home/runner-result.json",
   });
+});
+
+test("only an explicitly selected CA is passed to fixed runners", () => {
+  const environment = createRunnerEnvironment(
+    "/owned-test/inventory.json",
+    "buildkit-registry",
+    "/temporary/isolated-home",
+    {
+      PATH: "/safe/tools",
+      NODE_OPTIONS: "--require /tmp/untrusted-preload.cjs",
+      NODE_EXTRA_CA_CERTS: "/tmp/ambient-ca.pem",
+    },
+    "/owned-test/registry-ca.pem",
+  );
+  assert.equal(environment.NODE_EXTRA_CA_CERTS, "/owned-test/registry-ca.pem");
+  assert.equal(Object.hasOwn(environment, "NODE_OPTIONS"), false);
+  assert.equal(Object.keys(environment).filter((key) => key === "NODE_EXTRA_CA_CERTS").length, 1);
+});
+
+test("--ca-file accepts only one absolute owner CA path", () => {
+  assert.deepEqual(
+    parseCli([
+      "--environment",
+      "/owned-test/inventory.json",
+      "--ca-file",
+      "/owned-test/registry-ca.pem",
+      "--plan",
+    ]),
+    {
+      inventoryPath: "/owned-test/inventory.json",
+      caFile: "/owned-test/registry-ca.pem",
+      planOnly: true,
+    },
+  );
+  assert.throws(
+    () => parseCli(["--environment", "/owned-test/inventory.json", "--ca-file", "relative.pem"]),
+    /absolute path/u,
+  );
+  assert.throws(
+    () =>
+      parseCli([
+        "--environment",
+        "/owned-test/inventory.json",
+        "--ca-file",
+        "/owned-test/one.pem",
+        "--ca-file",
+        "/owned-test/two.pem",
+      ]),
+    /exactly one/u,
+  );
+});
+
+test("explicit CA input validates PEM certificates and rejects malformed or symlink files", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-ca-"));
+  const caPath = path.join(directory, "ca.pem");
+  const malformedPath = path.join(directory, "malformed.pem");
+  const symlinkPath = path.join(directory, "symlink.pem");
+  try {
+    await writeFile(caPath, rootCertificates[0], { mode: 0o600 });
+    await assert.doesNotReject(validateCaFile(caPath));
+    await chmod(caPath, 0o666);
+    await assert.rejects(validateCaFile(caPath), /without group\/world write/u);
+    await chmod(caPath, 0o600);
+
+    await writeFile(malformedPath, "not a certificate\n", { mode: 0o600 });
+    await assert.rejects(validateCaFile(malformedPath), /valid PEM certificate/u);
+    await writeFile(malformedPath, "-----BEGIN PRIVATE KEY-----\nredacted\n", { mode: 0o600 });
+    await assert.rejects(validateCaFile(malformedPath), /no private keys/u);
+    await writeFile(malformedPath, "a".repeat(256 * 1024 + 1), { mode: 0o600 });
+    await assert.rejects(validateCaFile(malformedPath), /bounded regular file/u);
+
+    await symlink(malformedPath, symlinkPath);
+    await assert.rejects(validateCaFile(symlinkPath), /must not be a symlink/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("foreign-owned CA files are rejected when the filesystem permits the test", async (t) => {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    t.skip("this platform does not expose UIDs for ownership validation");
+    return;
+  }
+  const directory = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-ca-owner-"));
+  const caPath = path.join(directory, "ca.pem");
+  try {
+    await writeFile(caPath, rootCertificates[0], { mode: 0o600 });
+    try {
+      await chown(caPath, process.getuid() + 1, process.getgid());
+    } catch {
+      t.skip("the current test user cannot create a foreign-owned file");
+      return;
+    }
+    await assert.rejects(validateCaFile(caPath), /owned by the current UID/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("a fixed runner prerequisite report cannot promote a failed or signaled process to proof", () => {

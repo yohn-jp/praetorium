@@ -16,8 +16,8 @@ metadata:
 data:
   PRAETORIUM_BUILD_WORKER_ID: "@@BUILD_WORKER_ID@@"
   PRAETORIUM_CONTROL_PLANE_URL: "@@BUILD_WORKER_CONTROL_PLANE_URL@@"
-  PRAETORIUM_BUILD_SERVICE_TOKEN_FILE: /var/run/secrets/control-plane/token
-  PRAETORIUM_BUILD_SIGNING_KEY_FILE: /var/run/secrets/signing/key.pem
+  PRAETORIUM_BUILD_SERVICE_TOKEN_FILE: /var/run/praetorium-build-worker/private/control-plane/token
+  PRAETORIUM_BUILD_SIGNING_KEY_FILE: /var/run/praetorium-build-worker/private/signing/key.pem
   PRAETORIUM_BUILD_SIGNING_KEY_ID: "@@BUILD_WORKER_SIGNING_KEY_ID@@"
   PRAETORIUM_BUILD_COMPOSITION_REPOSITORY: "@@BUILD_WORKER_COMPOSITION_REPOSITORY@@"
   PRAETORIUM_BUILD_REGISTRY_URL: "@@BUILD_REGISTRY_URL@@"
@@ -26,14 +26,14 @@ data:
   PRAETORIUM_BUILD_MAX_REGISTRY_REQUEST_MS: "@@BUILD_MAX_REGISTRY_REQUEST_MS@@"
   PRAETORIUM_BUILDKIT_ADDRESS: "@@BUILDKIT_ENDPOINT@@"
   PRAETORIUM_BUILDKIT_TLS_SERVER_NAME: "@@BUILDKIT_SERVER_NAME@@"
-  PRAETORIUM_BUILDKIT_TLS_CA_FILE: /var/run/secrets/buildkit/ca.crt
-  PRAETORIUM_BUILDKIT_TLS_CERT_FILE: /var/run/secrets/buildkit/tls.crt
-  PRAETORIUM_BUILDKIT_TLS_KEY_FILE: /var/run/secrets/buildkit/tls.key
+  PRAETORIUM_BUILDKIT_TLS_CA_FILE: /var/run/praetorium-build-worker/private/buildkit/ca.crt
+  PRAETORIUM_BUILDKIT_TLS_CERT_FILE: /var/run/praetorium-build-worker/private/buildkit/tls.crt
+  PRAETORIUM_BUILDKIT_TLS_KEY_FILE: /var/run/praetorium-build-worker/private/buildkit/tls.key
   PRAETORIUM_BUILDKIT_BUILDCTL_PATH: "@@BUILD_WORKER_BUILDKIT_PATH@@"
   PRAETORIUM_BUILDKIT_FRONTEND_REPOSITORY: "@@BUILDKIT_FRONTEND_REPOSITORY@@"
   PRAETORIUM_BUILDKIT_OUTPUT_REPOSITORY: "@@BUILDKIT_OUTPUT_REPOSITORY@@"
-  PRAETORIUM_BUILDKIT_DOCKER_CONFIG_DIRECTORY: /var/run/secrets/registry
-  PRAETORIUM_BUILDKIT_TEMPORARY_DIRECTORY: /tmp/praetorium-build-worker
+  PRAETORIUM_BUILDKIT_DOCKER_CONFIG_DIRECTORY: /var/run/praetorium-build-worker/private/registry
+  PRAETORIUM_BUILDKIT_TEMPORARY_DIRECTORY: /tmp/praetorium-build-worker/private
   PRAETORIUM_BUILDKIT_SAFE_PATH: /usr/local/bin:/usr/bin:/bin
 ---
 apiVersion: apps/v1
@@ -69,26 +69,20 @@ spec:
           type: RuntimeDefault
       imagePullSecrets:
         - name: "@@SECRET_APPLICATION_IMAGE_PULL@@"
-      containers:
-        - name: build-worker
+      initContainers:
+        - name: prepare-runtime-secrets
           image: "@@IMAGE_BUILD_WORKER@@"
           imagePullPolicy: IfNotPresent
-          command: ["node", "dist/main.js"]
-          envFrom:
-            - configMapRef:
-                name: praetorium-build-worker-config
-          env:
-            - name: PRAETORIUM_BUILD_REGISTRY_PULL_CREDENTIAL_FILE
-              value: /var/run/secrets/registry-pull/credential.json
+          command: ["node", "dist/prepare-runtime-secrets.js"]
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
-              ephemeral-storage: 256Mi
+              cpu: 10m
+              memory: 32Mi
+              ephemeral-storage: 1Mi
             limits:
-              cpu: "1"
-              memory: 1Gi
-              ephemeral-storage: 2Gi
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 16Mi
           securityContext:
             runAsNonRoot: true
             runAsUser: 10001
@@ -114,6 +108,44 @@ spec:
               readOnly: true
             - name: build-signing-key
               mountPath: /var/run/secrets/signing
+              readOnly: true
+            - name: runtime-private
+              mountPath: /var/run/praetorium-build-worker
+            - name: worker-temporary
+              mountPath: /tmp/praetorium-build-worker
+      containers:
+        - name: build-worker
+          image: "@@IMAGE_BUILD_WORKER@@"
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/main.js"]
+          envFrom:
+            - configMapRef:
+                name: praetorium-build-worker-config
+          env:
+            - name: PRAETORIUM_BUILD_REGISTRY_PULL_CREDENTIAL_FILE
+              value: /var/run/praetorium-build-worker/private/registry-pull/credential.json
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 2Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: runtime-private
+              mountPath: /var/run/praetorium-build-worker
               readOnly: true
             - name: worker-temporary
               mountPath: /tmp/praetorium-build-worker
@@ -160,3 +192,7 @@ spec:
         - name: worker-temporary
           emptyDir:
             sizeLimit: 2Gi
+        - name: runtime-private
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi

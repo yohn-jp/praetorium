@@ -123,9 +123,27 @@ identity, and probe run ID after cleanup completes.
 
 ## Result
 
-**BLOCKED / NOT_CHECKED.** The isolated implementation is prepared at base
-`f7fdb88e8653ec30b737901920586d71e9b4cbd4`. The CNI packet runner still owns
-the next disposable-cluster write slot; image import, canonical resource
-creation, Pod execution, and cleanup have not run. No runtime acceptance is
-claimed until the exact-image probe and UID-guarded cleanup complete after the
-handoff.
+**FAILED / acceptance not established.** The earlier preparation at base
+`f7fdb88` was not a live run. After CNI cleanup and the API-writer handoff, Sol
+ran the integrated source twice:
+
+- At `69097c0`, four local checks passed but the live case stopped before image
+  import or API resource creation: the harness incorrectly expected a bare
+  Kind cluster name in the kubeconfig's cluster reference. The linked-context
+  assertion was corrected in `c47f8c7`.
+- At `c47f8c7`, four local checks passed, the exact preserved image archive was
+  imported and the temporary bootstrap resources and probe Pod were created.
+  The Pod reached `Failed`, so acceptance failed. The harness asserted phase
+  before saving the Pod log, imageID or termination details; this attempt does
+  not localize which provider stage failed or prove the runtime imageID check.
+  The ordinary UID-guarded cleanup path completed without a reported cleanup
+  error. Root subsequently observed the canonical Namespace, ServiceAccount,
+  ClusterRole and ClusterRoleBinding all `NotFound`.
+
+The original [attempt logs and cleanup observation](evidence/t07-provider-read-attempts/SHA256SUMS)
+are retained byte-for-byte. Inspection also found that the harness expected
+`undefined` for the empty page cursor, while the actual `RuntimePage` contract
+requires `null`; this is a test mismatch, not yet proof of the failed Pod's
+exact stage. Diagnostic capture and the contract-aligned assertion are being
+corrected before another run. No provider read-path PASS, full Provisioner,
+producer integration, full T07/T14 or production deployment is claimed.

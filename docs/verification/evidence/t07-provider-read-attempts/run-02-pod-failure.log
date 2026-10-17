@@ -1,0 +1,35 @@
+✔ local preflight binds the probe to production provider settings and canonical bootstrap sources (5.574656ms)
+✔ Kind kubeconfig selection follows the context's cluster and user references (0.950106ms)
+✔ bounded command timeout kills descendants and waits for process-group exit (3210.873084ms)
+✔ bounded timeout kills a TERM-ignoring descendant after its leader closes (3131.857272ms)
+✖ actual Provisioner image reads managed Deployments and a known-absent identity through projected ServiceAccount credentials (13161.325255ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19566.7112
+
+✖ failing tests:
+
+test at tests/integration/kubernetes-provider-read.partial.test.mjs:942:1
+✖ actual Provisioner image reads managed Deployments and a known-absent identity through projected ServiceAccount credentials (13161.325255ms)
+  AssertionError [ERR_ASSERTION]: provider image did not complete its read probe
+  + actual - expected
+  
+  + 'Failed'
+  - 'Succeeded'
+  
+      at TestContext.<anonymous> (file:///home/sophia/src/praetorium/tests/integration/kubernetes-provider-read.partial.test.mjs:1205:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'Failed',
+    expected: 'Succeeded',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

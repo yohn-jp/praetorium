@@ -1,0 +1,28 @@
+{
+  "checkedAt": "2026-10-17T04:58:38.373830+00:00",
+  "sourceCommit": "c47f8c7010cb4c1cba0006f1b09facf2ef930138",
+  "scope": "root independent cleanup observation after Failed provider read-path Pod",
+  "resources": [
+    {
+      "kind": "namespace",
+      "name": "praetorium-system",
+      "observation": "NotFound"
+    },
+    {
+      "kind": "clusterrole",
+      "name": "praetorium-provisioner-bootstrap",
+      "observation": "NotFound"
+    },
+    {
+      "kind": "clusterrolebinding",
+      "name": "praetorium-provisioner-bootstrap",
+      "observation": "NotFound"
+    },
+    {
+      "kind": "serviceaccount",
+      "name": "praetorium-provisioner",
+      "observation": "NotFound"
+    }
+  ],
+  "apiWrites": false
+}

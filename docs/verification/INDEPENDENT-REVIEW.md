@@ -1,0 +1,25 @@
+# Independent migration review
+
+Evidence cut: Praetorium `d029989dbc6b78024bd401ed37e07e63336c1f6c`, branch `main`. Reviewers were separate read-only agents; implementation workers used isolated worktrees. This records reviewed paths and remaining limits, not certification of the complete migration or deployment readiness.
+
+## Findings and fixes
+
+- Runtime safety reviewer traced the actual Node executor → Kubernetes adapter → renderer/provider. Missing node-health tolerations allowed default 300-second eviction to erase a partitioned writer from the API census. `17b40ff` renders indefinite `not-ready` and `unreachable` NoExecute tolerations. The reviewer rechecked the actual provider path and tests; forced Pod deletion/node removal still requires independent process-termination evidence and remains an operational/T14 limit.
+- Security reviewer found that GitHub installation selection narrowing can have an empty removed-repository list. `ebf65f4` preserves the signed selection signal and conservatively invalidates the matching installation. `762e46a` rejects missing/invalid selection at the external Gateway boundary. The reviewer verified both committed worker changes against actual migration-backed SQLite: 14 focused tests passed, including signed Gateway → Control Plane processing, lease invalidation, duplicate delivery and missing-field rejection. Root's actual Worker/D1/DO runner also verifies empty-list selection narrowing.
+- Runtime identity reviewer found that old runtime authority survived the beginning of retirement. `d029989` fences any unresolved matching-epoch retirement checkpoint even after terminal reports, lease expiry or a newer desired operation. Only a later same-operation accepted checkpoint with explicit cleared quiesce request/receipt restores authority. `3936a26` persists that clear only after a matching resume is confirmed in the previously missing receipt-error/blocked branches. The reviewer checked all clear sites, tested repeated resume cycles and ran 17 identity/binding tests plus typecheck on the identical implementation commit `1b3e8d2` in its isolated worktree.
+
+The security review also inspected the actual operator admission path, separate service credentials, public JWKS projection, bounded request bodies and repository DO promise serialization. The runtime review inspected target lease/absence checks, Gateway's trusted fixed-origin broker reads, Kubernetes ownership/image/capacity/network controls and the actual provider construction path. No additional concrete defects were reported in those slices. Reviews do not cover unimplemented producer behavior.
+
+## Fresh integrated checks
+
+Root ran the required frozen pnpm 11.18.0 install and full `check` on clean `d029989`; both exited 0, including provider boundaries and generated contract schema checks. The fixed T14 harness ran the actual Wrangler deployment bundle on disposable local workerd/D1/SQLite DO storage: `workers-d1-do` VERIFIED, six remaining categories BLOCKED/NOT_CHECKED, overall exit 2. Its checks include migrations, concurrent repository resolution, persistence after restart, public-operation redaction, authenticated runtime metadata/public-only JWKS, separate operator authority and webhook invalidation.
+
+The real Gateway Worker partial Chromium probe passed at `f82227a`; Gateway and Instance Access source trees are unchanged at this evidence cut. This proves only its enumerated local cookie/session/redirect/logging boundaries, not successful GitHub login or producer entry. The actual compiled Provisioner process test passed at `d029989`: health 200, readiness 503, zero Control Plane claims while producer capabilities are missing, and graceful termination. Neither test satisfies real producer or Kubernetes acceptance.
+
+## Unresolved acceptance limits
+
+- The broker stops fresh GitHub credential issuance during retirement. It does not retain/revoke previously issued installation tokens, which may remain usable until their reported expiry (the issuer accepts at most 3605 seconds). **Known-token revocation is not verified or implemented.** Token expiry and Platform lease expiry never prove writer termination. The real App credential lifecycle, including renewal/revocation, remains an S03 acceptance gap.
+- Producer `4c163a3c8162b5d7bc4becb63f00a04617cab5dc` lacks S01–S05 hosted contracts/artifact proof. Platform assignment/auth probes, producer metadata admission and canary observations remain explicitly unavailable; these are not successful fixture substitutes.
+- Actual node partition/termination, live network isolation/capacity, owned GitHub App/repository access, stable-origin browser entry, producer recovery and stable/pinned rollout remain unverified. The fresh disposable BuildKit launch failed at host user-namespace setup; historical scratch digests are not current producer proof.
+
+T15 remains partial until the required real gates and the remaining credential-lifecycle acceptance are resolved. No production infrastructure, key rotation, package publication or legacy data deletion was performed.

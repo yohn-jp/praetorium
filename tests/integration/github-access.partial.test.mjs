@@ -656,19 +656,41 @@ function gitEnvironment(base, token) {
   };
 }
 
+async function executeGit(cwd, args, env) {
+  return execFileAsync("git", args, {
+    cwd,
+    env,
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: 256 * 1024,
+    windowsHide: true,
+  });
+}
+
 async function git(cwd, args, env) {
   try {
-    const result = await execFileAsync("git", args, {
-      cwd,
-      env,
-      timeout: GIT_TIMEOUT_MS,
-      maxBuffer: 256 * 1024,
-      windowsHide: true,
-    });
+    const result = await executeGit(cwd, args, env);
     return { ok: true, stdout: result.stdout };
   } catch {
     assert.fail("bounded Git operation failed");
   }
+}
+
+function isDefinitiveGitAuthorizationDenial(error) {
+  if (
+    !Number.isInteger(error?.code) ||
+    error.code === 0 ||
+    error.killed === true ||
+    error.signal != null
+  ) {
+    return false;
+  }
+  const stderr = typeof error.stderr === "string" ? error.stderr : "";
+  return (
+    /The requested URL returned error: (?:401|403|404)\b/iu.test(stderr) ||
+    /^\s*remote:\s*(?:Write access to repository not granted\.?|Permission to .+ denied to .+|Repository not found\.?)\s*$/imu.test(
+      stderr,
+    )
+  );
 }
 
 async function gitRefHash(cwd, remote, ref, env, gate) {
@@ -698,19 +720,31 @@ async function deleteOwnedRef(cwd, remote, ref, expectedHash, env) {
   );
 }
 
-async function attemptOwnedRefPush(cwd, remote, ref, expectedHash, env, gate) {
-  const localHead = (await git(cwd, ["rev-parse", "HEAD"], env)).stdout.trim();
+async function attemptOwnedRefPush(cwd, remote, ref, expectedHash, env, gate, runGit = executeGit) {
+  let headResult;
+  try {
+    headResult = await runGit(cwd, ["rev-parse", "HEAD"], env);
+  } catch {
+    assert.fail("bounded Git operation failed");
+  }
+  const localHead = headResult.stdout.trim();
   assert.equal(localHead, expectedHash, "push source differs from its recorded cleanup hash");
   return gate(async () => {
     try {
       // The empty expected value makes branch creation atomic and refuses a ref that
       // another actor created after the preflight existence check.
-      await git(cwd, ["push", "--quiet", `--force-with-lease=${ref}:`, remote, `HEAD:${ref}`], env);
-      return { ok: true, created: true, uncertain: false };
-    } catch {
-      // A failed push may have an uncertain remote outcome. Never infer ownership
-      // from a matching hash and never delete a ref unless this process got success.
-      return { ok: false, created: false, uncertain: true };
+      await runGit(
+        cwd,
+        ["push", "--quiet", `--force-with-lease=${ref}:`, remote, `HEAD:${ref}`],
+        env,
+      );
+      return { ok: true, created: true, outcome: "created" };
+    } catch (error) {
+      // Only a completed GitHub authorization refusal proves that the push was
+      // rejected. Timeouts and transport failures remain uncertain even if a later
+      // read currently sees no ref, because the original receive-pack may finish late.
+      const denied = isDefinitiveGitAuthorizationDenial(error);
+      return { ok: false, created: false, outcome: denied ? "denied" : "uncertain" };
     }
   });
 }
@@ -735,20 +769,121 @@ async function observedRefAfterPush({
   repository,
   expectedCommit,
   recoveryRecords,
+  readRef = () => gitRefHash(cwd, remote, ref, env, gate),
 }) {
   const record = refRecoveryRecord(repository, ref, expectedCommit);
   let observedCommit;
   try {
-    observedCommit = await gitRefHash(cwd, remote, ref, env, gate);
+    observedCommit = await readRef();
   } catch {
-    if (push.uncertain) recoveryRecords.push(record);
+    if (push.outcome !== "created") recoveryRecords.push(record);
     throw new Error("could not inspect the run-specific Git ref after push");
   }
-  if (push.uncertain && observedCommit !== null) {
+  if (push.outcome === "uncertain") {
+    recoveryRecords.push({ ...record, ...(observedCommit ? { observedCommit } : {}) });
+    throw new Error("Git push outcome is uncertain; automatic deletion was withheld");
+  }
+  if (push.outcome === "denied" && observedCommit !== null) {
     recoveryRecords.push({ ...record, observedCommit });
+    throw new Error("GitHub denied the push but the run-specific ref exists");
   }
   return observedCommit;
 }
+
+test("uncertain Git push remains a recovery failure when the later ref snapshot is absent", async () => {
+  const expectedCommit = "a".repeat(40);
+  const repository = { id: 70001, owner: "owned-org", name: "t14-access" };
+  const ref = "refs/heads/praetorium-t14-uncertain";
+  const runGit = async (_cwd, args) => {
+    if (args[0] === "rev-parse") return { stdout: `${expectedCommit}\n` };
+    assert.equal(args[0], "push");
+    throw Object.assign(new Error("simulated transport timeout"), {
+      code: "ETIMEDOUT",
+      killed: true,
+      signal: null,
+      stderr: "fatal: unable to access remote: operation timed out",
+    });
+  };
+  const gate = async (effect) => effect();
+  const push = await attemptOwnedRefPush(
+    "/unused/local-repository",
+    "https://example.invalid/owned-org/t14-access.git",
+    ref,
+    expectedCommit,
+    {},
+    gate,
+    runGit,
+  );
+  assert.deepEqual(push, { ok: false, created: false, outcome: "uncertain" });
+
+  const recoveryRecords = [];
+  let snapshotReads = 0;
+  await assert.rejects(
+    observedRefAfterPush({
+      cwd: "/unused/local-repository",
+      remote: "https://example.invalid/owned-org/t14-access.git",
+      ref,
+      env: {},
+      gate,
+      push,
+      repository,
+      expectedCommit,
+      recoveryRecords,
+      readRef: async () => {
+        snapshotReads += 1;
+        return null;
+      },
+    }),
+    /Git push outcome is uncertain/u,
+  );
+  assert.equal(snapshotReads, 1);
+  assert.deepEqual(recoveryRecords, [refRecoveryRecord(repository, ref, expectedCommit)]);
+});
+
+test("only a completed explicit GitHub authorization refusal proves a negative push", async () => {
+  const expectedCommit = "b".repeat(40);
+  const repository = { id: 70002, owner: "owned-org", name: "t14-sibling" };
+  const ref = "refs/heads/praetorium-t14-denied";
+  const runGit = async (_cwd, args) => {
+    if (args[0] === "rev-parse") return { stdout: `${expectedCommit}\n` };
+    assert.equal(args[0], "push");
+    throw Object.assign(new Error("GitHub refused the push"), {
+      code: 128,
+      killed: false,
+      signal: null,
+      stderr: "fatal: unable to access remote: The requested URL returned error: 403",
+    });
+  };
+  const gate = async (effect) => effect();
+  const push = await attemptOwnedRefPush(
+    "/unused/local-repository",
+    "https://example.invalid/owned-org/t14-sibling.git",
+    ref,
+    expectedCommit,
+    {},
+    gate,
+    runGit,
+  );
+  assert.deepEqual(push, { ok: false, created: false, outcome: "denied" });
+
+  const recoveryRecords = [];
+  assert.equal(
+    await observedRefAfterPush({
+      cwd: "/unused/local-repository",
+      remote: "https://example.invalid/owned-org/t14-sibling.git",
+      ref,
+      env: {},
+      gate,
+      push,
+      repository,
+      expectedCommit,
+      recoveryRecords,
+      readRef: async () => null,
+    }),
+    null,
+  );
+  assert.deepEqual(recoveryRecords, []);
+});
 
 async function issueGitHubScopedTokens(config, client, now, gate) {
   const issuanceRest = guardedRestClient(
@@ -1128,13 +1263,13 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
       gate,
     );
     primaryCreated = primaryPush.created;
-    if (primaryPush.uncertain) {
+    if (primaryPush.outcome === "uncertain") {
       uncertainRefs.push(refRecoveryRecord(config.github.repository, primaryRef, primaryCommit));
     }
     assert.equal(
       primaryPush.ok,
       true,
-      `write-scoped token could not push its owned target ref; inspect only ${primaryRef} manually if the Git result was uncertain`,
+      `write-scoped token could not push its owned target ref: ${primaryRef}`,
     );
     await git(readRepo, ["init", "--quiet", "--initial-branch=main"], baseGitEnv);
     await git(readRepo, ["remote", "add", "origin", targetRemote], baseGitEnv);
@@ -1171,9 +1306,9 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
       recoveryRecords: uncertainRefs,
     });
     assert.equal(
-      readOnlyPush.ok,
-      false,
-      `read-scoped token unexpectedly pushed a branch; inspect only ${readOnlyRef} manually if the Git result was uncertain`,
+      readOnlyPush.outcome,
+      "denied",
+      `read-scoped push was not an explicit GitHub authorization refusal: ${readOnlyRef}`,
     );
     assert.equal(
       readOnlyObserved,
@@ -1216,9 +1351,9 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
       recoveryRecords: uncertainRefs,
     });
     assert.equal(
-      scopedPush.ok,
-      false,
-      `repository-scoped installation token unexpectedly pushed to its sibling repository; inspect only ${unrelatedRef} manually if the Git result was uncertain`,
+      scopedPush.outcome,
+      "denied",
+      `repository-scoped sibling push was not an explicit GitHub authorization refusal: ${unrelatedRef}`,
     );
     assert.equal(
       unrelatedObserved,
@@ -1276,7 +1411,7 @@ async function runOwnedProbe(config, effectiveExpiresAt) {
   }
   if (uncertainRefs.length > 0) {
     throw new Error(
-      `Git push outcome is uncertain; automatic deletion was withheld. Preserve these sanitized repository/ref/commit records for owner recovery: ${JSON.stringify(uncertainRefs)}${cleanupFailed ? "; cleanup of other confirmed owned resources also failed" : ""}`,
+      `Git refs need owner recovery; automatic deletion was withheld where ownership was not confirmed. Preserve these sanitized repository/ref/commit records: ${JSON.stringify(uncertainRefs)}${cleanupFailed ? "; cleanup of other confirmed owned resources also failed" : ""}`,
     );
   }
   if (cleanupFailed) {

@@ -104,11 +104,16 @@ It then exercises Gateway entry and issues/revokes short-lived credentials.
 Git writes use a unique run-specific branch and an atomic empty-ref lease; the
 runner only deletes branches for which its push command reported success.
 Cleanup verifies the branch still points to the exact commit created by this
-run and uses Git's exact-hash lease when deleting it. An ambiguous push result
-does not authorize deletion. The failure report preserves sanitized repository
-IDs/names, refs, and expected commit hashes for owner recovery after local temp
-metadata is removed. Cleanup failures also report the generated ref names; the
-runner never deletes pre-existing or concurrently changed refs.
+run and uses Git's exact-hash lease when deleting it. A negative read-only or
+sibling push is accepted only after Git reports a completed, explicit GitHub
+authorization refusal and a later read sees no ref. A timeout or other
+ambiguous push remains a failure even when that read currently sees no ref,
+because the original remote write could finish later. Ambiguous or otherwise
+unreconciled outcomes do not authorize deletion. The failure report preserves
+sanitized repository IDs/names, refs, and expected commit hashes for owner
+recovery after local temp metadata is removed. Cleanup failures also report the
+generated ref names; the runner never deletes pre-existing or concurrently
+changed refs.
 
 Run only after building the workspace and preparing the private config:
 

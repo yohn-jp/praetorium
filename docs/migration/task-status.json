@@ -52,7 +52,8 @@
     "kubernetesRbacPolicyCommit": "ec47ce5",
     "tenantPodAdmissionPolicyCommit": "1a8c1c1",
     "runtimeNamespacePsaCommit": "fe1adba",
-    "previousEvidenceTargetHead": "4a94433c2d955653f5900b527f6b528300f90e3e"
+    "previousEvidenceTargetHead": "4a94433c2d955653f5900b527f6b528300f90e3e",
+    "scope": "Historical verification cut; current bounded results are in latestCampaignVerification. The earlier heads and counts are preserved as history."
   },
   "statusLegend": {
     "implementation": ["present", "partial", "missing"],
@@ -102,7 +103,8 @@
     ],
     "note": "Read-only producer observation at eab0fad7c811aeedabe29fcd214598dc5207c178 records local Core/Full OCI and terminal P12 component evidence for frozen fc4 application code. Hosted S01-S04 interfaces and accepted S05 composition remain missing; Platform artifactDigest null. See docs/verification/PRODUCER-eab0fad.md. No Platform-to-producer conformance was run.",
     "previousProducerRevision": "fc4eea880ef895decf6161bf4f45cc958e9700b3",
-    "previousProducerStatusDocumentCommit": "69bd25c"
+    "previousProducerStatusDocumentCommit": "69bd25c",
+    "scope": "Historical preflight; latestProducerObservation and PRODUCER-STATUS.json control current producer gates."
   },
   "tasks": {
     "T00": {
@@ -261,7 +263,7 @@
         "docs/verification/PLATFORM-SECURITY-DELTA.md"
       ],
       "blockers": [
-        "An explicitly owned Kind cluster and actual API admission probes are available. Full provider scheduling, actual image identity, CNI isolation, ingress, capacity, writer-absence and partition acceptance remain unverified.",
+        "Owned Kind admission, real IPv4 policy packets, and the immutable Provisioner image projected-ServiceAccount GET/list subset passed. Full tenant application image/repository/auth, scheduling, ingress TLS, IPv6, capacity, writer/partition and T07 acceptance remain unverified.",
         "At production cut b3fbe6d, principal/PSA and static RBAC plus namespace/RoleBinding/resource/Pod/network/route guards are composed in the canonical base and staged apply. Kubernetes package 34/34 and root infra 47/47 pass; these are local proof, not cluster enforcement.",
         "Indefinite not-ready/unreachable tolerations prevent the default automatic node-eviction path but are not host fencing. Operator force deletion/node removal can erase API evidence before a process terminates; no force-delete was performed."
       ],
@@ -269,9 +271,10 @@
         "docs/migration/tasks/T07.md",
         "docs/verification/INDEPENDENT-REVIEW.md",
         "plugins/kubernetes/test/provider.test.ts",
-        "docs/verification/KUBERNETES-NETWORK-PACKETS.md"
+        "docs/verification/KUBERNETES-NETWORK-PACKETS.md",
+        "docs/verification/KUBERNETES-PROVIDER-READ.md"
       ],
-      "recordStatus": "Provider principal/PSA, RBAC/admission/network/route paths are integrated. Owned API probes exposed and validated CEL/IPv6 source fixes, integrated through f3327c1. Full scheduling/image/isolation/capacity/writer/partition acceptance remains unverified; see docs/verification/OWNED-KUBERNETES.md. Actual owned IPv4 packet component passed at 92a681d with live ingress/port/private-target controls, DNS, source renderer closure hashes and UID-guarded cleanup. Root independently confirmed all four namespaces absent and zero run Pods. This does not certify metadata/public HTTPS, IPv6, ingress TLS, capacity/writer integration or full T07/T14."
+      "recordStatus": "Provider principal/PSA, RBAC/admission/network/route paths are integrated. Owned API probes exposed and validated CEL/IPv6 source fixes, integrated through f3327c1. Full scheduling/image/isolation/capacity/writer/partition acceptance remains unverified; see docs/verification/OWNED-KUBERNETES.md. Actual owned IPv4 packet component passed at 92a681d with live ingress/port/private-target controls, DNS, source renderer closure hashes and UID-guarded cleanup. Root independently confirmed all four namespaces absent and zero run Pods. This does not certify metadata/public HTTPS, IPv6, ingress TLS, capacity/writer integration or full T07/T14. Actual source431dbe1 Provisioner image with projected ServiceAccount passed bootstrap Deployment list and known-absent inspect at test source9a07bc6, with zero reservation callbacks and five UID-cleaned resources independently absent; this does not cover an existing-namespace Pod census, capacity/D1, runtime writes or full Provisioner/producer behavior."
     },
     "T08": {
       "implementation": "present",
@@ -319,7 +322,7 @@
       "blockers": [
         "Typed Control Plane idle-candidate/idle-stop routes and ProvisionerIdleController are implemented, mounted and locally tested; they do not establish real Scriptorium S04/S05 observations. S02/S03 auth-probe/assignment transports and S04/S05 producer conformance remain unavailable, so the actual executable stays not-ready and claims no operations.",
         "Compatible rollback is not implemented: apps/provisioner/src/lifecycle-executor.ts:isRollbackCompatible returns false because no schema/data compatibility proof is carried. PLAN T09 and PLATFORM §6 require compatible rollback under lifecycle fences; keep it fail-closed until a real compatibility checker/evidence is implemented. Do not infer compatibility from equal image digests.",
-        "No live disposable cluster, real producer quiesce/resume/lease/rollback acceptance, actual writer-absence proof, or GitHub App revocation acceptance was run. The partial Worker credential probe uses synthetic state/provider responses only."
+        "Owned Kubernetes component runs passed for T07 only. No real producer-bound T09 quiesce/resume/lease/rollback, physical writer fencing or GitHub App revocation acceptance ran; the partial credential Worker probe uses synthetic state/provider responses."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T09.md",
@@ -808,10 +811,10 @@
   },
   "latestCampaignVerification": {
     "checkedAt": "2026-10-17",
-    "mainEvidenceCut": "c47f8c7010cb4c1cba0006f1b09facf2ef930138",
+    "mainEvidenceCut": "9a07bc6685dcd9fef6bd8da1d9e06f398aa551a7",
     "sourceImageCut": "431dbe1c7c86251894efea3de2cf0ec94499ca10",
     "baselineScope": "The earlier evidenceCut and its tests are historical cuts; this field and the linked component documents record later bounded verification without changing full task acceptance.",
-    "requiredFrozenInstallAndCheck": "passed at c47f8c7; 29 cached test-stage tasks plus workspace build/lint/typecheck, boundaries and schemas; explicit CNI and provider-read ESLint/format passed. During this check only Sol-owned COVERAGE.json/task-status.json edits were present; runtime and test sources matched the named HEAD.",
+    "requiredFrozenInstallAndCheck": "passed at clean 9a07bc6; 29 cached test-stage tasks plus workspace build/lint/typecheck, boundaries and schemas; explicit CNI and provider-read ESLint/format passed",
     "workerD1Do": "VERIFIED in fresh owned local fixed runner at 5e8d2ad; aggregate exit2, six BLOCKED/NOT_CHECKED, errors=[]",
     "serviceImages": "three actual builds and digest/config/all-layer content readback; bounded service process evidence; independently reviewed through worker c585be27",
     "buildWorkerProjection": "production prepare init and cold constructor-only Pod passed at source431dbe1; final Pod UID d73943fd-c716-410e-982d-bb7baf6b6d84; all containers exit0; no queue/build/service requests",
@@ -822,6 +825,6 @@
     "acceptedPlatformArtifactDigest": null,
     "remainingMissingFixedRunners": 3,
     "productionApplied": false,
-    "providerReadPath": "FAILED at c47f8c7 after exact image import and probe Pod execution; primary phase Failed, cause not localized because the harness checked phase before retaining its stage log. All temporary canonical Namespace/ServiceAccount/ClusterRole/Binding were subsequently observed NotFound by root. Diagnostic capture is in progress; no provider runtime acceptance is claimed."
+    "providerReadPath": "PASS bounded actual immutable Provisioner image + projected ServiceAccount Deployment list and known-absent inspect at 9a07bc6; eight Node tests passed (seven local + one real case), live case14074.185991ms / total20505.296999ms; zero reservation callbacks. Runtime imageID equals original config sha256:d6e3eeaa4253ea3157a9b25ef944e2a6e6c4c6ae14230809576ccb5b4398120d. Five UID-deleted resources were independently NotFound. Earlier kubeconfig/Pod failures remain preserved; full provider/capacity/D1/producer/T07/T14 is not certified."
   }
 }

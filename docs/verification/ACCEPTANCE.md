@@ -2,6 +2,16 @@
 
 Status: **BLOCKED** at production source cut `27142b0ab28e6c7323af3e2c11ed6121bf830574` (2026-10-17). This is a partial acceptance record. It does not certify the full Platform or deployment readiness.
 
+The table and execution details below are historical observations at that cut.
+Current bounded verification is recorded in `ACCEPTANCE.json.latestCampaignVerification`
+and [task status](../migration/task-status.json). Owned Kind now exists and
+[IPv4 packets](KUBERNETES-NETWORK-PACKETS.md) and the
+[actual Provisioner image read path](KUBERNETES-PROVIDER-READ.md) passed.
+These do not pass the full Kubernetes category. GitHub/browser fixed runners
+now exist; the three missing fixed runners are BuildKit/registry, producer
+recovery and stable rollout. Public Core/Full presets exist, but the accepted
+Platform composition digest remains null. Full T14 remains BLOCKED.
+
 The fixed command `node scripts/verify-integration.mjs --environment /tmp/praetorium-t14-workers-inventory.json` returned exit 2, errors `[]`, at `2026-10-17T00:30:29.367Z`. Its explicitly owned local inventory supports only `workers-d1-do`. The owner is `sophia uid=1000`; expiry is `2026-10-17T00:52:16.149799Z`. The temporary D1/DO resources are removed in the runner's `finally` block. The checked-in acceptance inventory remains an unprovisioned draft; it was not used as ownership proof.
 
 | Category             | Status / proof        | Evidence or blocker                                                                                                                                                                      |
@@ -53,7 +63,6 @@ not a cluster pass. The fresh fixed harness at this cut VERIFIED only actual loc
 Worker/D1/DO, returning exit 2 with six blocked categories and errors `[]`.
 See [the required owned inputs](KUBERNETES-ISOLATION.md).
 
-
 ## Fixed runner outcome protocol
 
 At verifier checkpoint `d1f5d37`, each fixed runner receives a fresh
@@ -62,7 +71,12 @@ producer prerequisites can be distinguished from failed assertions by writing
 one strict JSON object and exiting nonzero:
 
 ```json
-{"reportVersion":1,"category":"github-access","status":"BLOCKED","reasonCode":"OWNER_INPUT_MISSING"}
+{
+  "reportVersion": 1,
+  "category": "github-access",
+  "status": "BLOCKED",
+  "reasonCode": "OWNER_INPUT_MISSING"
+}
 ```
 
 Only `reportVersion`, the exact fixed `category`, `status` and `reasonCode` are

@@ -327,8 +327,10 @@ Build Worker secret-mount and runtime-init component checks are complete as
 described below. The owned cluster remains available for a separately bounded
 T07 packet-flow check; no result from that check is implied here. Kind's
 networking does not certify NetworkPolicy packet enforcement, so CNI
-enforcement remains **NOT_CHECKED**; no producer artifact or integrated T14
-flow was used.
+enforcement was **NOT_CHECKED at that historical cut**; no producer artifact or
+integrated T14 flow was used. The later [IPv4 packet component](KUBERNETES-NETWORK-PACKETS.md)
+and [real Provisioner image read component](KUBERNETES-PROVIDER-READ.md) passed
+with UID-guarded cleanup. Their stated limits still exclude full T07/T14.
 
 ## Build Worker projected-secret preparation and constructor check
 

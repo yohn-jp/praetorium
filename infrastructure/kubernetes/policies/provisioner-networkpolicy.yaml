@@ -101,7 +101,7 @@ spec:
         object.spec.egress[1].to[0].ipBlock.cidr == "0.0.0.0/0" &&
         object.spec.egress[1].to[0].ipBlock.except == ["10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16", "168.63.129.16/32", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"] &&
         object.spec.egress[1].to[1].ipBlock.cidr == "::/0" &&
-        object.spec.egress[1].to[1].ipBlock.except == ["::/128", "::1/128", "::/96", "::ffff:0:0/96", "2001:db8::/32", "fc00::/7", "fec0::/10", "fe80::/10", "ff00::/8"] &&
+        object.spec.egress[1].to[1].ipBlock.except == ["::/128", "::1/128", "::/96", "::fffe:0:0/95", "2001:db8::/32", "fc00::/7", "fec0::/10", "fe80::/10", "ff00::/8"] &&
         object.spec.egress[1].ports.size() == 1 &&
         !has(object.spec.egress[1].ports[0].endPort) &&
         object.spec.egress[1].ports[0].protocol == "TCP" &&

@@ -28,7 +28,21 @@ reserved, metadata, and non-public CIDR exclusions as the static system
 policies. This includes IPv4-compatible (`::/96`) and mapped
 (`::ffff:0:0/96`) destinations, IPv6 site-local (`fec0::/10`), documentation,
 unspecified and multicast ranges, IPv4 multicast/reserved (`224.0.0.0/4`,
-`240.0.0.0/4`), and `168.63.129.16/32`.
+`240.0.0.0/4`), and `168.63.129.16/32`. The mapped-address exclusion is
+expressed as `::fffe:0:0/95`, which covers exactly `::fffe:0:0/96` and
+`::ffff:0:0/96`. The adjacent `::fffe:0:0/96` half also lies in the
+IETF-reserved `0000::/8` range [RFC 4291 §4](https://www.rfc-editor.org/rfc/rfc4291#section-4),
+and IANA marks the mapped `::ffff:0:0/96` range as not forwardable or globally
+reachable in the [IPv6 Special-Purpose Address Registry](https://www.iana.org/assignments/iana-ipv6-special-registry).
+This aggregate is needed because Kubernetes v1.35.0 validates an exception
+with `cidrIPNet.Contains(exceptCIDR.IP)` and Go 1.25.0's
+[`net.IPNet.Contains`](https://github.com/golang/go/blob/go1.25.0/src/net/ip.go#L449-L463)
+unmaps an IPv4-mapped address before checking the address-family length; the
+original mapped `/96` therefore fails containment under an IPv6 `::/0` parent.
+The validation path is in [Kubernetes v1.35.0
+`ValidateIPBlock`](https://github.com/kubernetes/kubernetes/blob/v1.35.0/pkg/apis/networking/validation/validation.go#L229-L254).
+This CIDR correction establishes API validity and preserves the policy's
+exclusion intent; it does not assert packet-level CNI behavior.
 
 The IngressRoute accepts one `websecure` host derived from the stable
 `ins-<instance-id>` hostname and one service with the exact local runtime

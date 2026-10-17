@@ -531,7 +531,7 @@ describe("Kubernetes runtime provider", () => {
       "::/128",
       "::1/128",
       "::/96",
-      "::ffff:0:0/96",
+      "::fffe:0:0/95",
       "2001:db8::/32",
       "fc00::/7",
       "fec0::/10",

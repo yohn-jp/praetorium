@@ -201,7 +201,7 @@ const networkPolicyScenarios = [
   }),
   rejected("ipv4-mapped-ipv6-egress-enabled", networkPolicy, (object) => {
     object.spec.egress[1].to[1].ipBlock.except = object.spec.egress[1].to[1].ipBlock.except.filter(
-      (cidr) => cidr !== "::ffff:0:0/96",
+      (cidr) => cidr !== "::fffe:0:0/95",
     );
   }),
   rejected("site-local-ipv6-egress-enabled", networkPolicy, (object) => {
@@ -344,7 +344,7 @@ test("target admission covers the actual renderer's tenant policy and endpoint s
     "::/128",
     "::1/128",
     "::/96",
-    "::ffff:0:0/96",
+    "::fffe:0:0/95",
     "2001:db8::/32",
     "fc00::/7",
     "fec0::/10",

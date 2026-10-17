@@ -12,8 +12,8 @@ function policyDocument(text, name) {
   assert.ok(document, `missing NetworkPolicy ${name}`);
   assert.match(document, /^apiVersion: networking\.k8s\.io\/v1$/mu);
   assert.match(document, /^kind: NetworkPolicy$/mu);
-  assert.match(document, /^  namespace: praetorium-system$/mu);
-  assert.match(document, /^  policyTypes:\n    - Ingress\n    - Egress$/mu);
+  assert.match(document, /^ {2}namespace: praetorium-system$/mu);
+  assert.match(document, /^ {2}policyTypes:\n {4}- Ingress\n {4}- Egress$/mu);
   return document;
 }
 
@@ -85,8 +85,8 @@ test("Provisioner reaches only the owned Scriptorium listener for runtime contro
   );
   assert.match(labels, /MANAGED_BY_LABEL_VALUE = "arcadia-provisioner"/u);
 
-  assert.match(policy, /^    # @@PROVISIONER_API_EGRESS_RULES@@$/mu);
-  assert.match(policy, /^    # @@PROVISIONER_PRIVATE_CONTROL_PLANE_EGRESS_RULES@@$/mu);
+  assert.match(policy, /^ {4}# @@PROVISIONER_API_EGRESS_RULES@@$/mu);
+  assert.match(policy, /^ {4}# @@PROVISIONER_PRIVATE_CONTROL_PLANE_EGRESS_RULES@@$/mu);
 });
 
 test("Instance Access has Gateway egress and no tenant-runtime egress", async () => {
@@ -98,7 +98,7 @@ test("Instance Access has Gateway egress and no tenant-runtime egress", async ()
   const instanceAccess = policyDocument(policy, "praetorium-instance-access-network");
 
   assert.doesNotMatch(instanceAccess, /scriptorium|arcadia\.io\/runtime-cluster-id/u);
-  assert.match(instanceAccess, /^    # @@INSTANCE_ACCESS_PRIVATE_GATEWAY_EGRESS_RULES@@$/mu);
+  assert.match(instanceAccess, /^ {4}# @@INSTANCE_ACCESS_PRIVATE_GATEWAY_EGRESS_RULES@@$/mu);
   assert.match(handler, /new URL\(path, config\.gatewayUrl\)/u);
   assert.match(handler, /\/internal\/instance-access\/(handoff|refresh|revoke)/u);
   assert.match(
@@ -128,7 +128,7 @@ test("public HTTPS egress retains reserved and metadata IP exclusions", async ()
     "::/128",
     "::1/128",
     "::/96",
-    "::ffff:0:0/96",
+    "::fffe:0:0/95",
     "2001:db8::/32",
     "fc00::/7",
     "fec0::/10",
@@ -136,7 +136,7 @@ test("public HTTPS egress retains reserved and metadata IP exclusions", async ()
     "ff00::/8",
   ];
   const publicHttpsRules = policy.matchAll(
-    /    - to:\n        - ipBlock:\n            cidr: 0\.0\.0\.0\/0[\s\S]*?      ports:\n        - protocol: TCP\n          port: 443/gmu,
+    / {4}- to:\n {8}- ipBlock:\n {12}cidr: 0\.0\.0\.0\/0[\s\S]*? {6}ports:\n {8}- protocol: TCP\n {10}port: 443/gmu,
   );
   const rules = [...publicHttpsRules].map(([rule]) => rule);
   assert.equal(rules.length, 2, "both static system policies require one public HTTPS rule");

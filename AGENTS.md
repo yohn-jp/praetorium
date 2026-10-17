@@ -1,8 +1,11 @@
 # Praetorium
 
-Authority: Epic #1, current owner instructions, docs/architecture/PLATFORM.md and docs/migration/PLAN.md.
-Use TypeScript/Node 24, pnpm 11.18.0 and explicit provider packages. Repository identity is numeric GitHub repository ID; user membership is never an independent instance ACL.
-Sol integrates main; implementation workers use isolated worktrees; reviewers are read-only and separate from implementers. Root manifests/lockfile, contracts, D1 migration order and final wiring are Sol-owned.
-No GitHub Actions, template sync or Inari. Source Arcadia and producer Scriptorium are read-only; missing producer contracts are explicit handoffs.
-Do not apply production infrastructure, rotate keys, publish releases/packages or delete legacy data. Tests use explicitly owned disposable environments. Record blocked and unexecuted gates accurately.
-Run `corepack pnpm@11.18.0 install --frozen-lockfile` and `corepack pnpm@11.18.0 check`. Never treat unit fixtures as real producer acceptance.
+Authority order for product behavior: (1) latest explicit owner instructions, (2) the original acceptance contract in [Epic #1](https://github.com/yohn-jp/praetorium/issues/1), (3) implementation code only as evidence of current behavior. Historical architecture and migration plans are not independent product requirements. Read [docs/architecture/SYSTEM.md](docs/architecture/SYSTEM.md), [EXECUTION.md](docs/architecture/EXECUTION.md) and [REVIEW.md](docs/architecture/REVIEW.md) for the current actor map, real execution traces and unresolved design questions.
+
+Use TypeScript/Node 24 and pnpm 11.18.0, with the existing explicit provider packages. Repository identity is numeric GitHub repository ID; users are authorization principals, not instance owners. Respect current generation, runtime epoch, immutable artifact admission, quiesce, writer-absence proof, and rollback compatibility evidence. Do not rationalize unnecessary constant Cloudflare polling as part of those requirements.
+
+Sol owns main integration for the coordinated campaign; implementation workers use isolated worktrees; reviewers remain read-only and separate from implementation. Keep shared manifests, contracts, D1 migration ordering and final wiring under a single integration owner. Do not force-push, rewrite history, or modify unrelated files.
+
+**CI/GitHub Actions verification is allowed by the owner's latest instruction** (superseding the older no-CI text). This does not authorize publishing service images, creating releases, deploying production Cloudflare/D1/DNS/K3s, rotating keys, or deleting legacy/user data. Do not initiate Inari or organization template synchronization. Preserve source provenance; existing Arcadia source and separately coordinated Scriptorium changes remain outside routine Praetorium writes.
+
+For code changes, run `corepack pnpm@11.18.0 install --frozen-lockfile` and `corepack pnpm@11.18.0 check`; document the actual result. Real integration testing requires explicitly owned disposable inputs and must label missing gates BLOCKED/NOT_CHECKED. A unit fixture or passing CI does not certify hosted producer, registry or browser acceptance.

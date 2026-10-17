@@ -1,5 +1,7 @@
 # Praetorium Full Migration Implementation Plan
 
+> **Historical T00–T15 implementation plan.** This is not the current product specification and does not establish that the present architecture is correct. Use [architecture/SYSTEM.md](../architecture/SYSTEM.md), [EXECUTION.md](../architecture/EXECUTION.md), [REVIEW.md](../architecture/REVIEW.md) and [the migration index](README.md). Only [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) and current explicit owner instructions authorize product behavior. The owner now permits CI, superseding prior no-GitHub-Actions instructions.
+
 For agentic workers: use the available plan-execution/subagent workflow for the fixed tasks below. Sol coordinates the complete campaign; implementation workers and independent read-only reviewers are separate. Do not impose a stop/reconfirmation after each task.
 
 Goal: migrate Arcadia Platform into a deployable, repository-scoped Praetorium with GitHub App access, selected-module OCI composition and safe on-demand Scriptorium routing.

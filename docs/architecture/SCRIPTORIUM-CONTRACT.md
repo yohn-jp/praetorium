@@ -1,5 +1,7 @@
 # Scriptorium producer contract for Praetorium
 
+> **Producer interface reference, not a product topology or current live-certification claim.** The initial [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) and current owner direction define product scope. Consult [SYSTEM.md](SYSTEM.md) and [EXECUTION.md](EXECUTION.md) for present actor/data ownership; inspect exact versioned code/Artifact before treating a contract listed here as implemented. Many lower sections contain historical producer observations.
+
 Status: required cross-repository contract, not a claim of producer implementation. Authority: the current Hosted Integration Completion instruction, Epic #1 and [PLATFORM.md](PLATFORM.md). Sol now coordinates implementation in both repositories. The historical read-only producer observations below record earlier cuts and do not prohibit this campaign's producer implementation.
 
 ## Current hosted campaign contract decisions

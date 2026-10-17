@@ -54,9 +54,20 @@ function splitUrlTarget(target: string): { endpoint: string; repositoryScope: st
     throw new Error("Restic destination URL must not contain a query or fragment");
   if (isLoopbackHost(url.hostname))
     throw new Error("Restic destination must not use a loopback or local endpoint");
+  const authorityStart = target.indexOf("://") + 3;
+  const pathStart = target.indexOf("/", authorityStart);
+  const rawPath = pathStart < 0 ? "/" : target.slice(pathStart);
+  let path: string;
+  try {
+    // Restic's Go URL parser decodes escaped path separators but does not apply
+    // WHATWG URL dot-segment normalization before splitting the S3 bucket.
+    path = decodeURIComponent(rawPath);
+  } catch {
+    throw new Error("Restic destination URL path is invalid");
+  }
   return {
     endpoint: url.origin,
-    repositoryScope: url.pathname.replace(/^\/+|\/+$/g, ""),
+    repositoryScope: path.startsWith("/") ? path.slice(1) : path,
   };
 }
 
@@ -114,7 +125,11 @@ function destinationParts(
   )
     throw new Error("Restic destination must not use a local filesystem path");
   const url = splitUrlTarget(target);
-  if (url) return url;
+  if (url) {
+    if (backend === "s3" && !url.repositoryScope.split("/", 1)[0])
+      throw new Error("S3 Restic destination URL must include its remote bucket");
+    return url;
+  }
   if (backend === "rest") throw new Error("REST Restic destinations must use an HTTP or HTTPS URL");
   if (backend === "sftp") {
     const sftp = splitSftpTarget(target);

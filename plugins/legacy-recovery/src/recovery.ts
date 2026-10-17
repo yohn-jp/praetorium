@@ -980,6 +980,7 @@ function wranglerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(
     Object.entries(env).filter(
       ([name]) =>
+        name !== "PRAETORIUM_OFFHOST_RESTIC_REPOSITORY" &&
         !["RESTIC_", "AWS_", "AZURE_", "B2_", "GOOGLE_", "RCLONE_"].some((prefix) =>
           name.startsWith(prefix),
         ),

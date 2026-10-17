@@ -69,7 +69,7 @@ For a remote D1 backup in one explicit operation, `d1-backup` requires `--remote
 
 Set both `RESTIC_REPOSITORY` and `PRAETORIUM_OFFHOST_RESTIC_REPOSITORY` from the owner's protected recovery configuration to the same exact repository URI. This binds the effective Restic repository to the destination approved for that recovery environment. Do not derive the approval value from an untrusted command argument. The validator also rejects local filesystem paths and exposed loopback/local hosts before starting Restic. A matching URI is configuration evidence; the real backup acceptance run must still use and verify the owner's actual remote storage account and destination.
 
-For S3-compatible storage, put the actual endpoint directly in the repository URI, for example `s3:https://backup.example.test:9000/bucket`. The validator binds and checks that parsed endpoint. The command rejects `RESTIC_REPOSITORY_FILE`, which would introduce a second Restic repository source.
+For S3-compatible storage, put the actual endpoint directly in the repository URI, for example `s3:https://backup.example.test:9000/bucket`. The validator binds and checks that parsed endpoint. The command rejects `RESTIC_REPOSITORY_FILE` as an unsupported conflicting configuration; recovery requires the single owner-approved `RESTIC_REPOSITORY` URI.
 
 ```sh
 pnpm --filter @praetorium/legacy-recovery recovery -- d1-backup \

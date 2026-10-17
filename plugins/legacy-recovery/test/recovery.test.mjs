@@ -514,6 +514,23 @@ test("off-host Restic destination validation binds owner-approved remote identit
       }),
     /loopback or local endpoint/,
   );
+  for (const [repository, error] of [
+    ["s3:https://backup-owned.example.test", /must include its remote bucket/],
+    ["s3:https://backup-owned.example.test/", /must include its remote bucket/],
+    ["s3:https://backup-owned.example.test//bucket", /must include its remote bucket/],
+    ["s3:https://backup-owned.example.test/%2Fbucket", /must include its remote bucket/],
+    ["s3:https://backup-owned.example.test/%GGbucket", /URL path is invalid/],
+  ]) {
+    assert.throws(
+      () =>
+        validateOffHostResticDestination({
+          RESTIC_REPOSITORY: repository,
+          PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: repository,
+          RESTIC_PASSWORD: "opaque-test-password",
+        }),
+      error,
+    );
+  }
   assert.throws(
     () =>
       validateOffHostResticDestination({
@@ -601,6 +618,16 @@ test("off-host Restic destination validation binds owner-approved remote identit
         }),
       ),
     },
+  );
+
+  const encodedPathRepository = "s3:https://backup-owned.example.test/recovery%2Fsecondary";
+  assert.equal(
+    validateOffHostResticDestination({
+      RESTIC_REPOSITORY: encodedPathRepository,
+      PRAETORIUM_OFFHOST_RESTIC_REPOSITORY: encodedPathRepository,
+      RESTIC_PASSWORD: "opaque-test-password",
+    }).repositoryScope,
+    "recovery/secondary",
   );
 
   const sftpRepository = "sftp:operator@backup.example.test:relative/recovery";
@@ -708,6 +735,7 @@ test("remote D1 CLI path exports only the named remote database, keeps Restic se
   assert.ok(resticBackup.args.includes("arcadia-platform-d1"));
   assert.ok(resticBackup.args.some((argument) => argument.startsWith("recovery-point:")));
   assert.equal(info.env.RESTIC_PASSWORD, undefined);
+  assert.equal(info.env.PRAETORIUM_OFFHOST_RESTIC_REPOSITORY, undefined);
   assert.equal(restic.env.CLOUDFLARE_API_TOKEN, undefined);
   assert.equal(restic.env.PRAETORIUM_OFFHOST_RESTIC_REPOSITORY, undefined);
   assert.equal((await stat(output)).mode & 0o777, 0o600);

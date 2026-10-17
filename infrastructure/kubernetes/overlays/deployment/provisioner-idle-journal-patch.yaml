@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: praetorium-provisioner
+  namespace: praetorium-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: provisioner
+          env:
+            - name: PROVISIONER_IDLE_JOURNAL_PATH
+              value: /var/lib/praetorium/provisioner/idle-journal/state.json
+          volumeMounts:
+            - name: provisioner-idle-journal
+              mountPath: /var/lib/praetorium/provisioner/idle-journal
+      volumes:
+        - name: provisioner-idle-journal
+          persistentVolumeClaim:
+            claimName: praetorium-provisioner-idle-journal

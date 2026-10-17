@@ -2,4 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
+  - provisioner-idle-journal.yaml
   - tls.yaml
+patches:
+  - path: provisioner-idle-journal-patch.yaml

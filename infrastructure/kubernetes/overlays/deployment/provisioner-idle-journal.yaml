@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: praetorium-provisioner-idle-journal
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/name: provisioner
+    app.kubernetes.io/part-of: praetorium
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 8Mi

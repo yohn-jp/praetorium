@@ -63,9 +63,13 @@ new dedicated VM (the bootstrap refuses existing `/etc/projects` or
 `/etc/projid` mappings).
 
 Install the reviewed and pinned `buildkitd`, `rootlesskit` and
-`slirp4netns` executables (plus `xfsprogs`, `uidmap`,
+`slirp4netns` executables, and an OCI runtime (`runc` or `buildkit-runc`)
+(plus `xfsprogs`, `uidmap`,
 `apparmor-utils`/parser, `iproute2`, `python3`). Do not use mutable
-`latest` binaries. Fill the operator input JSON with:
+`latest` binaries. Preflight requires the OCI runtime on PATH; apply writes
+its resolved path into the BuildKit worker configuration. Certificate IP
+checks also inspect the match result, since OpenSSL 3.0 can return success
+for a mismatched IP. Fill the operator input JSON with:
 
 - Private listening IPv4 address and TCP port; both Build Worker *client CIDRs*
   and approved build-input/proxy/registry *egress CIDRs*.
@@ -155,3 +159,10 @@ A successful static deployment is **not** Hosted integration certification.
 See [reproducible deployment](REPRODUCIBLE-DEPLOYMENT.md) for its exact gates
 and [hosted integration](../verification/HOSTED-INTEGRATION-RUNBOOK.md) for
 separate real-runtime acceptance.
+
+## Preflight regression tests
+
+Run `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v`
+with OpenSSL on PATH. These tests cover missing OCI runtimes and certificate
+IP matching, including OpenSSL 3.0's zero-exit mismatch. They do not apply a
+host role or replace the live Ubuntu acceptance checks above.

@@ -104,6 +104,20 @@ def executable(name):
     return found
 
 
+def oci_runtime():
+    for name in ("runc", "buildkit-runc"):
+        if shutil.which(name):
+            return executable(name)
+    raise ValueError("missing preinstalled OCI runtime: runc or buildkit-runc")
+
+
+def verify_certificate_ip(cert, address):
+    # OpenSSL 3.0's x509 -checkip can exit zero even when the IP does not match.
+    result = output("openssl", "x509", "-in", cert, "-checkip", address, "-noout")
+    require(result == "IP " + address + " does match certificate",
+            "server certificate does not match bindAddress")
+
+
 def host_preflight(role):
     os_release = dict(
         line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines()
@@ -191,7 +205,7 @@ def build_preflight(config):
     key = config["tls"]["serverKeyFile"]
     execute("openssl", "x509", "-in", cert, "-checkend", "3600", "-noout")
     execute("openssl", "x509", "-in", config["tls"]["clientCaFile"], "-noout")
-    execute("openssl", "x509", "-in", cert, "-checkip", address, "-noout")
+    verify_certificate_ip(cert, address)
     pub_from_cert = output("openssl", "x509", "-in", cert, "-pubkey", "-noout")
     pub_from_key = output("openssl", "pkey", "-in", key, "-pubout")
     require(pub_from_cert == pub_from_key, "server certificate and private key do not match")
@@ -203,6 +217,7 @@ def build_preflight(config):
     for tool in ("rootlesskit", "slirp4netns", "buildkitd", "xfs_quota",
                  "apparmor_parser", "useradd", "getent"):
         executable(tool)
+    oci_runtime()
     require(BUILD_ROOT.is_mount(), "dedicated XFS cache must already be mounted; never formats disks")
     require(not any(BUILD_ROOT.iterdir()), "dedicated BuildKit cache is not empty; refusing to relabel existing data")
     require(not Path("/var/run/docker.sock").exists(), "privileged Docker socket exists on BuildKit host")
@@ -271,6 +286,7 @@ def apply_build(config):
     rootlesskit = executable("rootlesskit")
     slirp4netns = executable("slirp4netns")
     buildkitd = executable("buildkitd")
+    runtime = oci_runtime()
     execute("useradd", "--system", "--user-group", "--create-home", "-F",
             "--home-dir", str(BUILD_ROOT), "--shell", "/usr/sbin/nologin", "buildkit")
     for filename in ("/etc/subuid", "/etc/subgid"):
@@ -296,6 +312,7 @@ def apply_build(config):
         '    key = "/run/credentials/praetorium-buildkit.service/server.key"',
         '    ca = "/run/credentials/praetorium-buildkit.service/client-ca.crt"',
         '[worker.oci]', '  rootless = true',
+        '  binary = ' + json.dumps(runtime),
         '  max-parallelism = 1', '  gc = true',
         '  maxUsedSpace = ' + str(config["quotaMiB"] * 1024 * 1024),
         '  reservedSpace = "5%"', ''

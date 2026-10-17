@@ -4,15 +4,24 @@ import type {
 } from "@praetorium/auth";
 import { GitHubApiError } from "./api.js";
 import type {
+  RuntimeIdentity,
   GitCredentialBroker,
   RepositoryBindingReader,
   RuntimeBindingReader,
   RuntimeIdentityAuthenticator,
   RuntimeIdentityProof,
 } from "./types.js";
-import type { GitHubInstallationTokenIssuer } from "./installation-token.js";
+import type {
+  GitHubInstallationTokenIssuer,
+  InstallationToken,
+} from "./installation-token.js";
 
 export const GITHUB_PUBLISH_RECEIPT_AUDIENCE = "praetorium-git-publisher";
+
+/** Durable lifecycle tracking required before a runtime bearer token can be returned. */
+export interface RuntimeGitCredentialLifecycle {
+  recordIssued(identity: RuntimeIdentity, credential: InstallationToken): Promise<boolean>;
+}
 
 export interface GitCredentialBrokerConfig {
   readonly runtimeAuthenticator: RuntimeIdentityAuthenticator;
@@ -21,6 +30,7 @@ export interface GitCredentialBrokerConfig {
   readonly accessProvider: FreshRepositoryAccessChecker;
   readonly mutationReceiptVerifier: MutationAuthorizationReceiptVerifier;
   readonly tokenIssuer: GitHubInstallationTokenIssuer;
+  readonly credentialLifecycle?: RuntimeGitCredentialLifecycle;
   readonly now?: () => Date;
 }
 
@@ -154,6 +164,15 @@ export function createGitCredentialBroker(config: GitCredentialBrokerConfig): Gi
           permission,
           instant.toISOString(),
         );
+        if (config.credentialLifecycle) {
+          let recorded: boolean;
+          try {
+            recorded = await config.credentialLifecycle.recordIssued(identity, credential);
+          } catch {
+            return { status: "unavailable", reason: "runtime_credential_registry_unavailable" };
+          }
+          if (!recorded) return { status: "denied", reason: "runtime_retired" };
+        }
         return {
           status: "issued",
           credential: {

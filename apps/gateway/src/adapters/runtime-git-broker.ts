@@ -11,6 +11,7 @@ import {
   createRuntimeIdentityAuthenticator,
   GITHUB_PUBLISH_RECEIPT_AUDIENCE,
   type RepositoryBindingReader,
+  type RuntimeGitCredentialLifecycle,
   type RuntimeBindingReader,
 } from "@praetorium/github";
 import { z } from "zod";
@@ -60,6 +61,8 @@ export interface RuntimeGitCredentialBrokerConfig {
   readonly githubAppPrivateKeyPem: string;
   readonly repositoryBindings: RepositoryBindingReader;
   readonly accessProvider: FreshRepositoryAccessChecker;
+  /** Durable registry/revocation lifecycle configured by the trusted Gateway context. */
+  readonly credentialLifecycle?: RuntimeGitCredentialLifecycle;
   /** Public-only Gateway signing-key registry loaded by the trusted Gateway context. */
   readonly gatewayKeyRegistry: readonly KeyRecord[];
   readonly controlPlaneTimeoutMs?: number;
@@ -380,6 +383,7 @@ export function createRuntimeGitCredentialBroker(
     accessProvider: config.accessProvider,
     mutationReceiptVerifier: receiptVerifier,
     tokenIssuer,
+    ...(config.credentialLifecycle ? { credentialLifecycle: config.credentialLifecycle } : {}),
     ...(config.now ? { now: config.now } : {}),
   });
 }

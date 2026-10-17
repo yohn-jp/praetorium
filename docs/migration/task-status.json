@@ -5,22 +5,27 @@
     "repository": "yohn-jp/praetorium",
     "targetWorktree": "/home/sophia/src/praetorium",
     "targetBranch": "main",
-    "targetHead": "27142b0ab28e6c7323af3e2c11ed6121bf830574",
-    "ledgerWorktree": "/tmp/praetorium-coverage-final-487",
-    "ledgerBranch": "worker/coverage-final-487",
-    "ledgerBaseHead": "da46030c40acbf3e5fbe3e510e5c647747296dd4",
+    "targetHead": "4a94433c2d955653f5900b527f6b528300f90e3e",
+    "ledgerWorktree": "/tmp/praetorium-ledger-kube-recovery-20261017",
+    "ledgerBranch": "worker/coverage-kube-recovery-20261017",
+    "ledgerBaseHead": "4a94433c2d955653f5900b527f6b528300f90e3e",
     "sourceRepository": "yohn-jp/arcadia-platform",
     "sourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
     "sourceSnapshotPath": "/tmp/praetorium-campaign-source",
     "sourceSnapshotGitMetadata": "unavailable; source revision is pinned in docs/migration/PLAN.md and SOURCE-HANDLERS.json",
-    "producerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
-    "producerStatusDocumentCommit": "5089752",
+    "producerRevision": "271d7b28ba40109f502b0bb196a81afdc47cd1d6",
+    "producerStatusDocumentCommit": "4a94433",
     "partialWorkerTestEvidenceCommit": "37f187c",
+    "productionSourceOnlyCommit": "fe1adba",
+    "kubernetesPrincipalTestCommit": "120b007",
+    "legacyMetadataPartialTestCommit": "ba9bdc1",
+    "latestDocumentationHead": "4a94433c2d955653f5900b527f6b528300f90e3e",
     "testsRunForThisLedger": [
-      "corepack pnpm@11.18.0 install --frozen-lockfile (pass at exact production source cut 27142b0ab28e6c7323af3e2c11ed6121bf830574; /tmp/praetorium-current-install.log)",
-      "corepack pnpm@11.18.0 check (pass at exact production source cut; 29/29 Turbo tasks, provider boundaries and generated schema drift pass; /tmp/praetorium-current-check.log)",
-      "node --test tests/integration/verify-integration.test.mjs (pass, 9/9 in the current ledger worktree; base HEAD da46030c40acbf3e5fbe3e510e5c647747296dd4 plus the two ledger files under review; source-handler IDs, parent IDs and harness mapping compatibility)",
-      "node scripts/verify-integration.mjs --environment /tmp/praetorium-t14-workers-inventory.json (exit 2, expected aggregate BLOCKED; /tmp/praetorium-27142b0-acceptance.json generated 2026-10-17T00:30:29.367Z, errors=[], workers-d1-do VERIFIED only)",
+      "corepack pnpm@11.18.0 install --frozen-lockfile passed at code cut 88b674d; package manifests and lockfile are unchanged through pinned target 4a94433. Full check exited 0 at 88b674d via installed pnpm 11.18.0 binary; the literal corepack check invocation exited before checks because nested pnpm resolved v12.10.1.",
+      "node --test tests/integration/verify-integration.test.mjs (pass, 9/9 in the ledger worktree after the candidate JSON edits; pinned production source cut 4a94433)",
+      "node --test tests/infra/provisioner-rbac.test.mjs tests/infra/tenant-pod-policy.test.mjs (pass, 5/5 at 4a94433; manifest/provider-graph structure only, no cluster acceptance)",
+      "pnpm --filter @praetorium/kubernetes test (pass, 32/32 at 4a94433; /tmp/praetorium-4a-kubernetes-package.log; local provider tests, no cluster acceptance)",
+      "RESTIC_BIN=/tmp/praetorium-t13-owned-restore-tools/restic_0.19.1_linux_amd64 WRANGLER_BIN=/home/sophia/src/praetorium/node_modules/.bin/wrangler node --test tests/integration/legacy-metadata-restore.partial.test.mjs (pass, 1/1 at 4a94433; /tmp/praetorium-4a-legacy-metadata-partial.log; actual local tools and synthetic metadata only)",
       "node --test tests/integration/workers-d1-do.test.mjs (pass, 1/1, 3201.90201 ms at source cut 27142b0; /tmp/praetorium-27142b0-workers.log)",
       "node --test tests/e2e/gateway-worker-security.partial.test.mjs (pass, 1/1, exact source cut 27142b0, partial local Worker/Miniflare/Chromium only; /tmp/praetorium-coverage-current-gateway.log)",
       "node --test tests/integration/provisioner-capability-gate.test.mjs (pass, 1/1, actual compiled process; health 200, readiness 503, zero claims without producer capabilities, graceful SIGTERM; /tmp/praetorium-coverage-current-provisioner.log)",
@@ -32,9 +37,14 @@
     ],
     "frozenInstallRunForThisLedger": true,
     "rootCheckRunForThisLedger": true,
-    "frozenInstallStatus": "pass",
-    "rootCheckStatus": "pass at exact source cut 27142b0 with pnpm 11.18.0; 29/29 Turbo tasks; test stage 5.056s",
-    "producerRefreshNote": "Producer preflight was refreshed separately at main commit 5089752; production source and runtime verification remain pinned to 27142b0 (unchanged through this documentation-only refresh). No new producer runtime acceptance was executed."
+    "frozenInstallStatus": "pass at 88b674d; package manifests and lockfile unchanged through pinned target 4a94433",
+    "rootCheckStatus": "Full pnpm 11.18.0 check passed at code cut 88b674d via the installed binary: build 18/18, lint 18/18, typecheck/test 29/29 Turbo tasks (11 cached), boundaries/schema checks passed. The literal corepack check invocation exited before checks because nested pnpm resolved v12.10.1; full check was not rerun at target 4a94433. The focused 32-test Kubernetes package run covers its provider-only code delta.",
+    "producerRefreshNote": "Current read-only producer audit is docs/migration/PRODUCER-STATUS.json at main 4a94433, revision 271d7b28ba40109f502b0bb196a81afdc47cd1d6, with S01-S05 missing/BLOCKED and artifactDigest null. docs/verification/PRODUCER-271d7b.md audits the previous e62bf91 to current 271d7b delta and confirms no hosted interface closure; previous producer status at 5089752/e62bf91 is retained as historical evidence. No producer artifact or current-checkpoint conformance was executed.",
+    "previousProducerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
+    "previousProducerStatusDocumentCommit": "5089752",
+    "kubernetesRbacPolicyCommit": "ec47ce5",
+    "tenantPodAdmissionPolicyCommit": "1a8c1c1",
+    "runtimeNamespacePsaCommit": "fe1adba"
   },
   "statusLegend": {
     "implementation": [
@@ -57,8 +67,8 @@
   },
   "producerPreflight": {
     "checkedInStatusPath": "docs/migration/PRODUCER-STATUS.json",
-    "producerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
-    "producerStatusDocumentCommit": "5089752",
+    "producerRevision": "271d7b28ba40109f502b0bb196a81afdc47cd1d6",
+    "producerStatusDocumentCommit": "4a94433",
     "statusAtEvidenceCut": "missing",
     "gate": "BLOCKED",
     "producerModified": false,
@@ -95,7 +105,9 @@
         "artifactDigest": null
       }
     ],
-    "note": "Read-only producer preflight at 5089752 observes e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f: S01-S05 missing/BLOCKED and current-main artifactDigest null. The new local Core recovery digest cb6d9d3e belongs to ancestor bc2b0936; the prior Full local digest belongs to e85c173a. Neither is current-main or published hosted-composition evidence. No producer artifact/conformance acceptance exists."
+    "note": "Current read-only producer status at main 4a94433 observes revision 271d7b28ba40109f502b0bb196a81afdc47cd1d6: S01-S05 remain missing/BLOCKED and artifactDigest is null. The read-only docs/verification/PRODUCER-271d7b.md compares prior e62bf91 to current 271d7b and confirms no hosted interface closure. Local Core/Full image digests refer only to older unpublished candidates; no current producer artifact or conformance acceptance exists.",
+    "previousProducerRevision": "e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f",
+    "previousProducerStatusDocumentCommit": "5089752"
   },
   "tasks": {
     "T00": {
@@ -123,12 +135,12 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Read-only producer preflight at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f marks S01-S05 missing/BLOCKED and artifactDigest null. Target consumer contracts cannot turn that producer gate green; the isolated candidate digest is not current-main or published evidence."
+        "Read-only producer preflight at 271d7b28ba40109f502b0bb196a81afdc47cd1d6 marks S01-S05 missing/BLOCKED and artifactDigest null. Target consumer contracts cannot turn that producer gate green; the isolated candidate digest is not current-main or published evidence."
       ],
       "recordedCheckDocs": [
         "docs/migration/PRODUCER-STATUS.json"
       ],
-      "recordStatus": "Producer status document integrated at 5089752 records revision e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f; S01-S05 are missing/BLOCKED and no current-main artifact digest or producer conformance run is recorded."
+      "recordStatus": "Latest read-only producer status at main 4a94433 records revision 271d7b28ba40109f502b0bb196a81afdc47cd1d6; S01-S05 remain missing/BLOCKED and no current-main artifact digest or producer conformance run is recorded. The previous 5089752/e62bf91 status is retained in the evidence cut."
     },
     "T02": {
       "implementation": "partial",
@@ -190,7 +202,7 @@
         "docs/migration/PRODUCER-STATUS.json"
       ],
       "blockers": [
-        "Current producer e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
+        "Current producer 271d7b28ba40109f502b0bb196a81afdc47cd1d6 preflight marks S01-S05 missing/BLOCKED with artifactDigest null; consumer fixture tests are not producer acceptance."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T04.md",
@@ -211,7 +223,7 @@
         "apps/control-plane/src/releases/operator-admission.ts"
       ],
       "blockers": [
-        "No current producer composition or immutable artifact is available for admission at producer revision e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f.",
+        "No current producer composition or immutable artifact is available for admission at producer revision 271d7b28ba40109f502b0bb196a81afdc47cd1d6.",
         "Bounded pinned-safe planner and D1 snapshot are wired into the scheduled Worker; the local Worker runner verifies configured retention policy and durable advisory audit. No cache/OCI deletion or storage reclamation is claimed, and no remote OCI delete executor is required by the current contract."
       ],
       "recordedCheckDocs": [
@@ -236,7 +248,7 @@
       ],
       "blockers": [
         "The production Build Worker entry defaults to UnavailableCompositionArtifactInspector, which always rejects; no digest-backed OCI/platform-manifest, server/browser/native closure verifier or declared-smoke runner is implemented and wired. PLAN T06/PLATFORM §4 require this before an artifact can be admitted.",
-        "Producer S01 receipt/catalog/immutable artifact and owned disposable BuildKit/registry environment remain unavailable; these external gates are separate from the target-side inspector implementation gap."
+        "Producer S01 receipt/catalog/immutable artifact is unavailable and is a prerequisite to define the verifier, not a substitute for implementing and wiring it. The owned disposable BuildKit/registry acceptance is also unavailable. After S01 contract/artifact delivery, the concrete closure inspector and declared-smoke implementation still need to be built and production-wired."
       ],
       "recordedCheckDocs": [
         "docs/migration/tasks/T06.md",
@@ -244,25 +256,34 @@
         "apps/build-worker/test/main.test.ts",
         "docs/migration/PRODUCER-STATUS.json"
       ],
-      "recordStatus": "Build worker queue/BuildKit/candidate-verification paths exist, but the production composition uses an always-rejecting inspector and cannot verify OCI closure or run declared smoke. Implement and wire the inspector/smoke path under the canonical T06/PLATFORM contract; producer S01 and real BuildKit/registry acceptance are additional blockers."
+      "recordStatus": "Build worker queue/BuildKit/candidate-verification paths exist, but the production composition uses an always-rejecting inspector and cannot verify OCI closure or run declared smoke. The producer S01 receipt/catalog ABI must arrive first; it does not itself provide the missing verifier. Implement and wire that verifier afterward, then complete owned BuildKit/registry acceptance."
     },
     "T07": {
       "implementation": "present",
-      "integration": "integrated",
+      "integration": "partial",
       "realAcceptance": "blocked",
       "evidence": [
         "plugins/kubernetes/src/kubernetes",
+        "plugins/kubernetes/test/provider.test.ts",
+        "infrastructure/kubernetes/base/platform-services.yaml",
+        "infrastructure/kubernetes/policies/provisioner-rbac.yaml",
+        "infrastructure/kubernetes/policies/tenant-pod-policy.yaml",
+        "tests/infra/provisioner-rbac.test.mjs",
+        "tests/infra/tenant-pod-policy.test.mjs",
         "apps/provisioner/src/kubernetes-lifecycle-adapter.ts",
         "apps/control-plane/src/provisioner-routes.ts"
       ],
       "blockers": [
         "No explicitly owned disposable Kubernetes cluster; no real scheduling, isolation, ingress, writer-absence or partition acceptance.",
+        "At pinned main 4a94433 the provider-generated tenant RoleBinding subject matches the Deployment ServiceAccount and namespace; the provider package passes 32/32 tests, and focused RBAC/tenant-Pod policy structure tests pass 5/5. The static ClusterRole/Binding and tenant Pod VAP files are not included by infrastructure/kubernetes/base/kustomization.yaml, so enforcement is not composed. Namespace/RoleBinding scoping and generic-resource/network/route admission remain incomplete.",
         "Indefinite not-ready/unreachable tolerations prevent the default automatic node-eviction path but are not host fencing. Operator force deletion/node removal can erase API evidence before a process terminates; no force-delete was performed."
       ],
       "recordedCheckDocs": [
-        "docs/migration/tasks/T07.md"
+        "docs/migration/tasks/T07.md",
+        "docs/verification/INDEPENDENT-REVIEW.md",
+        "plugins/kubernetes/test/provider.test.ts"
       ],
-      "recordStatus": "Provider/renderer/capacity unit tests ran in root check; no cluster acceptance."
+      "recordStatus": "Provider grants match the Deployment ServiceAccount; runtime namespaces receive and validate restricted PSA labels and reject pinned policy versions. Static RBAC and tenant Pod policy resources have structural tests but are not wired through the base Kustomize composition; namespace/RoleBinding scoping and generic-resource/network/route policy plus all live-cluster acceptance remain incomplete. No cluster was applied."
     },
     "T08": {
       "implementation": "present",
@@ -357,7 +378,7 @@
         "apps/control-plane/migrations/0002_stable_release_rollouts.sql"
       ],
       "blockers": [
-        "Current producer S01 metadata and immutable artifact at revision e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f are missing; composition remains unavailable and retries without metadata.",
+        "Current producer S01 metadata and immutable artifact at revision 271d7b28ba40109f502b0bb196a81afdc47cd1d6 are missing; composition remains unavailable and retries without metadata.",
         "No real canary, ten-minute health window, writer-absence observation, stable follower rollout or persisted canary observation is available; S02/S05 canary evidence remains blocked."
       ],
       "recordedCheckDocs": [
@@ -375,11 +396,18 @@
         "infrastructure",
         "scripts/preflight-integration.mjs",
         "docs/deployment/README.md",
+        "infrastructure/kubernetes/base/platform-services.yaml",
+        "infrastructure/kubernetes/policies/provisioner-rbac.yaml",
+        "infrastructure/kubernetes/policies/tenant-pod-policy.yaml",
+        "tests/infra/provisioner-rbac.test.mjs",
+        "tests/infra/tenant-pod-policy.test.mjs",
+        "plugins/kubernetes/test/provider.test.ts",
         "apps/control-plane/wrangler.toml",
         "apps/gateway/wrangler.toml"
       ],
       "blockers": [
         "Only the owned local Miniflare D1/DO resource was available; no disposable GitHub, registry, Kubernetes, browser/stable-origin, producer or rollout environment was declared/applied.",
+        "Static RBAC and tenant Pod policy files exist with five focused structural tests, and the provider enforces restricted PSA labels; the policy files are not included by the base Kustomization. Namespace/RoleBinding scoping and generic-resource/network/route policies remain incomplete; these tests do not establish cluster enforcement.",
         "No production infrastructure was applied."
       ],
       "recordedCheckDocs": [
@@ -387,23 +415,27 @@
         "infrastructure/test/deploy-workers.test.mjs",
         "docs/verification/ACCEPTANCE.md"
       ],
-      "recordStatus": "Worker deploy plan/preflight and six deployment tests were run. Preflight recognizes migrations 0001-0004 and both private service bindings with no template problems, but correctly returns blocked for absent operator inputs; remoteCalls=false and no secret values were inspected. No apply ran."
+      "recordStatus": "Worker deploy plan/preflight and six deployment tests were run. Preflight recognizes migrations 0001-0004 and both private service bindings with no template problems, but correctly returns blocked for absent operator inputs; remoteCalls=false and no secret values were inspected. Static Kubernetes RBAC/Pod policy files and runtime PSA labels are implemented and structurally tested, but policy files are not in the base Kustomize composition, additional admission scoping remains incomplete, and no cluster acceptance or apply ran."
     },
     "T13": {
       "implementation": "present",
       "integration": "integrated",
-      "realAcceptance": "not_run",
+      "realAcceptance": "blocked",
       "evidence": [
         "plugins/legacy-recovery/src",
-        "docs/migration/tasks/T13.md"
+        "docs/migration/tasks/T13.md",
+        "tests/integration/legacy-metadata-restore.partial.test.mjs",
+        "docs/verification/LEGACY-METADATA-PARTIAL.md"
       ],
       "blockers": [
-        "Offline tooling/fixture tests are not a real source Platform metadata export, legacy backup or isolated restore; old PVCs and unpublished data were preserved."
+        "The local partial probe uses only one synthetic Platform metadata row. No remote/off-host D1 export or Restic backend, source/legacy/user data, source PVC, producer checkpoint, key escrow, target binding, cutover or retirement was exercised; no old PVC or unpublished data was changed."
       ],
       "recordedCheckDocs": [
-        "docs/migration/tasks/T13.md"
+        "docs/migration/tasks/T13.md",
+        "docs/verification/LEGACY-METADATA-PARTIAL.md",
+        "tests/integration/legacy-metadata-restore.partial.test.mjs"
       ],
-      "recordStatus": "Offline tooling/fixture tests are implemented and locally tested. No real source metadata export, legacy backup or isolated restore was available or run."
+      "recordStatus": "A local partial integration test passed 1/1 at pinned code cut 4a94433: actual Wrangler local D1 migrations/seed/export, production metadata archive/verify/restore CLI, Restic 0.19.1 local repository, in-memory SQLite validation and tampered-ciphertext rejection before staging. The row is synthetic; this is not remote/off-host/source/PVC/producer T13 acceptance, which remains blocked."
     },
     "T14": {
       "implementation": "partial",
@@ -417,9 +449,9 @@
       ],
       "blockers": [
         "Passed: workers-d1-do only. Blocked: github-access, buildkit-registry, kubernetes-isolation, browser-entry, producer-recovery and stable-rollout; the fixed harness returned exit 2 with errors=[].",
-        "Current producer S01-S05 are missing at revision e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f; artifactDigest is null and no current-main immutable artifact is available.",
+        "Current producer S01-S05 are missing at revision 271d7b28ba40109f502b0bb196a81afdc47cd1d6; artifactDigest is null and no current-main immutable artifact is available.",
         "The six blocked fixed categories also lack their executable runner files; supplying resources alone does not complete acceptance. A separate partial M04 Worker test at 37f187c verifies a synthetic local revocation barrier but is not a T14 category pass or real writer/provider acceptance.",
-        "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain even when external resources are supplied."
+        "T06 also has a target-side always-rejecting composition artifact inspector and no OCI closure/smoke implementation; S01 receipt/catalog ABI must arrive first, then the inspector/smoke path must be implemented and wired. T09 automatic compatible rollback is safely disabled because compatibility evidence/checking is absent. These implementation gaps remain alongside the blocked producer/environment gates."
       ],
       "recordedCheckDocs": [
         "docs/verification/ACCEPTANCE.md",
@@ -475,7 +507,7 @@
       "id": "S01-S05",
       "capability": "producer catalog, hosted access, Git credentials, quiesce and immutable composition evidence",
       "state": "blocked",
-      "evidence": "docs/migration/PRODUCER-STATUS.json at e62bf91ca9ece82aa39b70e2369a459b3f5b2a1f marks each producer gate missing/BLOCKED and artifactDigest null."
+      "evidence": "docs/migration/PRODUCER-STATUS.json at 271d7b28ba40109f502b0bb196a81afdc47cd1d6 marks each producer gate missing/BLOCKED and artifactDigest null."
     },
     {
       "id": "T09-runtime",
@@ -499,7 +531,7 @@
       "id": "T06-composition-inspector",
       "capability": "digest-backed image/platform manifest, module/native closure and declared-smoke verification before candidate admission",
       "state": "missing",
-      "evidence": "apps/build-worker/src/main.ts defaults to UnavailableCompositionArtifactInspector and apps/build-worker/test/main.test.ts confirms it rejects. PLAN T06/PLATFORM §4 require concrete verification and smoke before admission; S01 receipt/artifact and owned BuildKit/registry are separate gates."
+      "evidence": "apps/build-worker/src/main.ts defaults to UnavailableCompositionArtifactInspector and apps/build-worker/test/main.test.ts confirms it rejects. PLAN T06/PLATFORM §4 require concrete verification and smoke before admission. The S01 receipt/catalog ABI is a prerequisite to define that verifier; implementation/wiring and owned BuildKit/registry acceptance remain required afterward."
     },
     {
       "id": "T09-compatible-rollback",
@@ -521,27 +553,30 @@
     "frozenInstall": {
       "command": "corepack pnpm@11.18.0 install --frozen-lockfile",
       "status": "passed",
-      "checkedHead": "27142b0ab28e6c7323af3e2c11ed6121bf830574",
-      "checkedWorktree": "/home/sophia/src/praetorium",
-      "log": "/tmp/praetorium-current-install.log",
-      "details": "Frozen install completed with pnpm 11.18.0 at the exact production source cut; frozen lockfile accepted with no tracked lockfile update."
+      "checkedHead": "88b674d60d8cc979e78db2c087d57fd08b411993",
+      "codeSourceHead": "88b674d60d8cc979e78db2c087d57fd08b411993",
+      "checkedWorktree": "/tmp/praetorium-ledger-kube-recovery-20261017",
+      "evidenceDocument": "docs/verification/ACCEPTANCE.json#latestPlatformDelta",
+      "details": "corepack frozen install passed at code cut 88b674d; package manifests and lockfile are unchanged through pinned target 4a94433."
     },
     "rootCheck": {
       "requiredCommand": "corepack pnpm@11.18.0 check",
-      "status": "passed",
-      "checkedHead": "27142b0ab28e6c7323af3e2c11ed6121bf830574",
-      "checkedWorktree": "/home/sophia/src/praetorium",
-      "log": "/tmp/praetorium-current-check.log",
-      "details": "Fresh exact-source-cut check exited 0: 29/29 Turbo build/lint/typecheck/test tasks; provider boundaries and generated contract schema drift passed. Test stage 5.056s; nested pnpm remained at 11.18.0."
+      "status": "passed at code cut 88b674d using the installed pnpm 11.18.0 binary",
+      "checkedHead": "88b674d60d8cc979e78db2c087d57fd08b411993",
+      "codeSourceHead": "88b674d60d8cc979e78db2c087d57fd08b411993",
+      "checkedWorktree": "/tmp/praetorium-ledger-kube-recovery-20261017",
+      "evidenceDocument": "docs/verification/ACCEPTANCE.json#latestPlatformDelta",
+      "details": "Exit 0: build 18/18, lint 18/18, typecheck and test 29/29 Turbo tasks (11 cached), provider boundaries and generated contract schemas passed. The literal corepack pnpm@11.18.0 check invocation exited before checks because nested pnpm resolved v12.10.1. The target 4a94433 provider delta was separately checked with the focused Kubernetes package suite; this full check is not claimed at 4a.",
+      "commandExecuted": "/home/sophia/.local/share/pnpm/bin/pnpm check"
     },
     "handlerMappingHarness": {
       "command": "node --test tests/integration/verify-integration.test.mjs",
       "status": "passed",
-      "checkedHead": "da46030c40acbf3e5fbe3e510e5c647747296dd4",
+      "checkedHead": "4a94433c2d955653f5900b527f6b528300f90e3e",
       "passed": 9,
       "failed": 0,
-      "checkedLedgerWorktree": "/tmp/praetorium-coverage-final-487",
-      "scope": "Run against the candidate ledger files in the current worktree based on da46030; all 65 source handler surfaces retain their parentIds and map to the 59 G/C/A/X parent IDs. Harness safety/mapping tests are not producer/runtime acceptance."
+      "checkedLedgerWorktree": "/tmp/praetorium-ledger-kube-recovery-20261017",
+      "scope": "All 65 source handler surfaces retain their parentIds and map to all 59 G/C/A/X parent IDs after the current candidate JSON edits. Mapping/safety tests are not producer/runtime acceptance."
     },
     "workersD1Do": {
       "command": "node scripts/verify-integration.mjs --environment /tmp/praetorium-t14-workers-inventory.json",
@@ -625,6 +660,33 @@
       "passed": 6,
       "failed": 0
     },
+    "kubernetesPrincipalAlignment": {
+      "command": "pnpm --filter @praetorium/kubernetes test",
+      "status": "passed_partial_only",
+      "sourceHead": "4a94433c2d955653f5900b527f6b528300f90e3e",
+      "productionSourceCommit": "fe1adbae9d2ef364f5c98e8b5907d8fdf06ccf51",
+      "testCommit": "fe1adbae9d2ef364f5c98e8b5907d8fdf06ccf51",
+      "log": "/tmp/praetorium-4a-kubernetes-package.log",
+      "passed": 32,
+      "failed": 0,
+      "scope": "The provider principal matches the checked-in Provisioner Deployment ServiceAccount; runtime namespace labels include restricted PSA enforcement and provider checks reject missing or pinned policy versions. Package tests prove local provider behavior only; static RBAC/tenant Pod-policy files are not in the base Kustomize composition and no cluster was checked."
+    },
+    "legacyMetadataRestorePartial": {
+      "command": "RESTIC_BIN=/tmp/praetorium-t13-owned-restore-tools/restic_0.19.1_linux_amd64 WRANGLER_BIN=/home/sophia/src/praetorium/node_modules/.bin/wrangler node --test tests/integration/legacy-metadata-restore.partial.test.mjs",
+      "status": "passed_partial_only",
+      "sourceHead": "4a94433c2d955653f5900b527f6b528300f90e3e",
+      "testCommit": "ba9bdc17d027f3e026553e809a06ec331d34b6a5",
+      "log": "/tmp/praetorium-4a-legacy-metadata-partial.log",
+      "passed": 1,
+      "failed": 0,
+      "testElapsedMs": 11098.375508,
+      "processElapsedMs": 11148.728082,
+      "scope": "Actual local Wrangler D1 migrations/seed/export, production metadata archive/verify/restore CLI, Restic 0.19.1 local repository, in-memory SQLite validation and tampered ciphertext rejected before staging. Uses one synthetic metadata row and disposable local files only.",
+      "limitations": [
+        "No remote D1 or off-host Restic backend, source/legacy/user data, old PVC, producer checkpoint, key escrow, target binding, cutover or retirement was exercised.",
+        "This partial local probe does not pass T13 real recovery or the fixed T14 producer-recovery gate."
+      ]
+    },
     "productionEffects": {
       "status": "none",
       "details": "No production GitHub/Cloudflare/Kubernetes/registry or external service was changed; no production infrastructure was applied; no old data/PVC was deleted; no release/package was published."
@@ -645,6 +707,18 @@
         "Writer-absence proof, credentials, and GitHub responses are synthetic; there is no real process/census/runtime lease.",
         "No live GitHub App/API, producer, actual Gateway Worker HTTP broker/issuance route, Kubernetes census, or T14 category acceptance."
       ]
+    },
+    "kubernetesPolicyStructure": {
+      "command": "node --test tests/infra/provisioner-rbac.test.mjs tests/infra/tenant-pod-policy.test.mjs",
+      "status": "passed_partial_only",
+      "sourceHead": "4a94433c2d955653f5900b527f6b528300f90e3e",
+      "testFiles": [
+        "tests/infra/provisioner-rbac.test.mjs",
+        "tests/infra/tenant-pod-policy.test.mjs"
+      ],
+      "passed": 5,
+      "failed": 0,
+      "scope": "Manifest and provider-permission structural assertions only. Neither static policy file is included by infrastructure/kubernetes/base/kustomization.yaml; no API server, CNI enforcement or live cluster acceptance."
     }
   },
   "taskSpecificEvidence": {}

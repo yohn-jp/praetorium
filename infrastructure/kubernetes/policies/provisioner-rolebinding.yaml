@@ -1,0 +1,117 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: praetorium-provisioner-instance-rolebindings
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["rolebindings"]
+  matchConditions:
+    - name: dedicated-provisioner-identity
+      expression: >-
+        request.userInfo.username ==
+        "system:serviceaccount:praetorium-system:praetorium-provisioner"
+  validations:
+    - expression: >-
+        namespaceObject != null &&
+        namespaceObject.metadata.name.startsWith("praetorium-instances-") &&
+        namespaceObject.metadata.labels["arcadia.io/instance-id"].matches("^ins_[0-9A-HJKMNP-TV-Z]{26}$") &&
+        namespaceObject.metadata.name == "praetorium-instances-" +
+          namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&
+        namespaceObject.metadata.labels["arcadia.io/platform"] == "arcadia-platform" &&
+        namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] == "arcadia-provisioner" &&
+        namespaceObject.metadata.labels["praetorium.io/repository-id"].matches("^[1-9][0-9]*$") &&
+        int(namespaceObject.metadata.labels["praetorium.io/repository-id"]) <= 9007199254740991 &&
+        namespaceObject.metadata.labels["arcadia.io/ownership-version"] == "v1" &&
+        namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@"
+      message: The Provisioner may change RoleBindings only inside a valid, owned per-instance namespace.
+    - expression: >-
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.name == "praetorium-provisioner-runtime" &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.namespace == namespaceObject.metadata.name &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["arcadia.io/platform"] == namespaceObject.metadata.labels["arcadia.io/platform"] &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["app.kubernetes.io/managed-by"] == namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
+        int((request.operation == "DELETE" ? oldObject : object).metadata.labels["praetorium.io/runtime-epoch"]) <= 9007199254740991 &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
+        int((request.operation == "DELETE" ? oldObject : object).metadata.labels["arcadia.io/generation"]) <= 9007199254740991 &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).metadata.labels["arcadia.io/release-id"] == "none" &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).roleRef.apiGroup == "rbac.authorization.k8s.io" &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).roleRef.kind == "ClusterRole" &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).roleRef.name == "praetorium-provisioner-tenant-runtime" &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).subjects.size() == 1 &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).subjects[0].kind == "ServiceAccount" &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).subjects[0].name == "praetorium-provisioner" &&
+        (
+          request.operation == "DELETE" ? oldObject : object
+        ).subjects[0].namespace == "praetorium-system"
+      message: The Provisioner may manage only the fixed runtime RoleBinding and grant the tenant runtime role to its own service account.
+    - expression: >-
+        request.operation != "UPDATE" || (
+          oldObject.metadata.name == "praetorium-provisioner-runtime" &&
+          oldObject.metadata.namespace == namespaceObject.metadata.name &&
+          oldObject.metadata.labels["arcadia.io/platform"] == namespaceObject.metadata.labels["arcadia.io/platform"] &&
+          oldObject.metadata.labels["app.kubernetes.io/managed-by"] == namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] &&
+          oldObject.metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+          oldObject.metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
+          oldObject.metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
+          oldObject.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
+          oldObject.roleRef.apiGroup == "rbac.authorization.k8s.io" &&
+          oldObject.roleRef.kind == "ClusterRole" &&
+          oldObject.roleRef.name == "praetorium-provisioner-tenant-runtime" &&
+          oldObject.subjects.size() == 1 &&
+          oldObject.subjects[0].kind == "ServiceAccount" &&
+          oldObject.subjects[0].name == "praetorium-provisioner" &&
+          oldObject.subjects[0].namespace == "praetorium-system"
+        )
+      message: The Provisioner may not take over or rewrite a RoleBinding with different ownership or privilege.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: praetorium-provisioner-instance-rolebindings
+spec:
+  policyName: praetorium-provisioner-instance-rolebindings
+  validationActions: [Deny]

@@ -1,0 +1,17 @@
+{
+  "role": "build",
+  "bindAddress": null,
+  "listenPort": 1234,
+  "clientCidrs": [],
+  "egressCidrs": [],
+  "egressProxyUrl": null,
+  "tls": {
+    "serverCertFile": "/var/lib/praetorium/credentials/praetorium-buildkit-server.crt",
+    "serverKeyFile": "/var/lib/praetorium/credentials/praetorium-buildkit-server.key",
+    "clientCaFile": "/var/lib/praetorium/credentials/praetorium-buildkit-ca.crt"
+  },
+  "quotaMiB": null,
+  "cpuQuota": null,
+  "memoryMax": null,
+  "tasksMax": null
+}

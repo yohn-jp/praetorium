@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { QuiesceRequestSchema } from "@praetorium/contracts";
 import type { OperationRecord } from "@praetorium/application/instances";
 import type { D1Database } from "@praetorium/persistence/d1";
@@ -15,19 +16,35 @@ export function createCredentialRetirementBarrier(config: {
 }) {
   const now = config.now ?? Date.now;
   return async (operation: OperationRecord): Promise<void> => {
-    const lifecycle = operation.checkpoint?.lifecycle as Record<string, unknown> | undefined;
-    const request = QuiesceRequestSchema.parse(lifecycle?.quiesceRequest);
-    const operationMatches =
-      request.operationId === operation.id ||
-      (request.operationId === `${operation.id}:rollback` &&
-        request.reason === "rollback" &&
-        operation.kind !== "stop");
-    if (
-      request.instanceId !== operation.instanceId ||
-      !operationMatches ||
-      operation.phase !== "quiescing-old"
-    )
-      throw new Error("Credential retirement checkpoint does not match the instance");
+    let runtimeEpoch: number;
+    if (operation.phase === "old-writer-absent") {
+      const proof = z
+        .object({
+          instanceId: z.literal(operation.instanceId),
+          repositoryId: z.literal(operation.repositoryId),
+          retiredRuntimeEpoch: z.number().int().nonnegative().safe().nullable(),
+          remainingWriters: z.literal(0),
+          source: z.literal("runtime-provider-census"),
+        })
+        .parse(operation.checkpoint?.writerAbsenceProof);
+      if (proof.retiredRuntimeEpoch === null) return;
+      runtimeEpoch = proof.retiredRuntimeEpoch;
+    } else {
+      const lifecycle = operation.checkpoint?.lifecycle as Record<string, unknown> | undefined;
+      const request = QuiesceRequestSchema.parse(lifecycle?.quiesceRequest);
+      const operationMatches =
+        request.operationId === operation.id ||
+        (request.operationId === `${operation.id}:rollback` &&
+          request.reason === "rollback" &&
+          operation.kind !== "stop");
+      if (
+        request.instanceId !== operation.instanceId ||
+        !operationMatches ||
+        operation.phase !== "quiescing-old"
+      )
+        throw new Error("Credential retirement checkpoint does not match the instance");
+      runtimeEpoch = request.runtimeEpoch;
+    }
     const remaining = async () => {
       const row = await config.db
         .prepare(
@@ -35,7 +52,7 @@ export function createCredentialRetirementBarrier(config: {
          WHERE repository_id=? AND instance_id=? AND runtime_epoch=?
            AND status='revocation_pending' AND expires_at>?`,
         )
-        .bind(operation.repositoryId, operation.instanceId, request.runtimeEpoch, now())
+        .bind(operation.repositoryId, operation.instanceId, runtimeEpoch, now())
         .first<{ remaining: number }>();
       if (!row || !Number.isSafeInteger(row.remaining) || row.remaining < 0)
         throw new Error("Credential retirement state unavailable");
@@ -70,7 +87,7 @@ export function createCredentialRetirementBarrier(config: {
             },
             body: JSON.stringify({
               repositoryId: operation.repositoryId,
-              runtimeEpoch: request.runtimeEpoch,
+              runtimeEpoch,
             }),
           }),
         ),

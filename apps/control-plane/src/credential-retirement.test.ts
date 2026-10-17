@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { OperationRecord } from "@praetorium/application/instances";
 import type { D1Database } from "@praetorium/persistence/d1";
+import { createProvisionerRoutes } from "./provisioner-routes.js";
+import type { OperationService } from "@praetorium/application/operations";
 import { createCredentialRetirementBarrier } from "./credential-retirement.js";
 
 const operation = {
@@ -67,5 +69,96 @@ describe("known credential retirement barrier", () => {
       },
     });
     await expect(barrier(operation)).resolves.toBeUndefined();
+  });
+  it("holds an already-absent old writer's credentials until durable revocation", async () => {
+    let remaining = 1;
+    const absent = {
+      ...operation,
+      phase: "old-writer-absent",
+      checkpoint: {
+        writerAbsenceProof: {
+          instanceId: operation.instanceId,
+          repositoryId: operation.repositoryId,
+          retiredRuntimeEpoch: 4,
+          remainingWriters: 0,
+          source: "runtime-provider-census",
+        },
+      },
+    } as unknown as OperationRecord;
+    const barrier = createCredentialRetirementBarrier({
+      db: database(() => ({ remaining })),
+      serviceSecret: "s".repeat(32),
+      gateway: {
+        async fetch(request) {
+          expect(await request.json()).toEqual({ repositoryId: 17, runtimeEpoch: 4 });
+          return Response.json({ complete: true });
+        },
+      },
+    });
+    await expect(barrier(absent)).rejects.toThrow("remain pending");
+    remaining = 0;
+    await expect(barrier(absent)).resolves.toBeUndefined();
+  });
+  it("does not retire credentials for a null retired epoch", async () => {
+    const barrier = createCredentialRetirementBarrier({
+      db: database(() => {
+        throw new Error("unexpected credential lookup");
+      }),
+    });
+    await expect(
+      barrier({
+        ...operation,
+        phase: "old-writer-absent",
+        checkpoint: {
+          writerAbsenceProof: {
+            instanceId: operation.instanceId,
+            repositoryId: operation.repositoryId,
+            retiredRuntimeEpoch: null,
+            remainingWriters: 0,
+            source: "runtime-provider-census",
+          },
+        },
+      } as unknown as OperationRecord),
+    ).resolves.toBeUndefined();
+  });
+  it("the provisioner checkpoint route does not acknowledge absent-writer retirement before its barrier", async () => {
+    const absent = { ...operation, phase: "old-writer-absent" } as OperationRecord;
+    let persisted = false;
+    let pending = true;
+    const app = createProvisionerRoutes({
+      operations: {
+        async checkpoint() {
+          persisted = true;
+          return absent;
+        },
+      } as unknown as OperationService,
+      workerId: "worker-test",
+      clusterId: "cluster-test",
+      now: () => 1,
+      resolveRuntimeContext: async () => ({}),
+      retireCredentials: async (saved) => {
+        expect(persisted).toBe(true);
+        expect(saved).toBe(absent);
+        if (pending) throw new Error("pending retirement");
+      },
+    });
+    app.onError(() => Response.json({ error: "retirement unavailable" }, { status: 503 }));
+    const request = () =>
+      app.request("/checkpoint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operationId: operation.id,
+          workerId: "worker-test",
+          leaseToken: "l".repeat(32),
+          leaseEpoch: 1,
+          expectedCheckpointSequence: 0,
+          phase: "old-writer-absent",
+          checkpoint: {},
+        }),
+      });
+    expect((await request()).status).toBe(503);
+    pending = false;
+    expect((await request()).status).toBe(200);
   });
 });

@@ -176,7 +176,7 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
     const input = SaveCheckpoint.parse(await boundedJson(c.req.raw));
     scoped(input);
     const operation = await deps.operations.checkpoint({ ...input, now: deps.now() });
-    if (input.phase === "quiescing-old") {
+    if (input.phase === "quiescing-old" || input.phase === "old-writer-absent") {
       if (!deps.retireCredentials)
         return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
       await deps.retireCredentials(operation);

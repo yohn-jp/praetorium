@@ -19,10 +19,15 @@ current UID. The owner UID and username must match the current process. The
 environment must be explicitly disposable, nonproduction, unexpired, and have
 enough remaining lifetime for the bounded test and cleanup. The inventory
 pins the exact Kind cluster name/context/ID, single node name/UID and
-disposable label, Kubernetes/Kind versions, node image ref/image ID/container
+disposable label, Kubernetes API version, node image ref/image ID/container
 ID, private kubeconfig path, exact CLI paths, and the immutable cached Node
-image. Its kubeconfig file must be owner-private. The test never reads or
-prints kubeconfig contents.
+image. The runner separately verifies the pinned Kind version. It also pins a
+private, hash-verified report from a previous successful
+Pod on this same Kind cluster, including the exact kubelet-observed `imageID`
+for the Node digest and confirmation that kubelet pulled it. The test compares
+new Pods against that observed runtime ID instead of assuming a CRI imageID is
+the manifest digest. Its kubeconfig and image-evidence files must be
+owner-private. The test never reads or prints kubeconfig contents.
 
 Inventory schema (values below are illustrative only and are not runnable):
 
@@ -58,7 +63,9 @@ Inventory schema (values below are illustrative only and are not runnable):
   },
   "image": {
     "ref": "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
-    "digest": "sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5"
+    "digest": "sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "runtimeImageEvidencePath": "/absolute/path/to/owned/evidence/prior-kubelet-image-report.json",
+    "runtimeImageEvidenceSha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "evidenceDirectory": "/absolute/path/to/owned/evidence",
   "timeouts": {
@@ -93,19 +100,30 @@ committed TypeScript renderer source in memory rather than importing a stale
 renderer option that selects the production ingress peer; the ingress probe
 Pod has only the `app.kubernetes.io/name=traefik` selector label.
 
+The report hashes the committed renderer source, source NetworkPolicy
+admission manifest, and live NetworkPolicy admission expressions. The runner
+requires those relevant source files to match the recorded clean commit. A live VAP's current
+`observedGeneration` describes the object currently stored by the API server;
+it does not prove that the object matches the current source manifest. The
+runner records the source/live mapped-IPv4 exclusion values and their drift
+without updating the canonical VAP. It also records that its owner-context
+NetworkPolicy create does not prove producer ServiceAccount authorization or
+the VAP's producer-only match condition.
+
 Each created namespace carries a unique run and inventory label. The tenant
 namespace uses the runtime provider's ownership and restricted Pod Security
 labels. Every probe Pod uses the pinned Node image with `imagePullPolicy:
 Never`, UID/GID 10001, `runAsNonRoot`, `RuntimeDefault` seccomp, dropped `ALL`
 capabilities, no privilege escalation, a read-only root filesystem, no
 automounted service-account token, and matching CPU, memory and
-ephemeral-storage requests and limits. Actual Pod `imageID` must match the
-immutable image digest.
+ephemeral-storage requests and limits. Each Pod's actual `imageID` must exactly
+match the value read from the hash-verified prior kubelet evidence.
 
 Before applying the renderer output, the test requires real successful packet
-controls from the allowed peer, wrong-label peer, other namespace, and tenant
-source to the private peer. It also checks DNS resolution. It then creates the
-exact rendered NetworkPolicy and waits for dataplane convergence while
+controls from the allowed peer to both tenant listeners, the wrong-label peer,
+the other namespace, the tenant source to the private peer, and the allowed
+peer to that same private target. It also checks DNS resolution. It then creates
+the exact rendered NetworkPolicy and waits for dataplane convergence while
 repeatedly requiring the allowed peer on TCP 8080 to keep working. The final
 matrix requires:
 
@@ -113,9 +131,9 @@ matrix requires:
   TCP 8080 succeeds;
 - ingress from a wrong Pod label or a different namespace is denied;
 - the same allowed ingress peer to TCP 8081 is denied while the target still
-  answers on TCP 8080;
-- tenant egress to the private peer Pod IP is denied, after that exact path
-  succeeded before policy creation; and
+  answers on TCP 8080 and its local TCP 8081 listener remains live;
+- tenant egress to the private peer Pod IP is denied while that same target
+  remains reachable from an unprotected peer; and
 - tenant DNS continues to resolve after policy creation.
 
 The denied probes use direct Pod IPs, disable HTTP keep-alive, and count only
@@ -123,12 +141,22 @@ failed new TCP/HTTP connection establishment as a deny. They do not count an
 unexpected HTTP response as a deny. Live allowed traffic is checked during
 convergence and again before each negative case so a broken network or stopped
 target cannot masquerade as policy enforcement. Convergence and all commands
-have explicit deadlines.
+have explicit deadlines. A denial counts only for `ECONNREFUSED`, `ECONNRESET`,
+or the bounded `ETIMEDOUT` from a new direct-IP connection. DNS, malformed
+responses, unrelated transport errors, and unexpected HTTP responses fail the
+test.
 
-Namespace cleanup uses the exact namespace UID recorded at creation as a
-Kubernetes delete precondition and waits for NotFound. It never force-deletes
-pods, nodes, or namespaces. The JSON report is created exclusively with mode
-0600 and records the cluster/image identity, rendered policy hash and UID,
+If a namespace-create request has an ambiguous result, the runner follows up
+with an API read and records any matching run-owned namespace UID for cleanup.
+If ownership still cannot be determined, cleanup is recorded incomplete and
+the test fails without issuing an unconditioned delete.
+
+Namespace cleanup sends HTTP DELETE through a loopback-only `kubectl proxy`
+with `DeleteOptions.preconditions.uid` set to the exact namespace UID recorded
+at creation, then waits for NotFound. It never uses a get-then-unconditional
+delete, force-deletes pods, or deletes nodes. The JSON report is created
+exclusively with mode 0600 and records the cluster/image identity, source and
+live policy hashes/drift, rendered policy hash and UID,
 Pod UIDs/IPs/imageIDs, positive and negative packet results, and UID-precondition
 cleanup results. If cleanup or report creation fails, the test fails.
 

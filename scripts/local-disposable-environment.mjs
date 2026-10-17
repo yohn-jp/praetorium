@@ -282,7 +282,7 @@ async function assertTools() {
   for (const binary of Object.values(TOOL)) await access(binary, fsConstants.X_OK);
 }
 
-async function pullAndStartRegistry(root, env) {
+async function pullAndStartRegistry(root, env, onRegistryStarted) {
   const baseArgs = podmanArgs(root);
   const port = await freeLoopbackPort();
   await run(
@@ -303,7 +303,6 @@ async function pullAndStartRegistry(root, env) {
       ...baseArgs,
       "run",
       "--pull=never",
-      "--rm",
       "--detach",
       "--name",
       REGISTRY_CONTAINER,
@@ -315,11 +314,44 @@ async function pullAndStartRegistry(root, env) {
     ],
     { env, logPath: path.join(root, "logs", "registry-start.log") },
   );
+  await onRegistryStarted();
   const registryUrl = `http://127.0.0.1:${port}`;
-  await waitFor(async () => {
-    const response = await fetch(`${registryUrl}/v2/`);
-    return response.status === 200 ? registryUrl : false;
-  }, "loopback OCI registry");
+  try {
+    await waitFor(async () => {
+      const response = await fetch(`${registryUrl}/v2/`);
+      return response.status === 200 ? registryUrl : false;
+    }, "loopback OCI registry");
+  } catch (error) {
+    let details = "";
+    try {
+      details = await run(
+        TOOL.podman,
+        [...baseArgs, "logs", "--tail", "100", REGISTRY_CONTAINER],
+        { env, logPath: path.join(root, "logs", "registry-container.log") },
+      );
+    } catch (logError) {
+      details = `could not read registry container logs: ${logError.message}`;
+    }
+    let state = "unknown";
+    try {
+      state = await run(
+        TOOL.podman,
+        [
+          ...baseArgs,
+          "inspect",
+          "--format",
+          "{{.State.Status}} exit={{.State.ExitCode}}",
+          REGISTRY_CONTAINER,
+        ],
+        { env, logPath: path.join(root, "logs", "registry-container-state.log") },
+      );
+    } catch (inspectError) {
+      state = `could not inspect registry container: ${inspectError.message}`;
+    }
+    throw new Error(
+      `${error.message}; registry state: ${state}; registry logs: ${details || "empty"}`,
+    );
+  }
   return { registryUrl, registryImage: REGISTRY_IMAGE };
 }
 
@@ -672,7 +704,8 @@ async function stopOwnedServices(root, owner) {
         logPath: path.join(root, "logs", "registry-stop.log"),
       });
     } catch (error) {
-      if (!/no such|not found|does not exist/i.test(error.message)) throw error;
+      if (!/no such|not found|does not exist|not running|already stopped/i.test(error.message))
+        throw error;
     }
   }
   if (owner.podmanInitialized) {
@@ -842,7 +875,10 @@ async function launch(keep) {
     owner.podmanInitialized = true;
     await persistOwner();
 
-    const registry = await pullAndStartRegistry(root, env);
+    const registry = await pullAndStartRegistry(root, env, async () => {
+      owner.registryStarted = true;
+      await persistOwner();
+    });
     owner.registryStarted = true;
     await persistOwner();
     const buildkit = await startBuildkit(

@@ -752,5 +752,40 @@
     "producerRevision": "fc4eea880ef895decf6161bf4f45cc958e9700b3",
     "artifactDigest": null,
     "productionApplied": false
+  },
+  "latestFixedRunnerImplementation": {
+    "sourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "document": "docs/verification/FIXED-RUNNER-PROGRESS.md",
+    "implementedFixedPaths": [
+      "tests/integration/workers-d1-do.test.mjs",
+      "tests/integration/kubernetes-isolation.test.mjs",
+      "tests/integration/github-access.test.mjs",
+      "tests/e2e/browser-entry.test.mjs"
+    ],
+    "remainingMissingFixedPaths": [
+      "tests/integration/buildkit-registry.test.mjs",
+      "tests/integration/producer-recovery.test.mjs",
+      "tests/integration/stable-rollout.test.mjs"
+    ],
+    "remainingMissingFixedRunners": 3,
+    "githubImplementationReview": "pending partial-probe write-ahead recovery and deletion-readback correction",
+    "browserImplementationReview": "closed at worker ff7cea8863b137007f3a346e4cf4638f077921a2; live NOT_CHECKED",
+    "requiredInstallAndCheck": "passed at exact sourceHead; 29/29 cached test-stage tasks plus boundaries/schema",
+    "infraAndMappingTestsPassed": 57,
+    "kubernetesLocalTestsPassed": 4,
+    "githubFixedLocalTestsPassed": 3,
+    "githubPartialLocalTestsPassed": 6,
+    "githubPartialLiveTestsSkipped": 1,
+    "missingInputFixedContract": "both new fixed runners exit1 and classify BLOCKED/OWNER_INPUT_MISSING through actual verifier environment",
+    "actualFixedAcceptanceReport": "/tmp/praetorium-164ae3b-acceptance.json",
+    "actualFixedAcceptance": "Worker/D1/DO VERIFIED locally only; six BLOCKED/NOT_CHECKED; exit2; errors=[]",
+    "liveGitHubAcceptance": "NOT_CHECKED",
+    "liveBrowserAcceptance": "NOT_CHECKED",
+    "producerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
+    "artifactDigest": null,
+    "remainingProducerConsumerImplementation": "Fixed GitHub category still requires actual producer client expiry/renewal after S03; direct Platform broker calls cannot certify it",
+    "applicationAndDeploymentSourceBaseline": "b3fbe6dcfb586b8f6aa28f5e06fa71ae89733061",
+    "baselineScope": "apps/packages/plugins/infrastructure and scripts except verify-integration.mjs are unchanged; that verifier and acceptance tests changed",
+    "productionApplied": false
   }
 }

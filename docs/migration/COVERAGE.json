@@ -288,5 +288,40 @@
     {"id":"M02","kind":"required-capability","parentId":"G26","source":"apps/gateway/src/routes/operations.ts","surface":"authorized, idempotent retry of an eligible lifecycle operation","task":"T09","disposition":"integrated-Gateway-portal-to-Control-Plane-retry-under-current-contract","status":"partial","target":["apps/control-plane/src/operation-admin-routes.ts","apps/control-plane/src/app.ts","apps/control-plane/src/worker.ts","apps/gateway/src/services/portal-service.ts","apps/gateway/src/ui/handler.ts"],"proofs":["apps/control-plane/src/operation-admin-routes.test.ts","apps/gateway/src/services/portal-service.test.ts","apps/gateway/src/ui/portal.test.ts","apps/gateway/test/runtime-git-broker.test.ts"],"candidateTargets":[],"blocker":"The authorized portal retry now invokes the idempotent Control Plane operation with current actor, binding, authorization and generation fences. Focused Gateway UI/service and Control Plane route tests passed at this cut; real browser, GitHub App and provisioner execution remain blocked.","relatedCoverageEntries":["C05"]},
     {"id":"M03","kind":"required-capability","parentId":"A16","source":"packages/application/src/build-cache/gc.ts","surface":"bounded artifact-cache retention planning with live-reference protection","task":"T05","disposition":"bounded-pinned-safe-planner-with-scheduled-advisory-retention-audit; no-remote-delete-executor-required","status":"partial","target":["packages/application/src/build-cache/gc.ts","packages/persistence/src/d1/artifact-cache-store.ts","apps/control-plane/src/cache-maintenance.ts","apps/control-plane/src/worker.ts","apps/control-plane/src/build-composition.ts"],"proofs":["packages/application/test/artifacts-build-cache.test.ts","packages/persistence/test/d1-artifact-cache-store.test.ts","tests/integration/workers-d1-do.test.mjs","infrastructure/test/deploy-workers.test.mjs"],"blocker":"The bounded planner and D1 snapshot protect current/desired/rollback references. The actual scheduled Worker now supplies configured cacheRetention and writes a durable build-cache.gc.planned advisory audit. No cache row or OCI manifest is deleted and no storage reclamation is claimed. PLAN T05 requires pin-respecting GC, not an OCI registry delete executor; operator policy must still be supplied for deploy preflight."},
     {"id":"M04","kind":"required-capability","parentId":"A13","source":"docs/architecture/PLATFORM.md","surface":"revoke already-issued repository/epoch-scoped GitHub installation tokens during runtime retirement","task":"T02","disposition":"encrypted-known-token-registry-revoker-and-retirement-barrier-integrated; local-evidence-only","status":"partial","target":["apps/control-plane/migrations/0004_runtime_git_credentials.sql","packages/persistence/src/d1/runtime-git-credentials-store.ts","apps/control-plane/src/runtime-git-credential-routes.ts","apps/control-plane/src/credential-retirement.ts","apps/control-plane/src/runtime-binding.ts","apps/gateway/src/adapters/runtime-credential-registry.ts","apps/gateway/src/context.ts","apps/gateway/src/router.ts"],"proofs":["packages/persistence/test/runtime-git-credentials-store.test.ts","apps/control-plane/src/runtime-git-credential-routes.test.ts","apps/control-plane/src/credential-retirement.test.ts","apps/control-plane/src/runtime-binding.test.ts","apps/control-plane/src/runtime-identity-routes.test.ts","apps/gateway/test/runtime-credential-registry.test.ts","tests/integration/workers-d1-do.test.mjs","apps/gateway/test/runtime-retirement-route.test.ts","tests/integration/runtime-credentials-worker.partial.test.mjs"],"relatedCoverageEntries":["A13","A18"],"blocker":"Source cut 27142b0 encrypts known issued tokens, invokes a scoped GitHub revoker during quiescing and already-absent-writer retirement, durably tracks pending/revoked state, and withholds target identity while matching unexpired active/pending credentials remain. Focused package/SQLite tests and independent review cover these paths. The separate actual Wrangler Worker/D1 probe at test-only commit 37f187c passed 1/1: synthetic zero-census old-writer-absent checkpoint remains 503/pending on GitHub 401, then succeeds after synthetic 204 acknowledgement; null retired epoch skips the callback. The absence proof, credentials, and GitHub responses are synthetic; there was no actual writer/census/runtime lease or live GitHub App/API call. No global or instantaneous revocation guarantee is claimed."}
-  ]
+  ],
+  "latestFixedRunnerImplementation": {
+    "sourceHead": "164ae3b80aacff51ee3472fd39a8d306011d3483",
+    "document": "docs/verification/FIXED-RUNNER-PROGRESS.md",
+    "implementedFixedPaths": [
+      "tests/integration/workers-d1-do.test.mjs",
+      "tests/integration/kubernetes-isolation.test.mjs",
+      "tests/integration/github-access.test.mjs",
+      "tests/e2e/browser-entry.test.mjs"
+    ],
+    "remainingMissingFixedPaths": [
+      "tests/integration/buildkit-registry.test.mjs",
+      "tests/integration/producer-recovery.test.mjs",
+      "tests/integration/stable-rollout.test.mjs"
+    ],
+    "remainingMissingFixedRunners": 3,
+    "githubImplementationReview": "pending partial-probe write-ahead recovery and deletion-readback correction",
+    "browserImplementationReview": "closed at worker ff7cea8863b137007f3a346e4cf4638f077921a2; live NOT_CHECKED",
+    "requiredInstallAndCheck": "passed at exact sourceHead; 29/29 cached test-stage tasks plus boundaries/schema",
+    "infraAndMappingTestsPassed": 57,
+    "kubernetesLocalTestsPassed": 4,
+    "githubFixedLocalTestsPassed": 3,
+    "githubPartialLocalTestsPassed": 6,
+    "githubPartialLiveTestsSkipped": 1,
+    "missingInputFixedContract": "both new fixed runners exit1 and classify BLOCKED/OWNER_INPUT_MISSING through actual verifier environment",
+    "actualFixedAcceptanceReport": "/tmp/praetorium-164ae3b-acceptance.json",
+    "actualFixedAcceptance": "Worker/D1/DO VERIFIED locally only; six BLOCKED/NOT_CHECKED; exit2; errors=[]",
+    "liveGitHubAcceptance": "NOT_CHECKED",
+    "liveBrowserAcceptance": "NOT_CHECKED",
+    "producerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
+    "artifactDigest": null,
+    "remainingProducerConsumerImplementation": "Fixed GitHub category still requires actual producer client expiry/renewal after S03; direct Platform broker calls cannot certify it",
+    "applicationAndDeploymentSourceBaseline": "b3fbe6dcfb586b8f6aa28f5e06fa71ae89733061",
+    "baselineScope": "apps/packages/plugins/infrastructure and scripts except verify-integration.mjs are unchanged; that verifier and acceptance tests changed",
+    "productionApplied": false
+  }
 }

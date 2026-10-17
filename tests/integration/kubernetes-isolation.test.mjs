@@ -39,6 +39,7 @@ const APP_LABEL = "app.kubernetes.io/name";
 const RUN_LABEL = "praetorium.io/t14-run-id";
 const INVENTORY_LABEL = "praetorium.io/t14-inventory-id";
 const PROBE_APP_LABEL = "praetorium.io/t14-probe";
+const METADATA_FIXTURE_LABEL = "praetorium.io/t14-metadata-fixture";
 const APP_READY_PATH = "/readyz";
 const APP_HEALTH_PATH = "/healthz";
 const APP_AUTH_PATH = "/__t14/auth";
@@ -86,7 +87,16 @@ function validateConfig(config, inventory, now = Date.now()) {
   const errors = [];
   exactKeys(
     config,
-    ["schemaVersion", "inventory", "cluster", "credentials", "probe", "network", "timeouts"],
+    [
+      "schemaVersion",
+      "inventory",
+      "cluster",
+      "credentials",
+      "metadataFixture",
+      "probe",
+      "network",
+      "timeouts",
+    ],
     "config",
     errors,
   );
@@ -205,7 +215,7 @@ function validateConfig(config, inventory, now = Date.now()) {
 
   exactKeys(
     config?.credentials,
-    ["directory", "controllerTokenPath", "providerTokenPath", "caPath"],
+    ["directory", "controllerIdentity", "controllerTokenPath", "providerTokenPath", "caPath"],
     "config.credentials",
     errors,
   );
@@ -213,6 +223,103 @@ function validateConfig(config, inventory, now = Date.now()) {
     if (!safeAbsolutePath(config?.credentials?.[key])) {
       errors.push(`config.credentials.${key} must be an absolute path`);
     }
+  }
+  if (!/^[\x21-\x7e]{1,256}$/u.test(config?.credentials?.controllerIdentity ?? "")) {
+    errors.push("config.credentials.controllerIdentity must be an explicit Kubernetes username");
+  }
+
+  exactKeys(
+    config?.metadataFixture,
+    [
+      "inventoryId",
+      "ownerIdentity",
+      "environmentName",
+      "expiresAt",
+      "fixtureId",
+      "marker",
+      "routeAttestation",
+      "serviceName",
+      "serviceUid",
+      "endpointsUid",
+      "podName",
+      "podUid",
+      "podIp",
+      "imageRef",
+      "imageDigest",
+      "platformManifestDigest",
+      "resources",
+    ],
+    "config.metadataFixture",
+    errors,
+  );
+  for (const key of ["inventoryId", "ownerIdentity", "environmentName", "expiresAt"]) {
+    if (config?.metadataFixture?.[key] !== config?.inventory?.[key]) {
+      errors.push(`config.metadataFixture.${key} must match the owned inventory`);
+    }
+  }
+  if (!/^[a-f0-9]{32}$/u.test(config?.metadataFixture?.fixtureId ?? "")) {
+    errors.push(
+      "config.metadataFixture.fixtureId must be a unique 128-bit lowercase hex identifier",
+    );
+  }
+  const metadataFixtureId = config?.metadataFixture?.fixtureId ?? "";
+  if (
+    config?.metadataFixture?.routeAttestation !==
+    `t14-owned-route:${config?.inventory?.inventoryId}:${metadataFixtureId}`
+  ) {
+    errors.push(
+      "config.metadataFixture.routeAttestation must explicitly attest this inventory and fixture route",
+    );
+  }
+  if (config?.metadataFixture?.serviceName !== `t14-meta-s-${metadataFixtureId.slice(0, 20)}`) {
+    errors.push(
+      "config.metadataFixture.serviceName must be the unique derived canary Service name",
+    );
+  }
+  if (config?.metadataFixture?.podName !== `t14-meta-p-${metadataFixtureId.slice(12)}`) {
+    errors.push("config.metadataFixture.podName must be the unique derived canary Pod name");
+  }
+  for (const key of ["serviceUid", "endpointsUid", "podUid"]) {
+    if (!/^[A-Za-z0-9-]{16,128}$/u.test(config?.metadataFixture?.[key] ?? "")) {
+      errors.push(`config.metadataFixture.${key} must be an explicit live Kubernetes UID`);
+    }
+  }
+  if (isIP(config?.metadataFixture?.podIp ?? "") === 0) {
+    errors.push("config.metadataFixture.podIp must be the explicit canary Pod IP");
+  }
+  const metadataImageRef = config?.metadataFixture?.imageRef;
+  const metadataImageDigest = config?.metadataFixture?.imageDigest;
+  if (
+    typeof metadataImageRef !== "string" ||
+    !/^[a-z0-9][a-z0-9./:_-]{0,254}@sha256:[0-9a-f]{64}$/u.test(metadataImageRef) ||
+    !DIGEST.test(metadataImageDigest ?? "") ||
+    !metadataImageRef.endsWith(`@${metadataImageDigest}`) ||
+    !DIGEST.test(config?.metadataFixture?.platformManifestDigest ?? "")
+  ) {
+    errors.push(
+      "config.metadataFixture must identify its immutable canary image and platform digest",
+    );
+  }
+  safeResourceQuantities(
+    config?.metadataFixture?.resources,
+    "config.metadataFixture.resources",
+    errors,
+  );
+  for (const key of ["cpuMilli", "memoryMiB", "ephemeralStorageMiB"]) {
+    if (
+      Number.isSafeInteger(config?.metadataFixture?.resources?.[key]) &&
+      Number.isSafeInteger(config?.cluster?.maximumResources?.[key]) &&
+      config.metadataFixture.resources[key] > config.cluster.maximumResources[key]
+    ) {
+      errors.push(
+        `config.metadataFixture.resources.${key} must not exceed cluster.maximumResources`,
+      );
+    }
+  }
+  if (!/^t14-metadata-[a-f0-9]{64}$/u.test(config?.metadataFixture?.marker ?? "")) {
+    errors.push(
+      "config.metadataFixture.marker must be an unguessable 256-bit marker for the owned canary",
+    );
   }
 
   exactKeys(
@@ -692,12 +799,74 @@ async function getNamespaceOptional(api, name) {
   }
 }
 
-async function listAll(api, kind, namespace) {
+async function verifyRuntimeDeletion(api, runtime, spec, config, guard) {
+  const namespace = runtimeNamespace(config, spec.instanceId);
+  const result = await runtime.ensureRuntimeDeleted(
+    spec,
+    abortSignal(config.timeouts.readinessMs),
+    guard,
+  );
+  assert.equal(
+    result.status,
+    "applied",
+    `provider runtime cleanup for ${spec.instanceId} remains pending`,
+  );
+  assert.equal(result.observation.state, "absent", "deleted runtime is still observed");
+  assert.equal(
+    result.observation.writerCensus.complete,
+    true,
+    "cleanup writer census is incomplete",
+  );
+  assert.equal(result.observation.writerCensus.queriedPodCount, 0, "cleanup left runtime writers");
+
+  const retainedNamespace = await api.getNamespace(namespace);
+  assert.equal(
+    namespaceOf(retainedNamespace),
+    namespace,
+    "provider cleanup removed the retained namespace",
+  );
+  const labels = metadataOf(retainedNamespace).labels ?? {};
+  for (const [key, expected] of Object.entries({
+    [PLATFORM_LABEL_KEY]: PLATFORM_LABEL_VALUE,
+    [MANAGED_BY_LABEL_KEY]: MANAGED_BY_LABEL_VALUE,
+    [INSTANCE_LABEL]: spec.instanceId,
+    [REPOSITORY_LABEL_KEY]: String(spec.repositoryId),
+    [OWNERSHIP_LABEL_KEY]: OWNERSHIP_VERSION,
+    [CLUSTER_LABEL_KEY]: config.cluster.id,
+    "pod-security.kubernetes.io/enforce": "restricted",
+    "pod-security.kubernetes.io/audit": "restricted",
+    "pod-security.kubernetes.io/warn": "restricted",
+  })) {
+    assert.equal(labels[key], expected, `retained namespace ownership changed at ${key}`);
+  }
+
+  const name = runtimeService(spec.instanceId);
+  for (const reference of [
+    { kind: "Service", name },
+    { kind: "NetworkPolicy", name: `${name}-network` },
+    { kind: "ResourceQuota", name: `${name}-quota` },
+    { kind: "LimitRange", name: `${name}-limits` },
+    { kind: "ServiceAccount", name: `${name}-app` },
+    { kind: "RoleBinding", name: "praetorium-provisioner-runtime" },
+    { kind: "Deployment", name },
+    { kind: "IngressRoute", name },
+  ]) {
+    try {
+      await api.get({ ...reference, namespace });
+      assert.fail(`provider cleanup left ${reference.kind} ${namespace}/${reference.name}`);
+    } catch (error) {
+      if (error instanceof KubernetesApiError && error.statusCode === 404) continue;
+      throw error;
+    }
+  }
+}
+
+async function listAll(api, kind, namespace, labelSelector = "") {
   const items = [];
   let cursor;
   const cursors = new Set();
   do {
-    const page = await api.list(kind, namespace, "", cursor);
+    const page = await api.list(kind, namespace, labelSelector, cursor);
     items.push(...page.items);
     cursor = page.nextCursor ?? undefined;
     if (cursor !== undefined) {
@@ -868,24 +1037,109 @@ async function preflightPublicEgress(config) {
   );
 }
 
-async function getLiveProvisionerHealthTarget(controllerApi) {
-  const provisionerPods = await controllerApi.list(
+async function getLiveProvisionerHealthTarget(
+  controllerApi,
+  controllerTransport,
+  expectedDeploymentUid,
+  requestMs,
+) {
+  const namespace = "praetorium-system";
+  const deployment = await controllerApi.get({
+    kind: "Deployment",
+    namespace,
+    name: "praetorium-provisioner",
+  });
+  const deploymentUid = objectUid(deployment);
+  assert.equal(
+    deploymentUid,
+    expectedDeploymentUid,
+    "Provisioner Deployment UID changed during the isolation run",
+  );
+  assert.deepEqual(
+    deployment?.spec?.selector?.matchLabels,
+    { [APP_LABEL]: "provisioner" },
+    "Provisioner Deployment selector changed during the isolation run",
+  );
+  assert.equal(
+    deployment?.spec?.template?.spec?.serviceAccountName,
+    "praetorium-provisioner",
+    "Provisioner Deployment ServiceAccount changed during the isolation run",
+  );
+
+  const replicaSets = [];
+  let continueToken;
+  const cursors = new Set();
+  do {
+    const query = new URLSearchParams({ labelSelector: `${APP_LABEL}=provisioner`, limit: "500" });
+    if (continueToken !== undefined) query.set("continue", continueToken);
+    const response = await controllerTransport.request({
+      method: "GET",
+      path: `/apis/apps/v1/namespaces/${namespace}/replicasets?${query.toString()}`,
+      headers: { accept: "application/json" },
+      signal: abortSignal(requestMs),
+    });
+    assert.equal(response.statusCode, 200, "Provisioner ReplicaSets are unavailable");
+    assert.equal(response.body?.kind, "ReplicaSetList");
+    assert.ok(Array.isArray(response.body?.items));
+    replicaSets.push(...response.body.items);
+    assert.ok(replicaSets.length <= 2_000, "Provisioner ReplicaSet observation exceeded its bound");
+    continueToken = response.body?.metadata?.continue || undefined;
+    if (continueToken !== undefined) {
+      assert.equal(cursors.has(continueToken), false, "ReplicaSet pagination repeated a cursor");
+      cursors.add(continueToken);
+    }
+  } while (continueToken !== undefined);
+
+  const ownedReplicaSets = replicaSets.filter((replicaSet) => {
+    const owners = metadataOf(replicaSet).ownerReferences ?? [];
+    return (
+      owners.filter(
+        (owner) =>
+          owner?.kind === "Deployment" &&
+          owner?.name === "praetorium-provisioner" &&
+          owner?.uid === deploymentUid &&
+          owner?.controller === true,
+      ).length === 1 &&
+      replicaSet?.spec?.template?.spec?.serviceAccountName === "praetorium-provisioner"
+    );
+  });
+  assert.ok(ownedReplicaSets.length > 0, "Provisioner Deployment owns no matching ReplicaSet");
+  const replicaSetUids = new Set(ownedReplicaSets.map((replicaSet) => objectUid(replicaSet)));
+  const provisionerPods = await listAll(
+    controllerApi,
     "Pod",
-    "praetorium-system",
+    namespace,
     `${APP_LABEL}=provisioner`,
   );
-  const liveProvisionerPod = provisionerPods.items.find(
-    (pod) =>
+  const liveProvisionerPod = provisionerPods.find((pod) => {
+    const controllerOwners = (metadataOf(pod).ownerReferences ?? []).filter(
+      (owner) => owner?.controller === true,
+    );
+    const podLabels = metadataOf(pod).labels ?? {};
+    return (
+      controllerOwners.length === 1 &&
+      controllerOwners[0]?.kind === "ReplicaSet" &&
+      replicaSetUids.has(controllerOwners[0]?.uid) &&
+      ownedReplicaSets.some(
+        (replicaSet) =>
+          metadataOf(replicaSet).uid === controllerOwners[0]?.uid &&
+          metadataOf(replicaSet).name === controllerOwners[0]?.name,
+      ) &&
+      pod?.spec?.serviceAccountName === "praetorium-provisioner" &&
+      Object.entries(deployment.spec.selector.matchLabels).every(
+        ([key, value]) => podLabels[key] === value,
+      ) &&
       pod?.status?.phase === "Running" &&
       typeof pod?.status?.podIP === "string" &&
       isIP(pod.status.podIP) !== 0 &&
       pod?.status?.containerStatuses?.some(
         (container) => container?.name === "provisioner" && container?.state?.running,
-      ),
-  );
+      )
+    );
+  });
   assert.ok(
     liveProvisionerPod,
-    "target Provisioner has no live process for the private health-path probe",
+    "actual Provisioner Deployment has no running Pod owned through its ReplicaSet and exact ServiceAccount",
   );
   const controlHost =
     isIP(liveProvisionerPod.status.podIP) === 6
@@ -893,11 +1147,180 @@ async function getLiveProvisionerHealthTarget(controllerApi) {
       : liveProvisionerPod.status.podIP;
   return {
     uid: objectUid(liveProvisionerPod),
+    deploymentUid,
+    replicaSetUid: liveProvisionerPod.metadata.ownerReferences.find(
+      (owner) => owner?.controller === true,
+    ).uid,
     url: `http://${controlHost}:8080/healthz`,
   };
 }
 
-async function preflightCluster(config, controllerApi, provider) {
+async function verifyMetadataFixture(config, controllerApi, controllerTransport) {
+  const fixture = config.metadataFixture;
+  const namespace = "praetorium-system";
+  const service = await controllerApi.get({
+    kind: "Service",
+    namespace,
+    name: fixture.serviceName,
+  });
+  assert.equal(metadataOf(service).uid, fixture.serviceUid, "metadata canary Service UID changed");
+  assert.equal(metadataOf(service).namespace, namespace);
+  assert.deepEqual(
+    metadataOf(service).labels?.[INVENTORY_LABEL],
+    config.inventory.inventoryId,
+    "metadata canary Service does not belong to the owned acceptance inventory",
+  );
+  assert.deepEqual(
+    metadataOf(service).labels?.[METADATA_FIXTURE_LABEL],
+    fixture.fixtureId,
+    "metadata canary Service fixture identity changed",
+  );
+  assert.equal(
+    service?.spec?.type,
+    "ClusterIP",
+    "metadata canary Service must use ClusterIP routing",
+  );
+  assert.deepEqual(
+    service?.spec?.externalIPs,
+    ["169.254.169.254"],
+    "metadata canary Service must own only the fixed link-local test address",
+  );
+  assert.ok(
+    isIP(service?.spec?.clusterIP ?? "") !== 0,
+    "metadata canary Service must have a live ClusterIP",
+  );
+  assert.deepEqual(
+    service?.spec?.selector,
+    { [METADATA_FIXTURE_LABEL]: fixture.fixtureId },
+    "metadata canary Service selector is not the exact owned fixture",
+  );
+  assert.equal(Array.isArray(service?.spec?.ports), true);
+  assert.equal(service.spec.ports.length, 1);
+  assert.deepEqual(service.spec.ports[0], {
+    name: "http",
+    port: 80,
+    targetPort: 8080,
+    protocol: "TCP",
+  });
+
+  const endpointsResponse = await controllerTransport.request({
+    method: "GET",
+    path: `/api/v1/namespaces/${namespace}/endpoints/${fixture.serviceName}`,
+    headers: { accept: "application/json" },
+    signal: abortSignal(config.timeouts.requestMs),
+  });
+  assert.equal(endpointsResponse.statusCode, 200, "metadata canary Endpoints are unavailable");
+  const endpoints = endpointsResponse.body;
+  assert.equal(endpoints?.kind, "Endpoints", "metadata canary API response is not Endpoints");
+  assert.equal(metadataOf(endpoints).name, fixture.serviceName);
+  assert.equal(metadataOf(endpoints).namespace, namespace);
+  assert.equal(
+    metadataOf(endpoints).uid,
+    fixture.endpointsUid,
+    "metadata canary Endpoints UID changed",
+  );
+  assert.equal(Array.isArray(endpoints?.subsets), true);
+  assert.equal(
+    endpoints.subsets.length,
+    1,
+    "metadata canary must have exactly one endpoint subset",
+  );
+  assert.equal(
+    endpoints.subsets[0]?.addresses?.length,
+    1,
+    "metadata canary must have one ready target",
+  );
+  assert.equal(endpoints.subsets[0]?.notReadyAddresses?.length ?? 0, 0);
+  assert.equal(endpoints.subsets[0].addresses[0]?.ip, fixture.podIp);
+  const targetRef = endpoints.subsets[0].addresses[0]?.targetRef;
+  assert.equal(targetRef?.kind, "Pod");
+  assert.equal(targetRef?.name, fixture.podName);
+  assert.equal(targetRef?.namespace, namespace);
+  assert.equal(targetRef?.uid, fixture.podUid);
+  assert.deepEqual(endpoints.subsets[0]?.ports, [{ name: "http", port: 8080, protocol: "TCP" }]);
+
+  const pod = await controllerApi.get({ kind: "Pod", namespace, name: fixture.podName });
+  assert.equal(metadataOf(pod).uid, fixture.podUid, "metadata canary Pod UID changed");
+  assert.equal(metadataOf(pod).namespace, namespace);
+  const podLabels = metadataOf(pod).labels ?? {};
+  assert.equal(podLabels[INVENTORY_LABEL], config.inventory.inventoryId);
+  assert.equal(podLabels[METADATA_FIXTURE_LABEL], fixture.fixtureId);
+  assert.equal(podLabels[PROBE_APP_LABEL], "metadata-fixture");
+  assert.equal(pod?.spec?.automountServiceAccountToken, false);
+  assert.equal(pod?.spec?.hostNetwork ?? false, false);
+  assert.equal(pod?.spec?.hostPID ?? false, false);
+  assert.equal(pod?.spec?.hostIPC ?? false, false);
+  assert.equal(pod?.spec?.securityContext?.runAsNonRoot, true);
+  assert.equal(pod?.spec?.securityContext?.seccompProfile?.type, "RuntimeDefault");
+  assert.equal(
+    (pod?.spec?.volumes ?? []).some((volume) => Object.hasOwn(volume, "hostPath")),
+    false,
+    "metadata canary Pod must not use host paths",
+  );
+  assert.equal(Array.isArray(pod?.spec?.containers), true);
+  assert.equal(pod.spec.containers.length, 1);
+  assert.equal((pod?.spec?.initContainers ?? []).length, 0);
+  assert.deepEqual(pod?.spec?.volumes ?? [], [], "metadata canary Pod must not mount any volumes");
+  const container = pod.spec.containers[0];
+  assert.equal(container?.name, "metadata-fixture");
+  assert.equal(container?.image, fixture.imageRef);
+  assert.equal(
+    container?.command,
+    undefined,
+    "metadata canary must use its immutable image entrypoint",
+  );
+  assert.equal(
+    container?.args,
+    undefined,
+    "metadata canary must use its immutable image entrypoint",
+  );
+  assert.deepEqual(container?.env, [
+    { name: "T14_METADATA_FIXTURE_ID", value: fixture.fixtureId },
+    { name: "T14_METADATA_MARKER", value: fixture.marker },
+  ]);
+  assert.equal(
+    container?.envFrom,
+    undefined,
+    "metadata canary must not load undeclared environment data",
+  );
+  assert.deepEqual(container?.ports, [{ name: "http", containerPort: 8080, protocol: "TCP" }]);
+  const security = container?.securityContext;
+  assert.equal(security?.runAsNonRoot, true);
+  assert.equal(security?.allowPrivilegeEscalation, false);
+  assert.equal(security?.privileged ?? false, false);
+  assert.equal(security?.readOnlyRootFilesystem, true);
+  assert.equal(security?.seccompProfile?.type, "RuntimeDefault");
+  assert.ok(security?.capabilities?.drop?.includes("ALL"));
+  const quantities = {
+    cpu: `${fixture.resources.cpuMilli}m`,
+    memory: `${fixture.resources.memoryMiB}Mi`,
+    "ephemeral-storage": `${fixture.resources.ephemeralStorageMiB}Mi`,
+  };
+  assert.deepEqual(container?.resources?.requests, quantities);
+  assert.deepEqual(container?.resources?.limits, quantities);
+  const ready = pod?.status?.conditions?.some(
+    (condition) => condition?.type === "Ready" && condition?.status === "True",
+  );
+  assert.equal(pod?.status?.phase, "Running", "metadata canary Pod is not running");
+  assert.equal(ready, true, "metadata canary Pod is not ready");
+  assert.equal(pod?.status?.podIP, fixture.podIp);
+  assert.equal(pod?.status?.containerStatuses?.length, 1);
+  const containerStatus = pod.status.containerStatuses[0];
+  assert.equal(containerStatus?.name, "metadata-fixture");
+  assert.equal(containerStatus?.state?.running !== undefined, true);
+  assert.equal(
+    digestFromImageId(containerStatus?.imageID),
+    fixture.platformManifestDigest,
+    "metadata canary actual imageID does not match its configured immutable platform digest",
+  );
+  return {
+    serviceUid: fixture.serviceUid,
+    endpointsUid: fixture.endpointsUid,
+    podUid: fixture.podUid,
+  };
+}
+
+async function preflightCluster(config, controllerApi, controllerTransport, provider) {
   const kubeSystem = await controllerApi.getNamespace("kube-system");
   assert.equal(
     namespaceOf(kubeSystem),
@@ -1000,6 +1423,9 @@ async function preflightCluster(config, controllerApi, provider) {
     "private T14 input does not match the target instance hostname suffix",
   );
 
+  await verifyMetadataFixture(config, controllerApi, controllerTransport);
+
+  let provisionerDeploymentUid;
   for (const service of [
     {
       name: "instance-access",
@@ -1039,6 +1465,9 @@ async function preflightCluster(config, controllerApi, provider) {
       namespace: "praetorium-system",
       name: service.deployment,
     });
+    if (service.label === "provisioner") {
+      provisionerDeploymentUid = objectUid(deployment);
+    }
     assert.equal(
       metadataOf(deployment).name,
       service.deployment,
@@ -1102,7 +1531,13 @@ async function preflightCluster(config, controllerApi, provider) {
     ),
     "configured Traefik namespace has no Ready ingress Pod with the NetworkPolicy source label",
   );
-  const controlHealthTarget = await getLiveProvisionerHealthTarget(controllerApi);
+  assert.ok(provisionerDeploymentUid, "target Provisioner Deployment has no explicit live UID");
+  const controlHealthTarget = await getLiveProvisionerHealthTarget(
+    controllerApi,
+    controllerTransport,
+    provisionerDeploymentUid,
+    config.timeouts.requestMs,
+  );
   const capacity = await provider.getCapacitySnapshot(undefined, config.cluster.resourceProfile.id);
   assert.equal(capacity.authoritative, true, "provider did not return authoritative live capacity");
   assert.ok(
@@ -1113,13 +1548,16 @@ async function preflightCluster(config, controllerApi, provider) {
   return {
     capacity,
     controlHealthTarget,
+    provisionerDeploymentUid,
   };
 }
 
 async function selfReview(transport, apiVersion, review, signal) {
+  const resource =
+    review.kind === "SelfSubjectAccessReview" ? "selfsubjectaccessreviews" : "selfsubjectreviews";
   const response = await transport.request({
     method: "POST",
-    path: `/apis/${apiVersion}/selfsubjectreviews`,
+    path: `/apis/${apiVersion}/${resource}`,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(review),
     signal,
@@ -1174,6 +1612,257 @@ async function verifyProvisionerIdentity(transport, runtimeNamespaceName) {
       "Kubernetes could not complete a Provisioner authorization review",
     );
   }
+}
+
+async function verifyControllerIdentityAndPermissions(
+  transport,
+  expectedUsername,
+  runtimeNamespaces,
+  requestMs,
+) {
+  const authentication = await selfReview(
+    transport,
+    "authentication.k8s.io/v1",
+    { apiVersion: "authentication.k8s.io/v1", kind: "SelfSubjectReview", spec: {} },
+    abortSignal(requestMs),
+  );
+  const userInfo = authentication?.status?.userInfo;
+  assert.equal(
+    userInfo?.username,
+    expectedUsername,
+    "test-controller Kubernetes API credential is not the explicitly configured identity",
+  );
+  assert.ok(Array.isArray(userInfo?.groups), "test-controller identity omitted its groups");
+  assert.equal(
+    userInfo.groups.includes("system:masters"),
+    false,
+    "test-controller credential must not belong to system:masters",
+  );
+  assert.notEqual(
+    userInfo.username,
+    "system:anonymous",
+    "test-controller credential must be authenticated",
+  );
+
+  const review = async (attributes, expected, description) => {
+    const response = await selfReview(
+      transport,
+      "authorization.k8s.io/v1",
+      {
+        apiVersion: "authorization.k8s.io/v1",
+        kind: "SelfSubjectAccessReview",
+        spec: { resourceAttributes: attributes },
+      },
+      abortSignal(requestMs),
+    );
+    assert.equal(
+      response?.status?.allowed,
+      expected,
+      `test-controller permission boundary failed for ${description}`,
+    );
+    assert.equal(
+      response?.status?.evaluationError,
+      undefined,
+      `Kubernetes could not evaluate test-controller permission for ${description}`,
+    );
+  };
+  const attributes = (verb, group, resource, namespace, name) => ({
+    verb,
+    group,
+    version: "v1",
+    resource,
+    ...(namespace === undefined ? {} : { namespace }),
+    ...(name === undefined ? {} : { name }),
+  });
+
+  for (const namespace of [
+    "kube-system",
+    "praetorium-system",
+    CONTROL_PROBE_NAMESPACE,
+    "traefik",
+  ]) {
+    await review(
+      attributes("get", "", "namespaces", undefined, namespace),
+      true,
+      `read namespace ${namespace}`,
+    );
+  }
+  for (const [namespace, resources] of [
+    ["praetorium-system", ["services", "deployments", "serviceaccounts", "configmaps"]],
+    [CONTROL_PROBE_NAMESPACE, ["services", "deployments"]],
+  ]) {
+    for (const resource of resources) {
+      await review(
+        attributes("get", "", resource, namespace),
+        true,
+        `read ${resource} in ${namespace}`,
+      );
+    }
+  }
+  await review(
+    attributes("get", "rbac.authorization.k8s.io", "rolebindings", "praetorium-system"),
+    true,
+    "confirm dry-run RoleBinding absence in praetorium-system",
+  );
+  await review(
+    attributes("list", "apps", "replicasets", "praetorium-system"),
+    true,
+    "verify the Provisioner Deployment owner chain",
+  );
+  await review(
+    attributes("get", "", "endpoints", "praetorium-system"),
+    true,
+    "verify the operator-owned metadata canary Endpoints object",
+  );
+  for (const namespace of ["praetorium-system", CONTROL_PROBE_NAMESPACE, "traefik"]) {
+    await review(attributes("list", "", "pods", namespace), true, `list Pods in ${namespace}`);
+  }
+  for (const namespace of ["praetorium-system", CONTROL_PROBE_NAMESPACE, ...runtimeNamespaces]) {
+    for (const verb of ["get", "create", "delete"]) {
+      await review(
+        attributes(verb, "", "pods", namespace),
+        true,
+        `${verb} run-owned Pods in ${namespace}`,
+      );
+    }
+  }
+
+  for (const [attributesToDeny, description] of [
+    [attributes("create", "", "namespaces"), "create namespaces"],
+    [attributes("delete", "", "namespaces"), "delete namespaces"],
+    [
+      attributes("create", "rbac.authorization.k8s.io", "rolebindings", "praetorium-system"),
+      "create system RoleBindings",
+    ],
+    [
+      attributes("delete", "rbac.authorization.k8s.io", "rolebindings", "praetorium-system"),
+      "delete system RoleBindings",
+    ],
+    [attributes("create", "", "secrets", "praetorium-system"), "create system Secrets"],
+    [attributes("create", "apps", "deployments", "praetorium-system"), "create system Deployments"],
+    [
+      attributes("create", "rbac.authorization.k8s.io", "clusterrolebindings"),
+      "create ClusterRoleBindings",
+    ],
+    [attributes("create", "rbac.authorization.k8s.io", "clusterroles"), "create ClusterRoles"],
+    [
+      attributes(
+        "bind",
+        "rbac.authorization.k8s.io",
+        "clusterroles",
+        undefined,
+        "praetorium-provisioner-tenant-runtime",
+      ),
+      "bind the Provisioner tenant ClusterRole",
+    ],
+  ]) {
+    await review(attributesToDeny, false, description);
+  }
+}
+
+function assertAdmissionPolicyDenial(response, policyName, bindingName, description) {
+  assert.equal(
+    response.statusCode,
+    403,
+    `${description} must be denied by the active ValidatingAdmissionPolicy, got HTTP ${response.statusCode}`,
+  );
+  const body = response.body;
+  assert.ok(isRecord(body), `${description} returned no Kubernetes Status response`);
+  assert.equal(body.kind, "Status", `${description} did not return a Kubernetes Status response`);
+  assert.equal(body.status, "Failure", `${description} did not return a failed API response`);
+  assert.equal(body.reason, "Forbidden", `${description} was not denied as Forbidden`);
+  assert.equal(body.code, 403, `${description} response code did not match HTTP 403`);
+  assert.ok(typeof body.message === "string", `${description} denial omitted its message`);
+  assert.ok(
+    body.message.includes(policyName) && body.message.includes(bindingName),
+    `${description} was not attributed to ValidatingAdmissionPolicy ${policyName} and binding ${bindingName}`,
+  );
+}
+
+async function requireNotFound(transport, requestPath, description, requestMs) {
+  const response = await transport.request({
+    method: "GET",
+    path: requestPath,
+    headers: { accept: "application/json" },
+    signal: abortSignal(requestMs),
+  });
+  assert.equal(
+    response.statusCode,
+    404,
+    `${description} unexpectedly exists or cannot be inspected`,
+  );
+  assert.equal(
+    response.body?.kind,
+    "Status",
+    `${description} absence was not confirmed by a Kubernetes Status response`,
+  );
+  assert.equal(response.body?.reason, "NotFound", `${description} absence was not confirmed`);
+}
+
+async function verifyProvisionerAdmissionGuards(
+  providerTransport,
+  controllerTransport,
+  run,
+  requestMs,
+) {
+  const namespaceName = `praetorium-instances-t14-deny-${run}`;
+  const roleBindingName = `t14-deny-${run}`;
+  const namespacePath = `/api/v1/namespaces/${namespaceName}`;
+  const roleBindingPath = `/api/v1/namespaces/praetorium-system/rolebindings/${roleBindingName}`;
+  await requireNotFound(controllerTransport, namespacePath, "dry-run namespace", requestMs);
+  await requireNotFound(controllerTransport, roleBindingPath, "dry-run RoleBinding", requestMs);
+
+  const namespace = {
+    apiVersion: "v1",
+    kind: "Namespace",
+    metadata: { name: namespaceName },
+  };
+  const namespaceResponse = await providerTransport.request({
+    method: "POST",
+    path: "/api/v1/namespaces?dryRun=All",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(namespace),
+    signal: abortSignal(requestMs),
+  });
+  assertAdmissionPolicyDenial(
+    namespaceResponse,
+    "praetorium-provisioner-instance-namespaces",
+    "praetorium-provisioner-instance-namespaces",
+    "unowned run-unique Namespace server-side dry run",
+  );
+  await requireNotFound(controllerTransport, namespacePath, "dry-run namespace", requestMs);
+
+  const roleBinding = {
+    apiVersion: "rbac.authorization.k8s.io/v1",
+    kind: "RoleBinding",
+    metadata: { name: roleBindingName, namespace: "praetorium-system" },
+    roleRef: {
+      apiGroup: "rbac.authorization.k8s.io",
+      kind: "ClusterRole",
+      name: "praetorium-provisioner-tenant-runtime",
+    },
+    subjects: [
+      {
+        kind: "ServiceAccount",
+        name: "praetorium-provisioner",
+        namespace: "praetorium-system",
+      },
+    ],
+  };
+  const roleBindingResponse = await providerTransport.request({
+    method: "POST",
+    path: "/api/v1/namespaces/praetorium-system/rolebindings?dryRun=All",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(roleBinding),
+    signal: abortSignal(requestMs),
+  });
+  assertAdmissionPolicyDenial(
+    roleBindingResponse,
+    "praetorium-provisioner-instance-rolebindings",
+    "praetorium-provisioner-instance-rolebindings",
+    "run-unique system RoleBinding server-side dry run with the exact tenant role and Provisioner subject",
+  );
+  await requireNotFound(controllerTransport, roleBindingPath, "dry-run RoleBinding", requestMs);
 }
 
 function podMetadata(name, namespace, run, inventoryId, labels = {}) {
@@ -1330,7 +2019,7 @@ async function waitForPodAbsent(api, entry, run, inventoryId, requestMs) {
         { kind: "Pod", namespace: entry.namespace, name: entry.name },
         abortSignal(requestMs),
       );
-      validateNamespaceAndPodOwnership(current, run, inventoryId, {});
+      validateNamespaceAndPodOwnership(current, run, inventoryId, {}, entry.namespace, entry.name);
       assert.equal(objectUid(current), entry.uid, "refusing to wait on a replacement probe Pod");
     } catch (error) {
       if (error instanceof KubernetesApiError && error.statusCode === 404) return;
@@ -1374,7 +2063,7 @@ async function createAndRunPod({
     resourceVersion: objectResourceVersion(created),
   };
   trackedPods.set(`${namespace}/${name}`, entry);
-  validateNamespaceAndPodOwnership(created, run, inventoryId, labels);
+  validateNamespaceAndPodOwnership(created, run, inventoryId, labels, namespace, name);
   const { pod, status } = await waitForPodTerminal(
     api,
     namespace,
@@ -1382,7 +2071,7 @@ async function createAndRunPod({
     timeoutMs,
     config.timeouts.requestMs,
   );
-  validateNamespaceAndPodOwnership(pod, run, inventoryId, labels);
+  validateNamespaceAndPodOwnership(pod, run, inventoryId, labels, namespace, name);
   assert.equal(metadataOf(pod).uid, entry.uid, "probe Pod was replaced during execution");
   assert.equal(
     status.phase,
@@ -1399,8 +2088,17 @@ async function createAndRunPod({
   return { pod, status, entry };
 }
 
-function validateNamespaceAndPodOwnership(pod, run, inventoryId, expectedLabels) {
+function validateNamespaceAndPodOwnership(
+  pod,
+  run,
+  inventoryId,
+  expectedLabels,
+  expectedNamespace,
+  expectedName,
+) {
   const metadata = metadataOf(pod);
+  assert.equal(metadata.namespace, expectedNamespace, "probe Pod namespace changed");
+  assert.equal(metadata.name, expectedName, "probe Pod name changed");
   assert.equal(metadata.labels?.[RUN_LABEL], run, "probe Pod runner ownership label changed");
   assert.equal(
     metadata.labels?.[INVENTORY_LABEL],
@@ -1428,7 +2126,7 @@ async function cleanupPod(api, trackedPods, key, run, inventoryId, requestMs) {
       }
       throw error;
     }
-    validateNamespaceAndPodOwnership(current, run, inventoryId, {});
+    validateNamespaceAndPodOwnership(current, run, inventoryId, {}, entry.namespace, entry.name);
     assert.equal(objectUid(current), entry.uid, "refusing to delete a replacement probe Pod");
     try {
       await api.deleteConditional(
@@ -1530,6 +2228,56 @@ function controlApiReachableScript() {
   ].join("\n");
 }
 
+function metadataPositiveControlScript(config) {
+  const timeoutSeconds = Math.ceil(config.timeouts.networkProbeMs / 1000);
+  const markerUrl = `http://169.254.169.254/.well-known/praetorium-t14/${config.metadataFixture.fixtureId}`;
+  return [
+    "set -eu",
+    `response=$(curl --disable --noproxy '*' --fail --silent --show-error --connect-timeout 2 --max-time ${timeoutSeconds} --max-filesize 1024 --write-out 'HTTP:%{http_code}' "${markerUrl}")`,
+    'expected="${T14_METADATA_MARKER}HTTP:200"',
+    'if [ "$response" != "$expected" ]; then echo "metadata canary returned the wrong owned marker or status" >&2; exit 1; fi',
+  ].join("\n");
+}
+
+async function runMetadataPositiveControl({
+  api,
+  controllerTransport,
+  config,
+  namespace,
+  run,
+  inventoryId,
+  trackedPods,
+}) {
+  await verifyMetadataFixture(config, api, controllerTransport);
+  const name = `metadata-control-${randomBytes(5).toString("hex")}`;
+  const key = `${namespace}/${name}`;
+  try {
+    const result = await createAndRunPod({
+      api,
+      config,
+      namespace,
+      name,
+      run,
+      inventoryId,
+      // Deliberately omit the tenant runtime selector labels so the rendered
+      // runtime NetworkPolicy does not select this restricted positive control.
+      labels: { [PROBE_APP_LABEL]: "metadata-positive-control" },
+      script: metadataPositiveControlScript(config),
+      env: [{ name: "T14_METADATA_MARKER", value: config.metadataFixture.marker }],
+      timeoutMs: config.timeouts.readinessMs,
+      trackedPods,
+    });
+    const nodeName = result.pod?.spec?.nodeName;
+    assert.ok(
+      typeof nodeName === "string" && nodeName.length > 0,
+      "metadata control Pod has no live node",
+    );
+    return { nodeName };
+  } finally {
+    await cleanupPod(api, trackedPods, key, run, inventoryId, config.timeouts.requestMs);
+  }
+}
+
 async function runControlApiProbe({
   api,
   config,
@@ -1560,20 +2308,21 @@ async function runControlApiProbe({
 }
 
 function tenantNetworkScript(peerHost, peerPort, peerMarker, config) {
+  const metadataUrl = `http://169.254.169.254/.well-known/praetorium-t14/${config.metadataFixture.fixtureId}`;
   return [
     "set -eu",
     `getent hosts "${peerHost}" >/dev/null`,
-    `status=$(curl --disable --silent --show-error --connect-timeout 3 --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} --output /dev/null --write-out '%{http_code}' "http://${peerHost}:${peerPort}${APP_READY_PATH}" || true)`,
+    `status=$(curl --disable --noproxy '*' --silent --show-error --connect-timeout 3 --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} --output /dev/null --write-out '%{http_code}' "http://${peerHost}:${peerPort}${APP_READY_PATH}" || true)`,
     "if [ \"$status\" != 000 ]; then echo 'cross-instance packet unexpectedly reached the peer' >&2; exit 1; fi",
     "getent hosts kubernetes.default.svc.cluster.local >/dev/null",
-    `status=$(curl --disable --insecure --silent --show-error --connect-timeout 3 --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} --output /dev/null --write-out '%{http_code}' https://kubernetes.default.svc.cluster.local/version || true)`,
+    `status=$(curl --disable --noproxy '*' --insecure --silent --show-error --connect-timeout 3 --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} --output /dev/null --write-out '%{http_code}' https://kubernetes.default.svc.cluster.local/version || true)`,
     "if [ \"$status\" != 000 ]; then echo 'tenant packet unexpectedly reached the Kubernetes control API' >&2; exit 1; fi",
-    `status=$(curl --disable --silent --show-error --connect-timeout 3 --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} --output /dev/null --write-out '%{http_code}' "$T14_CONTROL_HEALTH_URL" || true)`,
+    `status=$(curl --disable --noproxy '*' --silent --show-error --connect-timeout 3 --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} --output /dev/null --write-out '%{http_code}' "$T14_CONTROL_HEALTH_URL" || true)`,
     "if [ \"$status\" != 000 ]; then echo 'tenant packet unexpectedly reached the private Provisioner control endpoint' >&2; exit 1; fi",
-    `status=$(curl --disable --silent --show-error --connect-timeout 2 --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} --output /dev/null --write-out '%{http_code}' http://169.254.169.254/ || true)`,
+    `status=$(curl --disable --noproxy '*' --silent --show-error --connect-timeout 2 --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} --output /dev/null --write-out '%{http_code}' "${metadataUrl}" || true)`,
     "if [ \"$status\" != 000 ]; then echo 'tenant packet unexpectedly reached link-local metadata' >&2; exit 1; fi",
     'getent hosts "$T14_PUBLIC_HOST" >/dev/null',
-    `curl --disable --fail --silent --show-error --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} "$T14_PUBLIC_URL" | grep -Fqx "$T14_PUBLIC_MARKER"`,
+    `curl --disable --noproxy '*' --fail --silent --show-error --max-time ${Math.ceil(config.timeouts.networkProbeMs / 1000)} "$T14_PUBLIC_URL" | grep -Fqx "$T14_PUBLIC_MARKER"`,
   ].join("\n");
 }
 
@@ -1720,6 +2469,8 @@ async function activateAndVerifyIngress({
 
 async function runTenantNetworkProbe({
   api,
+  observerApi,
+  controllerTransport,
   config,
   source,
   target,
@@ -1732,6 +2483,24 @@ async function runTenantNetworkProbe({
   const sourceResourceName = `net-${randomBytes(5).toString("hex")}`;
   const peerHost = `${runtimeService(target.instanceId)}.${runtimeNamespace(config, target.instanceId)}.svc.cluster.local`;
   const labels = tenantFixtureLabels(source);
+  const metadataControl = await runMetadataPositiveControl({
+    api,
+    controllerTransport,
+    config,
+    namespace: sourceNamespace,
+    run,
+    inventoryId,
+    trackedPods,
+  });
+  const nodes = await listAll(observerApi, "Node", "");
+  const metadataControlNode = nodes.find(
+    (node) => metadataOf(node).name === metadataControl.nodeName,
+  );
+  const hostnameLabel = metadataOf(metadataControlNode).labels?.["kubernetes.io/hostname"];
+  assert.ok(
+    typeof hostnameLabel === "string" && hostnameLabel.length > 0,
+    "metadata positive-control node has no standard hostname label",
+  );
   const result = await createAndRunPod({
     api,
     config,
@@ -1744,6 +2513,7 @@ async function runTenantNetworkProbe({
     env: [{ name: "T14_CONTROL_HEALTH_URL", value: controlHealthUrl }],
     timeoutMs: config.timeouts.readinessMs,
     trackedPods,
+    nodeSelector: { "kubernetes.io/hostname": hostnameLabel },
   });
   assert.equal(result.status.phase, "Succeeded");
 }
@@ -1776,9 +2546,6 @@ async function createUnknownCapacityPod({
     { [nodeSelectorKey]: "absent" },
   );
   const created = await api.create(resource, abortSignal(config.timeouts.requestMs));
-  validateNamespaceAndPodOwnership(created, run, inventoryId, {
-    [PROBE_APP_LABEL]: "unknown-capacity",
-  });
   const entry = {
     namespace: helperNamespace,
     name,
@@ -1786,6 +2553,14 @@ async function createUnknownCapacityPod({
     resourceVersion: objectResourceVersion(created),
   };
   trackedPods.set(`${helperNamespace}/${name}`, entry);
+  validateNamespaceAndPodOwnership(
+    created,
+    run,
+    inventoryId,
+    { [PROBE_APP_LABEL]: "unknown-capacity" },
+    helperNamespace,
+    name,
+  );
   return { entry };
 }
 
@@ -1796,7 +2571,6 @@ async function createUnboundWriter({ api, config, spec, run, inventoryId, tracke
   const pod = podResource(name, namespace, run, inventoryId, config, "sleep 600", labels);
   delete pod.spec.nodeSelector;
   const created = await api.create(pod, abortSignal(config.timeouts.requestMs));
-  validateNamespaceAndPodOwnership(created, run, inventoryId, labels);
   const entry = {
     namespace,
     name,
@@ -1804,11 +2578,12 @@ async function createUnboundWriter({ api, config, spec, run, inventoryId, tracke
     resourceVersion: objectResourceVersion(created),
   };
   trackedPods.set(`${namespace}/${name}`, entry);
+  validateNamespaceAndPodOwnership(created, run, inventoryId, labels, namespace, name);
   const current = await api.get(
     { kind: "Pod", namespace, name },
     abortSignal(config.timeouts.requestMs),
   );
-  validateNamespaceAndPodOwnership(current, run, inventoryId, labels);
+  validateNamespaceAndPodOwnership(current, run, inventoryId, labels, namespace, name);
   for (const key of ["praetorium.io/runtime-epoch", "arcadia.io/generation"]) {
     assert.equal(
       Object.hasOwn(metadataOf(current).labels ?? {}, key),
@@ -1861,6 +2636,12 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     ...transportOptions,
     tokenPath: credentialFiles.controllerTokenPath,
   });
+  await verifyControllerIdentityAndPermissions(
+    controllerTransport,
+    config.credentials.controllerIdentity,
+    specs.map((spec) => runtimeNamespace(config, spec.instanceId)),
+    config.timeouts.requestMs,
+  );
   const guard = effectGuard(run, inventory, config);
   const providerApi = guardKubernetesApi(new KubernetesApiClient(providerTransport), guard);
   const controllerApi = guardKubernetesApi(new KubernetesApiClient(controllerTransport), guard);
@@ -1888,13 +2669,36 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
       undefined,
       "random runtime namespace B already exists; refusing to touch it",
     );
+    const clusterProof = await preflightCluster(
+      config,
+      controllerApi,
+      controllerTransport,
+      runtime,
+    );
+    // These product-identity creates are server-side dry runs only. Requiring
+    // them after the owned metadata route has been verified makes missing or
+    // stale fixture input fail before any network probe or workload creation.
+    await verifyProvisionerAdmissionGuards(
+      providerTransport,
+      controllerTransport,
+      run,
+      config.timeouts.requestMs,
+    );
+    await runMetadataPositiveControl({
+      api: controllerApi,
+      controllerTransport,
+      config,
+      namespace: "praetorium-system",
+      run,
+      inventoryId: inventory.inventoryId,
+      trackedPods,
+    });
     await preflightIngress(
       config,
       credentialFiles.ingressCa,
       `${run}.${config.network.hostnameSuffix}`,
     );
     await preflightPublicEgress(config);
-    const clusterProof = await preflightCluster(config, controllerApi, runtime);
 
     // Prove the control API is live and reachable from a run-owned Pod using
     // the exact Prometheus source allowed by the deployed system NetworkPolicy.
@@ -2051,7 +2855,12 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
       inventoryId: inventory.inventoryId,
       trackedPods,
     });
-    const controlBeforeA = await getLiveProvisionerHealthTarget(controllerApi);
+    const controlBeforeA = await getLiveProvisionerHealthTarget(
+      controllerApi,
+      controllerTransport,
+      clusterProof.provisionerDeploymentUid,
+      config.timeouts.requestMs,
+    );
     await runControlApiProbe({
       api: controllerApi,
       config,
@@ -2062,6 +2871,8 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     });
     await runTenantNetworkProbe({
       api: controllerApi,
+      observerApi: providerApi,
+      controllerTransport,
       config,
       source: specA,
       target: specB,
@@ -2085,12 +2896,19 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
       peerBeforeA,
       "cross-instance peer writer changed during the denial probe",
     );
-    const controlAfterA = await getLiveProvisionerHealthTarget(controllerApi);
+    const controlAfterA = await getLiveProvisionerHealthTarget(
+      controllerApi,
+      controllerTransport,
+      clusterProof.provisionerDeploymentUid,
+      config.timeouts.requestMs,
+    );
     assert.equal(
       controlAfterA.uid,
       controlBeforeA.uid,
       "Provisioner Pod changed during the tenant private-endpoint denial probe",
     );
+    assert.equal(controlAfterA.deploymentUid, controlBeforeA.deploymentUid);
+    assert.equal(controlAfterA.replicaSetUid, controlBeforeA.replicaSetUid);
     await runControlApiProbe({
       api: controllerApi,
       config,
@@ -2136,7 +2954,12 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
       inventoryId: inventory.inventoryId,
       trackedPods,
     });
-    const controlBeforeB = await getLiveProvisionerHealthTarget(controllerApi);
+    const controlBeforeB = await getLiveProvisionerHealthTarget(
+      controllerApi,
+      controllerTransport,
+      clusterProof.provisionerDeploymentUid,
+      config.timeouts.requestMs,
+    );
     await runControlApiProbe({
       api: controllerApi,
       config,
@@ -2147,6 +2970,8 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     });
     await runTenantNetworkProbe({
       api: controllerApi,
+      observerApi: providerApi,
+      controllerTransport,
       config,
       source: specB,
       target: specA,
@@ -2170,12 +2995,19 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
       peerBeforeB,
       "cross-instance peer writer changed during the denial probe",
     );
-    const controlAfterB = await getLiveProvisionerHealthTarget(controllerApi);
+    const controlAfterB = await getLiveProvisionerHealthTarget(
+      controllerApi,
+      controllerTransport,
+      clusterProof.provisionerDeploymentUid,
+      config.timeouts.requestMs,
+    );
     assert.equal(
       controlAfterB.uid,
       controlBeforeB.uid,
       "Provisioner Pod changed during the tenant private-endpoint denial probe",
     );
+    assert.equal(controlAfterB.deploymentUid, controlBeforeB.deploymentUid);
+    assert.equal(controlAfterB.replicaSetUid, controlBeforeB.replicaSetUid);
     await runControlApiProbe({
       api: controllerApi,
       config,
@@ -2238,22 +3070,20 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
     for (const spec of [...providerOwnedSpecs].reverse()) {
       try {
         const namespace = runtimeNamespace(config, spec.instanceId);
-        const current = await getNamespaceOptional(providerApi, namespace);
-        if (current !== undefined) {
-          const labels = metadataOf(current).labels ?? {};
-          assert.equal(
-            labels[INSTANCE_LABEL],
-            spec.instanceId,
-            "cleanup found a runtime namespace not owned by this exact instance",
-          );
-          assert.equal(
-            labels["arcadia.io/repository-id"],
-            String(spec.repositoryId),
-            "cleanup found a runtime namespace for a different repository",
-          );
-          await runtime.ensureRuntimeDeleted(spec, abortSignal(config.timeouts.readinessMs), guard);
-          reservations.setStatus(spec.instanceId, "released");
-        }
+        const current = await providerApi.getNamespace(namespace);
+        const labels = metadataOf(current).labels ?? {};
+        assert.equal(
+          labels[INSTANCE_LABEL],
+          spec.instanceId,
+          "cleanup found a runtime namespace not owned by this exact instance",
+        );
+        assert.equal(
+          labels["arcadia.io/repository-id"],
+          String(spec.repositoryId),
+          "cleanup found a runtime namespace for a different repository",
+        );
+        await verifyRuntimeDeletion(providerApi, runtime, spec, config, guard);
+        reservations.setStatus(spec.instanceId, "released");
       } catch (error) {
         cleanupErrors.push(error);
       }
@@ -2274,6 +3104,190 @@ async function runAcceptance({ inventory, config, credentialFiles }) {
   if (cleanupFailure) throw cleanupFailure;
   if (primaryError) throw primaryError;
 }
+
+test("Kubernetes identity and access reviews use their actual API resources", async () => {
+  const requests = [];
+  const transport = {
+    async request(request) {
+      requests.push(request);
+      return { statusCode: 201, headers: {}, body: { kind: "Status", status: "Success" } };
+    },
+  };
+  await selfReview(
+    transport,
+    "authentication.k8s.io/v1",
+    { apiVersion: "authentication.k8s.io/v1", kind: "SelfSubjectReview", spec: {} },
+    AbortSignal.timeout(1_000),
+  );
+  await selfReview(
+    transport,
+    "authorization.k8s.io/v1",
+    {
+      apiVersion: "authorization.k8s.io/v1",
+      kind: "SelfSubjectAccessReview",
+      spec: { resourceAttributes: { verb: "list", group: "", resource: "pods" } },
+    },
+    AbortSignal.timeout(1_000),
+  );
+  assert.deepEqual(
+    requests.map(({ path }) => path),
+    [
+      "/apis/authentication.k8s.io/v1/selfsubjectreviews",
+      "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+    ],
+  );
+});
+
+test("T14 admission proof accepts only denials attributed to the expected policy and binding", () => {
+  const expected = {
+    statusCode: 403,
+    body: {
+      kind: "Status",
+      status: "Failure",
+      reason: "Forbidden",
+      code: 403,
+      message:
+        "ValidatingAdmissionPolicy 'praetorium-provisioner-instance-namespaces' with binding 'praetorium-provisioner-instance-namespaces' denied request: invalid namespace ownership",
+    },
+  };
+  assert.doesNotThrow(() =>
+    assertAdmissionPolicyDenial(
+      expected,
+      "praetorium-provisioner-instance-namespaces",
+      "praetorium-provisioner-instance-namespaces",
+      "test Namespace request",
+    ),
+  );
+  assert.throws(
+    () =>
+      assertAdmissionPolicyDenial(
+        {
+          ...expected,
+          body: {
+            ...expected.body,
+            message: 'User "system:serviceaccount:default:default" cannot create namespaces',
+          },
+        },
+        "praetorium-provisioner-instance-namespaces",
+        "praetorium-provisioner-instance-namespaces",
+        "test Namespace request",
+      ),
+    /not attributed to ValidatingAdmissionPolicy/u,
+  );
+  assert.throws(
+    () =>
+      assertAdmissionPolicyDenial(
+        {
+          ...expected,
+          body: { ...expected.body, message: "ValidatingAdmissionPolicy 'other' denied request" },
+        },
+        "praetorium-provisioner-instance-namespaces",
+        "praetorium-provisioner-instance-namespaces",
+        "test Namespace request",
+      ),
+    /not attributed to ValidatingAdmissionPolicy/u,
+  );
+});
+
+test("T14 private health target follows the live Deployment, ReplicaSet and ServiceAccount", async () => {
+  const deployment = {
+    kind: "Deployment",
+    metadata: {
+      name: "praetorium-provisioner",
+      namespace: "praetorium-system",
+      uid: "deployment-uid",
+    },
+    spec: {
+      selector: { matchLabels: { [APP_LABEL]: "provisioner" } },
+      template: { spec: { serviceAccountName: "praetorium-provisioner" } },
+    },
+  };
+  const replicaSet = {
+    kind: "ReplicaSet",
+    metadata: {
+      name: "praetorium-provisioner-1234567890",
+      namespace: "praetorium-system",
+      uid: "replicaset-uid",
+      ownerReferences: [
+        {
+          kind: "Deployment",
+          name: "praetorium-provisioner",
+          uid: "deployment-uid",
+          controller: true,
+        },
+      ],
+    },
+    spec: { template: { spec: { serviceAccountName: "praetorium-provisioner" } } },
+  };
+  const pod = {
+    kind: "Pod",
+    metadata: {
+      name: "praetorium-provisioner-1234567890-abcde",
+      namespace: "praetorium-system",
+      uid: "pod-uid",
+      labels: { [APP_LABEL]: "provisioner" },
+      ownerReferences: [
+        {
+          kind: "ReplicaSet",
+          name: replicaSet.metadata.name,
+          uid: "replicaset-uid",
+          controller: true,
+        },
+      ],
+    },
+    spec: { serviceAccountName: "praetorium-provisioner" },
+    status: {
+      phase: "Running",
+      podIP: "10.96.0.7",
+      containerStatuses: [{ name: "provisioner", state: { running: {} } }],
+    },
+  };
+  const controllerApi = {
+    async get(reference) {
+      assert.deepEqual(reference, {
+        kind: "Deployment",
+        namespace: "praetorium-system",
+        name: "praetorium-provisioner",
+      });
+      return deployment;
+    },
+    async list(kind, namespace, labelSelector) {
+      assert.equal(kind, "Pod");
+      assert.equal(namespace, "praetorium-system");
+      assert.equal(labelSelector, `${APP_LABEL}=provisioner`);
+      return { items: [pod] };
+    },
+  };
+  const controllerTransport = {
+    async request(request) {
+      assert.equal(request.method, "GET");
+      assert.match(request.path, /\/apis\/apps\/v1\/namespaces\/praetorium-system\/replicasets\?/u);
+      return {
+        statusCode: 200,
+        body: { kind: "ReplicaSetList", metadata: {}, items: [replicaSet] },
+      };
+    },
+  };
+
+  const target = await getLiveProvisionerHealthTarget(
+    controllerApi,
+    controllerTransport,
+    "deployment-uid",
+    1_000,
+  );
+  assert.deepEqual(target, {
+    uid: "pod-uid",
+    deploymentUid: "deployment-uid",
+    replicaSetUid: "replicaset-uid",
+    url: "http://10.96.0.7:8080/healthz",
+  });
+
+  pod.metadata.ownerReferences = [];
+  await assert.rejects(
+    getLiveProvisionerHealthTarget(controllerApi, controllerTransport, "deployment-uid", 1_000),
+    /actual Provisioner Deployment has no running Pod owned through its ReplicaSet/u,
+  );
+});
 
 test("T14 Kubernetes private config validator rejects unowned, unsafe, or incomplete inputs", () => {
   const now = Date.parse("2026-10-01T00:00:00Z");
@@ -2313,9 +3327,29 @@ test("T14 Kubernetes private config validator rejects unowned, unsafe, or incomp
     },
     credentials: {
       directory: "/tmp/t14-private",
+      controllerIdentity: "system:serviceaccount:t14-test:t14-controller",
       controllerTokenPath: "/tmp/t14-private/controller-token",
       providerTokenPath: "/tmp/t14-private/provisioner-token",
       caPath: "/tmp/t14-private/ca.crt",
+    },
+    metadataFixture: {
+      inventoryId: inventory.inventoryId,
+      ownerIdentity: inventory.owner.identity,
+      environmentName: inventory.environment.name,
+      expiresAt: inventory.environment.expiresAt,
+      fixtureId: "a".repeat(32),
+      marker: `t14-metadata-${"b".repeat(64)}`,
+      routeAttestation: `t14-owned-route:${inventory.inventoryId}:${"a".repeat(32)}`,
+      serviceName: `t14-meta-s-${"a".repeat(20)}`,
+      serviceUid: "11111111-1111-4111-8111-111111111111",
+      endpointsUid: "22222222-2222-4222-8222-222222222222",
+      podName: `t14-meta-p-${"a".repeat(20)}`,
+      podUid: "33333333-3333-4333-8333-333333333333",
+      podIp: "10.244.0.2",
+      imageRef: `ghcr.io/praetorium/t14-metadata-canary@sha256:${"c".repeat(64)}`,
+      imageDigest: `sha256:${"c".repeat(64)}`,
+      platformManifestDigest: `sha256:${"d".repeat(64)}`,
+      resources: { cpuMilli: 100, memoryMiB: 64, ephemeralStorageMiB: 128 },
     },
     probe: {
       repositoryId: 700001,
@@ -2353,6 +3387,52 @@ test("T14 Kubernetes private config validator rejects unowned, unsafe, or incomp
     [],
   );
   assert.deepEqual(validateConfig(valid, inventory, now), []);
+  assert.ok(
+    validateConfig(
+      Object.fromEntries(Object.entries(valid).filter(([key]) => key !== "metadataFixture")),
+      inventory,
+      now,
+    ).some((error) => error.includes("config.metadataFixture must be an object")),
+    "metadata route fixture must be present before any Kubernetes or network probe",
+  );
+  assert.ok(
+    validateConfig(
+      {
+        ...valid,
+        metadataFixture: {
+          ...valid.metadataFixture,
+          routeAttestation: "t14-owned-route:another-inventory:another-fixture",
+        },
+      },
+      inventory,
+      now,
+    ).some((error) => error.includes("routeAttestation must explicitly attest")),
+    "metadata route attestation must bind to this inventory and unique fixture ID",
+  );
+  assert.ok(
+    validateConfig(
+      {
+        ...valid,
+        metadataFixture: {
+          ...valid.metadataFixture,
+          serviceName: "shared-metadata-service",
+        },
+      },
+      inventory,
+      now,
+    ).some((error) => error.includes("serviceName must be the unique derived")),
+    "metadata service must have its inventory-specific derived name",
+  );
+  assert.ok(
+    validateConfig(
+      {
+        ...valid,
+        credentials: { ...valid.credentials, controllerIdentity: "system:masters\n" },
+      },
+      inventory,
+      now,
+    ).some((error) => error.includes("explicit Kubernetes username")),
+  );
   assert.ok(
     validateConfig(
       { ...valid, cluster: { ...valid.cluster, apiHost: "203.0.113.10" } },

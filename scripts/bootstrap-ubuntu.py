@@ -173,10 +173,20 @@ def build_preflight(config):
         require(filename.startswith(("/run/secrets/", "/var/lib/praetorium/credentials/")),
                 "TLS files must be outside Git in protected credential paths")
         owned_file(filename, label, secret=True)
+    # Verify cert material, matching server private key, and the private bind IP.
+    executable("openssl")
+    cert = config["tls"]["serverCertFile"]
+    key = config["tls"]["serverKeyFile"]
+    execute("openssl", "x509", "-in", cert, "-checkend", "3600", "-noout")
+    execute("openssl", "x509", "-in", config["tls"]["clientCaFile"], "-noout")
+    execute("openssl", "x509", "-in", cert, "-checkip", address, "-noout")
+    pub_from_cert = output("openssl", "x509", "-in", cert, "-pubkey", "-noout")
+    pub_from_key = output("openssl", "pkey", "-in", key, "-pubout")
+    require(pub_from_cert == pub_from_key, "server certificate and private key do not match")
     require(type(config["quotaMiB"]) is int and 1024 <= config["quotaMiB"] <= 1048576,
             "quotaMiB outside bounded range")
-    require(re.fullmatch(r"[1-9][0-9]{0,3}%", config["cpuQuota"] or ""), "invalid cpuQuota")
-    require(re.fullmatch(r"[1-9][0-9]{0,5}[MGT]", config["memoryMax"] or ""), "invalid memoryMax")
+    require(isinstance(config["cpuQuota"], str) and re.fullmatch(r"[1-9][0-9]{0,3}%", config["cpuQuota"]), "invalid cpuQuota")
+    require(isinstance(config["memoryMax"], str) and re.fullmatch(r"[1-9][0-9]{0,5}[MGT]", config["memoryMax"]), "invalid memoryMax")
     require(type(config["tasksMax"]) is int and 16 <= config["tasksMax"] <= 4096, "invalid tasksMax")
     for tool in ("rootlesskit", "slirp4netns", "buildkitd", "xfs_quota",
                  "apparmor_parser", "useradd", "getent"):

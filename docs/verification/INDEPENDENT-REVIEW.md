@@ -138,3 +138,32 @@ browser-entry harnesses can exercise current Platform contracts while keeping
 producer/runtime-dependent acceptance blocked. Sol dispatched those two isolated
 implementation areas. Their future commits require their own review and current
 verification; this ledger review does not certify them or close T14/T15.
+
+## Fixed GitHub and browser implementation review closure
+
+The separate browser reviewer closed exact clean worker `ff7cea8` after checking
+the real Gateway UI, Instance Access and current verifier. The reviewed fixes
+match the actual redeploy 200 response, enforce owner lifetime on actions and
+requests, avoid cookie-value diagnostics, compare actual module IDs, and bracket
+an app GET with old digest/Ready/active-build observations. Sol integrated the
+ordered browser commits through `164ae3b`; root focused lint, syntax and actual
+fixed-environment missing-input classification passed. No live browser ran.
+
+The separate GitHub reviewer closed exact clean worker `f33ba36` after the
+ordered recovery corrections through `265ccf1` and `1b2be60`. All partial-probe
+push sites now fsync PENDING recovery tuples before writes and recheck expiry
+immediately before Git. Exact force-with-lease cleanup records CLEANED only
+after readback observes absence. The journal survives fixed temporary HOME
+cleanup; only bounded repository/ref/commit fields are retained. Actual producer
+client renewal remains unavailable; partial or skipped tests cannot verify the
+fixed category. The reviewer ran no live calls.
+
+Sol integrated these GitHub corrections through `d23b9af`. Fresh root mandatory
+frozen install and full check passed at that exact HEAD (29/29 cached test-stage
+tasks plus boundaries/schema); partial tests passed 7 local/1 live SKIP-BLOCKED,
+and fixed GitHub local guards passed 3/3 on the immediately preceding unchanged
+fixed-runner source. No live App/CP/Gateway operations ran. Application/deployment
+paths still match `b3fbe6d`; among apps/packages/plugins/infrastructure/scripts,
+only the separately reviewed integration verifier differs. Subsequent owned
+BuildKit/registry environment investigation is a separate T12 substrate scope,
+not producer composition acceptance or final T15 certification.

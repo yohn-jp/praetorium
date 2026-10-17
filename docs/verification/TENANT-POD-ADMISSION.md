@@ -12,4 +12,4 @@ Run the focused structural and renderer-source check with:
 node --test tests/infra/tenant-pod-policy.test.mjs
 ```
 
-That check is not a Kubernetes API-server or CEL execution test. The integrated policy and binding still need validation against the supported Kubernetes API/CEL implementation and execution in an explicitly owned disposable cluster before deployment. No cluster apply or live admission result is claimed here.
+That structural check is separate from the [owned Kubernetes v1.35 API probe](OWNED-KUBERNETES.md). The probe used the exact policy bytes integrated at `137bc17`, with an isolated candidate name/selector and binding. After a binding-specific denial established readiness, valid Pod dry-runs passed and missing regular/init resource maps or limits were denied. Requests omitted from input were defaulted from limits by the API. No Pod persisted or image was pulled. The report SHA-256 is `9da37813c798d04decd840ac805305862aff57102abccf51d190ee542d501df7`. Canonical full-bundle application, workload execution, networking and full T14 acceptance remain unverified.

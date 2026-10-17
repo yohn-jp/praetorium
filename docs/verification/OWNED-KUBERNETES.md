@@ -131,6 +131,8 @@ The complete probe report, including timestamps, VAP/binding UIDs, defaulted
 objects, denials, and cleanup responses, is outside the repository at
 `/tmp/praetorium-owned-kube-1000-20261017/pod-dyn-bound-probe-ready.json`,
 SHA-256 `9da37813c798d04decd840ac805305862aff57102abccf51d190ee542d501df7`.
+The report’s `candidateVapSpecificDenial` summary flag is incorrectly false for the two init-container denial cases: the probe classifier searched only for the regular-container message. Independent review checked the actual denial strings, which name the exact candidate policy/binding and init-container validation message. The original report and hash are preserved; these two flags are not used as the proof.
+
 The first no-canary run was superseded because it started before the binding
 was observed by admission; its initial regular-limit acceptance is not used as
 behavior evidence. After the controlled run, the temporary binding, candidate

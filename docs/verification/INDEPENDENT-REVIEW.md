@@ -167,3 +167,9 @@ paths still match `b3fbe6d`; among apps/packages/plugins/infrastructure/scripts,
 only the separately reviewed integration verifier differs. Subsequent owned
 BuildKit/registry environment investigation is a separate T12 substrate scope,
 not producer composition acceptance or final T15 certification.
+
+## Integrated Pod resource CEL review
+
+A separate read-only reviewer audited clean main `7bf2609` and the unchanged Pod policy from `137bc17`. Source YAML and both expression hashes match the owned API probe report (`9da37813…df7`). Review confirmed the binding-specific readiness canary preceded the matrix, API-defaulted requests were inspected, no Pods persisted, and exact candidate cleanup completed. The reviewer identified the init-case summary-classifier defect and two stale documentation claims; the evidence caveat and scoped documentation are corrected without rewriting the original report. This closes the scoped policy/evidence review, not canonical Kubernetes deployment or T14/T15 certification.
+
+Root verification at exact `137bc17`: required frozen install and full check passed (29/29 cached test-stage tasks plus provider boundaries/schema); actual Kustomize infra tests passed 47/47 with no skips; integration-verifier tests passed 10/10. Focused Pod-test ESLint and changed-file formatting passed. An earlier infra invocation lacked Kustomize and reported 45 passed/2 skipped; it was superseded by the configured 47/47 run. Logs are `/tmp/praetorium-137bc17-{install,check,infra-render,verifier}.log`. These checks are local source proofs, not the full live category.

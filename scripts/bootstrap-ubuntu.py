@@ -15,6 +15,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 
 ROLE_MARKER = Path("/etc/praetorium/ubuntu-role.json")
 BUILD_ROOT = Path("/var/lib/praetorium-buildkit")
@@ -245,13 +246,23 @@ def apply_runtime(config):
            "INSTALL_K3S_EXEC": "server", "INSTALL_K3S_SYMLINK": "skip"}
     execute("/bin/sh", config["installer"], env=env)
     execute("systemctl", "enable", "--now", "k3s.service")
-    nodes = json.loads(output("/usr/local/bin/k3s", "kubectl", "get", "nodes",
-                              "-l", "praetorium.io/cluster-id=" + config["clusterId"],
-                              "-o", "json"))
-    require(nodes.get("items"), "no K3s node registered with declared cluster identity")
-    require(all(any(c.get("type") == "Ready" and c.get("status") == "True"
+    # New embedded-etcd clusters need a bounded startup grace period.
+    for attempt in range(30):
+        try:
+            nodes = json.loads(output("/usr/local/bin/k3s", "kubectl", "get", "nodes",
+                                      "-l", "praetorium.io/cluster-id=" + config["clusterId"],
+                                      "-o", "json", "--request-timeout=5s"))
+            if nodes.get("items") and all(
+                any(c.get("type") == "Ready" and c.get("status") == "True"
                     for c in node.get("status", {}).get("conditions", []))
-                for node in nodes["items"]), "K3s node not Ready")
+                for node in nodes["items"]
+            ):
+                break
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            pass
+        time.sleep(5)
+    else:
+        raise ValueError("K3s node with declared cluster identity did not become Ready")
 
 
 def apply_build(config):
@@ -330,7 +341,19 @@ def apply_build(config):
     ]))
     execute("systemctl", "daemon-reload")
     execute("systemctl", "enable", "--now", "praetorium-buildkit.service")
-    execute("systemctl", "is-active", "--quiet", "praetorium-buildkit.service")
+    for attempt in range(12):
+        if (subprocess.run(["systemctl", "is-active", "--quiet",
+                            "praetorium-buildkit.service"]).returncode == 0):
+            try:
+                with socket.create_connection(
+                    (config["bindAddress"], config["listenPort"]), timeout=2
+                ):
+                    break
+            except OSError:
+                pass
+        time.sleep(2)
+    else:
+        raise ValueError("BuildKit service did not become reachable on its private mTLS listener")
 
 
 def main():

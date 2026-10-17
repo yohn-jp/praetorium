@@ -39,7 +39,7 @@ exit 2 with six categories BLOCKED/NOT_CHECKED and errors `[]`. This newer local
 cut supplements the historical broader report above. No actual cluster admission,
 Traefik/CNI enforcement or producer conformance was run. Exact logs, measurements,
 independent review and limitations: [PLATFORM-SECURITY-DELTA.md](PLATFORM-SECURITY-DELTA.md).
-Current producer audit: [539375c](PRODUCER-539375c.md), accepted artifactDigest null.
+Producer audit at that checkpoint: [539375c](PRODUCER-539375c.md), accepted artifactDigest null.
 
 ## Kubernetes runner implementation
 
@@ -52,3 +52,32 @@ inventory exits1 before transport construction. This is NOT_CHECKED acceptance,
 not a cluster pass. The fresh fixed harness at this cut VERIFIED only actual local
 Worker/D1/DO, returning exit 2 with six blocked categories and errors `[]`.
 See [the required owned inputs](KUBERNETES-ISOLATION.md).
+
+
+## Fixed runner outcome protocol
+
+At verifier checkpoint `d1f5d37`, each fixed runner receives a fresh
+`PRAETORIUM_T14_RESULT_PATH` inside its isolated temporary home. Missing owner or
+producer prerequisites can be distinguished from failed assertions by writing
+one strict JSON object and exiting nonzero:
+
+```json
+{"reportVersion":1,"category":"github-access","status":"BLOCKED","reasonCode":"OWNER_INPUT_MISSING"}
+```
+
+Only `reportVersion`, the exact fixed `category`, `status` and `reasonCode` are
+accepted. Public reasons come from a closed code table, never exception text,
+secret values, owner paths or URLs. The BLOCKED codes are `OWNER_INPUT_MISSING`,
+`OWNED_ENVIRONMENT_UNAVAILABLE`, `PRODUCER_CONTRACT_MISSING`,
+`RUNTIME_UNAVAILABLE`, `BROWSER_UNAVAILABLE` and `INSUFFICIENT_LIFETIME`.
+`ACCEPTANCE_ASSERTION_FAILED` is valid only with status FAILED. Unknown fields,
+codes, category/status mismatches, malformed or unsafe files, process signals,
+and a non-success report paired with exit zero fail acceptance. No sidecar can
+promote a nonzero exit to VERIFIED. The file is bounded, opened without following
+symlinks or blocking on FIFOs, and must be a current-user regular file without
+group/other write permission. The result is removed with the isolated home.
+
+Runners without sidecars retain the existing exit-status contract. Each full
+runner must assert every required live path before exit zero; local guard tests,
+fixtures, skips and partial probes cannot certify a fixed category. The new
+protocol itself is harness behavior, not proof of any live category.

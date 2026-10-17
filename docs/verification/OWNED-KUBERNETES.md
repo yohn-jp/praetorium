@@ -26,11 +26,11 @@ between those heads is verification-document formatting, and the tenant Pod
 policy YAML has the same SHA-256 at both heads. The evidence spans these exact
 source cuts:
 
-| Operation | Source cut | Result |
-| --- | --- | --- |
-| Initial product `applyGuardedBundle` attempt | `0a28ccdddc82bf00694719e5c9bed55c370e3bc0` | Applied the 14 admission guards, then stopped at live type checking. It did not apply the full bundle or bootstrap RBAC. |
-| Canonical NetworkPolicy VAP update | `02b0d196c61bcb1993106a441bed683586eef6ff` | Updated only that VAP from a policy-only render; its same-name binding was included unchanged. The VAP advanced to generation 2, but its resulting status omitted `typeChecking`, so readiness remained unsatisfied. |
-| Tenant Pod policy behavior candidate | worker commit `424f285adfb53150681b0cbe94d557cc61b9a8db`; equivalent policy content is present in main at `137bc179` | Bound, isolated API behavior probe described below. The candidate YAML SHA-256 is identical at both commits and at the current note head, but this was not a canonical bundle application or live workload deployment. |
+| Operation                                    | Source cut                                                                                                           | Result                                                                                                                                                                                                                 |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Initial product `applyGuardedBundle` attempt | `0a28ccdddc82bf00694719e5c9bed55c370e3bc0`                                                                           | Applied the 14 admission guards, then stopped at live type checking. It did not apply the full bundle or bootstrap RBAC.                                                                                               |
+| Canonical NetworkPolicy VAP update           | `02b0d196c61bcb1993106a441bed683586eef6ff`                                                                           | Updated only that VAP from a policy-only render; its same-name binding was included unchanged. The VAP advanced to generation 2, but its resulting status omitted `typeChecking`, so readiness remained unsatisfied.   |
+| Tenant Pod policy behavior candidate         | worker commit `424f285adfb53150681b0cbe94d557cc61b9a8db`; equivalent policy content is present in main at `137bc179` | Bound, isolated API behavior probe described below. The candidate YAML SHA-256 is identical at both commits and at the current note head, but this was not a canonical bundle application or live workload deployment. |
 
 The v1.35 live OpenAPI documents showed `Container.resources` referring to
 `ResourceRequirements`, whose `requests` and `limits` are maps with Quantity
@@ -110,15 +110,15 @@ readiness canary and all matrix requests used `kubectl create
 --dry-run=server`; all images had `imagePullPolicy: Never`. No Pod was
 persisted, started, or pulled.
 
-| Server-side dry-run case after the readiness canary | Outcome | API observation |
-| --- | --- | --- |
-| Valid regular and init containers, with all six request/limit keys | Accepted | Returned object retained both resource maps. |
-| Missing regular-container limits | Denied | Exact candidate Pod policy message. Repeated after all other cases and denied again. |
-| Missing regular-container resources object | Denied | Exact candidate Pod policy message. |
-| Missing init-container limits | Denied | Exact candidate init-container policy message. |
-| Missing init-container resources object | Denied | Exact candidate init-container policy message. |
-| Missing regular-container requests, limits retained | Accepted | API defaulted requests to the supplied limits in the returned object. |
-| Missing init-container requests, limits retained | Accepted | API defaulted requests to the supplied limits in the returned object. |
+| Server-side dry-run case after the readiness canary                | Outcome  | API observation                                                                      |
+| ------------------------------------------------------------------ | -------- | ------------------------------------------------------------------------------------ |
+| Valid regular and init containers, with all six request/limit keys | Accepted | Returned object retained both resource maps.                                         |
+| Missing regular-container limits                                   | Denied   | Exact candidate Pod policy message. Repeated after all other cases and denied again. |
+| Missing regular-container resources object                         | Denied   | Exact candidate Pod policy message.                                                  |
+| Missing init-container limits                                      | Denied   | Exact candidate init-container policy message.                                       |
+| Missing init-container resources object                            | Denied   | Exact candidate init-container policy message.                                       |
+| Missing regular-container requests, limits retained                | Accepted | API defaulted requests to the supplied limits in the returned object.                |
+| Missing init-container requests, limits retained                   | Accepted | API defaulted requests to the supplied limits in the returned object.                |
 
 The accepted request omissions are expected API defaulting, not a policy bypass:
 the post-defaulted object was inspected and included all required keys. This
@@ -148,7 +148,7 @@ this probe.
 - NetworkPolicy API schema/type checking was exercised, but no packet-flow
   test was performed. Kind's default CNI is not counted as NetworkPolicy
   enforcement here: CNI enforcement is **NOT_CHECKED**.
-- S01-S05 producer handshakes and immutable producer artifact are unavailable;
+- S01-S05 hosted handshakes and an accepted immutable Platform composition are unavailable;
   there was no real Scriptorium image or runtime.
 - No GitHub App user authorization, OCI BuildKit/registry artifact, browser
   entry, ingress, workload startup, cluster isolation/capacity, recovery, or

@@ -36,10 +36,10 @@ function fetchBundle(bundle: Bundle): typeof fetch {
 describe("source Sigstore provenance verification", () => {
   it("retains the global receiver for the platform fetch default", async () => {
     const originalFetch = globalThis.fetch;
-    let receiver: unknown;
+    let correctReceiver = false;
     globalThis.fetch = function (this: unknown) {
-      receiver = this;
-      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      correctReceiver = this === globalThis;
+      if (!correctReceiver) throw new TypeError("Illegal invocation");
       return Promise.resolve(new Response(null, { status: 404 }));
     } as typeof fetch;
     try {
@@ -52,7 +52,7 @@ describe("source Sigstore provenance verification", () => {
         provenanceRef: null,
       });
       expect(result.verified).toBe(false);
-      expect(receiver).toBe(globalThis);
+      expect(correctReceiver).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }

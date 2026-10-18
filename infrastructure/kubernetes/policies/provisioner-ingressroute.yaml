@@ -40,19 +40,48 @@ spec:
         object.metadata.labels["app.kubernetes.io/name"] == "scriptorium"
       message: IngressRoutes must belong to the provisioner's exact tenant namespace and runtime identity.
     - expression: >-
-        object.spec.size() == 3 &&
+        has(object.spec.entryPoints) &&
+        has(object.spec.routes) &&
+        has(object.spec.tls) &&
+        !has(object.spec.ingressClassName) &&
+        !has(object.spec.parentRefs) &&
         object.spec.entryPoints == ["websecure"] &&
         object.spec.routes.size() == 1 &&
-        object.spec.routes[0].size() == 4 &&
+        has(object.spec.routes[0].kind) &&
+        has(object.spec.routes[0].match) &&
+        has(object.spec.routes[0].priority) &&
+        has(object.spec.routes[0].services) &&
+        !has(object.spec.routes[0].middlewares) &&
+        !has(object.spec.routes[0].observability) &&
+        !has(object.spec.routes[0].syntax) &&
         object.spec.routes[0].kind == "Rule" &&
         object.spec.routes[0].match == "Host(`ins-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + ".@@INSTANCE_HOSTNAME_SUFFIX@@`)" &&
         object.spec.routes[0].priority == 10 &&
         object.spec.routes[0].services.size() == 1 &&
-        object.spec.routes[0].services[0].size() == 2 &&
+        has(object.spec.routes[0].services[0].name) &&
+        has(object.spec.routes[0].services[0].port) &&
+        !has(object.spec.routes[0].services[0].healthCheck) &&
+        !has(object.spec.routes[0].services[0].kind) &&
+        !has(object.spec.routes[0].services[0].middlewares) &&
+        !has(object.spec.routes[0].services[0].namespace) &&
+        !has(object.spec.routes[0].services[0].nativeLB) &&
+        !has(object.spec.routes[0].services[0].nodePortLB) &&
+        !has(object.spec.routes[0].services[0].passHostHeader) &&
+        !has(object.spec.routes[0].services[0].passiveHealthCheck) &&
+        !has(object.spec.routes[0].services[0].responseForwarding) &&
+        !has(object.spec.routes[0].services[0].scheme) &&
+        !has(object.spec.routes[0].services[0].serversTransport) &&
+        !has(object.spec.routes[0].services[0].sticky) &&
+        !has(object.spec.routes[0].services[0].strategy) &&
+        !has(object.spec.routes[0].services[0].weight) &&
         object.spec.routes[0].services[0].name == "arcadia-ins-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&
         object.spec.routes[0].services[0].port >= 1 &&
         object.spec.routes[0].services[0].port <= 65535 &&
-        object.spec.tls.size() == 0
+        !has(object.spec.tls.certResolver) &&
+        !has(object.spec.tls.domains) &&
+        !has(object.spec.tls.options) &&
+        !has(object.spec.tls.secretName) &&
+        !has(object.spec.tls.store)
       message: Tenant IngressRoutes must expose one stable HTTPS host to one same-namespace runtime service.
 ---
 apiVersion: admissionregistration.k8s.io/v1

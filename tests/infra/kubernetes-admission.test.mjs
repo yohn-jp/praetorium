@@ -16,6 +16,12 @@ function parseYamlDocuments(relativePath) {
 const namespaceDocuments = parseYamlDocuments(
   "infrastructure/kubernetes/policies/provisioner-boundary.yaml",
 );
+const ingressRoutePolicyDocuments = parseYamlDocuments(
+  "infrastructure/kubernetes/policies/provisioner-ingressroute.yaml",
+);
+const traefikHelmDocuments = parseYamlDocuments(
+  "infrastructure/kubernetes/controllers/helm-releases.yaml",
+);
 const roleBindingDocuments = parseYamlDocuments(
   "infrastructure/kubernetes/policies/provisioner-rolebinding.yaml",
 );
@@ -49,6 +55,82 @@ const runtimeResourceDeleteBinding = namespaceDocuments.find(
     document.metadata.name === "praetorium-provisioner-runtime-resource-delete" &&
     document.kind === "ValidatingAdmissionPolicyBinding",
 );
+const ingressRoutePolicy = ingressRoutePolicyDocuments.find(
+  (document) =>
+    document.kind === "ValidatingAdmissionPolicy" &&
+    document.metadata.name === "praetorium-provisioner-tenant-ingressroute",
+);
+
+test("tenant IngressRoute deny-list covers the pinned Traefik CRD object fields", () => {
+  const traefikRelease = traefikHelmDocuments.find(
+    (document) => document.kind === "HelmRelease" && document.metadata.name === "traefik",
+  );
+  assert.ok(traefikRelease);
+  assert.equal(traefikRelease.spec.chart.spec.version, "41.6.1");
+
+  const expression = ingressRoutePolicy.spec.validations[1].expression;
+  // This inventory is from the v41.6.1 IngressRoute CRD; a chart-pin change requires review here.
+  const crdFields = {
+    "object.spec": ["entryPoints", "ingressClassName", "parentRefs", "routes", "tls"],
+    "object.spec.routes[0]": [
+      "kind",
+      "match",
+      "middlewares",
+      "observability",
+      "priority",
+      "services",
+      "syntax",
+    ],
+    "object.spec.routes[0].services[0]": [
+      "healthCheck",
+      "kind",
+      "middlewares",
+      "name",
+      "namespace",
+      "nativeLB",
+      "nodePortLB",
+      "passHostHeader",
+      "passiveHealthCheck",
+      "port",
+      "responseForwarding",
+      "scheme",
+      "serversTransport",
+      "sticky",
+      "strategy",
+      "weight",
+    ],
+    "object.spec.tls": ["certResolver", "domains", "options", "secretName", "store"],
+  };
+  const allowedFields = {
+    "object.spec": ["entryPoints", "routes", "tls"],
+    "object.spec.routes[0]": ["kind", "match", "priority", "services"],
+    "object.spec.routes[0].services[0]": ["name", "port"],
+    "object.spec.tls": [],
+  };
+  const expectedForbidden = Object.entries(crdFields)
+    .flatMap(([path, fields]) =>
+      fields
+        .filter((field) => !allowedFields[path].includes(field))
+        .map((field) => `${path}.${field}`),
+    )
+    .sort();
+  const actualForbidden = [...expression.matchAll(/!has\((object\.spec[^)]*)\)/gu)]
+    .map((match) => match[1])
+    .sort();
+
+  assert.deepEqual(actualForbidden, expectedForbidden);
+  for (const field of Object.entries(allowedFields).flatMap(([path, fields]) =>
+    fields.map((name) => `${path}.${name}`),
+  )) {
+    assert.ok(expression.includes(`has(${field})`), `missing required field ${field}`);
+  }
+  assert.doesNotMatch(
+    expression,
+    /object\.spec\.size\(\)|routes\[0\]\.size\(\)|services\[0\]\.size\(\)|tls\.size\(\)/u,
+  );
+  assert.match(expression, /object\.spec\.routes\.size\(\) == 1/u);
+  assert.match(expression, /object\.spec\.routes\[0\]\.services\.size\(\) == 1/u);
+});
 
 test("Namespace policy uses the v1 policy API and rejects unowned or retired namespaces", () => {
   assert.equal(namespacePolicy.apiVersion, "admissionregistration.k8s.io/v1");

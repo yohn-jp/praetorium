@@ -46,6 +46,7 @@ jobs:
         with:
           name: praetorium-evidence-ledger-rendered
           path: .praetorium-preview/*.html
+          include-hidden-files: true
           retention-days: 7
 
   publish:

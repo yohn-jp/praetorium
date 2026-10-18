@@ -860,19 +860,24 @@ export class GhcrRegistryClient {
       const reader = response.body.getReader();
       const hash = createHash("sha256");
       let total = 0;
-      let rejectAborted: ((error: Error) => void) | undefined;
-      const aborted = new Promise<never>((_, reject) => { rejectAborted = reject; });
-      void aborted.catch(() => undefined);
+      let rejectRead: ((error: Error) => void) | undefined;
       const onAbort = () => {
         void reader.cancel().catch(() => undefined);
-        rejectAborted?.(new Error("layer body read aborted"));
+        rejectRead?.(new Error("layer body read aborted"));
       };
       requestSignal.addEventListener("abort", onAbort, { once: true });
       if (requestSignal.aborted) onAbort();
       try {
         while (true) {
-          const read = reader.read();
-          const { done, value } = await Promise.race([read, aborted]);
+          // Racing every chunk against one pending promise retains the settled
+          // race results (and their bytes) until the entire layer finishes.
+          // Keep only the current read rejector reachable from the abort hook.
+          const { done, value } = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+            rejectRead = reject;
+            if (requestSignal.aborted) { onAbort(); return; }
+            void reader.read().then(resolve, reject);
+          });
+          rejectRead = undefined;
           if (done) break;
           total += value.byteLength;
           if (!Number.isSafeInteger(total) || total > descriptor.size) {
@@ -886,6 +891,7 @@ export class GhcrRegistryClient {
         if (error instanceof RegistryError) throw error;
         throw new RegistryError("unavailable", "registry layer body read failed");
       } finally {
+        rejectRead = undefined;
         requestSignal.removeEventListener("abort", onAbort);
         try { reader.releaseLock(); } catch { /* an aborted stream can still have a pending read */ }
       }

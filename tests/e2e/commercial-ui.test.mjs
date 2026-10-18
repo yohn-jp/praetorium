@@ -358,7 +358,10 @@ try {
               .getByRole("navigation", { name: "Repository sections" })
               .getByRole("link", { name: "Configuration", exact: true })
               .click();
-          await page.screenshot({ path: `${output}/${name}-${mode}-${label}.png`, fullPage: true });
+          await page.screenshot({
+            path: `${output}/${name}-${mode}-${label}.png`,
+            fullPage: false,
+          });
           if (state === "blocked") {
             assert.equal(await page.locator('input[name="action"][value="enter"]').count(), 0);
             await page

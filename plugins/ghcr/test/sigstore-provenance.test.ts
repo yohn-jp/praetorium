@@ -34,6 +34,30 @@ function fetchBundle(bundle: Bundle): typeof fetch {
 }
 
 describe("source Sigstore provenance verification", () => {
+  it("retains the global receiver for the platform fetch default", async () => {
+    const originalFetch = globalThis.fetch;
+    let receiver: unknown;
+    globalThis.fetch = function (this: unknown) {
+      receiver = this;
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return Promise.resolve(new Response(null, { status: 404 }));
+    } as typeof fetch;
+    try {
+      const verifier = new SigstoreProvenanceVerifier({
+        signerIdentityAllowlist: [{ subjectAlternativeName: identity }],
+      });
+      const result = await verifier.verify({
+        imageDigest: digest,
+        signatureRef: "https://example.com/bundle",
+        provenanceRef: null,
+      });
+      expect(result.verified).toBe(false);
+      expect(receiver).toBe(globalThis);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects non-SLSA statements before treating their subjects as producer metadata", async () => {
     const verify = vi.fn(() => ({ identity: { subjectAlternativeName: identity } }));
     const verifier = new SigstoreProvenanceVerifier({

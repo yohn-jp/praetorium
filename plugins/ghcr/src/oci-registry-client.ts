@@ -292,7 +292,7 @@ export class GhcrRegistryClient {
     ) {
       throw new TypeError("registry pull and publish credentials must be separate");
     }
-    this.fetchImplementation = options.fetch ?? globalThis.fetch;
+    this.fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.maxMetadataBlobBytes = options.maxMetadataBlobBytes ?? 2 * 1024 * 1024;
     if (!Number.isSafeInteger(this.maxMetadataBlobBytes) || this.maxMetadataBlobBytes < 1) {
       throw new TypeError("maxMetadataBlobBytes must be a positive safe integer");

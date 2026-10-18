@@ -10,6 +10,24 @@ const imageLimits = {
   maxRegistryRequestMs: 1_000,
 };
 
+it("retains the global receiver for the platform fetch default", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = function (this: unknown) {
+    if (this !== globalThis) throw new TypeError("Illegal invocation");
+    return Promise.resolve(new Response(null, { status: 404 }));
+  } as typeof fetch;
+  try {
+    const client = new GhcrRegistryClient({
+      registryUrl: "https://registry.example",
+      allowedRepositories: [repository],
+      ...imageLimits,
+    });
+    await expect(client.discoverTag(repository, "missing")).rejects.toMatchObject({ reason: "not_found" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 async function digestOf(bytes: Uint8Array): Promise<string> {
   return sha256Digest(bytes);
 }

@@ -137,7 +137,7 @@ export class SigstoreProvenanceVerifier {
 
   constructor(private readonly options: SigstoreProvenanceVerifierOptions) {
     this.verifier = options.verifier ?? new Verifier(toTrustMaterial(TrustedRoot.fromJSON(trustedRootJson)));
-    this.fetchImplementation = options.fetch ?? globalThis.fetch;
+    this.fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.maxBundleBytes = options.maxBundleBytes ?? 2 * 1024 * 1024;
     this.maxRequestMs = options.maxRequestMs ?? 15_000;
     if (!Number.isSafeInteger(this.maxBundleBytes) || this.maxBundleBytes < 1) {

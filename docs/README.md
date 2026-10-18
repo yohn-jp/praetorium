@@ -9,7 +9,6 @@
 | [システム全体像](architecture/SYSTEM.md) | Cloudflare Worker/D1/DO/KV、VM、K3s、BuildKit、Registry、Scriptorium、GitHub、CIの**存在目的・責務・正本・禁止境界** | 現行ソースから再構築した地図 |
 | [動作経路・実行契機](architecture/EXECUTION.md) | ログイン→wake→handoff→保存、構成Build、Runtime停止/置換、Release、短命Credential、**ポーリング/Cloudflareコスト** | 現状の動作トレース |
 | [設計監査・未決定事項](architecture/REVIEW.md) | 初期要件との乖離、確定した事象、変えるべき部分・維持すべき安全性・まだ決めていない設計 | 観測と提案を区別した監査 |
-| [管理者アーキテクチャ](architecture/ADMINISTRATION.md) | Praetorium全体の管理責務、既存OSS連携、Headlampの独立配置と権限境界 | 新規管理者向け設計・Headlamp初期実装 |
 
 **重要:** 上の3文書は既存実装の「正しさ」を宣言する文書ではない。現行実装と、要件が求める動作の差分を読めるようにするための入口である。
 
@@ -20,6 +19,7 @@
 | 初期受入要件 | [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) | 最優先。CI禁止の旧記述は最新のユーザー指示で上書き済み |
 | 旧アーキテクチャ草案 | [PLATFORM.md](architecture/PLATFORM.md) | 移行時の実装想定。新しいトポロジーの正本ではない |
 | Producer ABI | [SCRIPTORIUM-CONTRACT.md](architecture/SCRIPTORIUM-CONTRACT.md) | Versioned contract・歴史的な実装差分を含む。現行稼働を単独で証明しない |
+| プラットフォーム運用管理 | [管理者アーキテクチャ](architecture/ADMINISTRATION.md) | 独立した運用入口とHeadlampの任意導入。既存のテナントControl Planeの受入条件ではない |
 | デプロイ操作 | [再現可能デプロイ](deployment/REPRODUCIBLE-DEPLOYMENT.md)、[ホスト手順](deployment/UBUNTU-2404.md)、[deployment/README](deployment/README.md) | `--check`/`--apply`の境界と実運用Secrets、稼働実証は別 |
 | 実Host・Runtime受入 | [検証記録の索引](verification/README.md) | 各レポートは観測したソースSHA/環境にだけ有効 |
 | 移行の実装履歴 | [移行索引](migration/README.md)、[PLAN.md](migration/PLAN.md) | T00–T15タスクを現在のプロダクト要件と混同しない |

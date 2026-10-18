@@ -1,7 +1,11 @@
 # Hosted Praetorium and Scriptorium integration runbook
 
 This runbook describes the disposable end-to-end path for the Hosted campaign.
-The integrated production source cuts are Praetorium
+For the latest deployed source pins, confirmed public editor/GitHub-save outcome
+and remaining acceptance gates, see the
+[current progress record](HOSTED-PROGRESS-20261018.md#latest-operational-result--public-editor-and-github-save-2026-10-18).
+The following introductory source pins describe an earlier integration snapshot:
+Praetorium
 `a669f5c16faa85d5fcc162241b793eab734d46c2` and Scriptorium
 `008d5c429ec279a424cafd5b8c4cbee70a613b8e`. Source implementation and local
 checks do not certify the full product path. Use the migration ledger and

@@ -3,6 +3,118 @@
 Status: **ACTIVE / GOAL UNMET**. [GOAL.md](../GOAL.md), including G1–G9,
 is unchanged. Source checks do not certify Hosted acceptance.
 
+## Latest operational result — public editor and GitHub save (2026-10-18)
+
+This section supersedes the current-state claims in the historical snapshots
+below. **G1–G9 are not collectively passed.** The owner requested a stop after
+the public save and performance investigation; no performance fix or change to
+the checkpoint/save product contract was implemented during that investigation.
+
+### Integrated and deployed source
+
+- Praetorium main: `bfef9e199a99d03636446ac31fc03db9086d254a`.
+  Frozen install and `corepack pnpm@11.18.0 check` passed all 29 tasks,
+  provider boundaries and contract schema checks. GitHub
+  [CI 39134970974](https://github.com/yohn-jp/praetorium/actions/runs/39134970974)
+  passed. These are source checks, not all-gate acceptance.
+- Gateway: source `bfef9e1`, deployed version
+  `3e39c05d-2386-4f29-8b54-9f3fd0336a89`. Repository action GETs redirect to
+  the canonical dashboard. Handoff uses a `strict-origin` document policy as
+  well as a response header, because the public path supplied a `same-origin`
+  response header. The intermediate page now uses the current Evidence Ledger
+  design rather than the legacy portal navigation and colors. Chromium checked
+  origin behavior and the rendered design with disposable inputs; the owner
+  confirmed entry into the real Scriptorium editor.
+- Control Plane: deployed source
+  `019eb506669ea4229f02a667ef70f7a03aea3948`, including pre-ready target binding,
+  admitted-revision reuse across lifecycle generations, report timestamp parsing
+  and live-lease recovery of a completion checkpoint.
+- Provisioner: source `229cb7befcf83f5ce24c6ba4fcf4c104c6cec59a`, image
+  `ghcr.io/yohn-jp/praetorium/provisioner@sha256:68cb9d69cce07236637c938b93142ba6418c68ff690e2eecf1851739ea784cce`.
+  Its canonical K3s apply completed successfully. Grant times are validated at
+  receipt, and recovered auth probes renew the existing fenced Runtime identity
+  before remote reads. Automatic projected identity renewal was observed after
+  the initial proof's expiry; signing keys were not rotated.
+- Running Scriptorium Producer source remains
+  `008d5c429ec279a424cafd5b8c4cbee70a613b8e`; it is not later Scriptorium main.
+  The admitted application image is
+  `ghcr.io/yohn-jp/praetorium/candidates@sha256:446a6a8a6703ebe54cc2ef924f71a885eabccf35b0397be6177cebb2f776ce99`,
+  with composition digest
+  `sha256:988f9f58a69c145d934a26ac170d9ae0d6c39bb407579e001bf9c34f9f00e613`
+  and no optional modules selected.
+
+### Real Hosted outcome
+
+The owner-authorized disposable repository is
+`yohn-jp/praetorium-hosted-validation-20261018`, numeric repository ID
+`1423923158`, installation `172344438`. Its logical instance is
+`ins_01M56ESTANTNHV8BA5J1PCNNQJ` in cluster
+`clu_01M552J5HCXXJAPCCPN480JSJN`.
+
+- Gateway: `https://praetorium.yohn.jp/`.
+- Stable instance origin:
+  `https://ins-01m56estantnhv8ba5j1pcnnqj.instances.praetorium.yohn.jp`.
+- Normal canary operation `op_01M57D1J5AQ3SJVHKAGEQEM03G` reached `succeeded`;
+  Control Plane observed `ready`, generation 2, Runtime epoch 1. Recovery used
+  the normal issuer/provider and operation reporting, without direct D1 failure
+  row rewrites.
+- The owner completed GitHub login, selected the repository, entered the editor,
+  edited and eventually completed **Save to GitHub**. The independent GitHub
+  read confirmed main moved from `edf0730a3d6b8cdae7e613d72d40ecabd3973d40`
+  to [commit c1d9c951](https://github.com/yohn-jp/praetorium-hosted-validation-20261018/commit/c1d9c951965c225d4325dbb873b9d142ccef3c58),
+  committed at `2026-10-18T14:29:53Z`. Local checkpoint/publication refs alone
+  were not treated as remote save evidence.
+- Reload/reconnect retention and long-lived browser-session acceptance were
+  **NOT_CHECKED**. Editor entry and one confirmed push do not pass all of G3.
+- Headlamp was deployed Ready behind an internal ClusterIP and SSH forwarding;
+  no public admin ingress or new cluster-admin grant was added. Admin login
+  remained **NOT_CHECKED**.
+
+### Remaining performance issue; no fix claimed
+
+The owner reported long snapshot loading and a save that appeared unresponsive
+before eventually succeeding. One read-only canonical observed-writer probe
+returned HTTP 200 for the snapshot in 149 ms inside the Runtime network. This
+was a warm read, not the complete browser scene-loading or save duration.
+The bounded, redacted Gateway trace observed credential issuance around
+0.9–1.7 seconds per request, with repeated serial requests. The deployed editor
+has a 15-second foreground refresh and overlapping proposal imports; publication
+also performs multiple remote observations/reconciliations. These are concrete
+latency contributors to investigate, not a measured complete attribution of the
+user's wait. No exact end-to-end save duration was recorded.
+
+No latency correction, checkpoint-semantics change, Scriptorium source edit or
+new Producer deployment resulted from this investigation. The owner's later
+request to record implementation status concerns this document, not changing
+the save implementation.
+
+### G1–G9 acceptance remainder
+
+| Gate | Current evidence and remaining acceptance |
+| --- | --- |
+| G1 | One real authorized user/repository path demonstrated. Multiple users, permission separation and revocation cases remain unverified. |
+| G2 | Public login, repository entry, one-use handoff and editor demonstrated. Stopped-bookmark wake, refresh/logout and the full API/MCP retry cases remain incomplete; an absent optional MCP route is not live MCP acceptance. |
+| G3 | Real edit and GitHub commit/push demonstrated. Reload/reconnect retention, long-lived sessions and unpublished/recovery-data protection still need complete evidence. |
+| G4 | One real admitted composition is running. Two approved selections and real cache reuse remain incomplete. |
+| G5 | Runtime startup/recovery reached Ready. The complete idle/quiesce/stop/resume/redeploy/single-writer acceptance sequence remains incomplete. |
+| G6 | Canary startup succeeded. No completed canary promotion, full Stable/Pinned rollout or complete failure/recovery acceptance is claimed. |
+| G7 | Existing infrastructure and isolation evidence remains scoped to its recorded checks. Full isolation, backup/restore and legacy preservation acceptance is incomplete. |
+| G8 | Source trigger changes do not replace cost evidence. Idle/active/failed-notification Cloudflare measurements and removal of remaining unnecessary recurring work are incomplete. |
+| G9 | Latest source CI and the initial public user journey have evidence. One coherent release-cut acceptance across all categories, final integrated review and full operational release remain incomplete. |
+
+Sanitized deployment/probe records are retained in the owner-private
+`/data/praetorium/production/verification/` directory, including
+`hosted-ready-540bb57.json`, `229cb7b-provisioner-image-pin.json`,
+`handoff-document-origin-d670734.json` and `handoff-design-bfef9e1.json`.
+Credentials, cookies, bearer tokens, raw tail events and authored manuscript
+contents are not copied into this repository. Historical failures below are
+preserved as historical evidence, not overwritten with PASS.
+
+## Historical snapshots
+
+The following sections describe their recorded earlier cuts and conditions;
+they do not describe the latest deployed state above.
+
 ## Integrated source and checks
 
 Repository identity is GitHub numeric ID `1422456736` (`yohn-jp/praetorium`).

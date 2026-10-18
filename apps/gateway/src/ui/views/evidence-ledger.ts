@@ -38,8 +38,8 @@ export function evidenceLedgerRepository(
     '<div class="evidence-material-heading"><span>Deployment evidence</span><span>Current / Desired</span></div>' +
     '<div class="evidence-operation-summary" aria-label="Latest operation">' + (view.evidence ?? '') + '</div>' +
     '<div class="evidence-deployment-comparison">' +
-    '<div class="desktop-deployment evidence-deployment evidence-deployment-current">' + view.current + '</div>' +
-    '<div class="desktop-deployment evidence-deployment evidence-deployment-desired">' + view.desired + '</div>' +
+    '<section class="desktop-deployment evidence-deployment evidence-deployment-current" aria-label="Current deployment">' + view.current + '</section>' +
+    '<section class="desktop-deployment evidence-deployment evidence-deployment-desired" aria-label="Desired deployment">' + view.desired + '</section>' +
     '</div></div></div></section>' +
     '<section id="configuration" class="evidence-secondary evidence-configuration" aria-labelledby="evidence-configuration-title">' +
     '<div class="evidence-section-title"><span class="evidence-index">01 / COMPOSITION</span>' +

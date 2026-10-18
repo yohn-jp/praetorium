@@ -3,7 +3,6 @@ import { evidenceLedgerRepository } from "./evidence-ledger.js";
 import type {
   RepositoryDetailView,
   RepositoryListView,
-  RepositoryRowView,
 } from "../presentation.js";
 
 /** Styles for the single mobile composition selected by the server renderer. */
@@ -74,28 +73,6 @@ export const MOBILE_STYLES = `
 }
 `;
 
-function optionalFragment(fragment: string, className: string): string {
-  return fragment.trim() ? `<div class="${className}">${fragment}</div>` : "";
-}
-
-function repositoryRow(view: RepositoryRowView): string {
-  return (
-    `<li class="mobile-repository-row"><article class="mobile-repository-summary">` +
-    `<div class="mobile-repository-identity">${view.identity}</div>` +
-    `<div class="mobile-repository-status"><div class="mobile-repository-runtime">${view.runtime}</div>` +
-    `<div class="mobile-repository-access">${view.access}</div></div>` +
-    optionalFragment(view.reason, "mobile-repository-reason") +
-    optionalFragment(view.operation, "mobile-repository-operation") +
-    `<div class="mobile-repository-actions">${view.actions}</div>` +
-    optionalFragment(view.installation, "mobile-repository-installation") +
-    (view.revisions.trim()
-      ? `<details class="mobile-repository-revisions"><summary>Current and desired revisions</summary>${view.revisions}</details>`
-      : "") +
-    `</article></li>`
-  );
-}
-
-/** Arrange already escaped, authoritative fragments into the mobile repository list. */
 export function mobileRepositories(view: RepositoryListView): string {
   return evidenceLedgerRepositories(view, "mobile");
 }

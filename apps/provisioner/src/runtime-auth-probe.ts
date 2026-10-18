@@ -157,7 +157,11 @@ export class HttpRuntimeAuthAcceptanceProbe implements LifecycleAuthProbeProvide
     const endpointUrl = await resolveRuntimeEndpoint(assignment, signal);
     const transport = runtimeApplicationTransport(endpointUrl, origin);
     const grants = await this.requestGrantMaterial(scope, assignmentIdentity, signal);
-    const grantSet = validateGrantSet(grants, assignment, Math.floor(startedAt / 1_000));
+    const grantsReceivedAt = this.now();
+    if (!Number.isSafeInteger(grantsReceivedAt) || grantsReceivedAt < 0) {
+      throw new Error("runtime_auth_probe_clock_invalid");
+    }
+    const grantSet = validateGrantSet(grants, assignment, Math.floor(grantsReceivedAt / 1_000));
     if (grantSet.origin !== origin || grantSet.audience !== assignment.deployment.grantPolicy.audience) {
       throw new Error("runtime_auth_probe_grant_policy_mismatch");
     }

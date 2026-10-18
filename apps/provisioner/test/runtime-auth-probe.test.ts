@@ -5,7 +5,6 @@ import type { RuntimeAssignment } from "@praetorium/application/lifecycle";
 import { HttpRuntimeAuthAcceptanceProbe } from "../src/runtime-auth-probe.js";
 
 const NOW = Date.parse("2026-10-17T00:00:10.000Z");
-const NOW_ISO = new Date(NOW).toISOString();
 const INSTANCE_ID = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const REPOSITORY_ID = 7001;
 const RUNTIME_EPOCH = 12;
@@ -64,7 +63,7 @@ function assignment(): RuntimeAssignment {
   };
 }
 
-async function makeGrantSet() {
+async function makeGrantSet(issuedAt = NOW) {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const signingKey: SigningKey = { kid: "probe-test-key", privateKey: pair.privateKey };
   const common = {
@@ -76,7 +75,7 @@ async function makeGrantSet() {
     permissions: VALID_GRANT_PERMISSION,
     sessionRevision: 0,
     authorizationRevision: 4,
-    now: NOW_ISO,
+    now: new Date(issuedAt).toISOString(),
     ttlSeconds: 60,
   } as const;
   const make = (repositoryId: number, runtimeEpoch: number) => issueAccessGrant(signingKey, {
@@ -112,13 +111,16 @@ async function makeGrantSet() {
 }
 
 describe("HttpRuntimeAuthAcceptanceProbe internal Service transport", () => {
-  it("probes the actual hosted UI/API/persistence routes before public route activation", async () => {
-    const grants = await makeGrantSet();
+  it("accepts grants minted during the authority request and probes routes before public activation", async () => {
+    const grantIssueTime = NOW + 1_500;
+    const grants = await makeGrantSet(grantIssueTime);
+    let clock = NOW;
     const runtimeRequests: { url: URL; headers: Headers }[] = [];
     const fetcher: typeof fetch = async (input, init) => {
       const url = input instanceof URL ? input : new URL(input.toString());
       if (url.origin === CONTROL_PLANE_ORIGIN) {
         expect(url.pathname).toBe("/internal/provisioner/operations/op-auth-probe/auth-probe");
+        clock = grantIssueTime;
         return Response.json(grants.response, { headers: { "Cache-Control": "no-store" } });
       }
       // No public route exists yet during a fresh start. A successful sample
@@ -126,6 +128,7 @@ describe("HttpRuntimeAuthAcceptanceProbe internal Service transport", () => {
       expect(url.origin).toBe(SERVICE_ORIGIN);
       const headers = new Headers(init?.headers);
       runtimeRequests.push({ url, headers });
+      clock += 1_000;
       expect(headers.get("Origin")).toBe(PUBLIC_ORIGIN);
       expect(headers.get("X-Forwarded-Proto")).toBe("https");
 
@@ -163,7 +166,7 @@ describe("HttpRuntimeAuthAcceptanceProbe internal Service transport", () => {
       workerId: "provisioner-1",
       clusterId: "cluster-1",
       fetch: fetcher,
-      now: () => NOW + runtimeRequests.length * 1_000,
+      now: () => clock,
       timeoutMs: 1_000,
       scope: () => ({ mode: "observed", operationId: "op-auth-probe" }),
     }).withEndpointResolver(async () => SERVICE_ORIGIN);
@@ -176,7 +179,7 @@ describe("HttpRuntimeAuthAcceptanceProbe internal Service transport", () => {
     expect(evidence.invalidServiceCredentialRejected).toBe(true);
     expect(evidence.uiApiMcpProbeId).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(evidence.persistenceProbeId).toMatch(/^sha256:[a-f0-9]{64}$/u);
-    expect(evidence.observedAt).toBe(new Date(NOW + runtimeRequests.length * 1_000).toISOString());
+    expect(evidence.observedAt).toBe(new Date(grantIssueTime + runtimeRequests.length * 1_000).toISOString());
     expect(runtimeRequests.map(({ url }) => url.pathname)).toEqual([
       "/",
       "/api/session",
@@ -208,5 +211,34 @@ describe("HttpRuntimeAuthAcceptanceProbe internal Service transport", () => {
     await expect(probe.withEndpointResolver(async () => PUBLIC_ORIGIN).verify(assignment()))
       .rejects.toThrow("provider-owned in-cluster Service endpoint");
     expect(calls).toBe(0);
+  });
+
+  it.each([
+    { name: "future at receipt", issuedAt: NOW + 2_500, receivedAt: NOW + 1_500 },
+    { name: "expired at receipt", issuedAt: NOW, receivedAt: NOW + 61_000 },
+  ])("rejects grants that are $name", async ({ issuedAt, receivedAt }) => {
+    const grants = await makeGrantSet(issuedAt);
+    let clock = NOW;
+    let runtimeRequests = 0;
+    const probe = new HttpRuntimeAuthAcceptanceProbe({
+      controlPlaneUrl: CONTROL_PLANE_ORIGIN,
+      provisionerCredential: CONTROL_CREDENTIAL,
+      workerId: "provisioner-1",
+      clusterId: "cluster-1",
+      fetch: async (input) => {
+        const url = input instanceof URL ? input : new URL(input.toString());
+        if (url.origin === CONTROL_PLANE_ORIGIN) {
+          clock = receivedAt;
+          return Response.json(grants.response, { headers: { "Cache-Control": "no-store" } });
+        }
+        runtimeRequests += 1;
+        return Response.json({ error: "unexpected runtime request" }, { status: 500 });
+      },
+      now: () => clock,
+      scope: () => ({ mode: "observed", operationId: "op-auth-probe" }),
+    }).withEndpointResolver(async () => SERVICE_ORIGIN);
+
+    await expect(probe.verify(assignment())).rejects.toThrow("runtime auth probe grant binding is invalid");
+    expect(runtimeRequests).toBe(0);
   });
 });

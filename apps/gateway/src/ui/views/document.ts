@@ -9,6 +9,7 @@ export function page(
   options: {
     readonly formAction?: string;
     readonly scriptNonce?: string;
+    readonly referrerPolicy?: "strict-origin";
     readonly presentation?: PortalPresentation;
   } = {},
 ): Response {
@@ -26,6 +27,7 @@ export function page(
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
       `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+      (options.referrerPolicy ? `<meta name="referrer" content="${options.referrerPolicy}">` : "") +
       `<meta name="color-scheme" content="light">` +
       `<title>${escapeHtml(title)}</title><style>${portalStyles(presentation.mode)}</style></head><body data-ui="${presentation.mode}">` +
       `<a class="skip-link" href="#main-content">Skip to main content</a>` +
@@ -43,7 +45,7 @@ export function page(
         "Content-Security-Policy":
           `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; ` +
           `form-action ${formAction}; style-src 'sha256-${PORTAL_STYLE_HASHES[presentation.mode]}'${scriptPolicy}`,
-        "Referrer-Policy": "same-origin",
+        "Referrer-Policy": options.referrerPolicy ?? "same-origin",
         "X-Content-Type-Options": "nosniff",
       },
     },

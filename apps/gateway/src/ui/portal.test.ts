@@ -611,6 +611,7 @@ describe("server-rendered management UI", () => {
     const html = await response.text();
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Referrer-Policy")).toBe("strict-origin");
+    expect(html).toContain('<meta name="referrer" content="strict-origin">');
     expect(response.headers.get("Content-Security-Policy")).toContain(
       "form-action https://ins-01.instances.example",
     );

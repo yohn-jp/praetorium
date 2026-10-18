@@ -305,9 +305,56 @@ export class KubernetesLifecycleRuntimeAdapter
         this.startIdentityRenewal(assignment, beforeEffect, signal);
         return;
       }
+      if (await this.hasMatchingProjectedWriter(assignment, signal)) {
+        // A hosted runtime may need its repository proof to finish startup.
+        // Start renewal only after the all-epoch census identifies this exact
+        // target writer and its mounted projection matches the assignment.
+        this.startIdentityRenewal(assignment, beforeEffect, signal);
+      }
       await pause(this.pollIntervalMs, signal);
     } while (this.now() < deadline);
     throw new Error("runtime_start_convergence_timeout");
+  }
+
+  private async hasMatchingProjectedWriter(
+    assignment: RuntimeAssignment,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (this.identityTransport === undefined) return false;
+    const observation = await this.provider.inspect(parseIdentity(assignment), signal);
+    const census = observation.writerCensus;
+    const writer = census.pods[0];
+    if (
+      census.scope !== "instance-repository-all-epochs" ||
+      census.complete !== true ||
+      census.queriedNamespace.length === 0 ||
+      census.namespaceUid === null ||
+      census.namespaceResourceVersion === null ||
+      census.listResourceVersion === null ||
+      census.queriedPodCount !== 1 ||
+      census.pods.length !== 1 ||
+      writer === undefined ||
+      writer.namespace !== census.queriedNamespace ||
+      writer.uid.length === 0 ||
+      writer.runtimeEpoch !== assignment.runtimeEpoch ||
+      writer.generation !== assignment.generation ||
+      writer.phase !== "Running" ||
+      writer.deleting ||
+      observation.writerState !== "running" ||
+      !sameIdentity(observation, assignment) ||
+      observation.observedImageDigest !== assignment.deployment.platformManifestDigest ||
+      !writer.imageIds.some((imageId) =>
+        imageId.endsWith(assignment.deployment.platformManifestDigest),
+      )
+    ) {
+      return false;
+    }
+
+    // This read also verifies that the projection is present, has a valid
+    // expiry date, and is bound to the exact canonical assignment. An expired proof
+    // remains eligible for renewal while this exact writer is starting.
+    await this.runtimeIdentityExpiresAt(assignment, signal);
+    return true;
   }
 
   async readiness(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<RuntimeReadiness> {

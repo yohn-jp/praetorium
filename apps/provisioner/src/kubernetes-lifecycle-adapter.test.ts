@@ -241,4 +241,139 @@ describe("runtime identity renewal after a controller outage", () => {
     expect(issueRuntimeIdentity).toHaveBeenCalledOnce();
     expect(refreshRuntimeIdentity).toHaveBeenCalledOnce();
   });
+
+  it("renews the exact startup writer before its projected proof expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const assignment: RuntimeAssignment = {
+      instanceId: "ins_00000000000000000000000001",
+      repositoryId: 123456,
+      runtimeEpoch: 5,
+      generation: 2,
+      clusterId: "cluster-a",
+      reservationId: "res_target",
+      deployment: deployment(),
+    };
+    const initialExpiry = now + 300_000;
+    let projectionExpiry = new Date(initialExpiry).toISOString();
+    let issuedExpiry = projectionExpiry;
+    let proofRefreshed = false;
+    let startupObservedBeyondInitialExpiry = false;
+    let renewalBeforeInitialExpiry = false;
+    let inspectionCount = 0;
+    const readRuntimeBinding = vi.fn(async () => ({
+      active: true as const,
+      authority: "observed-writer" as const,
+      repositoryId: assignment.repositoryId,
+      installationId: 789,
+      instanceId: assignment.instanceId,
+      runtimeId: "res_target",
+      runtimeEpoch: assignment.runtimeEpoch,
+      leaseId: "res_target",
+      clusterId: assignment.clusterId,
+    }));
+    const issueRuntimeIdentity = vi.fn(async () => {
+      issuedExpiry = new Date(Date.now() + 300_000).toISOString();
+      return { token: "renewed.header.signature", expiresAt: issuedExpiry };
+    });
+    const transport = new RuntimeIdentityAssignmentTransport({
+      operations: {
+        readRuntimeBinding,
+        issueRuntimeIdentity,
+      } as unknown as RuntimeIdentityProvisionerService,
+      workerId: "worker-a",
+      clusterId: assignment.clusterId,
+      now: () => Date.now(),
+    });
+    const projected = transport.canonicalAssignment(assignment);
+    const observation = (generation: number) => ({
+      identity: {
+        instanceId: assignment.instanceId,
+        repositoryId: assignment.repositoryId,
+        runtimeEpoch: assignment.runtimeEpoch,
+        generation: assignment.generation,
+        clusterId: assignment.clusterId,
+      },
+      observationId: `observation-${generation}`,
+      observedAt: Date.now(),
+      namespaceExists: true,
+      state: "applying",
+      writerState: "running",
+      writerCensus: {
+        scope: "instance-repository-all-epochs",
+        complete: true,
+        queriedNamespace: "praetorium-instances-target",
+        namespaceUid: "namespace-uid",
+        namespaceResourceVersion: "namespace-rv",
+        listResourceVersion: "pod-list-rv",
+        queriedPodCount: 1,
+        pods: [
+          {
+            namespace: "praetorium-instances-target",
+            name: "arcadia-target",
+            uid: `pod-${generation}`,
+            runtimeEpoch: assignment.runtimeEpoch,
+            generation,
+            phase: "Running",
+            deleting: false,
+            ready: false,
+            imageIds: [`containerd://${assignment.deployment.platformManifestDigest}`],
+          },
+        ],
+      },
+      observedImageDigest: assignment.deployment.platformManifestDigest,
+      conditions: [],
+    });
+    const refreshRuntimeIdentity = vi.fn(async () => {
+      renewalBeforeInitialExpiry = Date.now() < initialExpiry;
+      projectionExpiry = issuedExpiry;
+      proofRefreshed = true;
+    });
+    const provider = {
+      ensureRunning: vi.fn(async () => {
+        if (Date.now() > initialExpiry && !proofRefreshed)
+          startupObservedBeyondInitialExpiry = true;
+        return proofRefreshed && Date.now() >= initialExpiry + 10_000
+          ? { status: "unchanged" as const }
+          : { status: "pending" as const };
+      }),
+      inspect: vi.fn(async () => {
+        inspectionCount += 1;
+        // A prior generation may still be shutting down. It must not arm
+        // renewal, even though its container happens to share the image.
+        return observation(
+          inspectionCount === 1 ? assignment.generation - 1 : assignment.generation,
+        );
+      }),
+      readRuntimeIdentityProjection: vi.fn(async () => ({
+        assignment: projected,
+        expiresAt: projectionExpiry,
+      })),
+      refreshRuntimeIdentity,
+    };
+    const runtime = Object.assign(Object.create(KubernetesLifecycleRuntimeAdapter.prototype), {
+      provider,
+      now: () => Date.now(),
+      convergenceTimeoutMs: 400_000,
+      pollIntervalMs: 1_000,
+      identityTransport: transport,
+      identityRenewalController: undefined,
+      identityRenewalTask: undefined,
+    }) as KubernetesLifecycleRuntimeAdapter;
+    try {
+      const starting = runtime.start(assignment, "op_target", async () => undefined);
+      await vi.advanceTimersByTimeAsync(310_000);
+      await expect(starting).resolves.toBeUndefined();
+      expect(Date.now()).toBeGreaterThan(initialExpiry);
+      expect(startupObservedBeyondInitialExpiry).toBe(false);
+      expect(renewalBeforeInitialExpiry).toBe(true);
+      expect(refreshRuntimeIdentity).toHaveBeenCalledOnce();
+      expect(provider.ensureRunning).toHaveBeenCalled();
+      expect(inspectionCount).toBeGreaterThan(1);
+      expect(Date.parse(projectionExpiry)).toBeGreaterThan(Date.now());
+    } finally {
+      await runtime.close();
+      vi.useRealTimers();
+    }
+  });
 });

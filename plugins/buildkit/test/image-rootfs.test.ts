@@ -153,4 +153,5 @@ describe("BuildKit image rootfs export", () => {
         new AbortController().signal,
       ),
     ).rejects.toThrow("BuildKit image startup input is invalid");
-  })});
+  });
+});

@@ -6,10 +6,6 @@ workers_dev = false
 # Preserve existing remote policy variables not yet declared in this config.
 keep_vars = true
 
-# Bounded CPU budget for immutable OCI and Sigstore release verification.
-[limits]
-cpu_ms = 1000
-
 [triggers]
 crons = ["*/5 * * * *"]
 

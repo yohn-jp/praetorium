@@ -616,6 +616,8 @@ describe("server-rendered management UI", () => {
     expect(html).not.toContain('<footer class="page-footer">');
     expect(html).not.toContain('aria-label="Presentation"');
     expect(html).toContain('<button type="submit">Continue</button>');
+    expect(html).toContain('<section class="evidence-ledger evidence-handoff" aria-labelledby="handoff-title">');
+    expect(html).toContain('<header class="evidence-intro"><div class="page-heading">');
     expect(response.headers.get("Content-Security-Policy")).toContain(
       "form-action https://ins-01.instances.example",
     );

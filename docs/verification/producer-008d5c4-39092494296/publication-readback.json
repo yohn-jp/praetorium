@@ -1,0 +1,23 @@
+{
+  "observedAt": "2026-10-18T03:28:11.733808+00:00",
+  "producerRun": 39092494296,
+  "publisherRun": 39093546534,
+  "images": [
+    {
+      "name": "runtime-base",
+      "reference": "ghcr.io/yohn-jp/praetorium/scriptorium-producer@sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52",
+      "httpStatus": 200,
+      "manifestDigestVerified": true,
+      "authentication": "anonymous registry-issued pull token",
+      "tls": "default verified"
+    },
+    {
+      "name": "build-kit",
+      "reference": "ghcr.io/yohn-jp/praetorium/scriptorium-producer@sha256:b0d99ef773188fa451f9aef1a03b52fb26871c152bb7eaebb1863c0cc44bf888",
+      "httpStatus": 200,
+      "manifestDigestVerified": true,
+      "authentication": "anonymous registry-issued pull token",
+      "tls": "default verified"
+    }
+  ]
+}

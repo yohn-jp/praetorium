@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "producer": {
+    "repository": "yohn-jp/praetorium",
+    "runId": 39092494296,
+    "attempt": 1,
+    "url": "https://github.com/yohn-jp/praetorium/actions/runs/39092494296",
+    "sourceRevision": "95da17f276587586ec4c6a16200b3aaa7984ba21",
+    "scriptoriumRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+    "overallConclusion": "failure",
+    "buildProducerJob": "success",
+    "signProducerMetadataJob": "success",
+    "originalOptionalPublisherJob": "failure before image copy at pinned Skopeo version check"
+  },
+  "publisher": {
+    "repository": "yohn-jp/praetorium",
+    "runId": 39093546534,
+    "attempt": 1,
+    "url": "https://github.com/yohn-jp/praetorium/actions/runs/39093546534",
+    "sourceRevision": "fb3575902ab255d9c5611f51924e04672cd5c07f",
+    "result": "success",
+    "inputProducerRunId": 39092494296,
+    "inputProducerRunAttempt": 1,
+    "tool": "quay.io/skopeo/stable@sha256:8342e1e8d7b12d0bd3bf53ce8f4fde7ed876277aa8e4345f53937a505309e6b5",
+    "anonymousStrictTlsReadback": true
+  },
+  "images": {
+    "repository": "ghcr.io/yohn-jp/praetorium/scriptorium-producer",
+    "runtimeBase": {
+      "digest": "sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52",
+      "reference": "ghcr.io/yohn-jp/praetorium/scriptorium-producer@sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52",
+      "anonymousHttpStatus": 200,
+      "manifestDigestVerified": true
+    },
+    "buildKit": {
+      "digest": "sha256:b0d99ef773188fa451f9aef1a03b52fb26871c152bb7eaebb1863c0cc44bf888",
+      "reference": "ghcr.io/yohn-jp/praetorium/scriptorium-producer@sha256:b0d99ef773188fa451f9aef1a03b52fb26871c152bb7eaebb1863c0cc44bf888",
+      "anonymousHttpStatus": 200,
+      "manifestDigestVerified": true
+    }
+  },
+  "proofSha256": {
+    "buildCatalog": "37bd46d09e0a68833e20de5c8d0610458a986c1d0e2f78dfa54de2c509a2d10a",
+    "runtimeMetadata": "a14a651934ad1a7219f26a205e30e79440c7fe66ba1b8dab940c715150c84978",
+    "provenanceStatement": "c7a142100681c6e743abc610e69e443134afd79a3852ed6716f202ffdadf9400",
+    "sigstoreBundle": "8594b655977940277ebc2233ded5aeea48a3689a78ffad7de3cad10ce5d0d1d6",
+    "unsignedBuildReport": "2770242b3f9e0d3d7bb0c0f8db68babfd50b78f4efedbc982cc51fbe8cfe3a32"
+  },
+  "currentG4State": {
+    "status": "blocked",
+    "required": "complete the already-admitted release canary through the normal Provisioner/GitHub App path, then require actual available status and use a fresh stopped binding/instance with an exclusive queue",
+    "reason": "the owned CP lists no available releases; its admitted release remains canary_observing while normal Runtime startup awaits legitimate GitHub App authorization",
+    "notClaimed": [
+      "G4 completion",
+      "available release",
+      "cache reuse",
+      "normal BuildWorker queue evidence"
+    ]
+  }
+}

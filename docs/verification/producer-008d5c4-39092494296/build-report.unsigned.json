@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "praetorium-scriptorium-producer-verification/v1",
+  "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+  "sourceOrigin": "https://github.com/yohn-jp/scriptorium",
+  "dockerfileSha256": "005b540188d5337e103bb4e5aba17c0ae4be3439c17d02b170a6b3d9a28ce350",
+  "sourceDigest": "sha256:cf72b950c008c284f77d524f27eb3c2e4114ee0115fedb1cb53aba971e32d188",
+  "recipeDigest": "sha256:d90d640bd9e0d232817d95e41e46787f5c2b8ff0918c2559217655e32a2e678a",
+  "lockDigest": "sha256:873a93f452833cf963978904c1a3fdabb9dca1c85b2d27c592156bbd03e7ea9e",
+  "cosignIdentity": "https://github.com/yohn-jp/praetorium/.github/workflows/scriptorium-producer-verification.yml@refs/heads/main",
+  "cosignIssuer": "https://token.actions.githubusercontent.com",
+  "recipientCertificateFingerprintSha256": "4f117e60f1ff8af66e5eb9619dcf7142782162507ec558201b77d4ac62c2ad9b",
+  "imageRepository": "127.0.0.1:5000/scriptorium/producer",
+  "images": {
+    "runtime-base": {"digest": "sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52", "reference": "127.0.0.1:5000/scriptorium/producer@sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52", "archive": "runtime-base.oci.tar", "archiveSizeBytes": 117258752},
+    "build-kit": {"digest": "sha256:b0d99ef773188fa451f9aef1a03b52fb26871c152bb7eaebb1863c0cc44bf888", "reference": "127.0.0.1:5000/scriptorium/producer@sha256:b0d99ef773188fa451f9aef1a03b52fb26871c152bb7eaebb1863c0cc44bf888", "archive": "build-kit.oci.tar", "archiveSizeBytes": 372470784},
+    "composition-core": {"digest": "sha256:6695ae31cde89e873feffa1ee623016eebeaf3006c94f85c9325d9a152e812f4", "reference": "127.0.0.1:5000/scriptorium/producer@sha256:6695ae31cde89e873feffa1ee623016eebeaf3006c94f85c9325d9a152e812f4", "archive": "composition-core.oci.tar", "archiveSizeBytes": 120157696},
+    "composition-story": {"digest": "sha256:46870cff1bf06981a3d3e8b37c479d86737af3827cb19e7f4ee081ce3ca19096", "reference": "127.0.0.1:5000/scriptorium/producer@sha256:46870cff1bf06981a3d3e8b37c479d86737af3827cb19e7f4ee081ce3ca19096", "archive": "composition-story.oci.tar", "archiveSizeBytes": 121818624}
+  },
+  "catalogSha256": "37bd46d09e0a68833e20de5c8d0610458a986c1d0e2f78dfa54de2c509a2d10a",
+  "runtimeMetadataSha256": "a14a651934ad1a7219f26a205e30e79440c7fe66ba1b8dab940c715150c84978",
+  "statementSha256": "c7a142100681c6e743abc610e69e443134afd79a3852ed6716f202ffdadf9400",
+  "encryptedEvidence": {
+    "fileName": "producer-evidence.cms",
+    "sha256": "6d5721e88a6e7701495721a0eb02e75db5a2a08dec76799114554ab8dbfc7277",
+    "sizeBytes": 732424583,
+    "maxSizeBytes": 4294967296
+  },
+  "registryPublication": "deferred to separate Praetorium GHCR publisher after signer success",
+  "artifactPublication": "ciphertext evidence plus two one-day OCI publication inputs"
+}

@@ -50,6 +50,8 @@ export class BuildKitImageRootfsExporter {
     input: {
       readonly imageReference: string;
       readonly platform: "linux/amd64" | "linux/arm64";
+      /** Restrict metadata-only exports to one file instead of transferring the full rootfs. */
+      readonly filePath?: string;
       readonly startup?: BuildKitImageStartup;
     },
     signal: AbortSignal,
@@ -96,7 +98,9 @@ export class BuildKitImageRootfsExporter {
           `RUN --network=none node /${smokeFile} /${settingsFile}`,
         ] : []),
         "FROM scratch",
-        "COPY --from=candidate / /image/",
+        ...(input.filePath
+          ? [`COPY --from=candidate ${input.filePath} /image${input.filePath}`]
+          : ["COPY --from=candidate / /image/"]),
         ...(smokeSettings ? [`COPY --from=smoke /tmp/${markerName} /smoke-result.json`] : []),
         "",
       ].join("\n");
@@ -176,9 +180,15 @@ export class BuildKitImageRootfsExporter {
   }
 }
 
+function validSelectedFilePath(value: string): boolean {
+  return /^\/[A-Za-z0-9._/-]{1,511}$/u.test(value) &&
+    value.split("/").slice(1).every((part) => part !== "" && part !== "." && part !== "..");
+}
+
 function validateImageInput(input: {
   readonly imageReference: string;
   readonly platform: string;
+  readonly filePath?: string;
   readonly startup?: BuildKitImageStartup;
 }): void {
   const args = input.startup ? [...input.startup.entrypoint, ...input.startup.command] : [];
@@ -186,6 +196,7 @@ function validateImageInput(input: {
   if (
     !IMAGE_REFERENCE.test(input.imageReference) ||
     (input.platform !== "linux/amd64" && input.platform !== "linux/arm64") ||
+    (input.filePath !== undefined && (input.startup !== undefined || !validSelectedFilePath(input.filePath))) ||
     (input.startup !== undefined && (
       args.length === 0 ||
       args.length > 128 ||

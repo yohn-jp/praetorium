@@ -45,7 +45,7 @@ export interface BuildProvider {
   ): Promise<BuildCandidate>;
 }
 
-/** T05 implementation reads/verifies OCI bytes, composition closure and smoke evidence. */
+/** Binds trusted Builder output to immutable BuildInput, registry identity, and compact composition metadata. */
 export interface BuildCandidateVerifier {
   verify(input: {
     buildKey: string;

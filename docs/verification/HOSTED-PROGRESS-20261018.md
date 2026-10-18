@@ -98,7 +98,7 @@ Expired owned disposable harness data was copied to `/data`, verified with
 checksum and metadata comparison, then removed from `/tmp`; compatibility
 symlinks retain old references. Evidence and worktrees were preserved. Only
 regenerable campaign caches were discarded. At the last check the root disk had
-18 GiB free and `/data` had 147 GiB free. Unrelated application/user data was not
+18 GiB free and `/data` had 141 GiB free. Unrelated application/user data was not
 removed; archived expired inventories are not current acceptance inputs.
 
 ## Independent readiness since the producer build
@@ -176,6 +176,17 @@ removed; archived expired inventories are not current acceptance inputs.
   pulled into containerd with strict TLS and its manifest digest preserved.
   These are readiness proofs, not a running assigned Scriptorium or public
   ingress acceptance. Kind packet-policy enforcement remains NOT_CHECKED.
+- The actual Provisioner entrypoint subsequently reached its first normal
+  claim, which returned 409 `RUNTIME_CONTEXT_UNAVAILABLE` before assignment,
+  reservation or Pod creation. The private harness omitted two runtime-policy
+  bindings. The registry host is known from strict-TLS readback; the broker
+  reference is also known from Gateway code:
+  `https://praetorium.yohn.jp/internal/github/credential`. These are not missing
+  owner-provided URLs. What remains unverified is real broker trust and GitHub
+  authorization for the canary's synthetic repository/installation IDs. No
+  authorized real test repository or browser principals have been established.
+  The utility worker was stopped; no assignment or broker authority was forged,
+  and the blocked operation was not reset through direct D1 writes.
 - The real Core image declares user `node` (UID/GID 1000). Kubernetes rejected
   the earlier nonnumeric identity with `runAsNonRoot`. The renderer now sets
   UID/GID and volume group 1000. An owned live-policy Pod using the exact image

@@ -187,7 +187,9 @@ export class SigstoreProvenanceVerifier {
     try {
       if (controller.signal.aborted) throw new Error("provenance request was canceled");
       response = await Promise.race([
-        this.fetchImplementation(bundleUrl, { redirect: "manual", signal: controller.signal }),
+        this.fetchImplementation(bundleUrl, {
+          redirect: "manual", headers: { "accept-encoding": "identity" }, signal: controller.signal,
+        }),
         aborted,
       ]);
     } catch {

@@ -140,6 +140,28 @@ describe("source Sigstore provenance verification", () => {
     });
   });
 
+  it("requests identity encoding so response length describes the verified bundle bytes", async () => {
+    const body = JSON.stringify(bundleToJSON(signedBundle(digest.slice("sha256:".length))));
+    const verify = vi.fn(() => ({ identity: { subjectAlternativeName: identity } }));
+    const verifier = new SigstoreProvenanceVerifier({
+      signerIdentityAllowlist: [{ subjectAlternativeName: identity }],
+      verifier: { verify } as never,
+      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const identityEncoding = new Headers(init?.headers).get("accept-encoding") === "identity";
+        // Fetch exposes decoded bytes, while a compressed response's length
+        // describes its wire bytes, as observed on raw.githubusercontent.com.
+        return new Response(body, {
+          headers: identityEncoding
+            ? { "content-length": String(body.length) }
+            : { "content-length": String(Math.floor(body.length / 2)), "content-encoding": "gzip" },
+        });
+      }) as typeof fetch,
+    });
+    const result = await verifier.verify({ imageDigest: digest, signatureRef: "https://example.com/bundle", provenanceRef: null });
+    expect(result.verified).toBe(true);
+    expect(verify).toHaveBeenCalledOnce();
+  });
+
   it("rejects provenance redirects without following or disclosing their target", async () => {
     const redirectTarget = "https://redirect-attacker.example/collect";
     let calls = 0;

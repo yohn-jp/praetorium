@@ -3,6 +3,7 @@ import { verifyAccessGrant, type SigningKey } from "@praetorium/auth";
 import { instanceHostname } from "@praetorium/contracts";
 import type { OperationRecord, RepositorySnapshot } from "@praetorium/application/instances";
 import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
+import type { RuntimeBindingMetadata } from "../src/runtime-binding.js";
 import type { GatewayContext } from "../../gateway/src/context.js";
 import { createRuntimeAuthProbeRoutes } from "../../gateway/src/runtime-auth-probes.js";
 import { createProvisionerRuntimeAuthProbeRoutes } from "../src/runtime-auth-probe.js";
@@ -158,7 +159,11 @@ function assignment() {
   } as const;
 }
 
-function repositorySnapshot(runtimeEpoch = RUNTIME_EPOCH, generation = GENERATION): RepositorySnapshot {
+function repositorySnapshot(
+  runtimeEpoch = RUNTIME_EPOCH,
+  generation = GENERATION,
+  instanceOverrides: Partial<RepositorySnapshot["instance"]> = {},
+): RepositorySnapshot {
   return {
     binding: {
       repositoryId: REPOSITORY_ID,
@@ -191,6 +196,7 @@ function repositorySnapshot(runtimeEpoch = RUNTIME_EPOCH, generation = GENERATIO
       clusterId: CLUSTER_ID,
       createdAt: NOW_MS - 10_000,
       updatedAt: NOW_MS,
+      ...instanceOverrides,
     },
   };
 }
@@ -201,10 +207,18 @@ async function makeHarness(
   statementJson = artifactStatement(),
   actorId = "12345",
   auditActors: readonly { readonly actor_id: string }[] = [],
+  options: {
+    readonly instance?: Partial<RepositorySnapshot["instance"]>;
+    readonly runtimeBinding?: RuntimeBindingMetadata | null;
+  } = {},
 ) {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const signingKey: SigningKey = { kid: "gateway-probe-test", privateKey: pair.privateKey };
-  const snapshot = repositorySnapshot(operationRecord.runtimeEpoch, operationRecord.generation);
+  const snapshot = repositorySnapshot(
+    operationRecord.runtimeEpoch,
+    operationRecord.generation,
+    options.instance,
+  );
   const authorizedActors: string[] = [];
   const gatewayContext = {
     config: {
@@ -242,6 +256,11 @@ async function makeHarness(
     db,
     operations: operations as never,
     instances: instances as never,
+    runtimeBindings: {
+      async getCurrent(repositoryId: number) {
+        return repositoryId === REPOSITORY_ID ? options.runtimeBinding ?? null : null;
+      },
+    },
     gateway: { fetch: (request) => gateway.fetch(request) },
     gatewaySecret: GATEWAY_SECRET,
     gatewayOrigin: GATEWAY_ORIGIN,
@@ -255,6 +274,170 @@ async function makeHarness(
 }
 
 describe("Control Plane to Gateway runtime auth probe", () => {
+  it("uses the active post-absence target reservation to verify the cluster before the first ready observation", async () => {
+    const { controlPlane } = await makeHarness(
+      true,
+      operation(),
+      artifactStatement(),
+      "12345",
+      [],
+      {
+        instance: {
+          observedState: "absent",
+          observedRuntimeEpoch: null,
+          clusterId: null,
+          reservationState: "reserved",
+        },
+        runtimeBinding: {
+          repositoryId: REPOSITORY_ID,
+          installationId: INSTALLATION_ID,
+          instanceId: INSTANCE_ID,
+          runtimeId: "reservation-12",
+          runtimeEpoch: RUNTIME_EPOCH,
+          leaseId: "reservation-12",
+          clusterId: CLUSTER_ID,
+          active: true,
+          authority: "post-absence-target",
+        },
+      },
+    );
+
+    const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "lease",
+        workerId: WORKER_ID,
+        leaseToken: LEASE_TOKEN,
+        leaseEpoch: 3,
+        assignment: assignment(),
+      }),
+    });
+
+    expect(response.status, await response.clone().text()).toBe(200);
+  });
+
+  it.each([
+    {
+      name: "a different cluster",
+      runtimeBinding: {
+        repositoryId: REPOSITORY_ID,
+        installationId: INSTALLATION_ID,
+        instanceId: INSTANCE_ID,
+        runtimeId: "reservation-12",
+        runtimeEpoch: RUNTIME_EPOCH,
+        leaseId: "reservation-12",
+        clusterId: "cluster-other",
+        active: true,
+        authority: "post-absence-target" as const,
+      },
+    },
+    {
+      name: "an observed-writer binding instead of the post-absence target",
+      runtimeBinding: {
+        repositoryId: REPOSITORY_ID,
+        installationId: INSTALLATION_ID,
+        instanceId: INSTANCE_ID,
+        runtimeId: "reservation-12",
+        runtimeEpoch: RUNTIME_EPOCH,
+        leaseId: "reservation-12",
+        clusterId: CLUSTER_ID,
+        active: true,
+        authority: "observed-writer" as const,
+      },
+    },
+    {
+      name: "a retired target epoch",
+      runtimeBinding: {
+        repositoryId: REPOSITORY_ID,
+        installationId: INSTALLATION_ID,
+        instanceId: INSTANCE_ID,
+        runtimeId: "reservation-12",
+        runtimeEpoch: RUNTIME_EPOCH - 1,
+        leaseId: "reservation-12",
+        clusterId: CLUSTER_ID,
+        active: true,
+        authority: "post-absence-target" as const,
+      },
+    },
+  ])("rejects a pre-ready cluster binding from $name", async ({ runtimeBinding }) => {
+    const { controlPlane } = await makeHarness(
+      true,
+      operation(),
+      artifactStatement(),
+      "12345",
+      [],
+      {
+        instance: {
+          observedState: "absent",
+          observedRuntimeEpoch: null,
+          clusterId: null,
+          reservationState: "reserved",
+        },
+        runtimeBinding,
+      },
+    );
+
+    const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "lease",
+        workerId: WORKER_ID,
+        leaseToken: LEASE_TOKEN,
+        leaseEpoch: 3,
+        assignment: assignment(),
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "CURRENT_BINDING_REQUIRED" } });
+  });
+
+  it("rejects a post-absence target whose reservation ID differs from the leased operation", async () => {
+    const { controlPlane } = await makeHarness(
+      true,
+      { ...operation(), reservationId: "reservation-other" },
+      artifactStatement(),
+      "12345",
+      [],
+      {
+        instance: {
+          observedState: "absent",
+          observedRuntimeEpoch: null,
+          clusterId: null,
+          reservationState: "reserved",
+        },
+        runtimeBinding: {
+          repositoryId: REPOSITORY_ID,
+          installationId: INSTALLATION_ID,
+          instanceId: INSTANCE_ID,
+          runtimeId: "reservation-12",
+          runtimeEpoch: RUNTIME_EPOCH,
+          leaseId: "reservation-12",
+          clusterId: CLUSTER_ID,
+          active: true,
+          authority: "post-absence-target",
+        },
+      },
+    );
+
+    const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "lease",
+        workerId: WORKER_ID,
+        leaseToken: LEASE_TOKEN,
+        leaseEpoch: 3,
+        assignment: assignment(),
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "CURRENT_BINDING_REQUIRED" } });
+  });
+
   it("issues a read-only grant after real binding, operation, artifact, and GitHub checks even when index and platform digests differ", async () => {
     const { controlPlane, pair } = await makeHarness();
     const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {

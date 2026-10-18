@@ -1,10 +1,11 @@
 import { BuilderArtifactStatementSchema, instanceHostname } from "@praetorium/contracts";
 import type { OperationService } from "@praetorium/application/operations";
-import type { OperationRecord } from "@praetorium/application/instances";
+import type { OperationRecord, RepositorySnapshot } from "@praetorium/application/instances";
 import type { InstanceService } from "@praetorium/application/instances";
 import type { D1Database } from "@praetorium/persistence/d1";
 import { Hono } from "hono";
 import { z } from "zod";
+import type { RuntimeBindingMetadataReader } from "./runtime-binding.js";
 
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const REMOTE_REVISION = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
@@ -77,6 +78,7 @@ export interface RuntimeAuthProbeRouteDependencies {
   readonly db: D1Database;
   readonly operations: Pick<OperationService, "getById">;
   readonly instances: Pick<InstanceService, "getByInstanceId">;
+  readonly runtimeBindings: RuntimeBindingMetadataReader;
   readonly gateway: RuntimeAuthProbeGatewayBinding;
   readonly gatewaySecret: string;
   readonly gatewayOrigin: string;
@@ -129,6 +131,9 @@ export function createProvisionerRuntimeAuthProbeRoutes(
     }
 
     const snapshot = await dependencies.instances.getByInstanceId(operation.instanceId);
+    const clusterMatches = snapshot
+      ? await matchesOperationCluster(input, operation, snapshot, dependencies)
+      : false;
     if (
       !snapshot ||
       snapshot.binding.suspended ||
@@ -136,7 +141,7 @@ export function createProvisionerRuntimeAuthProbeRoutes(
       snapshot.binding.instanceId !== operation.instanceId ||
       snapshot.instance.repositoryId !== operation.repositoryId ||
       snapshot.instance.instanceId !== operation.instanceId ||
-      snapshot.instance.clusterId !== dependencies.clusterId ||
+      !clusterMatches ||
       snapshot.instance.generation !== input.assignment.generation ||
       snapshot.instance.runtimeEpoch !== input.assignment.runtimeEpoch ||
       operation.clusterId !== dependencies.clusterId ||
@@ -215,6 +220,36 @@ export function createProvisionerRuntimeAuthProbeRoutes(
     }, 200, { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
   });
   return app;
+}
+
+async function matchesOperationCluster(
+  input: z.infer<typeof ProbeRequestSchema>,
+  operation: OperationRecord,
+  snapshot: RepositorySnapshot,
+  dependencies: RuntimeAuthProbeRouteDependencies,
+): Promise<boolean> {
+  if (snapshot.instance.clusterId === dependencies.clusterId) return true;
+  if (input.mode !== "lease" || snapshot.instance.clusterId !== null) return false;
+
+  const reservationId = operation.reservationId;
+  if (
+    reservationId === null ||
+    snapshot.instance.reservationId !== reservationId ||
+    (snapshot.instance.reservationState !== "reserved" &&
+      snapshot.instance.reservationState !== "allocated")
+  ) return false;
+
+  const target = await dependencies.runtimeBindings.getCurrent(operation.repositoryId);
+  return target !== null &&
+    target.authority === "post-absence-target" &&
+    target.active === true &&
+    target.repositoryId === operation.repositoryId &&
+    target.installationId === snapshot.binding.installationId &&
+    target.instanceId === operation.instanceId &&
+    target.runtimeId === reservationId &&
+    target.leaseId === reservationId &&
+    target.runtimeEpoch === operation.runtimeEpoch &&
+    target.clusterId === dependencies.clusterId;
 }
 
 function httpsOrigin(value: string): string {

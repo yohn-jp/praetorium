@@ -108,6 +108,7 @@ function composeServices(env: ControlPlaneEnv) {
             db: env.CONTROL_PLANE_DB,
             operations,
             instances,
+            runtimeBindings: createRuntimeBindingMetadataReader({ db: env.CONTROL_PLANE_DB }),
             gateway: env.GATEWAY_SERVICE,
             gatewaySecret: env.CONTROL_PLANE_GATEWAY_AUTH,
             gatewayOrigin: required(env.GATEWAY_ORIGIN),

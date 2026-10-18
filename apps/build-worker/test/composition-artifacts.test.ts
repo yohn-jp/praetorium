@@ -92,6 +92,14 @@ describe("Scriptorium composition receipt reader", () => {
         outputRepository: "ghcr.io/test/candidates",
       }),
     ).rejects.toMatchObject({ code: "BUILD_FAILED" });
+    expect(rootfsExporter.exportImage).toHaveBeenCalledWith(
+      {
+        imageReference: `ghcr.io/test/candidates@${imageDigest}`,
+        platform: "linux/amd64",
+        filePath: "/usr/share/scriptorium/composition-manifest.json",
+      },
+      expect.any(AbortSignal),
+    );
     expect(rootfsExporter.exportImage).toHaveBeenCalledOnce();
     expect(registry.publishBlob).not.toHaveBeenCalled();
   });

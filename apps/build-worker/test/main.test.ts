@@ -77,6 +77,39 @@ afterEach(async () => {
 });
 
 describe("build worker composition", () => {
+  it("keeps custom HTTPS registry publisher credentials separate from pull and notification credentials", async () => {
+    const environment = await workerEnvironment();
+    const signer: BuilderSigner = { sign: vi.fn(async () => { throw new Error("unused"); }) };
+    const publisher = { username: "builder", password: "registry-publisher-".padEnd(48, "p") };
+    environment.PRAETORIUM_BUILD_REGISTRY_URL = "https://registry.example:5002";
+    environment.PRAETORIUM_BUILDKIT_FRONTEND_REPOSITORY = "registry.example:5002/test/buildkit";
+    environment.PRAETORIUM_BUILDKIT_OUTPUT_REPOSITORY = "registry.example:5002/test/candidates";
+    const dockerDirectory = environment.PRAETORIUM_BUILDKIT_DOCKER_CONFIG_DIRECTORY;
+    if (!dockerDirectory) throw new Error("BuildKit fixture config path is missing");
+    await writeFile(
+      path.join(dockerDirectory, "config.json"),
+      JSON.stringify({ auths: { "registry.example:5002": publisher } }),
+      { mode: 0o600 },
+    );
+
+    await expect(createBuildWorker(environment, {
+      signer,
+      registryCredential: publisher,
+    })).rejects.toThrow("registry pull and publish credentials must be separate");
+
+    environment.PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED = "1";
+    environment.PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN = publisher.password;
+    await expect(createBuildWorker(environment, { signer })).rejects.toThrow(
+      "Build worker credentials must remain separate",
+    );
+
+    environment.PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN = "separate-notification-".padEnd(48, "n");
+    await expect(createBuildWorker(environment, {
+      signer,
+      registryCredential: { username: "reader", password: "read-only-password" },
+    })).resolves.toBeDefined();
+  });
+
   it("rejects notification authentication reused from service or registry credentials", async () => {
     const environment = await workerEnvironment();
     const signer: BuilderSigner = { sign: vi.fn(async () => { throw new Error("unused"); }) };

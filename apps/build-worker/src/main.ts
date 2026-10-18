@@ -81,9 +81,9 @@ export async function createBuildWorker(
       ? await readRegistryPullCredential(config.registryPullCredentialFile)
       : undefined);
   const publishCredential =
-    registryOrigin.host === "ghcr.io"
-      ? await readBuildKitRegistryCredential(config.buildKit, registryOrigin.host)
-      : undefined;
+    config.registryAllowAnonymousLoopbackPublish
+      ? undefined
+      : await readBuildKitRegistryCredential(config.buildKit, registryOrigin.host);
   if (
     config.notificationToken !== undefined &&
     (config.notificationToken === serviceToken ||

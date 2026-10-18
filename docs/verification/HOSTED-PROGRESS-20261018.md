@@ -7,7 +7,7 @@ is unchanged. Source checks do not certify Hosted acceptance.
 
 Repository identity is GitHub numeric ID `1422456736` (`yohn-jp/praetorium`).
 The campaign started from `e7926f472e12e5f0ec30db88e459328dd08ca58d`.
-The integrated and pushed product source cut is `c709470173b5e6eff1b57ae2d2fadec1339a5439`;
+The latest integrated and pushed source is `fcaaa2a51eb90c5b91c9d2ab47bebc780a0e7316`;
 the disposable producer verification workflow is a separate verification addition.
 
 - Build and Provisioner use authenticated, coalesced local work notifications
@@ -45,7 +45,8 @@ the disposable producer verification workflow is a separate verification additio
   repositories. Integrated review found no remaining product-code issue and
   identified an artifact naming collision on workflow reruns; names now include
   the build attempt, and the signer receives the successful build's exact
-  metadata artifact name through its job output. Actual producer CI is pending.
+  metadata artifact name through its job output. The corrected actual producer CI
+  succeeded; see the real evidence below.
   The first run, [39084385532](https://github.com/yohn-jp/praetorium/actions/runs/39084385532),
   passed certificate/tool pins and producer frozen install, then failed because
   the host build's nested `pnpm` command had no PATH shim. The harness now creates
@@ -79,8 +80,15 @@ That exact commit remains fetchable from GitHub despite later main commits.
 The unchanged Build Kit Dockerfile's Corepack fetch fails behind the VM proxy;
 Node requires proxy opt-in inside the build step, which daemon environment alone
 does not supply. Producer source and production proxy were not modified.
-A manually dispatched disposable CI harness will exercise that exact producer,
-two compositions and metadata signing without publishing service images.
+The manual [producer CI 39084601122](https://github.com/yohn-jp/praetorium/actions/runs/39084601122)
+succeeded on `4e615d8`, producing real Runtime Base, Build Kit, Core and Story
+images. Local pinned Cosign verification passed. Exact signed metadata and the
+unsigned CI build report are preserved in [producer evidence](producer-008d5c4-39084601122/README.md);
+all public proof files were read back from immutable commit `a263f6a` with HTTP
+200, no redirects and identical bytes. The 732,414,335-byte ciphertext was
+downloaded and its SHA-256 verified before transfer to the owned Build VM.
+Registry import, Control Plane admission, cache reuse and Hosted acceptance
+remain separate checks. No public service image was published.
 
 Expired owned disposable harness data was copied to `/data`, verified with
 checksum and metadata comparison, then removed from `/tmp`; compatibility
@@ -88,6 +96,35 @@ symlinks retain old references. Evidence and worktrees were preserved. Only
 regenerable campaign caches were discarded. At the last check the root disk had
 20 GiB free and `/data` had 158 GiB free. Unrelated application/user data was not
 removed; archived expired inventories are not current acceptance inputs.
+
+## Independent readiness since the producer build
+
+- A real bundled Control Plane Worker on owned loopback HTTPS has local D1 and
+  SQLite DO bindings; migrations 0001–0005 were applied. A synthetic repository
+  resolved to the same instance after process restart. This is not real GitHub
+  authorization. Its canary/release state will not be bypassed for Build tests.
+- A new owned rootless Kind cluster passed actual Kubernetes policy checks:
+  host networking was denied, and a restricted digest-pinned Pod became Ready,
+  was deleted and observed absent. This is not a Scriptorium runtime acceptance.
+- A fresh Chromium profile with strict TLS followed the public Gateway OAuth
+  flow to GitHub’s signed-out login page, with state and S256 PKCE. No human
+  login, consent, repository operation or authenticated Hosted acceptance ran.
+- The owned test registry and SSH/BuildKit namespace forwarding use the same
+  HTTPS loopback URI. Build Worker now loads distinct mounted publisher
+  credentials for configured registries; a regression checks separation from
+  pull and notification credentials. Frozen install and full check passed.
+  The fixed runner accepts the existing explicit anonymous HTTPS loopback flag;
+  its restrictions to loopback and disposable ownership remain in force.
+- Latest source CI [39085370845](https://github.com/yohn-jp/praetorium/actions/runs/39085370845)
+  passed on `fcaaa2a`; service publication was skipped.
+- Production inventory preflight actually ran and stopped at validation. After
+  deriving routine fields, outstanding validator inputs are Cloudflare account
+  identity, the verified existing production builder public key, four immutable
+  service/monitoring image references and ACME contact. Runtime public L4/DNS/TLS,
+  management/secret references and authorized real browser principals remain
+  separate external gates. Public Control Plane `/healthz` returns 503; remote
+  revision/configuration is unknown and the source deployment probe/health-route
+  mismatch is being corrected independently. No production apply ran.
 
 ## Remaining acceptance
 

@@ -37,3 +37,13 @@ immutable commit URL before admission.
 
 No service image is pushed to a public registry, and no release, Cloudflare,
 D1, DNS or Kubernetes deployment is performed by this workflow.
+
+`verify-service-images.yml` separately builds the current exact Praetorium
+commit's Provisioner, Instance Access and Build Worker Dockerfiles using the
+existing pinned build arguments. It verifies BuildKit, OCI archive and loopback
+registry digests, then uploads encrypted OCI evidence and a separate public
+digest/hash report, each retained for one day. It uses the same pinned public
+recipient certificate and four-GiB cap, with no OIDC permission or public image
+push. These are candidates for later owned-runtime verification and review of
+specific publication/deployment operations; this workflow grants no production
+authority. Its public report is CI evidence, not a signed SLSA statement.

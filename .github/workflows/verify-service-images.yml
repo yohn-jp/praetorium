@@ -1,0 +1,61 @@
+name: Verify Praetorium service image candidates (disposable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      recipient_cert_b64:
+        description: Base64 PEM for the existing pinned public CI recipient certificate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: praetorium-service-candidates-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-candidates:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      RECIPIENT_CERT_B64: ${{ inputs.recipient_cert_b64 }}
+
+    steps:
+      - name: Check out the exact Praetorium source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: praetorium
+          persist-credentials: false
+
+      - name: Set up Node 24 for digest verification
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.22.0
+
+      - name: Build and encrypt source-matching service candidates
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/praetorium/scripts/ci/build-service-image-candidates.sh"
+
+      - name: Upload ciphertext only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: praetorium-service-candidates-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/praetorium-service-candidates-${{ github.run_id }}-${{ github.run_attempt }}/praetorium-service-images.cms
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload public digest report only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: praetorium-service-candidates-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/praetorium-service-candidates-${{ github.run_id }}-${{ github.run_attempt }}/public-build-report.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

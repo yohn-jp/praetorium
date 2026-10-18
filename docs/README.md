@@ -9,6 +9,7 @@
 | [システム全体像](architecture/SYSTEM.md) | Cloudflare Worker/D1/DO/KV、VM、K3s、BuildKit、Registry、Scriptorium、GitHub、CIの**存在目的・責務・正本・禁止境界** | 現行ソースから再構築した地図 |
 | [動作経路・実行契機](architecture/EXECUTION.md) | ログイン→wake→handoff→保存、構成Build、Runtime停止/置換、Release、短命Credential、**ポーリング/Cloudflareコスト** | 現状の動作トレース |
 | [設計監査・未決定事項](architecture/REVIEW.md) | 初期要件との乖離、確定した事象、変えるべき部分・維持すべき安全性・まだ決めていない設計 | 観測と提案を区別した監査 |
+| [管理者アーキテクチャ](architecture/ADMINISTRATION.md) | Praetorium全体の管理責務、既存OSS連携、Headlampの独立配置と権限境界 | 新規管理者向け設計・Headlamp初期実装 |
 
 **重要:** 上の3文書は既存実装の「正しさ」を宣言する文書ではない。現行実装と、要件が求める動作の差分を読めるようにするための入口である。
 

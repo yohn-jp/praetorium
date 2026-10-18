@@ -718,6 +718,8 @@ describe("Kubernetes runtime provider", () => {
     expect(container.env).toEqual([
       { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
       { name: "SCRIPTORIUM_TRUST_PROXY", value: "1" },
+      { name: "SCRIPTORIUM_DATA_DIR", value: "/data/workspace" },
+      { name: "SCRIPTORIUM_USAGE_DIR", value: "/data/history" },
       {
         name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
         value: "/run/scriptorium/runtime-assignment.json",

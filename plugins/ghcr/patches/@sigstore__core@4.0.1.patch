@@ -1,0 +1,16 @@
+diff --git a/dist/crypto.js b/dist/crypto.js
+index 8d8110ee4234766dc639b4c01b3cc6d6ba980d40..1af01fbce14018d9962020cccab6a40eabab239f 100644
+--- a/dist/crypto.js
++++ b/dist/crypto.js
+@@ -51,6 +51,11 @@ function verify(data, key, signature, algorithm) {
+     // The try/catch is to work around an issue in Node 14.x where verify throws
+     // an error in some scenarios if the signature is invalid.
+     try {
++        // Match Node/OpenSSL's default for ECDSA while making it explicit for
++        // runtimes whose Node-compatible crypto API requires a digest.
++        if ((algorithm === undefined || algorithm === null) && key?.asymmetricKeyType === 'ec') {
++            algorithm = 'sha256';
++        }
+         return crypto_1.default.verify(algorithm, data, key, signature);
+     }
+     catch (e) {

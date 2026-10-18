@@ -61,7 +61,7 @@ describe("mobile UI compositions", () => {
     const html = mobileRepositories(listView({ rows: [] }));
 
     expect(html).toContain(
-      '<div class="mobile-repository-empty"><p>No repositories are available.</p>',
+      '<div class="ledger-list-empty"><p>No repositories are available.</p></div>',
     );
     expect(html).not.toContain("ledger-list-rows");
     expect(html).not.toContain("Review configuration");

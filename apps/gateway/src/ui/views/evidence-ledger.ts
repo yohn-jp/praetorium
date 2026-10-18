@@ -36,6 +36,7 @@ export function evidenceLedgerRepository(
     '<div class="evidence-access">' + view.access + '</div></div>' +
     '<div class="evidence-material">' +
     '<div class="evidence-material-heading"><span>Deployment evidence</span><span>Current / Desired</span></div>' +
+    '<div class="evidence-operation-summary" aria-label="Latest operation">' + (view.evidence ?? '') + '</div>' +
     '<div class="evidence-deployment-comparison">' +
     '<div class="desktop-deployment evidence-deployment evidence-deployment-current">' + view.current + '</div>' +
     '<div class="desktop-deployment evidence-deployment evidence-deployment-desired">' + view.desired + '</div>' +

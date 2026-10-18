@@ -150,31 +150,72 @@ test("work notification inventory requires dedicated secret refs and deployment 
   assert.doesNotMatch(renderedEnabledKustomization, /@@[A-Z0-9_]+@@/u);
 });
 
-test("work notification tokens are printable, dedicated and distinct from claim credentials", () => {
+test("work notification tokens are printable and distinct from claim and registry credentials", () => {
   const bytes = (value) => Buffer.from(value, "ascii");
-  assert.doesNotThrow(() => validateWorkNotificationTokens({
+  const pullUsername = "pull-user-".repeat(4);
+  const pullPassword = "pull-password-".repeat(4);
+  const pushUsername = "push-user-".repeat(4);
+  const pushPassword = "push-password-".repeat(4);
+  const pullBytes = Buffer.from(JSON.stringify({ username: pullUsername, password: pullPassword }));
+  const pushAuth = Buffer.from(`${pushUsername}:${pushPassword}`).toString("base64");
+  const pushBytes = Buffer.from(JSON.stringify({
+    auths: {
+      "https://ghcr.io": {
+        username: pushUsername,
+        password: pushPassword,
+        auth: pushAuth,
+      },
+    },
+  }));
+  const registry = { registryPull: pullBytes, registryPush: pushBytes, registryHost: "ghcr.io" };
+  const base = {
     provisioner: bytes("p".repeat(48)),
     build: bytes("b".repeat(48)),
     provisionerClaim: bytes("c".repeat(48)),
     buildClaim: bytes("d".repeat(48)),
+    ...registry,
+  };
+  assert.doesNotThrow(() => validateWorkNotificationTokens({
+    ...base,
   }));
+  const assertRegistryConflict = (token, role = "provisioner", registryOverride = {}) => assert.throws(
+    () => validateWorkNotificationTokens({
+      ...base,
+      ...registryOverride,
+      [role]: Buffer.from(token),
+    }),
+    /distinct from registry credentials/u,
+  );
+  const registryTokens = [
+    pullUsername,
+    pullPassword,
+    `${pullUsername}:${pullPassword}`,
+    Buffer.from(`${pullUsername}:${pullPassword}`).toString("base64"),
+    pushUsername,
+    pushPassword,
+    `${pushUsername}:${pushPassword}`,
+    pushAuth,
+  ];
+  for (const role of ["provisioner", "build"]) {
+    for (const candidate of registryTokens) assertRegistryConflict(candidate, role);
+  }
+  assertRegistryConflict(pullBytes, "provisioner");
+  assertRegistryConflict(pushBytes, "build");
+  const authOnlyPush = Buffer.from(JSON.stringify({
+    auths: { "ghcr.io": { auth: pushAuth } },
+  }));
+  assertRegistryConflict(pushUsername, "build", { registryPush: authOnlyPush });
   assert.throws(() => validateWorkNotificationTokens({
+    ...base,
     provisioner: bytes("c".repeat(48)),
-    build: bytes("b".repeat(48)),
-    provisionerClaim: bytes("c".repeat(48)),
-    buildClaim: bytes("d".repeat(48)),
   }), /distinct from claim credentials/u);
   assert.throws(() => validateWorkNotificationTokens({
+    ...base,
     provisioner: bytes("x".repeat(31)),
-    build: bytes("b".repeat(48)),
-    provisionerClaim: bytes("c".repeat(48)),
-    buildClaim: bytes("d".repeat(48)),
   }), /32-512 printable ASCII/u);
   assert.throws(() => validateWorkNotificationTokens({
+    ...base,
     provisioner: Buffer.concat([bytes("x".repeat(31)), Buffer.from([0xe1])]),
-    build: bytes("b".repeat(48)),
-    provisionerClaim: bytes("c".repeat(48)),
-    buildClaim: bytes("d".repeat(48)),
   }), /32-512 printable ASCII/u);
 });
 

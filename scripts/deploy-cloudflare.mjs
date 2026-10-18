@@ -62,6 +62,9 @@ if (notificationTokenBytes) {
     ...notificationTokenBytes,
     provisionerClaim: privateBytes("controlPlaneCredential"),
     buildClaim: privateBytes("buildWorkerControlPlaneAuth"),
+    registryPull: privateBytes("buildWorkerRegistryPull"),
+    registryPush: privateBytes("buildWorkerRegistryPush"),
+    registryHost: new URL(inventory.buildPolicy.registryUrl).host,
   });
 }
 if (inventory.environment !== "deployment" || inventory.cloudflare.mode !== "remote") {

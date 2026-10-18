@@ -73,6 +73,9 @@ validateWorkNotificationTokens({
   build: buildBytes,
   provisionerClaim: readSecret("controlPlaneCredential"),
   buildClaim: readSecret("buildWorkerControlPlaneAuth"),
+  registryPull: readSecret("buildWorkerRegistryPull"),
+  registryPush: readSecret("buildWorkerRegistryPush"),
+  registryHost: new URL(inventory.buildPolicy.registryUrl).host,
 });
 
 await verifyWorkNotificationEndpoints(

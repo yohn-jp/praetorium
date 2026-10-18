@@ -119,6 +119,9 @@ if (notificationEndpoints) {
     build: secretBytes("buildWorkerWorkNotificationToken"),
     provisionerClaim: secretBytes("controlPlaneCredential"),
     buildClaim: secretBytes("buildWorkerControlPlaneAuth"),
+    registryPull: secretBytes("buildWorkerRegistryPull"),
+    registryPush: secretBytes("buildWorkerRegistryPush"),
+    registryHost: new URL(inventory.buildPolicy.registryUrl).host,
   });
 }
 function run(command, args, { input, timeout = 180_000 } = {}) {

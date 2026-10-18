@@ -306,6 +306,28 @@ removed; archived expired inventories are not current acceptance inputs.
   built and signed successfully but stopped at the pinned Skopeo version-string
   guard before any image push. The exact signed artifacts are retained for a
   scoped retry; public producer availability is not established by that run.
+- `fb35759` fixes the guard against the actual pinned image output and adds a
+  trusted publisher-only retry. Frozen install, all 29 check tasks, six publisher
+  guard tests and actionlint passed. Retry
+  [39093546534](https://github.com/yohn-jp/praetorium/actions/runs/39093546534)
+  succeeded using the original run's signed metadata and OCI archives without
+  rebuilding. Sigstore verification and digest-preserving publication passed;
+  independent anonymous HTTPS manifest readback at 03:28:11 UTC verified both
+  exact digests in `ghcr.io/yohn-jp/praetorium/scriptorium-producer`:
+  Runtime Base `sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52`
+  and BuildKit `sha256:b0d99ef773188fa451f9aef1a03b52fb26871c152bb7eaebb1863c0cc44bf888`.
+  Public producer inputs are now available; this does not establish admitted
+  compositions, cache reuse or full G4.
+- `b2f91e6` records the existing file-backed/Cloudflare-managed secret contract
+  in [SECRETS.md](../deployment/SECRETS.md), including exact consumers, initial
+  issuance conditions, synchronized registration, activation and recovery.
+  Four prepared roles now have byte-verified copies under the durable private
+  root `/data/praetorium/production`; independent review found no ownership,
+  file-mode or symlink errors. Seven inputs remain incomplete; remote presence
+  not inspected is explicitly `NOT_CHECKED`, not assumed absent or present.
+  No independent protected backup has yet been verified. Existing Runtime
+  ingress, DNS token source and real ACME contact could not be established from
+  the checked settings. No production secret registration or rotation occurred.
 
 ## Remaining acceptance
 

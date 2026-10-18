@@ -1549,7 +1549,7 @@ export class D1PlatformStore implements OperationStore {
              FROM operations WHERE operation_id = ? AND report_sequence = ?`,
         )
         .bind(
-          `operation.report:${input.operationId}:${input.sequence}`,
+          `operation.report:${input.operationId}:${input.leaseEpoch}:${input.sequence}`,
           input.workerId,
           status,
           JSON.stringify({

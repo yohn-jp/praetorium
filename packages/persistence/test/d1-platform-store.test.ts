@@ -265,6 +265,80 @@ describe("D1PlatformStore with SQLite transactions", () => {
     });
   });
 
+  it("keeps report audit IDs unique when an expired operation lease restarts its sequence", async () => {
+    const { database, registry, instances, operations } = createPlatform();
+    const resolved = await registry.resolveOrCreate(registryInput("instance-a", "request-a"));
+    seedDeployment(database, resolved.binding.instanceId);
+    await instances.requestDesiredState({
+      repositoryId: 71,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "running",
+      actorId: "user-1",
+      idempotencyKey: "start-1",
+      requestId: "request-a",
+      now: 100,
+    });
+
+    const firstClaim = await operations.claimNext({
+      workerId: "provisioner-1",
+      clusterId: "cluster-a",
+      now: 101,
+    });
+    if (!firstClaim) throw new Error("expected admitted start claim");
+    const firstLease = {
+      operationId: firstClaim.operation.id,
+      workerId: firstClaim.operation.workerId!,
+      leaseToken: firstClaim.operation.leaseToken!,
+      leaseEpoch: firstClaim.operation.leaseEpoch,
+    } as const;
+    expect(firstLease.leaseEpoch).toBe(1);
+
+    await operations.report({ ...firstLease, sequence: 1, now: 102, observation: null });
+
+    const secondClaim = await operations.claimNext({
+      workerId: "provisioner-1",
+      clusterId: "cluster-a",
+      now: firstClaim.operation.leaseExpiresAt!,
+    });
+    if (!secondClaim) throw new Error("expected expired operation lease to be reclaimed");
+    const secondLease = {
+      operationId: secondClaim.operation.id,
+      workerId: secondClaim.operation.workerId!,
+      leaseToken: secondClaim.operation.leaseToken!,
+      leaseEpoch: secondClaim.operation.leaseEpoch,
+    } as const;
+    expect(secondLease.leaseEpoch).toBe(2);
+    const reclaimedAt = firstClaim.operation.leaseExpiresAt! + 1;
+
+    await expect(
+      operations.report({ ...firstLease, sequence: 2, now: reclaimedAt, observation: null }),
+    ).rejects.toBeInstanceOf(OperationFenceConflict);
+    await operations.report({
+      ...secondLease,
+      sequence: 1,
+      now: reclaimedAt,
+      observation: null,
+    });
+
+    const rows = database
+      .prepare(
+        `SELECT event_id, occurred_at FROM audit_events
+         WHERE operation_id = ? AND action = 'operation.reported' ORDER BY occurred_at`,
+      )
+      .all(firstClaim.operation.id) as { event_id: string; occurred_at: number }[];
+    expect(rows).toEqual([
+      {
+        event_id: `operation.report:${firstClaim.operation.id}:1:1`,
+        occurred_at: 102,
+      },
+      {
+        event_id: `operation.report:${firstClaim.operation.id}:2:1`,
+        occurred_at: reclaimedAt,
+      },
+    ]);
+  });
+
   it("fenced-blocks a claim when runtime context cannot be resolved without changing the old observation", async () => {
     const { database, registry, instances, operations } = createPlatform();
     const resolved = await registry.resolveOrCreate(registryInput("instance-a", "request-a"));

@@ -97,4 +97,61 @@ describe("BuildKit image rootfs export", () => {
     await result.dispose();
     await expect(readFile(path.join(outputDirectory, "smoke-result.json"))).rejects.toThrow();
   });
+  it("exports only a validated receipt file, not the entire rootfs", async () => {
+    const config = await createConfig();
+    const digest = "1".repeat(64);
+    const filePath = "/usr/share/scriptorium/composition-manifest.json";
+    const runBuildctl = vi.fn<BuildctlRunner>(async (_args, options) => {
+      const dockerfile = await readFile(path.join(options.cwd, "Dockerfile"), "utf8");
+      expect(dockerfile).toContain(
+        "COPY --from=candidate /usr/share/scriptorium/composition-manifest.json /image/usr/share/scriptorium/composition-manifest.json",
+      );
+      expect(dockerfile).not.toContain("COPY --from=candidate / /image/");
+      expect(dockerfile).not.toContain("FROM candidate AS smoke");
+    });
+    const exporter = new BuildKitImageRootfsExporter(config, { runBuildctl });
+    const imageReference = `ghcr.io/scriptorium/image@sha256:${digest}`;
+    const result = await exporter.exportImage(
+      { imageReference, platform: "linux/amd64", filePath },
+      new AbortController().signal,
+    );
+    expect(result.smokeResult).toBeNull();
+    expect(runBuildctl).toHaveBeenCalledOnce();
+    await result.dispose();
+
+    for (const invalidPath of [
+      "/usr/share/../secret",
+      "/usr//share/receipt.json",
+      "/usr/share/receipt.json\\nRUN echo unsafe",
+      "/usr/share/",
+      "/./receipt.json",
+    ]) {
+      await expect(
+        exporter.exportImage(
+          { imageReference, platform: "linux/amd64", filePath: invalidPath },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("BuildKit image startup input is invalid");
+    }
+    expect(runBuildctl).toHaveBeenCalledOnce();
+    await expect(
+      exporter.exportImage(
+        {
+          imageReference,
+          platform: "linux/amd64",
+          filePath,
+          startup: {
+            entrypoint: ["/usr/bin/tini", "--"],
+            command: ["node", "launch.mjs"],
+            workingDirectory: "/app",
+            port: 3000,
+            healthPath: "/health/ready",
+            timeoutMs: 10_000,
+          },
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("BuildKit image startup input is invalid");
+  });
+
 });

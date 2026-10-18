@@ -537,8 +537,12 @@ export class D1T11ReleaseRolloutStore
                 AND p.response_kind = 'configuration-plan'
                JOIN logical_instances i ON i.instance_id = ?
                JOIN repository_bindings rb ON rb.repository_id = ? AND rb.instance_id = i.instance_id
-               WHERE w.release_id = ? AND w.state = 'blocked'
-                 AND w.failure_code = 'canary_build_failed' AND w.revision = ?
+               WHERE w.release_id = ?
+                 AND (
+                   (w.state = 'blocked' AND w.failure_code = 'canary_build_failed')
+                   OR (w.state = 'canary_building' AND w.failure_code IS NULL)
+                 )
+                 AND w.revision = ?
                  AND w.lease_owner IS NULL AND w.lease_expires_at IS NULL
                  AND w.canary_build_key = b.build_key AND b.status = 'pending'
                  AND p.response_id = deployment_revisions.revision_id
@@ -586,8 +590,11 @@ export class D1T11ReleaseRolloutStore
                   cleanup_evidence_json = NULL, follower_cursor = NULL,
                   follower_planning_complete = 0, canary_cleanup_complete = 0,
                   cleanup_disposition = NULL, failure_code = NULL, updated_at = ?
-            WHERE release_id = ? AND revision = ? AND state = 'blocked'
-              AND failure_code = 'canary_build_failed'
+            WHERE release_id = ? AND revision = ?
+              AND (
+                (state = 'blocked' AND failure_code = 'canary_build_failed')
+                OR (state = 'canary_building' AND failure_code IS NULL)
+              )
               AND EXISTS (
                 SELECT 1 FROM release_candidates c
                 JOIN idempotency_records p
@@ -1877,13 +1884,15 @@ function isEligiblePreRuntimeCanaryRetry(
     typeof failure === "object" && failure !== null && !Array.isArray(failure)
       ? (failure as Record<string, unknown>)
       : null;
+  const retryableWorkflowState =
+    (row.workflow_state === "blocked" && row.workflow_failure_code === "canary_build_failed") ||
+    (row.workflow_state === "canary_building" && row.workflow_failure_code === null);
   const requestedModules = [...canary.requestedModules].sort();
   return (
     candidate.id.length > 0 &&
     candidate.status === "candidate" &&
     row.candidate_status === "candidate" &&
-    row.workflow_state === "blocked" &&
-    row.workflow_failure_code === "canary_build_failed" &&
+    retryableWorkflowState &&
     row.workflow_lease_owner === null &&
     row.workflow_lease_expires_at === null &&
     row.workflow_canary_artifact_digest === null &&
@@ -1954,8 +1963,12 @@ function retryEligibilitySql(buildStatus: "failed", revisionStatus: "failed"): s
     JOIN build_attempts a ON a.attempt_id = b.active_attempt_id AND a.build_id = b.build_id
    WHERE (
        c.release_id = ? AND c.candidate_json = ? AND c.status = 'candidate'
-       AND w.release_id = c.release_id AND w.revision = ? AND w.state = 'blocked'
-       AND w.failure_code = 'canary_build_failed' AND w.lease_owner IS NULL
+       AND w.release_id = c.release_id AND w.revision = ?
+       AND (
+         (w.state = 'blocked' AND w.failure_code = 'canary_build_failed')
+         OR (w.state = 'canary_building' AND w.failure_code IS NULL)
+       )
+       AND w.lease_owner IS NULL
        AND w.lease_expires_at IS NULL AND w.canary_artifact_digest IS NULL
        AND w.canary_runtime_id IS NULL AND w.canary_operation_id IS NULL
        AND w.healthy_since IS NULL AND w.last_healthy_at IS NULL

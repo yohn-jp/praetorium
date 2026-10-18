@@ -19,14 +19,14 @@ const runtimeResourceRules = [
     [""],
     ["v1"],
     ["CREATE", "UPDATE"],
-    ["limitranges", "resourcequotas", "serviceaccounts", "services"],
+    ["limitranges", "resourcequotas", "secrets", "serviceaccounts", "services"],
   ),
   rule(["apps"], ["v1"], ["CREATE", "UPDATE"], ["deployments"]),
   rule(["networking.k8s.io"], ["v1"], ["CREATE", "UPDATE"], ["networkpolicies"]),
   rule(["traefik.io"], ["v1alpha1"], ["CREATE", "UPDATE"], ["ingressroutes"]),
 ];
 const runtimeResourceDeleteRules = [
-  rule([""], ["v1"], ["DELETE"], ["limitranges", "resourcequotas", "serviceaccounts", "services"]),
+  rule([""], ["v1"], ["DELETE"], ["limitranges", "resourcequotas", "secrets", "serviceaccounts", "services"]),
   rule(["apps"], ["v1"], ["DELETE"], ["deployments"]),
   rule(["networking.k8s.io"], ["v1"], ["DELETE"], ["networkpolicies"]),
   rule(["traefik.io"], ["v1alpha1"], ["DELETE"], ["ingressroutes"]),

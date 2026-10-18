@@ -612,6 +612,10 @@ describe("server-rendered management UI", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Referrer-Policy")).toBe("strict-origin");
     expect(html).toContain('<meta name="referrer" content="strict-origin">');
+    expect(html).not.toContain('<header class="topbar">');
+    expect(html).not.toContain('<footer class="page-footer">');
+    expect(html).not.toContain('aria-label="Presentation"');
+    expect(html).toContain('<button type="submit">Continue</button>');
     expect(response.headers.get("Content-Security-Policy")).toContain(
       "form-action https://ins-01.instances.example",
     );

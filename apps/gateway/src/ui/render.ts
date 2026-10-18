@@ -386,7 +386,7 @@ export function renderHandoff(handoff: PortalHandoff, nonce: string): Response {
   const action = `${origin.origin}/_platform/handoff`;
   return page(
     "Enter application",
-    `<h1>Continue to the application</h1>` +
+    `<h1>Opening application</h1>` +
       `<form id="handoff" method="post" action="${escapeHtml(action)}" enctype="application/x-www-form-urlencoded">` +
       `<input type="hidden" name="code" value="${escapeHtml(handoff.code)}">` +
       `<input type="hidden" name="returnPath" value="/">` +
@@ -398,6 +398,7 @@ export function renderHandoff(handoff: PortalHandoff, nonce: string): Response {
       // The document policy also survives an ingress response-header baseline.
       // Cross-origin form POSTs must retain the exact Gateway Origin.
       referrerPolicy: "strict-origin",
+      layout: "handoff",
     },
   );
 }

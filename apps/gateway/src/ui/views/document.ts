@@ -10,6 +10,7 @@ export function page(
     readonly formAction?: string;
     readonly scriptNonce?: string;
     readonly referrerPolicy?: "strict-origin";
+    readonly layout?: "handoff";
     readonly presentation?: PortalPresentation;
   } = {},
 ): Response {
@@ -24,6 +25,7 @@ export function page(
       ? options.scriptNonce
       : undefined;
   const scriptPolicy = validNonce ? `; script-src 'nonce-${validNonce}'` : "";
+  const showNavigation = options.layout !== "handoff";
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
       `<meta name="viewport" content="width=device-width, initial-scale=1">` +
@@ -31,13 +33,14 @@ export function page(
       `<meta name="color-scheme" content="light">` +
       `<title>${escapeHtml(title)}</title><style>${portalStyles(presentation.mode)}</style></head><body data-ui="${presentation.mode}">` +
       `<a class="skip-link" href="#main-content">Skip to main content</a>` +
-      `<header class="topbar"><div class="topbar-inner">` +
+      (showNavigation ? `<header class="topbar"><div class="topbar-inner">` +
       `<a class="brand" href="${home}"><span class="brand-mark" aria-hidden="true">P</span><span>Praetorium</span></a>` +
-      `<nav aria-label="Primary"><a href="${home}">Repositories</a></nav><nav aria-label="Presentation">${(["desktop", "mobile"] as const).map((mode) => `<a data-ui-choice href="${localUrl(path, mode)}"${mode === presentation.mode ? ' aria-current="true"' : ""}>${mode === "desktop" ? "Desktop" : "Mobile"}</a>`).join(" ")}</nav></div></header>` +
+      `<nav aria-label="Primary"><a href="${home}">Repositories</a></nav><nav aria-label="Presentation">${(["desktop", "mobile"] as const).map((mode) => `<a data-ui-choice href="${localUrl(path, mode)}"${mode === presentation.mode ? ' aria-current="true"' : ""}>${mode === "desktop" ? "Desktop" : "Mobile"}</a>`).join(" ")}</nav></div></header>` : "") +
       `<main id="main-content" class="page-shell">${body}</main>` +
-      `${validNonce ? interactionScript(validNonce) : ""}` +
-      `<footer class="page-footer"><div class="footer-inner"><span>Praetorium repository workspace</span>` +
-      `<span>Access is checked with your current GitHub permissions.</span></div></footer></body></html>`,
+      `${validNonce && showNavigation ? interactionScript(validNonce) : ""}` +
+      (showNavigation ? `<footer class="page-footer"><div class="footer-inner"><span>Praetorium repository workspace</span>` +
+      `<span>Access is checked with your current GitHub permissions.</span></div></footer>` : "") +
+      `</body></html>`,
     {
       headers: {
         "Content-Type": "text/html; charset=utf-8",

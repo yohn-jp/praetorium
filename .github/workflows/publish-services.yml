@@ -40,6 +40,7 @@ jobs:
           corepack pnpm@11.18.0 check
           node --test tests/deployment/reproducibility.test.mjs
           node --test tests/deployment/headlamp-admin.test.mjs
+          node scripts/ci/verify-workerd-runtime-identity.mjs
 
   candidate-images:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')

@@ -12,6 +12,7 @@ import {
 } from "./idle-routes.js";
 import { createBuildRoutes, type BuildRoutesOptions } from "./build-routes.js";
 import { Hono } from "hono";
+import type { createOperatorReleaseAdmissionRoutes } from "./releases/operator-admission.js";
 import { createGitHubWebhookRoutes } from "./github-webhook-routes.js";
 import { z } from "zod";
 import {
@@ -61,7 +62,7 @@ export type ControlPlaneDependencies = {
   configuration?: ConfigurationRoutesOptions;
   operationAdmin?: OperationAdminDependencies;
   webhook?: Parameters<typeof createGitHubWebhookRoutes>[0];
-  operatorAdmission?: Hono;
+  operatorAdmission?: ReturnType<typeof createOperatorReleaseAdmissionRoutes>;
   operatorToken?: string;
   runtimeIdentity?: Hono;
   runtimeHealth?: Hono;
@@ -91,7 +92,11 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.header("Cache-Control", "no-store");
-    if (c.req.path === "/v1/operator/releases" || c.req.path === "/v1/operator/releases/") {
+    const operatorReleaseRoute =
+      c.req.path === "/v1/operator/releases" || c.req.path === "/v1/operator/releases/" ||
+      (c.req.method === "GET" && /^\/v1\/operator\/releases\/[^/]+\/?$/u.test(c.req.path)) ||
+      (c.req.method === "POST" && /^\/v1\/operator\/releases\/[^/]+\/retry\/?$/u.test(c.req.path));
+    if (operatorReleaseRoute) {
       if (!deps.operatorAdmission)
         return c.json({ error: { code: "RELEASE_SERVICE_UNAVAILABLE" } }, 503);
       await next();

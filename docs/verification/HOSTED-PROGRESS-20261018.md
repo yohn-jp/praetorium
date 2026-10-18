@@ -426,3 +426,41 @@ actually been deployed; an all-in-one `deploy-platform --apply` is not required
 to repeat those completed effects. No production approval is inferred from CI
 alone. Final completion requires the remaining actual product outcomes on the
 identified release cut, with no fabricated PASS or direct D1 failure reset.
+
+
+## Canary Build recovery (2026-10-18 07:40 UTC)
+
+The owner read the remote D1 state through their own refreshed Wrangler login.
+Candidate `rel_28a87a55-f1b3-4675-b57a-d9f3cca5cb6b` is blocked with
+`canary_build_failed`; Build `build_2f92619e-66d7-4b20-ac89-f461418ddd06`
+failed its first attempt with `BUILD_FAILED`. The BuildKit journal identifies the
+underlying GHCR token TLS failure: `x509: certificate signed by unknown authority`.
+The Build Worker image lacked an OS CA store for Go buildctl; Node's bundled roots
+alone do not provide that filesystem store.
+
+`db8e4ca` adds the public CA roots from the existing digest-pinned Node build
+image. Its publication succeeded in
+[39107905774](https://github.com/yohn-jp/praetorium/actions/runs/39107905774).
+The first replacement Pod failed before startup because the copied CA directory
+was not traversable by its non-root identity. `bef4eb7` corrects directory modes
+and validates CA loading after switching to the runtime user. Its publication
+[39108408228](https://github.com/yohn-jp/praetorium/actions/runs/39108408228)
+is pending; no successful replacement or Canary retry is claimed here.
+
+A narrowly scoped Operator status/retry route is integrated with the canonical
+D1 store. It only retries the designated failed pre-runtime Canary Build, with
+unchanged candidate, pinned selection and binding, absent Runtime effects,
+transactional revision checks and advancing lease epochs. Failed attempt rows
+remain intact. Exact authenticated replays use a read-only durable receipt
+lookup before external re-verification; new retries preserve all existing
+registry, provenance and producer checks. A newly pending Build receives the
+existing authenticated work hint. No new migration, credential rotation, CPU
+budget change or direct remote D1 repair is used.
+
+Frozen install and all 29 check tasks pass (28 cached, one changed Control Plane
+task per phase); focused coverage includes 18 operator route tests and 11
+SQLite-backed rollout-store tests. Separate read-only review confirmed the
+replay fix and found no remaining actionable defect in this scoped change.
+These source results do not certify a successful real Canary or Hosted browser
+session. The remaining sequence is replacement Build Worker readiness, normal
+Operator retry, actual Build/Canary/Runtime progression, then authoring acceptance.

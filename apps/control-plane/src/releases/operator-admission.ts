@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { z } from "zod";
+import type { ReleaseRetryCommand, ReleaseRetryResult, ReleaseRetryStatus } from "./retry-contract.js";
 import {
   createRegistryBackedReleaseVerifier,
   ingestReleaseCandidate,
@@ -27,7 +29,18 @@ export interface OperatorReleaseAdmissionDependencies
     candidate: ReleaseCandidate,
     context: ReleaseAdmissionExecutionContext,
   ) => void;
+  readonly retry?: {
+    status(releaseId: string): Promise<ReleaseRetryStatus | null>;
+    replay(input: Pick<ReleaseRetryCommand, "releaseId" | "idempotencyKey" | "requestHash">): Promise<ReleaseRetryResult | null>;
+    execute(input: Omit<ReleaseRetryCommand, "canary">): Promise<ReleaseRetryResult>;
+  };
 }
+
+const ReleaseId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u);
+const RetryRequest = z.strictObject({
+  expectedRevision: z.number().int().nonnegative().safe(),
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u),
+});
 
 /**
  * Builds the operator-only immutable release admission route. Mount this router
@@ -35,11 +48,12 @@ export interface OperatorReleaseAdmissionDependencies
  * the registry, provenance, and producer-metadata verifiers.
  */
 export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmissionDependencies) {
-  const app = new Hono();
+  const app = new Hono<{ Variables: { operatorPrincipal: OperatorReleasePrincipal } }>();
   const newRequestId = deps.requestId ?? (() => crypto.randomUUID());
   const verifier = createRegistryBackedReleaseVerifier(deps);
 
-  app.post("/", async (c) => {
+  app.use("*", async (c, next) => {
+    c.header("Cache-Control", "no-store");
     let principal: OperatorReleasePrincipal | null;
     try {
       principal = await deps.authorize(c.req.raw.headers);
@@ -49,6 +63,90 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
     if (!principal || !principal.actorId || principal.actorId.length > 255) {
       return c.json({ error: { code: "OPERATOR_AUTH_REQUIRED" } }, 403);
     }
+    c.set("operatorPrincipal", principal);
+    await next();
+  });
+
+  app.get("/:releaseId", async (c) => {
+    if (!deps.retry) return c.json({ error: { code: "RELEASE_RETRY_UNAVAILABLE" } }, 503);
+    const id = ReleaseId.safeParse(c.req.param("releaseId"));
+    if (!id.success) return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
+    try {
+      const status = await deps.retry.status(id.data);
+      return status
+        ? c.json(status)
+        : c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
+    } catch {
+      return c.json({ error: { code: "RELEASE_STATUS_UNAVAILABLE" } }, 503);
+    }
+  });
+
+  app.post("/:releaseId/retry", async (c) => {
+    if (!deps.retry) return c.json({ error: { code: "RELEASE_RETRY_UNAVAILABLE" } }, 503);
+    const id = ReleaseId.safeParse(c.req.param("releaseId"));
+    if (!id.success) return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
+    let request: z.infer<typeof RetryRequest>;
+    try {
+      request = RetryRequest.parse(await readBoundedJson(c.req.raw, 1024));
+    } catch (error) {
+      return c.json(
+        { error: { code: error instanceof RequestTooLargeError ? "REQUEST_TOO_LARGE" : "INVALID_REQUEST" } },
+        error instanceof RequestTooLargeError ? 413 : 400,
+      );
+    }
+    try {
+      const requestHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
+        JSON.stringify({ releaseId: id.data, expectedRevision: request.expectedRevision }),
+      )));
+      const command = {
+        ...request,
+        releaseId: id.data,
+        actorId: c.get("operatorPrincipal").actorId,
+        requestId: validRequestId(c.req.header("X-Request-Id")) ?? newRequestId(),
+        requestHash: `sha256:${Array.from(requestHash, (byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+        now: deps.clock.nowMs(),
+      };
+      const replay = await deps.retry.replay(command);
+      if (replay?.kind === "accepted") return c.json({ ...replay.status, duplicate: true });
+      if (replay?.kind === "not_found") return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
+      if (replay?.kind === "conflict") {
+        return c.json({ error: { code: "RELEASE_RETRY_CONFLICT", reason: replay.reason } }, 409);
+      }
+      const candidate = await deps.releases.findById(id.data);
+      if (!candidate) return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
+      const verification = await verifier.verify({
+        schemaVersion: 1,
+        version: candidate.version,
+        imageRepository: candidate.imageRepository,
+        catalog: candidate.catalog,
+        runtimeMetadata: candidate.runtimeMetadata,
+        signatureRef: candidate.signatureRef,
+        provenanceRef: candidate.provenanceRef,
+      });
+      if (verification.kind === "retry") {
+        return c.json({ error: { code: "RELEASE_EVIDENCE_UNAVAILABLE", retryable: true } }, 503);
+      }
+      if (verification.kind !== "verified") {
+        return c.json({ error: { code: "RELEASE_CANDIDATE_DENIED" } }, 422);
+      }
+      const result = await deps.retry.execute(command);
+      if (result.kind === "not_found") return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
+      if (result.kind === "conflict") {
+        return c.json({ error: { code: "RELEASE_RETRY_CONFLICT", reason: result.reason } }, 409);
+      }
+      try {
+        deps.afterAdmitted?.(candidate, c.executionCtx);
+      } catch {
+        // The retry is durable; the existing recovery scheduler owns missed hints.
+      }
+      return c.json({ ...result.status, duplicate: result.duplicate }, result.duplicate ? 200 : 202);
+    } catch {
+      return c.json({ error: { code: "RELEASE_RETRY_UNAVAILABLE" } }, 503);
+    }
+  });
+
+  app.post("/", async (c) => {
+    const principal = c.get("operatorPrincipal");
 
     let manifest: unknown;
     try {

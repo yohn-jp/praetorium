@@ -176,6 +176,15 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     clock: deps.clock,
     ids: deps.ids,
     authorize: deps.authorizeOperator,
+    retry: {
+      status: (releaseId) => releases.getReleaseRetryStatus(releaseId),
+      replay: (command) => releases.findPreRuntimeCanaryRetry(command),
+      execute: async (command) => {
+        const result = await releases.retryPreRuntimeCanaryBuild({ ...command, canary: deps.canaryBinding });
+        if (result.kind === "accepted" && !result.duplicate) await notifyWork("build");
+        return result;
+      },
+    },
     ...(deps.requestId ? { requestId: deps.requestId } : {}),
     afterAdmitted: (_candidate, context) => {
       context.waitUntil(runStableReleaseWork(scheduled, { promotionPasses: 2 }));

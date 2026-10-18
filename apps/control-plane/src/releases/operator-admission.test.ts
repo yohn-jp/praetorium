@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { ReleaseCandidateSchema } from "@praetorium/application/releases";
+import type { ReleaseRetryStatus } from "./retry-contract.js";
+import { createControlPlaneApp, type ControlPlaneDependencies } from "../app.js";
 import type { OperatorReleaseAdmissionDependencies } from "./operator-admission.js";
 import { createOperatorReleaseAdmissionRoutes } from "./operator-admission.js";
 
@@ -180,4 +183,159 @@ describe("operator release admission route", () => {
       error: { code: "RELEASE_EVIDENCE_UNAVAILABLE", retryable: true },
     });
   });
+});
+
+
+function retryFixture() {
+  const candidate = ReleaseCandidateSchema.parse({
+    ...manifest(), id: "release-test", imageDigest: digest, status: "candidate",
+    admission: { registryConfirmed: true, provenanceVerified: true,
+      runtimeMetadataVerified: true, evidence: ["verified"], verifiedAt: "2026-01-01T00:00:00.000Z" },
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+  const status: ReleaseRetryStatus = {
+    release: { id: candidate.id, version: candidate.version, imageDigest: digest, status: "candidate" },
+    workflow: { state: "blocked", revision: 3, failureCode: "canary_build_failed", attempts: 1,
+      nextAttemptAt: null, canaryBuildKey: digest, canaryOperationId: null },
+    build: { id: "build-test", status: "failed", attemptCount: 1,
+      progress: { stage: "preparing", percent: 0 }, failure: { code: "BUILD_FAILED", retryable: false } },
+  };
+  const retry = {
+    replay: vi.fn<NonNullable<OperatorReleaseAdmissionDependencies["retry"]>["replay"]>(async () => null),
+    status: vi.fn(async (): Promise<ReleaseRetryStatus | null> => status),
+    execute: vi.fn<NonNullable<OperatorReleaseAdmissionDependencies["retry"]>["execute"]>(
+      async () => ({ kind: "accepted", duplicate: false, status }),
+    ),
+  };
+  const routeDeps = deps({ retry });
+  routeDeps.releases.findById = vi.fn(async () => candidate);
+  return { routeDeps, retry, status };
+}
+
+const retryBody = { expectedRevision: 3, idempotencyKey: "retry-ca-bundle" };
+function retryRequest(body: unknown = retryBody) {
+  return { method: "POST", headers: { "Content-Type": "application/json", "X-Request-Id": "retry-request" },
+    body: JSON.stringify(body) };
+}
+
+describe("operator pre-runtime Canary recovery", () => {
+  it.each(["GET", "POST"])("requires operator authority before %s reads or mutations", async (method) => {
+    const { routeDeps, retry } = retryFixture();
+    const app = createOperatorReleaseAdmissionRoutes({ ...routeDeps, authorize: async () => null });
+    const response = await app.request(method === "GET" ? "/release-test" : "/release-test/retry",
+      method === "GET" ? {} : retryRequest());
+    expect(response.status).toBe(403);
+    expect(retry.status).not.toHaveBeenCalled();
+    expect(retry.execute).not.toHaveBeenCalled();
+    expect(routeDeps.releases.findById).not.toHaveBeenCalled();
+    expect(routeDeps.producerMetadata.verify).not.toHaveBeenCalled();
+  });
+
+  it("returns bounded status without caching and distinguishes missing releases", async () => {
+    const { routeDeps, retry, status } = retryFixture();
+    const app = createOperatorReleaseAdmissionRoutes(routeDeps);
+    const response = await app.request("/release-test");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual(status);
+    retry.status.mockResolvedValueOnce(null);
+    expect((await app.request("/missing")).status).toBe(404);
+  });
+
+  it.each([
+    { expectedRevision: -1, idempotencyKey: "retry" },
+    { expectedRevision: 3, idempotencyKey: "retry", actorId: "forged" },
+    { expectedRevision: 3, idempotencyKey: "" },
+    { expectedRevision: 1.5, idempotencyKey: "retry" },
+  ])("rejects invalid retry commands before verification or mutation", async (body) => {
+    const { routeDeps, retry } = retryFixture();
+    const response = await createOperatorReleaseAdmissionRoutes(routeDeps)
+      .request("/release-test/retry", retryRequest(body));
+    expect(response.status).toBe(400);
+    expect(retry.execute).not.toHaveBeenCalled();
+    expect(routeDeps.producerMetadata.verify).not.toHaveBeenCalled();
+  });
+
+  it("bounds retry bodies", async () => {
+    const { routeDeps, retry } = retryFixture();
+    const response = await createOperatorReleaseAdmissionRoutes(routeDeps)
+      .request("/release-test/retry", retryRequest({ ...retryBody, padding: "x".repeat(1024) }));
+    expect(response.status).toBe(413);
+    expect(retry.execute).not.toHaveBeenCalled();
+  });
+
+  it("revalidates immutable evidence and binds the durable command to the authenticated actor", async () => {
+    const { routeDeps, retry, status } = retryFixture();
+    const afterAdmitted = vi.fn<NonNullable<OperatorReleaseAdmissionDependencies["afterAdmitted"]>>(
+      (_candidate, context) => context.waitUntil(Promise.resolve()),
+    );
+    const waitUntil = vi.fn();
+    const app = createOperatorReleaseAdmissionRoutes({ ...routeDeps, afterAdmitted });
+    const response = await app.fetch(new Request("https://control.example/release-test/retry", retryRequest()),
+      {}, { waitUntil, passThroughOnException() {}, props: {} });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ ...status, duplicate: false });
+    expect(routeDeps.producerMetadata.verify).toHaveBeenCalledOnce();
+    expect(retry.execute).toHaveBeenCalledWith({ ...retryBody, releaseId: "release-test",
+      actorId: "operator-test", requestId: "retry-request", now: Date.parse("2026-01-01T00:00:00.000Z"),
+      requestHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u) });
+    expect(afterAdmitted).toHaveBeenCalledOnce();
+    expect(waitUntil).toHaveBeenCalledOnce();
+  });
+
+  it.each(["rejected", "retry"] as const)("does not mutate when evidence is %s", async (kind) => {
+    const { routeDeps, retry } = retryFixture();
+    const app = createOperatorReleaseAdmissionRoutes({ ...routeDeps,
+      producerMetadata: { verify: async () => ({ kind, reason: "unavailable or invalid" }) } });
+    const response = await app.request("/release-test/retry", retryRequest());
+    expect(response.status).toBe(kind === "retry" ? 503 : 422);
+    expect(retry.execute).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes exact replay from stale revision conflicts", async () => {
+    const { routeDeps, retry, status } = retryFixture();
+    retry.execute.mockResolvedValueOnce({ kind: "accepted", duplicate: true, status });
+    retry.execute.mockResolvedValueOnce({ kind: "conflict", reason: "stale_revision" });
+    const app = createOperatorReleaseAdmissionRoutes(routeDeps);
+    expect((await app.request("/release-test/retry", retryRequest())).status).toBe(200);
+    const conflict = await app.request("/release-test/retry", retryRequest());
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toEqual({ error: { code: "RELEASE_RETRY_CONFLICT", reason: "stale_revision" } });
+  });
+});
+
+
+it("mounts status and retry under operator authority without accepting the Gateway credential", async () => {
+  const { routeDeps, retry } = retryFixture();
+  const operatorToken = "o".repeat(40);
+  const gatewaySecret = "g".repeat(40);
+  const operatorAdmission = createOperatorReleaseAdmissionRoutes({ ...routeDeps,
+    authorize: async (headers) => headers.get("Authorization") === `Bearer ${operatorToken}`
+      ? { actorId: "operator-test" } : null });
+  const app = createControlPlaneApp({
+    registry: {} as ControlPlaneDependencies["registry"],
+    instances: {} as ControlPlaneDependencies["instances"],
+    gatewaySecret, operatorToken, operatorAdmission,
+  });
+  for (const path of ["/v1/operator/releases/release-test", "/v1/operator/releases/release-test/retry"]) {
+    const init = path.endsWith("/retry") ? retryRequest() : {};
+    const denied = await app.request(path, { ...init, headers: { "X-Control-Plane-Gateway-Auth": gatewaySecret } });
+    expect(denied.status).toBe(403);
+    const accepted = await app.request(path, { ...init, headers: { Authorization: `Bearer ${operatorToken}` } });
+    expect(accepted.status).toBe(path.endsWith("/retry") ? 202 : 200);
+  }
+  expect(retry.status).toHaveBeenCalledOnce();
+  expect(retry.execute).toHaveBeenCalledOnce();
+});
+
+
+it("returns durable exact replay during an external evidence outage without verification or mutation", async () => {
+  const { routeDeps, retry, status } = retryFixture();
+  retry.replay.mockResolvedValueOnce({ kind: "accepted", duplicate: true, status });
+  const app = createOperatorReleaseAdmissionRoutes({ ...routeDeps,
+    producerMetadata: { verify: vi.fn(async () => ({ kind: "retry" as const, reason: "outage" })) } });
+  const response = await app.request("/release-test/retry", retryRequest());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ...status, duplicate: true });
+  expect(retry.execute).not.toHaveBeenCalled();
+  expect(routeDeps.releases.findById).not.toHaveBeenCalled();
 });

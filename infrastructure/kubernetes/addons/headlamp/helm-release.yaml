@@ -1,0 +1,83 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: praetorium-headlamp
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: praetorium
+    app.kubernetes.io/component: administration
+spec:
+  interval: 30m
+  releaseName: praetorium-headlamp
+  targetNamespace: praetorium-admin
+  install:
+    createNamespace: false
+  chart:
+    spec:
+      chart: headlamp
+      version: "0.45.0"
+      sourceRef:
+        kind: HelmRepository
+        name: headlamp
+        namespace: flux-system
+  values:
+    fullnameOverride: praetorium-headlamp
+    replicaCount: 1
+    config:
+      inCluster: true
+      baseURL: ""
+      sessionTTL: 3600
+      # Per-operator Kubernetes bearer token / RBAC is authoritative.
+      # Never impersonate operators with the pod service account token.
+      unsafeUseServiceAccountToken: false
+      enableHelm: false
+      watchPlugins: false
+      clusterInventory:
+        enabled: false
+      staticPlugins:
+        enabled: false
+      oidc:
+        secret:
+          create: false
+    pluginsManager:
+      enabled: false
+    # Used only for in-cluster Kubernetes API discovery and CA trust.
+    # This pod ServiceAccount has NO ClusterRoleBinding or privileged RBAC.
+    automountServiceAccountToken: true
+    serviceAccount:
+      create: true
+      name: praetorium-headlamp
+    clusterRoleBinding:
+      create: false
+    service:
+      type: ClusterIP
+      port: 80
+    ingress:
+      enabled: false
+    httpRoute:
+      enabled: false
+    persistentVolumeClaim:
+      enabled: false
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 100
+      runAsGroup: 101
+      privileged: false
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      seccompProfile:
+        type: RuntimeDefault
+      capabilities:
+        drop:
+          - ALL
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi

@@ -343,6 +343,13 @@ but actual Cloudflare request/CPU/D1/DO measurements and outage recovery remain.
 G9 requires the exact final cut, all seven real categories, independent integrated
 and RC review, approved deployment and the public editing journey.
 
+The next normal G4 queue run is also blocked by release availability: the owned
+stateful Control Plane's only candidate remains `canary_observing`, and its
+normal available-release list is empty. The canary still needs legitimate
+GitHub App/broker authorization and an actual Runtime journey. Public producer
+inputs remove the registry dependency, but do not permit fabricating an
+available release, resetting the canary or bypassing its admission.
+
 Production `deploy-platform --apply` remains unexecuted. Its concrete effect is
 K3s controllers, secrets, certificates and platform services, receiver wake
 probes, then Cloudflare migration/Worker deployment. The environment record

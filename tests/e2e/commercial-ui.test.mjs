@@ -358,6 +358,11 @@ try {
               .getByRole("navigation", { name: "Repository sections" })
               .getByRole("link", { name: "Configuration", exact: true })
               .click();
+          if (label === "failure")
+            await page
+              .getByRole("navigation", { name: "Repository sections" })
+              .getByRole("link", { name: "Activity", exact: true })
+              .click();
           await page.screenshot({
             path: `${output}/${name}-${mode}-${label}.png`,
             fullPage: false,

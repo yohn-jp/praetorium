@@ -2,7 +2,7 @@
 
 > **Deployment details, not the system architecture or proof of Hosted readiness.** Start with the [documentation index](../README.md) and [system responsibilities](../architecture/SYSTEM.md). This file retains both disposable-test and historical host guidance; current host bootstrap and production preflight paths are linked from [REPRODUCIBLE-DEPLOYMENT.md](REPRODUCIBLE-DEPLOYMENT.md). Applying production resources remains a separate authorized action.
 
-**Operational entry point:** [Reproducible deployment](REPRODUCIBLE-DEPLOYMENT.md) (two isolated host roles, Kubernetes controllers and workloads, Cloudflare Worker releases, externally supplied credentials and end-to-end gates).
+**Operational entry point:** [Reproducible deployment](REPRODUCIBLE-DEPLOYMENT.md) (two isolated host roles, Kubernetes controllers and workloads, Cloudflare Worker releases, externally supplied credentials and end-to-end gates). **Secret registration and stewardship:** [SECRETS.md](SECRETS.md) (canonical private file paths, existing provider authorities, cross-plane synchronization, and current staged-role status).
 
 **Fresh VM installation:** [NixOS ISO/Proxmox setup](NIXOS-INSTALL.md) or [Ubuntu 24.04 / 26.04 host bootstrap](UBUNTU-2404.md). **NixOS bootstrap:** [NIXOS-BOOTSTRAP](NIXOS-BOOTSTRAP.md). **Cloudflare-only:** [CLOUDFLARE-ONE-COMMAND](CLOUDFLARE-ONE-COMMAND.md).
 

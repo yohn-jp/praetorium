@@ -328,6 +328,19 @@ removed; archived expired inventories are not current acceptance inputs.
   No independent protected backup has yet been verified. Existing Runtime
   ingress, DNS token source and real ACME contact could not be established from
   the checked settings. No production secret registration or rotation occurred.
+- The owner subsequently confirmed `PROVISIONER_AUTH_TOKEN`,
+  `BUILD_WORKER_AUTH_TOKEN` and `INSTANCE_ACCESS_SERVICE_AUTH_TOKEN` absent in
+  their respective Workers. Targeted read-only Runtime checks also found the
+  three corresponding Kubernetes Secrets absent. Three distinct initial
+  256-bit auth values are now staged privately, distinct from notification
+  tokens; the partial manifest now supplies seven of eleven roles. No values
+  or secret hashes were recorded in evidence. A private registration helper
+  refuses existing target names and uploads only these Worker secrets from
+  stdin; its read-only preflight stopped at unavailable Cloudflare management
+  authentication before any write. Actual registration remains pending an
+  authorized Wrangler login on this terminal. Frozen install and all 29 check
+  tasks passed after preparation. Builder trust, registry read/write and DNS
+  token inputs remain unresolved, along with ingress and ACME contact.
 
 ## Remaining acceptance
 

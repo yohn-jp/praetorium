@@ -1,3 +1,4 @@
+import { evidenceLedgerRepositories } from "./repository-ledger-list.js";
 import { evidenceLedgerRepository } from "./evidence-ledger.js";
 import type { RepositoryDetailView, RepositoryListView } from "../presentation.js";
 
@@ -322,20 +323,7 @@ function repositoryRow(row: RepositoryListView["rows"][number]): string {
 }
 
 export function desktopRepositories(view: RepositoryListView): string {
-  const rows = view.rows.map(repositoryRow).join("");
-  const content = view.rows.length
-    ? `<div class="desktop-repository-table-wrap"><table class="desktop-repository-table">` +
-      `<caption class="visually-hidden">Repositories, runtime state, access, latest operation and available actions</caption>` +
-      `<thead><tr><th scope="col">Repository</th><th scope="col">Runtime</th>` +
-      `<th scope="col">Access</th><th scope="col">Latest operation</th><th scope="col">Actions</th></tr></thead>` +
-      `<tbody>${rows}</tbody></table></div>`
-    : `<div class="desktop-empty-state">${view.empty}</div>`;
-
-  return (
-    `<div class="desktop-composition desktop-repositories">` +
-    `<div class="desktop-connection">${view.connection}</div>` +
-    `<header class="desktop-page-heading">${view.heading}</header>${content}</div>`
-  );
+  return evidenceLedgerRepositories(view, "desktop");
 }
 
 export function desktopRepository(view: RepositoryDetailView): string {

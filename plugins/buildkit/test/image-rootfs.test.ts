@@ -97,6 +97,7 @@ describe("BuildKit image rootfs export", () => {
     await result.dispose();
     await expect(readFile(path.join(outputDirectory, "smoke-result.json"))).rejects.toThrow();
   });
+
   it("exports only a validated receipt file, not the entire rootfs", async () => {
     const config = await createConfig();
     const digest = "1".repeat(64);
@@ -152,6 +153,4 @@ describe("BuildKit image rootfs export", () => {
         new AbortController().signal,
       ),
     ).rejects.toThrow("BuildKit image startup input is invalid");
-  });
-
-});
+  })});

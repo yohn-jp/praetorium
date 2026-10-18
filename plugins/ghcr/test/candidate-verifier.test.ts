@@ -1,6 +1,6 @@
 import { buildKey, type BuildInput, type CompositionManifest } from "@praetorium/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { CandidateVerificationError, GhcrCandidateVerifier, type CompositionArtifactInspector } from "../src/candidate-verifier.js";
+import { GhcrCandidateVerifier } from "../src/candidate-verifier.js";
 import { sha256Digest } from "../src/digest.js";
 import { GhcrRegistryClient } from "../src/oci-registry-client.js";
 import type { VerifiedOciImage } from "../src/oci-types.js";
@@ -58,21 +58,7 @@ async function fixture() {
       return { repository, digest, mediaType: "application/json", size: compositionBytes.byteLength, bytes: compositionBytes };
     }),
   } as unknown as GhcrRegistryClient;
-  const inspection: CompositionArtifactInspector = {
-    inspectAndSmoke: vi.fn(async () => {
-      return {
-        imageDigest: digestA,
-        compositionManifestDigest: compositionDigest,
-        serverEntry: "dist/server.js",
-        browserEntry: "dist/browser.js",
-        serverModuleIds: ["core"],
-        browserModuleIds: ["core"],
-        nativeDependencies: [],
-        smoke: { id: "runtime-ready", healthPath: "/health", passed: true },
-      };
-    }),
-  };
-  const verifier = new GhcrCandidateVerifier(registry, inspection, () => new Date("2026-10-17T00:00:00.000Z"));
+  const verifier = new GhcrCandidateVerifier(registry, () => new Date("2026-10-17T00:00:00.000Z"));
   const candidate = {
     expectedInput: input,
     expectedBuildKey: key as typeof digestA,
@@ -80,7 +66,7 @@ async function fixture() {
     manifestDigest: digestA,
     compositionManifest: { repository: "praetorium/derived", digest: compositionDigest },
   };
-  return { verifier, registry, inspection, candidate, compositionDigest, compositionBytes, image };
+  return { verifier, registry, candidate, compositionDigest, compositionBytes, image };
 }
 
 const approvedOutput = { registryHost: "ghcr.io", repository: "praetorium/derived" } as const;
@@ -116,8 +102,8 @@ function stubConfiguredRegistry(
 }
 
 describe("GHCR candidate verification", () => {
-  it("returns a canonical statement only after persisted-input, composition, closure, and smoke checks", async () => {
-    const { verifier, registry, inspection, candidate, compositionDigest } = await fixture();
+  it("binds trusted builder output to persisted input and digest-addressed composition metadata", async () => {
+    const { verifier, registry, candidate, compositionDigest } = await fixture();
 
     await expect(verifier.verifyUnsignedCandidate(candidate, approvedOutput, activeSignal)).resolves.toEqual({
       schemaVersion: "praetorium.build-artifact/v1",
@@ -137,52 +123,19 @@ describe("GHCR candidate verification", () => {
     expect(registry.readBlob).toHaveBeenCalledWith(
       candidate.compositionManifest.repository, compositionDigest, 4 * 1024 * 1024, activeSignal,
     );
-    expect(inspection.inspectAndSmoke).toHaveBeenCalledWith(
-      expect.objectContaining({ imageReference: `ghcr.io/praetorium/derived@${digestA}` }),
-      expect.any(AbortSignal),
-    );
+    expect(registry.verifyImage).toHaveBeenCalledWith("praetorium/derived", digestA, { os: "linux", architecture: "amd64" }, activeSignal);
   });
 
-  it("rejects a mismatched closure and a failed smoke instead of returning a signable statement", async () => {
-    const { registry, candidate } = await fixture();
-    const badInspector: CompositionArtifactInspector = {
-      async inspectAndSmoke() {
-        return {
-          imageDigest: digestA,
-          compositionManifestDigest: candidate.compositionManifest.digest,
-          serverEntry: "dist/server.js",
-          browserEntry: null,
-          serverModuleIds: ["core"],
-          browserModuleIds: [],
-          nativeDependencies: [],
-          smoke: { id: "runtime-ready", healthPath: "/health", passed: false },
-        };
-      },
-    };
-    const badVerifier = new GhcrCandidateVerifier(registry, badInspector);
-
-    await expect(badVerifier.verifyUnsignedCandidate(candidate, approvedOutput, activeSignal)).rejects.toBeInstanceOf(CandidateVerificationError);
-  });
-
-  it("rejects a failed declared health smoke even when the inspected closure matches", async () => {
-    const { registry, candidate } = await fixture();
-    const failedSmoke: CompositionArtifactInspector = {
-      async inspectAndSmoke() {
-        return {
-          imageDigest: digestA,
-          compositionManifestDigest: candidate.compositionManifest.digest,
-          serverEntry: "dist/server.js",
-          browserEntry: "dist/browser.js",
-          serverModuleIds: ["core"],
-          browserModuleIds: ["core"],
-          nativeDependencies: [],
-          smoke: { id: "runtime-ready", healthPath: "/health", passed: false },
-        };
-      },
-    };
-
-    await expect(new GhcrCandidateVerifier(registry, failedSmoke).verifyUnsignedCandidate(candidate, approvedOutput, activeSignal))
-      .rejects.toMatchObject({ reason: "smoke" });
+  it("rejects an altered composition receipt even from the configured registry", async () => {
+    const { verifier, registry, candidate } = await fixture();
+    vi.spyOn(registry, "readBlob").mockResolvedValue({
+      digest: candidate.compositionManifest.digest,
+      mediaType: "application/json",
+      size: 2,
+      bytes: new TextEncoder().encode("{}"),
+    });
+    await expect(verifier.verifyUnsignedCandidate(candidate, approvedOutput, activeSignal))
+      .rejects.toMatchObject({ reason: "composition" });
   });
 
   it("rejects when persisted input does not hash to the expected build key", async () => {
@@ -202,10 +155,10 @@ describe("GHCR candidate verification", () => {
   });
 
   it("accepts the exact configured custom HTTPS registry host", async () => {
-    const { candidate, inspection, compositionDigest, compositionBytes, image } = await fixture();
+    const { candidate, compositionDigest, compositionBytes, image } = await fixture();
     const registry = configuredRegistry("https://registry.example.test");
     stubConfiguredRegistry(registry, image, compositionBytes, compositionDigest);
-    const verifier = new GhcrCandidateVerifier(registry, inspection);
+    const verifier = new GhcrCandidateVerifier(registry);
     const configuredCandidate = {
       ...candidate,
       candidateRef: `${registry.registryHost}/praetorium/derived@${digestA}`,
@@ -215,17 +168,13 @@ describe("GHCR candidate verification", () => {
       registryHost: registry.registryHost,
       repository: "praetorium/derived",
     }, activeSignal)).resolves.toBeDefined();
-    expect(inspection.inspectAndSmoke).toHaveBeenCalledWith(
-      expect.objectContaining({ imageReference: `registry.example.test/praetorium/derived@${digestA}` }),
-      expect.any(AbortSignal),
-    );
   });
 
   it("accepts the exact explicitly enabled loopback registry host and port", async () => {
-    const { candidate, inspection, compositionDigest, compositionBytes, image } = await fixture();
+    const { candidate, compositionDigest, compositionBytes, image } = await fixture();
     const registry = configuredRegistry("http://127.0.0.1:39567", true);
     stubConfiguredRegistry(registry, image, compositionBytes, compositionDigest);
-    const verifier = new GhcrCandidateVerifier(registry, inspection);
+    const verifier = new GhcrCandidateVerifier(registry);
     const configuredCandidate = {
       ...candidate,
       candidateRef: `${registry.registryHost}/praetorium/derived@${digestA}`,
@@ -235,10 +184,6 @@ describe("GHCR candidate verification", () => {
       registryHost: registry.registryHost,
       repository: "praetorium/derived",
     }, activeSignal)).resolves.toBeDefined();
-    expect(inspection.inspectAndSmoke).toHaveBeenCalledWith(
-      expect.objectContaining({ imageReference: `127.0.0.1:39567/praetorium/derived@${digestA}` }),
-      expect.any(AbortSignal),
-    );
   });
 
   it("rejects registry URL credentials instead of exposing them in the configured host", () => {
@@ -264,21 +209,4 @@ describe("GHCR candidate verification", () => {
     expect(registry.verifyImage).not.toHaveBeenCalled();
   });
 
-  it("aborts a stalled image inspection at the configured verification deadline", async () => {
-    const { registry, candidate } = await fixture();
-    let inspectionSignal: AbortSignal | undefined;
-    const stalledInspector: CompositionArtifactInspector = {
-      inspectAndSmoke: vi.fn((_input, signal) => {
-        inspectionSignal = signal;
-        return new Promise((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-        });
-      }),
-    };
-    const verifier = new GhcrCandidateVerifier(registry, stalledInspector, undefined, 5);
-
-    await expect(verifier.verifyUnsignedCandidate(candidate, approvedOutput, activeSignal))
-      .rejects.toMatchObject({ reason: "closure" });
-    expect(inspectionSignal?.aborted).toBe(true);
-  });
 });

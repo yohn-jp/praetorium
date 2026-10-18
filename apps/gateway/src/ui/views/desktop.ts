@@ -1,3 +1,4 @@
+import { evidenceLedgerRepositories } from "./repository-ledger-list.js";
 import { evidenceLedgerRepository } from "./evidence-ledger.js";
 import type { RepositoryDetailView, RepositoryListView } from "../presentation.js";
 
@@ -294,48 +295,8 @@ export const DESKTOP_STYLES = `
 }
 `;
 
-function labelledCell(label: string, content: string, className: string): string {
-  return (
-    `<td class="${className}" data-column="${label}">` +
-    `<span class="desktop-cell-label">${label}</span>${content}</td>`
-  );
-}
-
-function repositoryRow(row: RepositoryListView["rows"][number]): string {
-  return (
-    `<tr class="desktop-repository-row">` +
-    labelledCell(
-      "Repository",
-      `<div class="desktop-row-identity">${row.identity}` +
-        `<span class="desktop-row-installation">${row.installation}</span>` +
-        `${row.reason ? `<span class="desktop-row-reason">${row.reason}</span>` : ""}` +
-        `${row.revisions ? `<details class="desktop-row-revisions"><summary>Image revisions</summary>${row.revisions}</details>` : ""}` +
-        `</div>`,
-      "desktop-row-repository",
-    ) +
-    labelledCell("Runtime", row.runtime, "desktop-row-runtime") +
-    labelledCell("Access", row.access, "desktop-row-access") +
-    labelledCell("Latest operation", row.operation, "desktop-row-operation") +
-    labelledCell("Actions", row.actions, "desktop-row-actions") +
-    `</tr>`
-  );
-}
-
 export function desktopRepositories(view: RepositoryListView): string {
-  const rows = view.rows.map(repositoryRow).join("");
-  const content = view.rows.length
-    ? `<div class="desktop-repository-table-wrap"><table class="desktop-repository-table">` +
-      `<caption class="visually-hidden">Repositories, runtime state, access, latest operation and available actions</caption>` +
-      `<thead><tr><th scope="col">Repository</th><th scope="col">Runtime</th>` +
-      `<th scope="col">Access</th><th scope="col">Latest operation</th><th scope="col">Actions</th></tr></thead>` +
-      `<tbody>${rows}</tbody></table></div>`
-    : `<div class="desktop-empty-state">${view.empty}</div>`;
-
-  return (
-    `<div class="desktop-composition desktop-repositories">` +
-    `<div class="desktop-connection">${view.connection}</div>` +
-    `<header class="desktop-page-heading">${view.heading}</header>${content}</div>`
-  );
+  return evidenceLedgerRepositories(view, "desktop");
 }
 
 export function desktopRepository(view: RepositoryDetailView): string {

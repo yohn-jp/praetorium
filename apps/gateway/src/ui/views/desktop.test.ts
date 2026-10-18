@@ -24,23 +24,16 @@ describe("Desktop repository compositions", () => {
 
     const html = desktopRepositories(view);
 
-    expect(html).toContain(
-      `<div class="desktop-connection"><span>GitHub connection: Active</span></div>`,
-    );
-    expect(html).toContain(`<th scope="col">Repository</th><th scope="col">Runtime</th>`);
-    expect(html).toContain(
-      `<th scope="col">Access</th><th scope="col">Latest operation</th><th scope="col">Actions</th>`,
-    );
-    expect(html).toContain(`<span class="desktop-row-installation">GitHub App: Suspended</span>`);
-    expect(html).toContain(
-      `<span class="desktop-row-reason">Approval is required<br>before this repository can run.</span>`,
-    );
-    expect(html).toContain(
-      `<details class="desktop-row-revisions"><summary>Image revisions</summary><details><summary>Image revisions</summary><code>sha256:full-digest</code></details></details>`,
-    );
-    expect(html).toContain(
-      `<td class="desktop-row-actions" data-column="Actions"><span class="desktop-cell-label">Actions</span><a href="/repositories/123?ui=desktop">Open details</a></td>`,
-    );
+    expect(html).toContain('class="evidence-ledger-list ledger-list-desktop"');
+    expect(html).toContain('class="ledger-list-rows"');
+    expect(html).toContain("owner/long-project-name");
+    expect(html).toContain("Blocked");
+    expect(html).toContain("Approval is required");
+    expect(html).toContain("GitHub App: Suspended");
+    expect(html).toContain("Current and desired revisions");
+    expect(html).toContain("sha256:full-digest");
+    expect(html).toContain('href="/repositories/123?ui=desktop"');
+    expect(html).not.toContain("<table");
     expect(html).not.toContain("No repositories available.");
   });
 
@@ -53,7 +46,7 @@ describe("Desktop repository compositions", () => {
     });
 
     expect(html).toContain(`<h1>Repositories <span>0 available</span></h1>`);
-    expect(html).toContain(`<div class="desktop-empty-state"><h2>No repositories available</h2>`);
+    expect(html).toContain(`<div class="ledger-list-empty"><h2>No repositories available</h2>`);
     expect(html).toContain(`Install the Praetorium App to continue.`);
     expect(html).not.toContain(`<table class="desktop-repository-table">`);
     expect(html).not.toContain(`<tr class="desktop-repository-row">`);

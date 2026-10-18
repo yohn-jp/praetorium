@@ -64,6 +64,8 @@ export interface RepositoryDetailView {
   readonly heading: string;
   readonly runtime: string;
   readonly access: string;
+  /** Latest authoritative operation summary; purely presentational, when available. */
+  readonly evidence?: string;
   readonly current: string;
   readonly desired: string;
   readonly policy: string;

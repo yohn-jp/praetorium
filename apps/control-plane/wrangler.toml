@@ -40,3 +40,6 @@ PROVISIONER_WORKER_ID = "clu_01M552J5HCXXJAPCCPN480JSJN-provisioner"
 BUILD_WORKER_ID = "clu_01M552J5HCXXJAPCCPN480JSJN-build-worker"
 RUNTIME_REGISTRY_HOST = "ghcr.io"
 GIT_CREDENTIAL_BROKER_LOCATOR = "https://praetorium.yohn.jp/internal/github/credential"
+
+# Public initial builder trust and approved OCI repositories; no private key or credentials.
+BUILD_POLICY_JSON = "{\"registryUrl\":\"https://ghcr.io\",\"allowedRepositories\":[\"yohn-jp/praetorium/candidates\",\"yohn-jp/praetorium/scriptorium-producer\",\"yohn-jp/praetorium/compositions\"],\"outputRepository\":\"yohn-jp/praetorium/candidates\",\"maxImageLayerBytes\":17179869184,\"maxImageVerificationMs\":120000,\"maxRegistryRequestMs\":60000,\"runtimeResourceLimits\":{\"cpuMilli\":2000,\"memoryMiB\":4096,\"ephemeralStorageMiB\":8192},\"cacheRetention\":{\"maxBytes\":1048576,\"maxEntries\":32,\"minAgeMs\":0,\"maxEvictions\":8},\"targetPlatform\":\"linux/amd64\",\"builderKeys\":[{\"keyId\":\"builder-key-v1\",\"publicKeyBase64\":\"KFpHfh5VIGUeS40Zq39CtU5q7OK5lLBTdiMYVOCftMo=\",\"revoked\":false}]}"

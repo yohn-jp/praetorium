@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { validateInventory } from "../scripts/inventory.mjs";
+import { buildPolicy } from "../scripts/worker-config.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const inventoryPath = path.join(repoRoot, "infrastructure/test/disposable-inventory.json");
@@ -260,6 +261,8 @@ test("Worker preflight recognizes credential retirement wiring without inspectin
 test("Worker plan includes cache retention only when all four controls are complete", () => {
   const complete = structuredClone(inventory);
   complete.buildkit.outputRepository = "ghcr.io/operator-owned/cache-retention-fixture";
+  complete.buildkit.frontendRepository = "ghcr.io/operator-owned/producer-inputs";
+  complete.buildWorker.compositionRepository = "operator-owned/compositions";
   complete.buildPolicy.targetPlatform = "linux/amd64";
   complete.buildPolicy.builderKeys = [
     {
@@ -278,6 +281,11 @@ test("Worker plan includes cache retention only when all four controls are compl
     maxEvictions: 32,
   };
   assert.deepEqual(validateInventory(complete).errors, []);
+  assert.deepEqual(buildPolicy(complete).allowedRepositories, [
+    "operator-owned/cache-retention-fixture",
+    "operator-owned/producer-inputs",
+    "operator-owned/compositions",
+  ]);
   const completeResult = planForInventory(complete);
   assert.equal(completeResult.status, 2, completeResult.stderr);
   const completePlan = JSON.parse(completeResult.stdout);

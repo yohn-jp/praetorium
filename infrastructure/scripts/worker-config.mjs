@@ -19,7 +19,17 @@ export function buildPolicy(inventory) {
   const outputRepository = repository.slice("ghcr.io/".length);
   return {
     registryUrl: inventory.buildPolicy.registryUrl,
-    allowedRepositories: [outputRepository],
+    allowedRepositories: [
+      ...new Set(
+        [
+          outputRepository,
+          inventory.buildkit.frontendRepository,
+          inventory.buildWorker.compositionRepository,
+        ]
+          .filter((value) => typeof value === "string" && value.length > 0)
+          .map((value) => value.replace(/^ghcr\.io\//u, "")),
+      ),
+    ],
     outputRepository,
     maxImageLayerBytes: inventory.buildPolicy.maxImageLayerBytes,
     maxImageVerificationMs: inventory.buildPolicy.maxImageVerificationMs,
@@ -127,4 +137,3 @@ export function renderWorkerTemplate(template, inventory, worker) {
   }
   return `${JSON.stringify(config, null, 2)}\n`;
 }
-

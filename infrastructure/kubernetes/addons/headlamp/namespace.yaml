@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: praetorium-admin
+  labels:
+    app.kubernetes.io/part-of: praetorium
+    app.kubernetes.io/component: administration
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

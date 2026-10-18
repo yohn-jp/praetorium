@@ -19,6 +19,7 @@
 | 初期受入要件 | [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) | 最優先。CI禁止の旧記述は最新のユーザー指示で上書き済み |
 | 旧アーキテクチャ草案 | [PLATFORM.md](architecture/PLATFORM.md) | 移行時の実装想定。新しいトポロジーの正本ではない |
 | Producer ABI | [SCRIPTORIUM-CONTRACT.md](architecture/SCRIPTORIUM-CONTRACT.md) | Versioned contract・歴史的な実装差分を含む。現行稼働を単独で証明しない |
+| プラットフォーム運用管理 | [管理者アーキテクチャ](architecture/ADMINISTRATION.md) | 独立した運用入口とHeadlampの任意導入。既存のテナントControl Planeの受入条件ではない |
 | デプロイ操作 | [再現可能デプロイ](deployment/REPRODUCIBLE-DEPLOYMENT.md)、[ホスト手順](deployment/UBUNTU-2404.md)、[deployment/README](deployment/README.md) | `--check`/`--apply`の境界と実運用Secrets、稼働実証は別 |
 | 実Host・Runtime受入 | [検証記録の索引](verification/README.md) | 各レポートは観測したソースSHA/環境にだけ有効 |
 | 移行の実装履歴 | [移行索引](migration/README.md)、[PLAN.md](migration/PLAN.md) | T00–T15タスクを現在のプロダクト要件と混同しない |

@@ -577,14 +577,17 @@ async function admittedArtifactMatches(
   assignment: z.infer<typeof PolicyAssignmentSchema>,
 ): Promise<boolean> {
   if (!operation.deploymentRevisionId) return false;
+  // A revision keeps the generation at which it was created. The operation and
+  // assignment generation are fenced before this lookup and may be newer when
+  // the same admitted revision is started or resumed.
   const row = await db
     .prepare(
       `SELECT r.status, r.artifact_digest, a.statement_json
          FROM deployment_revisions r
          JOIN artifacts a ON a.artifact_digest = r.artifact_digest AND a.status = 'admitted'
-        WHERE r.revision_id = ? AND r.instance_id = ? AND r.repository_id = ? AND r.generation = ?`,
+        WHERE r.revision_id = ? AND r.instance_id = ? AND r.repository_id = ?`,
     )
-    .bind(assignment.revisionId, assignment.instanceId, assignment.repositoryId, assignment.generation)
+    .bind(assignment.revisionId, assignment.instanceId, assignment.repositoryId)
     .first<AdmittedArtifactRow>();
   if (!row || row.status !== "admitted" || !row.statement_json) return false;
   let statement: z.infer<typeof BuilderArtifactStatementSchema>;

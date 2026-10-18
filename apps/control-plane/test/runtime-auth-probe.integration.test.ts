@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { verifyAccessGrant, type SigningKey } from "@praetorium/auth";
 import { instanceHostname } from "@praetorium/contracts";
@@ -32,6 +34,134 @@ const GATEWAY_SECRET = "control-plane-gateway-auth-secret".padEnd(40, "x");
 interface ProbeStatement extends D1PreparedStatement {
   query: string;
   values: readonly (string | number | null | ArrayBuffer | Uint8Array)[];
+}
+
+class SQLiteProbeDatabase implements D1Database {
+  readonly database = new DatabaseSync(":memory:");
+
+  constructor() {
+    this.database.exec(readFileSync(new URL("../migrations/0001_repository_platform.sql", import.meta.url), "utf8"));
+    this.database.exec("PRAGMA foreign_keys = OFF");
+  }
+
+  prepare(query: string): D1PreparedStatement {
+    return new SQLiteProbeStatement(this.database.prepare(query));
+  }
+
+  async batch<T = unknown>(statements: readonly D1PreparedStatement[]): Promise<readonly D1Result<T>[]> {
+    if (statements.length === 0) return [];
+    throw new Error("SQLite auth-probe fixture does not support D1 batches");
+  }
+}
+
+class SQLiteProbeStatement implements D1PreparedStatement {
+  private values: readonly (string | number | null | ArrayBuffer | Uint8Array)[] = [];
+
+  constructor(
+    private readonly statement: StatementSync,
+  ) {}
+
+  bind(...values: readonly (string | number | null | ArrayBuffer | Uint8Array)[]): D1PreparedStatement {
+    this.values = values;
+    return this;
+  }
+
+  private sqlValues(): SQLInputValue[] {
+    return this.values.map((value) => value instanceof ArrayBuffer ? new Uint8Array(value) : value);
+  }
+
+  async first<T = unknown>(): Promise<T | null> {
+    return (this.statement.get(...this.sqlValues()) as T | undefined) ?? null;
+  }
+
+  async all<T = unknown>(): Promise<D1Result<T>> {
+    return { results: this.statement.all(...this.sqlValues()) as T[], meta: { changes: 0 } };
+  }
+
+  async run<T = unknown>(): Promise<D1Result<T>> {
+    const result = this.statement.run(...this.sqlValues());
+    return { results: [], meta: { changes: Number(result.changes) } };
+  }
+}
+
+function createAdmittedArtifactDatabase(
+  statementJson: string,
+  revisionGeneration: number,
+  operationGeneration: number,
+): SQLiteProbeDatabase {
+  const db = new SQLiteProbeDatabase();
+  const statement = JSON.parse(statementJson) as {
+    readonly buildKey: string;
+    readonly artifact: {
+      readonly digest: string;
+      readonly platformManifestDigest: string;
+    };
+    readonly compositionManifest: { readonly digest: string };
+    readonly producerRevision: string;
+    readonly resolvedModules: readonly unknown[];
+  };
+  db.database.prepare(
+    `INSERT INTO builds (build_id, build_key, build_input_json, status, created_at, updated_at)
+     VALUES ('build-12', ?, '{}', 'succeeded', ?, ?)`,
+  ).run(statement.buildKey, NOW_MS, NOW_MS);
+  db.database.prepare(
+    `INSERT INTO build_attempts (
+       attempt_id, build_id, lease_epoch, worker_id, status, lease_token,
+       lease_expires_at, started_at, updated_at
+     ) VALUES ('attempt-12', 'build-12', 1, 'builder-1', 'succeeded', 'fixture-token', ?, ?, ?)`,
+  ).run(NOW_MS + 30_000, NOW_MS - 1_000, NOW_MS);
+  db.database.prepare(
+    `INSERT INTO artifacts (
+       artifact_digest, build_key, build_id, attempt_id, manifest_digest,
+       platform_manifest_digest, composition_manifest_digest, producer_revision,
+       requested_modules_json, resolved_modules_json, contract_versions_json,
+       verification_json, statement_json, signature_json, verifier_id, status,
+       created_at, admitted_at
+     ) VALUES (?, ?, 'build-12', 'attempt-12', ?, ?, ?, ?, '[]', ?, '{}', '{}', ?, '{}', 'fixture', 'admitted', ?, ?)`,
+  ).run(
+    statement.artifact.digest,
+    statement.buildKey,
+    statement.artifact.digest,
+    statement.artifact.platformManifestDigest,
+    statement.compositionManifest.digest,
+    statement.producerRevision,
+    JSON.stringify(statement.resolvedModules),
+    statementJson,
+    NOW_MS,
+    NOW_MS,
+  );
+  db.database.prepare(
+    `INSERT INTO deployment_revisions (
+       revision_id, instance_id, repository_id, generation, build_key, build_id,
+       selection_json, resource_requirements_json, runtime_metadata_json,
+       artifact_digest, status, actor_id, created_at
+     ) VALUES (?, ?, ?, ?, ?, 'build-12', '{}', '{}', '{}', ?, 'admitted', '12345', ?)`,
+  ).run(REVISION_ID, INSTANCE_ID, REPOSITORY_ID, revisionGeneration, statement.buildKey, statement.artifact.digest, NOW_MS);
+  db.database.prepare(
+    `INSERT INTO operations (
+       operation_id, instance_id, repository_id, generation, runtime_epoch, kind,
+       status, phase, attempt, lease_epoch, worker_id, lease_token, lease_expires_at,
+       report_sequence, checkpoint_sequence, cluster_id, reservation_id,
+       deployment_revision_id, idempotency_scope, idempotency_key, request_hash,
+       actor_id, authorization_revision, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, 'start', 'running', 'starting-target', 1, 3, ?, ?, ?,
+       1, 1, ?, 'reservation-12', ?, 'repo:7001', 'request-12', 'request-hash',
+       '12345', 4, ?, ?)`,
+  ).run(
+    OPERATION_ID,
+    INSTANCE_ID,
+    REPOSITORY_ID,
+    operationGeneration,
+    RUNTIME_EPOCH,
+    WORKER_ID,
+    LEASE_TOKEN,
+    NOW_MS + 30_000,
+    CLUSTER_ID,
+    REVISION_ID,
+    NOW_MS - 1_000,
+    NOW_MS,
+  );
+  return db;
 }
 
 class ProbeDatabase implements D1Database {
@@ -103,12 +233,12 @@ function artifactStatement(
   });
 }
 
-function operation(): OperationRecord {
+function operation(generation = GENERATION): OperationRecord {
   return {
     id: OPERATION_ID,
     instanceId: INSTANCE_ID,
     repositoryId: REPOSITORY_ID,
-    generation: GENERATION,
+    generation,
     runtimeEpoch: RUNTIME_EPOCH,
     kind: "start",
     status: "running",
@@ -134,11 +264,11 @@ function operation(): OperationRecord {
   };
 }
 
-function assignment() {
+function assignment(generation = GENERATION) {
   return {
     instanceId: INSTANCE_ID,
     repositoryId: REPOSITORY_ID,
-    generation: GENERATION,
+    generation,
     runtimeEpoch: RUNTIME_EPOCH,
     clusterId: CLUSTER_ID,
     revisionId: REVISION_ID,
@@ -210,6 +340,7 @@ async function makeHarness(
   options: {
     readonly instance?: Partial<RepositorySnapshot["instance"]>;
     readonly runtimeBinding?: RuntimeBindingMetadata | null;
+    readonly database?: D1Database;
   } = {},
 ) {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
@@ -249,7 +380,7 @@ async function makeHarness(
     getSigningKey: async () => signingKey,
   } as unknown as GatewayContext;
   const gateway = createRuntimeAuthProbeRoutes(gatewayContext);
-  const db = new ProbeDatabase(statementJson, actorId, auditActors);
+  const db = options.database ?? new ProbeDatabase(statementJson, actorId, auditActors);
   const operations = { async getById(id: string) { return id === OPERATION_ID ? operationRecord : null; } };
   const instances = { async getByInstanceId(id: string) { return id === INSTANCE_ID ? snapshot : null; } };
   const controlPlane = createProvisionerRuntimeAuthProbeRoutes({
@@ -431,6 +562,85 @@ describe("Control Plane to Gateway runtime auth probe", () => {
         leaseToken: LEASE_TOKEN,
         leaseEpoch: 3,
         assignment: assignment(),
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "CURRENT_BINDING_REQUIRED" } });
+  });
+
+  it.each([
+    { name: "the initial start", currentGeneration: 2, revisionGeneration: 1 },
+    { name: "a later resume", currentGeneration: 8, revisionGeneration: 3 },
+  ])("admits the exact older immutable revision during $name using the current operation generation", async ({
+    currentGeneration,
+    revisionGeneration,
+  }) => {
+    const statementJson = artifactStatement();
+    const db = createAdmittedArtifactDatabase(statementJson, revisionGeneration, currentGeneration);
+    try {
+      const { controlPlane } = await makeHarness(
+        true,
+        operation(currentGeneration),
+        statementJson,
+        "12345",
+        [],
+        { database: db },
+      );
+      const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "lease",
+          workerId: WORKER_ID,
+          leaseToken: LEASE_TOKEN,
+          leaseEpoch: 3,
+          assignment: assignment(currentGeneration),
+        }),
+      });
+
+      expect(response.status, await response.clone().text()).toBe(200);
+    } finally {
+      db.database.close();
+    }
+  });
+
+  it("keeps the current operation generation fence when the assignment names an older generation", async () => {
+    const { controlPlane } = await makeHarness(true, operation(2));
+    const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "lease",
+        workerId: WORKER_ID,
+        leaseToken: LEASE_TOKEN,
+        leaseEpoch: 3,
+        assignment: assignment(1),
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "OPERATION_FENCE_CONFLICT" } });
+  });
+
+  it("keeps the current snapshot generation fence when it differs from the assignment", async () => {
+    const { controlPlane } = await makeHarness(
+      true,
+      operation(2),
+      artifactStatement(),
+      "12345",
+      [],
+      { instance: { generation: 1 } },
+    );
+    const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "lease",
+        workerId: WORKER_ID,
+        leaseToken: LEASE_TOKEN,
+        leaseEpoch: 3,
+        assignment: assignment(2),
       }),
     });
 

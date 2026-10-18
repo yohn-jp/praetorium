@@ -53,6 +53,8 @@ const registryDiagnosticCodes = new Map<string, string>([
   ["registry blob digest header does not match its bytes", "blob_header_digest_mismatch"],
   ["registry blob size does not match its descriptor", "blob_size_mismatch"],
   ["image config platform does not match the requested platform", "image_platform_mismatch"],
+  ["registry repository is not in the configured allowlist", "repository_not_allowed"],
+  ["registry blob was not found", "blob_not_found"],
 ]);
 
 /** Adds bounded diagnostics only to the registry reads used for artifact admission. */
@@ -64,7 +66,7 @@ export function withAdmissionRegistryDiagnostics(
       try {
         return await registry.verifyImage(repository, manifestDigest, platform);
       } catch (error) {
-        logRegistryFailure("image", error);
+        logRegistryFailure("image", error, manifestDigest);
         throw error;
       }
     },
@@ -72,14 +74,14 @@ export function withAdmissionRegistryDiagnostics(
       try {
         return await registry.readBlob(repository, digest, maxBytes);
       } catch (error) {
-        logRegistryFailure("composition", error);
+        logRegistryFailure("composition", error, digest);
         throw error;
       }
     },
   };
 }
 
-function logRegistryFailure(phase: "image" | "composition", error: unknown): void {
+function logRegistryFailure(phase: "image" | "composition", error: unknown, digest: string): void {
   if (!(error instanceof RegistryError)) return;
   const diagnosticCode = registryDiagnosticCodes.get(error.message);
   console.error(
@@ -87,6 +89,7 @@ function logRegistryFailure(phase: "image" | "composition", error: unknown): voi
       event: "build_registry_failure",
       phase,
       reason: error.reason,
+      ...(/^sha256:[a-f0-9]{64}$/.test(digest) ? { digest } : {}),
       ...(diagnosticCode === undefined ? {} : { diagnosticCode }),
     }),
   );

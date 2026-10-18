@@ -30,6 +30,7 @@ describe("admission registry diagnostics", () => {
           event: "build_registry_failure",
           phase: "image",
           reason: "invalid_content",
+          digest: `sha256:${"a".repeat(64)}`,
           diagnosticCode: "manifest_digest_mismatch",
         }),
       );
@@ -66,6 +67,7 @@ describe("admission registry diagnostics", () => {
           event: "build_registry_failure",
           phase: "composition",
           reason: "unauthorized",
+          digest: `sha256:${"b".repeat(64)}`,
         }),
       );
       expect(serializedLog).not.toContain("registry.invalid");

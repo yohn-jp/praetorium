@@ -3,7 +3,7 @@ import { planCacheMaintenance } from "./cache-maintenance.js";
 import { ResourceRequirementsSchema, buildKey } from "@praetorium/contracts";
 import { BuildQueueService } from "@praetorium/application/builds";
 import { BuildArtifactCache } from "@praetorium/application/build-cache";
-import { ArtifactAdmissionService } from "@praetorium/application/artifacts";
+import { ArtifactAdmissionService, type ArtifactRegistryProvider } from "@praetorium/application/artifacts";
 import { ConfigurationService } from "@praetorium/application/configurations";
 import { ReleaseCandidateSchema } from "@praetorium/application/releases";
 import {
@@ -12,7 +12,7 @@ import {
   D1ConfigurationStore,
   type D1Database,
 } from "@praetorium/persistence/d1";
-import { GhcrRegistryClient } from "@praetorium/ghcr/registry";
+import { GhcrRegistryClient, RegistryError } from "@praetorium/ghcr/registry";
 import { OperatorBuilderSignatureVerifier } from "@praetorium/ghcr/builder-signature";
 import { normalizeComposition, type ProducerCatalogResolver } from "@praetorium/scriptorium";
 
@@ -45,6 +45,53 @@ const Policy = z.strictObject({
     .max(32),
 });
 const PullCredential = z.strictObject({ username: z.string().min(1), password: z.string().min(1) });
+
+const registryDiagnosticCodes = new Map<string, string>([
+  ["registry manifest bytes do not match the requested digest", "manifest_digest_mismatch"],
+  ["registry digest header does not match manifest bytes", "manifest_header_digest_mismatch"],
+  ["registry blob bytes do not match their digest", "blob_digest_mismatch"],
+  ["registry blob digest header does not match its bytes", "blob_header_digest_mismatch"],
+  ["registry blob size does not match its descriptor", "blob_size_mismatch"],
+  ["image config platform does not match the requested platform", "image_platform_mismatch"],
+]);
+
+/** Adds bounded diagnostics only to the registry reads used for artifact admission. */
+export function withAdmissionRegistryDiagnostics(
+  registry: ArtifactRegistryProvider,
+): ArtifactRegistryProvider {
+  return {
+    async verifyImage(repository, manifestDigest, platform) {
+      try {
+        return await registry.verifyImage(repository, manifestDigest, platform);
+      } catch (error) {
+        logRegistryFailure("image", error);
+        throw error;
+      }
+    },
+    async readBlob(repository, digest, maxBytes) {
+      try {
+        return await registry.readBlob(repository, digest, maxBytes);
+      } catch (error) {
+        logRegistryFailure("composition", error);
+        throw error;
+      }
+    },
+  };
+}
+
+function logRegistryFailure(phase: "image" | "composition", error: unknown): void {
+  if (!(error instanceof RegistryError)) return;
+  const diagnosticCode = registryDiagnosticCodes.get(error.message);
+  console.error(
+    JSON.stringify({
+      event: "build_registry_failure",
+      phase,
+      reason: error.reason,
+      ...(diagnosticCode === undefined ? {} : { diagnosticCode }),
+    }),
+  );
+}
+
 export class ProducerContractUnavailable extends Error {
   readonly code = "PRODUCER_CONTRACT_UNAVAILABLE";
 }
@@ -77,7 +124,7 @@ export function composeBuildServices(
       ...(key.validUntil === undefined ? {} : { validUntil: key.validUntil }),
     })),
   );
-  const admission = new ArtifactAdmissionService(registry, signer);
+  const admission = new ArtifactAdmissionService(withAdmissionRegistryDiagnostics(registry), signer);
   const cacheStore = new D1ArtifactCacheStore(db);
   const cache = new BuildArtifactCache(admission, cacheStore);
   const builds = new BuildQueueService(new D1BuildStore(db), admission, {

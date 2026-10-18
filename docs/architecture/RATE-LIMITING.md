@@ -1,11 +1,11 @@
 # Cloudflareネイティブのレート制限設計・KVカウンター撤去計画
 
-> **状態:** 設計提案・移行計画（未実装、未デプロイ）。2026-10-19 JST。調査時のPraetorium `main` は `ac0d519cb2ede2f3e9beb3956e270da820ccbbb5`。
+> **状態:** [PR #14](https://github.com/yohn-jp/praetorium/pull/14) にWorkers公式API移行のソースとテストを実装（**未マージ、未デプロイ**）。WAFは後日の手動運用設定。2026-10-19 JST。調査時のPraetorium `main` は `ac0d519cb2ede2f3e9beb3956e270da820ccbbb5`。
 > **Authority:** 最新のオーナー指示、[Praetorium Epic #1](https://github.com/yohn-jp/praetorium/issues/1)、[Issue #13](https://github.com/yohn-jp/praetorium/issues/13)。実コードは現状の証拠であり、歴史的設計文書は独立した製品要件ではない。
 
 ## 1. 目的、非目的、導入経緯
 
-- **目的:** HTTP濫用抑制はCloudflareの公式機能へ、コンテナ／Operationの一意性・容量・権限は既存のControl Plane／D1へ戻す。レート制限のためのKV Read/Write、追加Durable Object、追加データベース、独自カウンターを**ゼロ**にする。
+- **目的:** HTTP濫用抑制はCloudflareの公式機能へ、コンテナ／Operationの一意性・容量・権限は既存のControl Plane／D1へ戻す。レート制限のためのKV Read/Write、追加Durable Object、追加データベース、独自カウンターを**ゼロ**にする。今回の実装対象は **Gateway native API＋既存Control Planeの保証維持**であり、WAFの作成・変更は後日手動で行う。
 - **維持:** 認証済み主体の判定、失効、CSRF、single-use handoff、権限の鮮度、D1 CAS／冪等性、既存のセッション・コード用DO、ユーザー向けエラー契約。DOは不要なカウンター用途に拡張しない。
 - **非目的:** 課金上限をレート制限APIで保証すること、全拠点で厳密な回数を数えること、Podの生死監視、WAFルールやCloudflare本番設定の変更、既存KVの鍵・セッション索引の移行、他アプリへのルール適用、任意の新規セキュリティ機能の導入。
 - **履歴:** [旧Arcadiaの `d4b216c`](https://github.com/yohn-jp/arcadia-platform/commit/d4b216c07074c756d91089b4f7e62d35f1b8bbb7) がKVレートリミッターを追加。元の[Arcadia #19](https://github.com/yohn-jp/arcadia-platform/issues/19) はMCPトークン交換のレート／並行数制限を要求したが、KV利用は指定していない。旧実装をPraetoriumへ引き継ぎ、現行[REVIEW A-08](REVIEW.md)も非原子的カウンターを指摘している。
@@ -69,7 +69,7 @@ Instance Access / 内部Caller ──▶ Gateway (WAFを経由する保証なし
 | --- | --- | --- | --- |
 | Login `GET /auth/github/start` | **Workers native 10/60秒**を当面維持。WAFは公開入口の追加防御として、有効なHost/Path範囲が設定可能なら導入 | 認証前なのでCloudflare管理の接続元IP（共有NATの誤検知を評価）。`unknown` を全利用者の単一bucketにしない。OAuth開始前にconsume | OAuth state/nonce、既存のLoginAttempt DO |
 | MCP `POST /api/token` | **native 20/60秒／検証済みcredential**を維持。**認証前の接続元bucket 60/60秒**を暫定追加（要実負荷で調整、厳密契約ではない） | まず入力形式検査→信頼できる接続元で粗制限→Control Plane等の高コスト照会→既存のcredential検証。成功した検証済みcredentialのdigestで20/60秒（Bearer生値をログ／keyへ直載せしない）。無効値を変えても粗制限から逃れない | 無効・失効・他Repoへのアクセス拒否、scopeと署名検証、失敗の一様性 |
-| Runtime Git `POST /internal/github/credential` | **native 120/60秒**、内部経路へのWAF依存なし | 現状の接続元IP方式を暫定移植。ただし`unknown`共有bucketは廃止。Runtimeのproofが検証可能な位置で、長期的には**検証済みruntime/binding identity**をキーにする（未検証の`runtimeId`をそのままキーにしない） | 現行のbrokerによるservice proof、repository/epoch/lease照合、GitHub発行権限 |
+| Runtime Git `POST /internal/github/credential` | **native 120/60秒**、内部経路へのWAF依存なし | Edgeの接続元IPがあればその鍵付きdigest、Service Binding等でIPがなければ提示されたruntime service tokenの鍵付きdigestを暫定使用。**後者はbroker認証前に作るbest-effort bucketで、偽トークンの大量変更まで防御できると主張しない**。検証済みruntime identityへの移行は別の根拠・API境界が必要 | 現行のbrokerによるservice proof、repository/epoch/lease照合、GitHub発行権限 |
 | Wake / Entry | **native 10/60秒／userId:repositoryId**。ReadyなEntryは消費しない | 既存ユーザーセッションとGitHub Repoアクセス確認後、**実際にstart/resumeが必要なときだけ**consume | D1の`requestDesiredState`、CAS／冪等キー／capacity／単一Writer、Kubernetes Admission |
 | Mutation Receipt | **native 10/60秒／userId:repositoryId** | 検証済みsessionまたはHosted grantの主体を使用。無効grantの入力文字列で他ユーザーのquotaを消費させない | 現行GitHub権限再確認、署名、binding/epoch/revision、operation id／payload digest |
 
@@ -122,14 +122,14 @@ period = 60
 - **地域境界:** Workers API／WAFのカウンターはCloudflare拠点単位の**best-effort**であり、同時大量リクエスト・PoP間移動時に厳密な最大回数や資源予算を保証しない。料金上限、Writer一意性、同時起動、ジョブ実行枠には使用しない。
 - **濫用による自己枯渇回避:** Native limiterに失敗／成功するだけでKV Writesを発生させない。追加DO作成・D1行書き込みをレート制限のために行わない。ログは既存の構造化イベントを必要な範囲で用い、ユーザー・鍵ごとの高頻度追跡ログを追加しない。
 
-## 8. 移行手順と受入ゲート（このPRでは一切実施しない）
+## 8. 移行手順と受入ゲート（PR #14はWorker側のソース・テストまで。Cloudflare本番適用は未実施）
 
 | Phase | 実施 | 必須の証明／停止条件 |
 | --- | --- | --- |
 | 0 — 構成確認 | OperatorがWorkersプラン、Zone/WAFプラン、残りルール枠、既存セキュリティルール、Gateway外部・内部入口の実経路、namespace ID利用状況を読取確認 | Free WAFの1ルール/10秒/Host非対応を踏まえ、別アプリを巻き込まない経路が確保できなければWAF追加は**別保留**。native移行を阻害しない |
-| 1 — Native化 | 別の実装Issue/PRで5経路のadapter/Bindingを置換、MCP入力源の粗制限・Wake実Wake時の判定を実装 | 独自KV limiterの参照ゼロ、native bindingが全環境で必須、既存JWK/Session/DOの経路不変、テストと静的検証がPASS |
+| 1 — Native化 | **実装Issue #15／PR #14に実装コミット済み**。5経路のadapter/Bindingを置換、MCP入力源の粗制限・Wake実Wake時の判定を実装 | 独自KV limiterの参照ゼロ、native bindingが全環境で必須、既存JWK/Session/DOの経路不変。検証ステータスはGitHub Checksの結果で確定し、まだPASSと仮定しない |
 | 2 — 隔離環境検証 | Worker実行環境で期限窓・同一/別キー・無効Bearer連投・並列要求・同一共有IP・異なるPoPの制約を検証。Hosted内部Caller経路も確認 | Gateway JSON 429と503、WAFの異なるエラー、失効・権限変更・Operation CASが維持される。正確なグローバル上限を合格条件にしない |
-| 3 — Edge構成（別の承認） | Zoneに適合する既存WAF Security Ruleを調整／追加。ルール容量不足やHost区別不能ならnativeだけで運用 | 別サブドメイン・GitHub callback・正規MCPクライアントを誤遮断しない。設定の実際のRule IDとZoneを物証として残す |
+| 3 — Edge構成（**後日の手動作業**） | 今回WAFルールを作成・変更しない。オーナーがZoneに適合する既存WAF Security Ruleを必要に応じ調整／追加。ルール容量不足やHost区別不能ならnativeだけで運用 | 別サブドメイン・GitHub callback・正規MCPクライアントを誤遮断しない。設定の実際のRule IDとZoneを物証として残す |
 | 4 — Cutover | 承認済みWorkerだけ段階切替、現行Workerロギングで429/503/レイテンシー/ログイン成功率を確認 | **Rate limiter由来KV Read/Writeゼロ**（コード上）を確認。KV総量は公開鍵とDigest索引が残るためゼロを求めない。既存D1/DO利用の増加と請求計測も確認 |
 | 5 — 清掃・確定 | 旧アダプターと古いテスト／bindings参照を削除し、SYSTEM・REVIEWの**現行状態**欄を実測に合わせて更新 | 新しい独自rate-limit stateなし。migrationコード・設定・検証結果のSHAを紐付ける |
 

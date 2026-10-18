@@ -81,6 +81,8 @@ flowchart TB
 
 ## 3. 主体と責務：Cloudflare側
 
+> Rate Limiting APIへの移行は[PR #14](https://github.com/yohn-jp/praetorium/pull/14)の変更であり、本番デプロイ済みを意味しない。WAF設定はオーナーの別作業。
+
 | 主体・コード | 何のためにあるか／所有する状態 | 実行する操作 | **所有しない責務** |
 | --- | --- | --- | --- |
 | **Gateway Worker** `apps/gateway` | ユーザーセッションの入口、GitHub権限に基づくGrant発行・交換、管理UI/API、Git認証仲介 | OAuth、権限再確認、リポジトリ選択、D1操作要求、one-use handoff、refresh/logout、GitHub Appトークン仲介 | Scriptoriumの本文中継、Pod死活監視、BuildKit起動 |
@@ -88,11 +90,12 @@ flowchart TB
 | **RepositoryCoordinator DO** `apps/control-plane/src/worker.ts` | 同じGitHubリポジトリに対する一部の変更要求を直列化する**実行中のPromiseキュー** | `repository_id`でシャーディングし、対象APIを順序づける | Desired Stateの永続保存。**このDOに別の状態正本はない**（D1 CASが必要） |
 | **UserAuthState DO** `apps/gateway/src/adapters/durable-objects` | ユーザーごとのセッション、MCP認証情報、暗号化されたGitHubユーザートークンとrefreshロック | 保存・検証・失効・トークン更新の直列化／トランザクション | GitHubリポジトリ権限自体の決定、インスタンスのDesired State |
 | **EphemeralCode DO** 同上 | OAuth login attempt、one-use handoff、同一originのrefresh credential | 原子的な消費・交換・ローテーション・失効。コードは32シャードへ分配 | ユーザーのGitHub権限やRuntime状態の正本 |
-| **Gateway KV** `key-registry-kv.ts`／`digest-user-index.ts`／`rate-limiter-kv.ts` | 公開JWKレジストリ、セッション／credential digest→userの**ルーティングヒント**、レート制限用カウンタ | 公開鍵・インデックス参照、制限の近似判定 | 認可セッションの正本、線形化されたカウンタ。KVのread-modify-writeは原子的ではない |
+| **Gateway KV** `key-registry-kv.ts`／`digest-user-index.ts` | 公開JWKレジストリ、セッション／credential digest→userの**ルーティングヒント**のみ | 公開鍵・インデックス参照。レート制限カウンターは保存しない | 認可セッションの正本、レート制限のread-modify-write |
+| **Workers Rate Limiting API** `rate-limiter-workers.ts` | Login、MCP入力源／credential、Runtime Git、Wake、Mutationの濫用抑制 | Cloudflare公式Bindingによるlocation-localな近似的制限 | グローバルな課金・同時実行上限、権限判定、D1/CAS／single writerの保証 |
 | **D1** `apps/control-plane/migrations`／`packages/persistence/src/d1` | インスタンス・構成・Release・Build・Artifact・Operation・Lease・Reservation・監査の**永続的な論理正本** | 世代/リビジョン比較、claimとreportの整合性維持、再試行時の復元 | Podの真の実行状態、ファイル実体、GitHub上の原稿、BuildKitキャッシュの実体 |
 | **Workers Cron** `apps/control-plane/src/worker.ts` | 現行は5分ごとの保守・リリース進行の**起動契機** | 期限切れCredential削除、D1キャッシュ計画、Release候補探索・昇格・Rollout進行 | それ自体は永続状態の正本でも、K8sコンテナ監視主体でもない |
 
-**D1・DO・KVを混同しない。** D1は論理状態の正本、DOは特定キーの排他／Gatewayセッションの局所ストレージ、KVは公開情報・ルーティングヒント・近似的な制限である。`RepositoryCoordinator DO`の存在を理由にD1の世代チェックを省略してはならない。逆に、DOの追加が本当に必要かは[レビュー項目](REVIEW.md)として未決定である。
+**D1・DO・KVを混同しない。** D1は論理状態の正本、DOは特定キーの排他／Gatewayセッションの局所ストレージ、KVは公開情報・ルーティングヒント。HTTP濫用抑制はWorkers公式Rate Limiting APIであり、厳密なグローバル上限ではない。`RepositoryCoordinator DO`の存在を理由にD1の世代チェックを省略してはならない。逆に、DOの追加が本当に必要かは[レビュー項目](REVIEW.md)として未決定である。
 
 ## 4. 主体と責務：VM・Kubernetes・外部
 

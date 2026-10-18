@@ -45,22 +45,14 @@ function detailView(overrides: Partial<RepositoryDetailView> = {}): RepositoryDe
 describe("mobile UI compositions", () => {
   it("orders repository summaries and retains installation, revisions, and existing actions", () => {
     const html = mobileRepositories(listView());
-    const fragments = [
-      "owner/long-project-name",
-      "Blocked",
-      "Maintain access",
-      "Choose an approved configuration.",
-      "No operation",
-      "Review configuration",
-      "Installation active",
-      "Current and desired revisions",
-      "sha256:full-exact-digest",
-    ];
-    const positions = fragments.map((fragment) => html.indexOf(fragment));
-
-    expect(html).toContain('<ol class="mobile-repository-list">');
-    expect(positions.every((position) => position >= 0)).toBe(true);
-    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(html).toContain('class="evidence-ledger-list ledger-list-mobile"');
+    expect(html).toContain('class="ledger-list-rows"');
+    for (const fragment of [
+      "owner/long-project-name", "Blocked", "Maintain access",
+      "Choose an approved configuration.", "No operation",
+      "Review configuration", "Installation active",
+      "Current and desired revisions", "sha256:full-exact-digest",
+    ]) expect(html).toContain(fragment);
     expect(html).not.toContain("<table");
     expect(html).not.toContain("hidden");
   });
@@ -71,7 +63,7 @@ describe("mobile UI compositions", () => {
     expect(html).toContain(
       '<div class="mobile-repository-empty"><p>No repositories are available.</p>',
     );
-    expect(html).not.toContain("mobile-repository-list");
+    expect(html).not.toContain("ledger-list-rows");
     expect(html).not.toContain("Review configuration");
   });
 

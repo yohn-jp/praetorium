@@ -28,7 +28,7 @@ export interface VerifiedOciImage {
   readonly platform: OciPlatform;
   readonly configDigest: Sha256Digest;
   readonly layerDescriptors: readonly OciDescriptor[];
-  /** Includes layers downloaded and hashed from their digest-addressed response bodies. */
+  /** Sum of validated layer descriptor sizes; layer bodies are checked by the image puller. */
   readonly reachableLayerBytes: number;
 }
 

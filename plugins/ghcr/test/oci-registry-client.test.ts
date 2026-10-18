@@ -49,6 +49,7 @@ async function imageFixture(options: {
   readonly configVariant?: string;
   readonly indexArchitecture?: string;
   readonly indexVariant?: string;
+  readonly layerOverrides?: Record<string, unknown>;
 } = {}): Promise<ImageFixture> {
   const configBytes = encoder.encode(JSON.stringify({
     os: "linux",
@@ -62,7 +63,7 @@ async function imageFixture(options: {
     schemaVersion: 2,
     mediaType: "application/vnd.oci.image.manifest.v1+json",
     config: { mediaType: "application/vnd.oci.image.config.v1+json", digest: configDigest, size: configBytes.byteLength },
-    layers: [{ mediaType: "application/vnd.oci.image.layer.v1.tar+gzip", digest: layerDigest, size: layerBytes.byteLength }],
+    layers: [{ mediaType: "application/vnd.oci.image.layer.v1.tar+gzip", digest: layerDigest, size: layerBytes.byteLength, ...options.layerOverrides }],
   }));
   const childDigest = await digestOf(childBytes);
   const rootBytes = encoder.encode(JSON.stringify({
@@ -107,6 +108,8 @@ function imageFetch(fixture: ImageFixture, options: {
   readonly missingLayer?: boolean;
   readonly omitLayerHeaders?: boolean;
   readonly alteredLayer?: Uint8Array;
+  readonly alteredConfig?: Uint8Array;
+  readonly missingConfig?: boolean;
   readonly alteredChild?: Uint8Array;
   readonly record?: (url: URL, init?: RequestInit) => void;
 } = {}): typeof fetch {
@@ -126,7 +129,8 @@ function imageFetch(fixture: ImageFixture, options: {
       return new Response(null, { status: 404 });
     }
     if (decodeURIComponent(url.pathname).endsWith(`/blobs/${fixture.configDigest}`)) {
-      return jsonResponse(fixture.configBytes, "application/vnd.oci.image.config.v1+json", fixture.configDigest);
+      if (options.missingConfig) return new Response(null, { status: 404 });
+      return jsonResponse(options.alteredConfig ?? fixture.configBytes, "application/vnd.oci.image.config.v1+json", fixture.configDigest);
     }
     if (decodeURIComponent(url.pathname).endsWith(`/blobs/${fixture.layerDigest}`)) {
       if (options.missingLayer) return new Response(null, { status: 404 });
@@ -169,7 +173,7 @@ describe("GHCR OCI registry adapter", () => {
     expect(moved.digest).not.toBe(initial.digest);
   });
 
-  it("verifies the index, selected child, config platform, and every layer reference", async () => {
+  it("verifies the index, selected child, config platform, and layer descriptors", async () => {
     const fixture = await imageFixture();
     const client = new GhcrRegistryClient({
       ...imageLimits,
@@ -197,7 +201,7 @@ describe("GHCR OCI registry adapter", () => {
 
     await client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" });
 
-    expect(redirects).toEqual(["manual", "manual", "manual", "manual", "manual"]);
+    expect(redirects).toEqual(["manual", "manual", "manual", "manual"]);
   });
 
   it("rejects a credentialed token-service redirect without following its target", async () => {
@@ -240,9 +244,9 @@ describe("GHCR OCI registry adapter", () => {
     "verifies official GHCR CDN bytes without forwarding auth (tampered=%s)",
     async (tampered) => {
       const fixture = await imageFixture();
-      const alteredLayer = fixture.layerBytes.slice();
-      alteredLayer[0] = alteredLayer[0]! ^ 0xff;
-      const serve = imageFetch(fixture, tampered ? { alteredLayer } : {});
+      const alteredConfig = fixture.configBytes.slice();
+      alteredConfig[0] = alteredConfig[0]! ^ 0xff;
+      const serve = imageFetch(fixture, tampered ? { alteredConfig } : {});
       const cdnRequests: Array<{
         authorization: string | null;
         cookie: string | null;
@@ -285,7 +289,6 @@ describe("GHCR OCI registry adapter", () => {
       if (tampered) await expect(result).rejects.toMatchObject({ reason: "invalid_content" });
       else expect((await result).manifestDigest).toBe(fixture.rootDigest);
       expect(cdnRequests).toEqual([
-        { authorization: null, cookie: null, redirect: "manual", credentials: "omit" },
         { authorization: null, cookie: null, redirect: "manual", credentials: "omit" },
       ]);
     },
@@ -362,30 +365,48 @@ describe("GHCR OCI registry adapter", () => {
     expect(image.platform).toEqual({ os: "linux", architecture: "arm64", variant: "v8" });
   });
 
-  it("rejects an image when any layer content reference is missing", async () => {
+  it("validates descriptors without requesting layer bodies", async () => {
     const fixture = await imageFixture();
+    const paths: string[] = [];
     const client = new GhcrRegistryClient({
       ...imageLimits,
       allowedRepositories: [repository],
-      fetch: imageFetch(fixture, { missingLayer: true }),
+      fetch: imageFetch(fixture, { missingLayer: true, record: (url) => paths.push(decodeURIComponent(url.pathname)) }),
     });
+    await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
+      .resolves.toMatchObject({ reachableLayerBytes: fixture.layerSize });
+    expect(paths).toEqual([
+      "/token",
+      `/v2/${repository}/manifests/${fixture.rootDigest}`,
+      `/v2/${repository}/manifests/${fixture.childDigest}`,
+      `/v2/${repository}/blobs/${fixture.configDigest}`,
+    ]);
+  });
 
+  it.each([
+    { digest: undefined }, { digest: "sha256:invalid" },
+    { size: undefined }, { size: -1 }, { size: 1.5 }, { size: Number.MAX_SAFE_INTEGER + 1 },
+  ])("rejects malformed layer descriptors: %j", async (layerOverrides) => {
+    const fixture = await imageFixture({ layerOverrides });
+    const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [repository], fetch: imageFetch(fixture) });
+    await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
+      .rejects.toMatchObject({ reason: "invalid_content" });
+  });
+
+  it("rejects missing Config blobs", async () => {
+    const fixture = await imageFixture();
+    const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [repository], fetch: imageFetch(fixture, { missingConfig: true }) });
     await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
       .rejects.toMatchObject({ reason: "not_found" });
   });
 
-  it("rejects layers whose downloaded bytes do not match their immutable descriptor", async () => {
+  it("rejects Config blobs with mismatched bytes or size", async () => {
     const fixture = await imageFixture();
-    const alteredLayer = fixture.layerBytes.slice();
-    alteredLayer[0] = alteredLayer[0]! ^ 0xff;
-    const client = new GhcrRegistryClient({
-      ...imageLimits,
-      allowedRepositories: [repository],
-      fetch: imageFetch(fixture, { alteredLayer }),
-    });
-
-    await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
-      .rejects.toMatchObject({ reason: "invalid_content" });
+    for (const alteredConfig of [new Uint8Array(fixture.configBytes.length), new Uint8Array(fixture.configBytes.length + 1)]) {
+      const client = new GhcrRegistryClient({ ...imageLimits, allowedRepositories: [repository], fetch: imageFetch(fixture, { alteredConfig }) });
+      await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
+        .rejects.toMatchObject({ reason: "invalid_content" });
+    }
   });
 
   it("rejects an image before layer download when the aggregate byte cap is too small", async () => {
@@ -471,18 +492,6 @@ describe("GHCR OCI registry adapter", () => {
 
     await expect(request).rejects.toMatchObject({ reason: "unavailable" });
     expect(requestSignal?.aborted).toBe(true);
-  });
-
-  it("hashes layer bytes when digest and size headers are absent", async () => {
-    const fixture = await imageFixture();
-    const client = new GhcrRegistryClient({
-      ...imageLimits,
-      allowedRepositories: [repository],
-      fetch: imageFetch(fixture, { omitLayerHeaders: true }),
-    });
-
-    await expect(client.verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" }))
-      .resolves.toMatchObject({ reachableLayerBytes: fixture.layerSize });
   });
 
   it("cancels manifest streams that exceed the hard byte limit without Content-Length", async () => {

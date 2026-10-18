@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { isSha256Digest, requireSha256Digest, sha256Digest, type Sha256Digest } from "./digest.js";
 import type {
   OciDescriptor,
@@ -437,10 +436,6 @@ export class GhcrRegistryClient {
       }
     }
 
-    for (const layer of imageManifest.layers) {
-      await this.verifyLayerContent(repo, layer, token, signal);
-    }
-
     return {
       repository: repo,
       manifestDigest: root.digest,
@@ -639,7 +634,7 @@ export class GhcrRegistryClient {
             [302, 307, 308].includes(response.status) &&
             this.baseUrl.origin === "https://ghcr.io" &&
             url.origin === this.baseUrl.origin &&
-            (label === "blob" || label === "layer") &&
+            label === "blob" &&
             (init.method === undefined || init.method === "GET")
           ) {
             const location = response.headers.get("location");
@@ -817,90 +812,6 @@ export class GhcrRegistryClient {
         size: bytes.byteLength,
         bytes,
       };
-    });
-  }
-
-  private async verifyLayerContent(
-    repository: string,
-    descriptor: OciDescriptor,
-    token: string,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const url = new URL(`/v2/${repository}/blobs/${encodeURIComponent(descriptor.digest)}`, this.baseUrl);
-    const headers = new Headers({ "accept-encoding": "identity" });
-    if (token) headers.set("authorization", `Bearer ${token}`);
-    await this.withRegistryRequest(url, { headers, redirect: "manual" }, signal, "layer", async (response, requestSignal) => {
-      if (response.status === 404) throw new RegistryError("not_found", "an image layer is missing from the registry");
-      if (response.status === 401 || response.status === 403) throw new RegistryError("unauthorized", "registry layer access was denied");
-      if (response.status === 429) throw new RegistryError("rate_limited", "registry rate limit exceeded");
-      if (!response.ok) throw new RegistryError("unavailable", `registry layer request returned ${response.status}`);
-      const declaredLengthHeader = response.headers.get("content-length");
-      const declaredLength = contentLength(response);
-      if (declaredLengthHeader !== null && (declaredLength === null || declaredLength !== descriptor.size)) {
-        void response.body?.cancel().catch(() => undefined);
-        throw new RegistryError("invalid_content", "registry layer size header does not match its descriptor");
-      }
-      const headerDigest = response.headers.get("docker-content-digest");
-      if (headerDigest !== null && headerDigest !== descriptor.digest) {
-        void response.body?.cancel().catch(() => undefined);
-        throw new RegistryError("invalid_content", "registry layer digest header does not match its descriptor");
-      }
-      const encoding = response.headers.get("content-encoding");
-      if (encoding !== null && encoding.toLowerCase() !== "identity") {
-        void response.body?.cancel().catch(() => undefined);
-        throw new RegistryError("invalid_content", "registry layer used an unexpected HTTP content encoding");
-      }
-      if (response.body === null) {
-        if (descriptor.size !== 0 || descriptor.digest !== "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") {
-          throw new RegistryError("invalid_content", "registry layer body is missing");
-        }
-        return;
-      }
-
-      const reader = response.body.getReader();
-      const hash = createHash("sha256");
-      let total = 0;
-      let rejectRead: ((error: Error) => void) | undefined;
-      const onAbort = () => {
-        void reader.cancel().catch(() => undefined);
-        rejectRead?.(new Error("layer body read aborted"));
-      };
-      requestSignal.addEventListener("abort", onAbort, { once: true });
-      if (requestSignal.aborted) onAbort();
-      try {
-        while (true) {
-          // Racing every chunk against one pending promise retains the settled
-          // race results (and their bytes) until the entire layer finishes.
-          // Keep only the current read rejector reachable from the abort hook.
-          const { done, value } = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
-            rejectRead = reject;
-            if (requestSignal.aborted) { onAbort(); return; }
-            void reader.read().then(resolve, reject);
-          });
-          rejectRead = undefined;
-          if (done) break;
-          total += value.byteLength;
-          if (!Number.isSafeInteger(total) || total > descriptor.size) {
-            void reader.cancel().catch(() => undefined);
-            throw new RegistryError("invalid_content", "registry layer bytes exceed the manifest descriptor size");
-          }
-          hash.update(value);
-        }
-      } catch (error) {
-        if (requestSignal.aborted) throw new RegistryError("unavailable", "registry layer body read was canceled");
-        if (error instanceof RegistryError) throw error;
-        throw new RegistryError("unavailable", "registry layer body read failed");
-      } finally {
-        rejectRead = undefined;
-        requestSignal.removeEventListener("abort", onAbort);
-        try { reader.releaseLock(); } catch { /* an aborted stream can still have a pending read */ }
-      }
-      if (total !== descriptor.size) {
-        throw new RegistryError("invalid_content", "registry layer byte count does not match its descriptor");
-      }
-      if (`sha256:${hash.digest("hex")}` !== descriptor.digest) {
-        throw new RegistryError("invalid_content", "registry layer bytes do not match their digest");
-      }
     });
   }
 }

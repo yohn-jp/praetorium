@@ -85,7 +85,7 @@ body:has(.evidence-ledger) .page-shell{max-width:1500px;padding-inline:clamp(16p
 .evidence-runtime .entry-panel>.status-warn:after,.evidence-runtime .entry-panel>.status-bad:after{color:#f3ab7e}
 .evidence-runtime .entry-panel>.muted{color:#c5d9ce;font-size:13px;line-height:1.7;max-width:34ch;overflow-wrap:anywhere}
 .evidence-runtime .entry-actions{margin-top:24px;display:flex;align-items:stretch;gap:8px;flex-wrap:wrap}
-.evidence-runtime .entry-actions .button,.evidence-runtime .entry-actions button{background:#e1f0e4;color:#193c2e;border:1px solid #e1f0e4;min-height:43px}
+.evidence-runtime .entry-actions .button,.evidence-runtime .entry-actions button{background:#e1f0e4;color:#193c2e;border:1px solid #e1f0e4;min-height:44px}
 .evidence-runtime .entry-actions .button-secondary{background:transparent;color:#e1f0e4;border-color:#87aa96}
 .evidence-runtime .entry-actions p{color:#d1e4d7}
 .evidence-runtime .entry-actions a{color:#e1f0e4}

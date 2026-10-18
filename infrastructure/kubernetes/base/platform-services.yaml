@@ -143,6 +143,7 @@ data:
   PROVISIONER_CLUSTER_ID: "@@CLUSTER_ID@@"
   PROVISIONER_WORKER_ID: "@@PROVISIONER_WORKER_ID@@"
   PROVISIONER_CREDENTIAL_PATH: /var/run/secrets/control-plane/credential
+  PROVISIONER_IMAGE_PULL_CONFIG_PATH: /var/run/secrets/application-image-pull/config.json
   PROVISIONER_INGRESS_NAMESPACE: traefik
   PROVISIONER_INSTANCE_ACCESS_NAMESPACE: praetorium-system
   PROVISIONER_INSTANCE_ACCESS_SERVICE: instance-access
@@ -201,6 +202,9 @@ spec:
             - name: control-plane-credential
               mountPath: /var/run/secrets/control-plane
               readOnly: true
+            - name: application-image-pull
+              mountPath: /var/run/secrets/application-image-pull
+              readOnly: true
           startupProbe:
             httpGet:
               path: /healthz
@@ -249,6 +253,13 @@ spec:
             items:
               - key: "@@SECRET_PROVISIONER_CREDENTIAL_KEY@@"
                 path: credential
+        - name: application-image-pull
+          secret:
+            secretName: "@@SECRET_APPLICATION_IMAGE_PULL@@"
+            defaultMode: 0440
+            items:
+              - key: .dockerconfigjson
+                path: config.json
 ---
 apiVersion: v1
 kind: Service

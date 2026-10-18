@@ -77,6 +77,7 @@ export function createDurableObjectGitHubUserTokenStore(
         lockId,
         lockUntil,
         now,
+        expectedRevision: state.revision,
       });
       if (!acquired) {
         // A concurrent request is refreshing. Re-read the serialized record a few times; never use an expired token.

@@ -75,4 +75,48 @@ describe("UserAuthStateDurableObject transport", () => {
     expect((await object.fetch(new Request("https://user-auth-state/sessions/get"))).status).toBe(405);
     expect((await object.fetch(post("/nope", {}))).status).toBe(404);
   });
+
+  it("does not let a stale GitHub token reader lock a rotated token revision", async () => {
+    const object = new UserAuthStateDurableObject(createFakeDurableObjectState());
+    const original = {
+      encrypted: { version: 1, keyId: "test", iv: "iv-0", ciphertext: "token-0" },
+      accessTokenExpiresAt: "2026-08-01T00:00:00.000Z",
+      refreshTokenExpiresAt: "2026-09-01T00:00:00.000Z",
+      issuedAt: NOW,
+    };
+    await object.fetch(post("/github-token/store", original));
+
+    const firstLock = await object.fetch(post("/github-token/lock", {
+      lockId: "refresh-a",
+      lockUntil: "2026-08-01T00:00:20.000Z",
+      now: NOW,
+      expectedRevision: 1,
+    }));
+    expect(await firstLock.json()).toEqual({ acquired: true });
+
+    const rotated = await object.fetch(post("/github-token/rotate", {
+      lockId: "refresh-a",
+      expectedRevision: 1,
+      encrypted: { version: 1, keyId: "test", iv: "iv-1", ciphertext: "token-1" },
+      accessTokenExpiresAt: "2026-08-01T01:00:00.000Z",
+      refreshTokenExpiresAt: "2026-09-01T00:00:00.000Z",
+    }));
+    expect(await rotated.json()).toEqual({ stored: true });
+
+    const staleLock = await object.fetch(post("/github-token/lock", {
+      lockId: "refresh-b",
+      lockUntil: "2026-08-01T00:00:20.000Z",
+      now: NOW,
+      expectedRevision: 1,
+    }));
+    expect(await staleLock.json()).toEqual({ acquired: false });
+    const { state } = await (await object.fetch(post("/github-token/get", {}))).json() as {
+      state: { readonly revision: number; readonly refreshLockId: string | null; readonly encrypted: { readonly ciphertext: string } };
+    };
+    expect(state).toMatchObject({
+      revision: 2,
+      refreshLockId: null,
+      encrypted: { ciphertext: "token-1" },
+    });
+  });
 });

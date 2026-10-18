@@ -160,10 +160,18 @@ export class UserAuthStateDurableObject implements DurableObject {
         return Response.json({ state: state ?? null });
       }
       case "/github-token/lock": {
-        const { lockId, lockUntil, now } = body as { lockId: string; lockUntil: string; now: string };
+        const { lockId, lockUntil, now, expectedRevision } = body as {
+          lockId: string;
+          lockUntil: string;
+          now: string;
+          expectedRevision: number;
+        };
+        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+          return Response.json({ error: "invalid revision" }, { status: 400 });
+        }
         const acquired = await this.state.storage.transaction(async (transaction) => {
           const current = await transaction.get<Record<string, unknown>>(GITHUB_TOKEN_KEY);
-          if (!current) return false;
+          if (!current || current["revision"] !== expectedRevision) return false;
           const expires = current["refreshLockedUntil"];
           if (typeof expires === "string" && new Date(expires).getTime() > new Date(now).getTime()) return false;
           await transaction.put(GITHUB_TOKEN_KEY, { ...current, refreshLockId: lockId, refreshLockedUntil: lockUntil });

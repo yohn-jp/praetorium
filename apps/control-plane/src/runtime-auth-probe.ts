@@ -64,6 +64,11 @@ interface UserAuditActorRow {
   readonly actor_id: string;
 }
 
+export interface CanaryProbeActor {
+  readonly repositoryId: number;
+  readonly actorId: string;
+}
+
 interface AdmittedArtifactRow {
   readonly status: string;
   readonly artifact_digest: string | null;
@@ -79,6 +84,7 @@ export interface RuntimeAuthProbeRouteDependencies {
   readonly operations: Pick<OperationService, "getById">;
   readonly instances: Pick<InstanceService, "getByInstanceId">;
   readonly runtimeBindings: RuntimeBindingMetadataReader;
+  readonly canaryProbeActor?: CanaryProbeActor;
   readonly gateway: RuntimeAuthProbeGatewayBinding;
   readonly gatewaySecret: string;
   readonly gatewayOrigin: string;
@@ -164,6 +170,7 @@ export function createProvisionerRuntimeAuthProbeRoutes(
       operation,
       actor,
       snapshot.binding.authorizationRevision,
+      dependencies.canaryProbeActor,
     );
     if (!probeActor) return c.json({ error: { code: "CURRENT_USER_AUTHORITY_REQUIRED" } }, 403);
 
@@ -292,12 +299,22 @@ async function resolveProbeActor(
   operation: OperationRecord,
   row: OperationActorRow,
   currentAuthorizationRevision: number,
+  canaryProbeActor?: CanaryProbeActor,
 ): Promise<{ readonly actorId: string; readonly authorizationRevision: number } | null> {
   if (/^[1-9][0-9]{0,15}$/u.test(row.actor_id) && Number.isSafeInteger(Number(row.actor_id))) {
     if (row.authorization_revision !== currentAuthorizationRevision) return null;
     return { actorId: row.actor_id, authorizationRevision: row.authorization_revision };
   }
-  if (row.actor_id !== "system:stable-release" && row.actor_id !== "system:stable-release-canary") return null;
+  if (row.actor_id === "system:stable-release-canary") {
+    // Operator-approved canary user, not an arbitrary historical audit actor.
+    // Gateway still verifies current GitHub read permission.
+    return canaryProbeActor?.repositoryId === operation.repositoryId &&
+      /^[1-9][0-9]{0,15}$/u.test(canaryProbeActor.actorId) &&
+      Number.isSafeInteger(Number(canaryProbeActor.actorId))
+      ? { actorId: canaryProbeActor.actorId, authorizationRevision: currentAuthorizationRevision }
+      : null;
+  }
+  if (row.actor_id !== "system:stable-release") return null;
   const recentUsers = await db.prepare(
     `SELECT actor_id
        FROM audit_events

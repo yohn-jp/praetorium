@@ -588,7 +588,7 @@ export function validateInventory(value) {
 
   exactKeys(
     value.releasePolicy,
-    ["workerId", "operatorActorId", "signerIdentityAllowlist", "canary"],
+    ["workerId", "operatorActorId", "canaryProbeActorId", "signerIdentityAllowlist", "canary"],
     "releasePolicy",
     errors,
   );
@@ -629,6 +629,7 @@ export function validateInventory(value) {
   const releaseConfigured =
     value.releasePolicy?.workerId !== null ||
     value.releasePolicy?.operatorActorId !== null ||
+    value.releasePolicy?.canaryProbeActorId !== null ||
     (Array.isArray(value.releasePolicy?.signerIdentityAllowlist) &&
       value.releasePolicy.signerIdentityAllowlist.length > 0) ||
     canaryConfigured;
@@ -656,6 +657,14 @@ export function validateInventory(value) {
       ) {
         errors.push("releasePolicy.operatorActorId must be at most 128 characters");
       }
+    }
+    if (value.releasePolicy?.canaryProbeActorId === null) {
+      blockers.push("T11 canary GitHub probe actor user ID has not been supplied");
+    } else if (
+      !Number.isSafeInteger(value.releasePolicy?.canaryProbeActorId) ||
+      value.releasePolicy.canaryProbeActorId < 1
+    ) {
+      errors.push("releasePolicy.canaryProbeActorId must be a positive GitHub user ID or null");
     }
     if (
       Array.isArray(value.releasePolicy?.signerIdentityAllowlist) &&

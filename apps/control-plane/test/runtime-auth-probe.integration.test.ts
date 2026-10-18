@@ -344,6 +344,7 @@ async function makeHarness(
     readonly instance?: Partial<RepositorySnapshot["instance"]>;
     readonly runtimeBinding?: RuntimeBindingMetadata | null;
     readonly database?: D1Database;
+    readonly canaryProbeActor?: { readonly repositoryId: number; readonly actorId: string };
   } = {},
 ) {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
@@ -396,6 +397,7 @@ async function makeHarness(
       },
     },
     gateway: { fetch: (request) => gateway.fetch(request) },
+    ...(options.canaryProbeActor ? { canaryProbeActor: options.canaryProbeActor } : {}),
     gatewaySecret: GATEWAY_SECRET,
     gatewayOrigin: GATEWAY_ORIGIN,
     controlPlaneOrigin: CONTROL_PLANE_ORIGIN,
@@ -784,7 +786,8 @@ describe("Control Plane to Gateway runtime auth probe", () => {
       operation(),
       artifactStatement(),
       "system:stable-release-canary",
-      [{ actor_id: "12345" }],
+      [],
+      { canaryProbeActor: { repositoryId: REPOSITORY_ID, actorId: "12345" } },
     );
     const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
       method: "POST",
@@ -799,6 +802,25 @@ describe("Control Plane to Gateway runtime auth probe", () => {
     });
     expect(response.status).toBe(200);
     expect(authorizedActors).toEqual(["12345"]);
+    // Old audit activity is never sufficient authority for a fresh canary.
+    const withoutApproval = await makeHarness(
+      true, operation(), artifactStatement(), "system:stable-release-canary",
+      [{ actor_id: "12345" }],
+    );
+    const deniedCanary = await withoutApproval.controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "lease",
+        workerId: WORKER_ID,
+        leaseToken: LEASE_TOKEN,
+        leaseEpoch: 3,
+        assignment: assignment(),
+      }),
+    });
+    expect(deniedCanary.status).toBe(403);
+    expect(withoutApproval.authorizedActors).toEqual([]);
+
 
     const noUserAuthority = await makeHarness(
       true,

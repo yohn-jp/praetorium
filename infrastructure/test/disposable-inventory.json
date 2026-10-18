@@ -62,6 +62,7 @@
   "releasePolicy": {
     "workerId": null,
     "operatorActorId": null,
+    "canaryProbeActorId": null,
     "signerIdentityAllowlist": [],
     "canary": {
       "owner": null,

@@ -109,6 +109,7 @@ function composeServices(env: ControlPlaneEnv) {
             operations,
             instances,
             runtimeBindings: createRuntimeBindingMetadataReader({ db: env.CONTROL_PLANE_DB }),
+            ...(releases ? { canaryProbeActor: releases.canaryProbeActor } : {}),
             gateway: env.GATEWAY_SERVICE,
             gatewaySecret: env.CONTROL_PLANE_GATEWAY_AUTH,
             gatewayOrigin: required(env.GATEWAY_ORIGIN),

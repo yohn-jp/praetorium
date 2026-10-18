@@ -294,7 +294,6 @@ function validPersistenceObservation(value: unknown): boolean {
   }
   return (
     Array.isArray(value.formats) &&
-    value.formats.length > 0 &&
     value.formats.every(
       (format) =>
         isRecord(format) &&

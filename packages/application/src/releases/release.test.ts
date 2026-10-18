@@ -499,8 +499,12 @@ describe("stable release candidate application", () => {
     await advanceOnce(store, deps);
     expect(store.workflows.get(item.id)).toMatchObject({
       state: "canary_observing",
-      nextAttemptAt: firstDeadline,
+      nextAttemptAt: firstDeadline! + 5 * 60 * 1_000,
     });
+    // Re-running the scheduler at the old deadline must not re-claim unknown evidence.
+    const revision = store.workflows.get(item.id)!.revision;
+    await advanceOnce(store, deps);
+    expect(store.workflows.get(item.id)!.revision).toBe(revision);
   });
 
   it("does not count the same provider observation twice toward the canary window", async () => {

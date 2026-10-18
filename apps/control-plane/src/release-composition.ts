@@ -14,6 +14,7 @@ const Policy = z.strictObject({
   workerId: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/u),
   clusterId: z.string().min(1).max(128),
   operatorActorId: z.string().min(1).max(128),
+  canaryProbeActorId: z.number().int().positive().safe(),
   signerIdentityAllowlist: z
     .array(
       z.strictObject({
@@ -49,7 +50,7 @@ export function composeReleaseServices(input: {
   const policy = Policy.parse(JSON.parse(input.policyJson));
   if (!/^[\x21-\x7e]{32,4096}$/u.test(input.operatorToken))
     throw new TypeError("Separate release operator credential required");
-  return createT11RolloutComposition({
+  const services = createT11RolloutComposition({
     db: input.db,
     configurations: input.builds.configurations,
     canaryConfigurations: input.builds.canaryConfigurations,
@@ -82,4 +83,11 @@ export function composeReleaseServices(input: {
     }),
     producerMetadata: { verify: verifyReleaseProducerMetadata },
   });
+  return {
+    ...services,
+    canaryProbeActor: {
+      repositoryId: policy.canary.repositoryId,
+      actorId: String(policy.canaryProbeActorId),
+    },
+  };
 }

@@ -1,6 +1,11 @@
 import {
+  resolvePresentation,
+  type ConfigurationSelection,
+  type PortalPresentation,
+} from "./presentation.js";
+import {
   renderHandoff,
-  renderPortalError,
+  renderPortalError as renderError,
   renderRepositoryDashboard,
   renderRepositoryList,
 } from "./render.js";
@@ -275,35 +280,29 @@ function pagePollCount(url: URL): number {
   return Number.isSafeInteger(parsed) ? Math.min(parsed, 5) : 0;
 }
 
-function makeDashboardResponse(
+function dashboardResponse(
   dashboard: PortalRepositoryDashboard,
   dependencies: PortalHandlerDependencies,
   session: { readonly csrfToken: string },
   options: {
+    readonly presentation?: PortalPresentation;
+    readonly selection?: ConfigurationSelection;
     readonly preview?: PortalModulePreview;
     readonly notice?: PortalOperation;
     readonly errorMessage?: string;
     readonly pollCount?: number;
   } = {},
 ): Response {
-  const operationInProgress =
-    options.notice?.state === "queued" ||
-    options.notice?.state === "running" ||
-    (dashboard.build !== null &&
-      ["reserved", "pending", "claimed", "running", "verifying"].includes(
-        dashboard.build.status,
-      )) ||
-    dashboard.operations.some(
-      (operation) => operation.state === "queued" || operation.state === "running",
-    );
   return renderRepositoryDashboard(dashboard, {
+    ...(options.selection ? { selection: options.selection } : {}),
+    ...(options.presentation ? { presentation: options.presentation } : {}),
     csrfToken: session.csrfToken,
     createIdempotencyKey: dependencies.createToken,
     ...(options.preview ? { preview: options.preview } : {}),
     ...(options.notice ? { notice: options.notice } : {}),
     ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
     ...(options.pollCount !== undefined ? { pollCount: options.pollCount } : {}),
-    ...(operationInProgress ? { scriptNonce: dependencies.createToken() } : {}),
+    scriptNonce: dependencies.createToken(),
   });
 }
 
@@ -343,7 +342,19 @@ function requireCommandResult<T extends PortalCommandResult["kind"]>(
 export function createPortalHandler(
   dependencies: PortalHandlerDependencies,
 ): (request: Request) => Promise<Response> {
-  return async (request) => {
+  const handle = async (request: Request, presentation: PortalPresentation): Promise<Response> => {
+    const renderPortalError = (message: string, status = 503) =>
+      renderError(message, status, presentation);
+    const makeDashboardResponse = (
+      dashboard: PortalRepositoryDashboard,
+      deps: PortalHandlerDependencies,
+      session: { readonly csrfToken: string },
+      options: Parameters<typeof dashboardResponse>[3] = {},
+    ) =>
+      dashboardResponse(dashboard, deps, session, {
+        ...options,
+        presentation: { ...presentation, repositoryId: dashboard.repository.repositoryId },
+      });
     const url = new URL(request.url);
     const route = url.pathname === "/" ? null : repositoryRoute(url.pathname);
     const isList = url.pathname === "/" && request.method === "GET";
@@ -377,7 +388,7 @@ export function createPortalHandler(
       try {
         const result = await dependencies.service.listRepositories(identity.session.actor);
         return result.ok
-          ? renderRepositoryList(result.value, identity.session.csrfToken)
+          ? renderRepositoryList(result.value, identity.session.csrfToken, presentation)
           : renderPortalError(result.error.message, errorStatus(result.error.code));
       } catch {
         return renderPortalError("Repository status is temporarily unavailable.", 503);
@@ -411,7 +422,13 @@ export function createPortalHandler(
         action.command,
       );
     } catch {
-      return renderPortalError("The requested operation is temporarily unavailable.", 503);
+      result = {
+        ok: false,
+        error: {
+          code: "UNAVAILABLE",
+          message: "The requested operation is temporarily unavailable.",
+        },
+      };
     }
     if (!result.ok) {
       const dashboard = await loadDashboard(
@@ -423,6 +440,9 @@ export function createPortalHandler(
         return withStatus(
           makeDashboardResponse(dashboard.value, dependencies, identity.session, {
             errorMessage: result.error.message,
+            ...(action.command.kind === "preview" || action.command.kind === "configure"
+              ? { selection: action.command }
+              : {}),
           }),
           errorStatus(result.error.code),
         );
@@ -443,6 +463,7 @@ export function createPortalHandler(
         return renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
       return makeDashboardResponse(dashboard.value, dependencies, identity.session, {
         preview: preview.value.preview,
+        selection: action.command,
       });
     }
 
@@ -490,5 +511,21 @@ export function createPortalHandler(
           202,
         )
       : renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
+  };
+  return async (request) => {
+    const selection = resolvePresentation(request);
+    const route = repositoryRoute(new URL(request.url).pathname);
+    const response = await handle(request, {
+      mode: selection.mode,
+      ...(route ? { repositoryId: route.repositoryId } : {}),
+    });
+    if (!selection.cookie) return response;
+    const headers = new Headers(response.headers);
+    headers.append("Set-Cookie", selection.cookie);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   };
 }

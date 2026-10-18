@@ -1,0 +1,10 @@
+✔ actual Gateway Worker partial browser security proof on owned local Miniflare bindings (6803.155982ms)
+ℹ {"proof":"partial-source-execution","sourceHead":"3652083d6e78de9a0ab762361bbadb06d0dfc948","sourceEntry":"apps/gateway/src/worker.ts","workerRuntime":"Miniflare 4.20260730.0","browserExecutable":"/home/sophia/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome","browserCases":["attacker Host redirects to configured Gateway origin","incoming query credentials omitted from login redirect and request logs","configured OAuth callback and secure HttpOnly host nonce cookie","valid local browser session resolves through Gateway DO and KV","duplicate session, OAuth nonce, and CSRF cookies fail closed","unauthenticated session API and public-only JWKS"],"limitations":["no owned stable origin or actual Instance Access integration","no successful GitHub App/OAuth login or producer artifact","Control Plane service boundary intentionally fails closed"]}
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7850.461844

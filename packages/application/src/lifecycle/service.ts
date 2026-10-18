@@ -794,13 +794,14 @@ export class LifecycleService {
         censusIsComplete(recoveredTargetCensus) &&
         recoveredTargetCensus.writers.length === 1 &&
         recoveredTargetCensus.writers[0]?.runtimeEpoch === targetEpoch &&
-        ["starting-target", "target-ready", "route-activated"].includes(operation.phase) &&
+        ["unknown", "starting-target", "target-ready", "route-activated"].includes(
+          operation.phase,
+        ) &&
         provesPreviousWriterAbsent(recoveredProof, targetAssignment, targetEpoch);
 
       if (targetAlreadyRunning && recoveredProof !== null) {
         // The old writer absence checkpoint is durable before start. A prior
-        // worker may have started the target or activated its route and then
-        // exited before recording the next phase; re-observe and finish safely.
+        // worker may have started the target and exited before recording progress.
         retirement = { status: "retired", proof: recoveredProof };
       } else {
         const result = await this.retireAssignment(
@@ -832,7 +833,22 @@ export class LifecycleService {
           beforeStart.writers[0]?.runtimeEpoch === targetEpoch &&
           provesPreviousWriterAbsent(retirement.proof, targetAssignment, targetEpoch)
         ) {
-          // A prior attempt may have started the target and crashed before recording progress.
+          // A prior attempt may have started the target and exited before recording progress.
+          // Re-enter the idempotent provider start path so it can verify the exact
+          // assignment and resume startup work such as runtime identity renewal.
+          if (operation.phase === "unknown") {
+            await context.assertLease();
+            await checkpoint({ phase: "starting-target", failureCode: null, failureReason: null });
+          }
+          if (operation.phase === "starting-target") {
+            await context.assertLease();
+            await this.dependencies.runtime.start(
+              targetAssignment,
+              operation.id,
+              context.assertLease,
+              context.signal,
+            );
+          }
         } else {
           return setOutcome(
             "unknown",

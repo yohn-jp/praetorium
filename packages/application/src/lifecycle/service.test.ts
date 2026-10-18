@@ -17,6 +17,7 @@ import type {
   RuntimeReadiness,
   RollbackCompatibilityEvidence,
   WriterCensus,
+  WriterAbsenceProof,
 } from "./ports.js";
 
 const digestA = `sha256:${"a".repeat(64)}`;
@@ -145,6 +146,7 @@ class MemoryJournal implements LifecycleJournal {
   ): Promise<LifecycleOperation | null> {
     if (operationId !== this.value.id || expectedVersion !== this.value.version) return null;
     this.value = { ...this.value, ...patch, version: this.value.version + 1 };
+    if (patch.phase !== undefined) this.timeline.push(`checkpoint:${patch.phase}`);
     if (patch.phase === "quiescing-old")
       this.timeline.push(`fence:${patch.quiesceRequest?.runtimeEpoch ?? "unknown"}`);
     return this.value;
@@ -278,6 +280,7 @@ function harness(options: HarnessOptions = {}) {
     },
     async start(value) {
       counters.starts.push(value.runtimeEpoch);
+      timeline.push(`start:${value.runtimeEpoch}`);
       if (!writers.some((writer) => writer.runtimeEpoch === value.runtimeEpoch))
         writers.push(value);
       if (
@@ -695,22 +698,23 @@ describe("LifecycleService", () => {
       quiesceTimeoutMs: 10,
       quiesce: (request) => {
         quiesceCalls += 1;
-        if (quiesceCalls === 1) return {
-          contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
-          operationId: request.operationId,
-          instanceId: request.instanceId,
-          runtimeEpoch: request.runtimeEpoch,
-          quiesceRevision: "q-before-restart",
-          disposition: "safe",
-          activeMutations: 0,
-          activeJobs: 0,
-          restartableJobs: 0,
-          pendingCheckpoints: 0,
-          uncertainPublication: false,
-          lastConfirmedRemoteRevision: "a".repeat(40),
-          reasonCodes: [],
-          observedAt: new Date(clock).toISOString(),
-        };
+        if (quiesceCalls === 1)
+          return {
+            contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
+            operationId: request.operationId,
+            instanceId: request.instanceId,
+            runtimeEpoch: request.runtimeEpoch,
+            quiesceRevision: "q-before-restart",
+            disposition: "safe",
+            activeMutations: 0,
+            activeJobs: 0,
+            restartableJobs: 0,
+            pendingCheckpoints: 0,
+            uncertainPublication: false,
+            lastConfirmedRemoteRevision: "a".repeat(40),
+            reasonCodes: [],
+            observedAt: new Date(clock).toISOString(),
+          };
         return {
           contractVersion: SCRIPTORIUM_PLATFORM_CONTRACT_VERSION,
           operationId: request.operationId,
@@ -956,7 +960,10 @@ describe("LifecycleService", () => {
 
     const result = await h.service.execute("op-01", h.context);
 
-    expect(result).toMatchObject({ status: "unknown", code: "producer_remote_preflight_unverified" });
+    expect(result).toMatchObject({
+      status: "unknown",
+      code: "producer_remote_preflight_unverified",
+    });
     expect(h.counters.producerStatuses).toHaveLength(1);
     expect(h.counters.quiesces).toHaveLength(0);
     expect(h.counters.resumes).toHaveLength(0);
@@ -1023,9 +1030,72 @@ describe("LifecycleService", () => {
     const recovered = await h.service.execute("op-01", h.context);
 
     expect(recovered.status).toBe("complete");
-    expect(h.counters.starts).toEqual([5]);
+    expect(h.counters.starts).toEqual([5, 5]);
     expect(h.counters.stops).toEqual([4]);
     expect(h.counters.activations).toHaveLength(1);
+    expect(h.timeline.lastIndexOf("checkpoint:starting-target")).toBeLessThan(
+      h.timeline.lastIndexOf("start:5"),
+    );
+  });
+
+  it("rearms an exact target writer from unknown only after persisting starting-target", async () => {
+    const proof: WriterAbsenceProof = {
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      retiredRuntimeEpoch: 4,
+      providerObservationId: "pods-before-target",
+      censusObservedAt: new Date().toISOString(),
+      remainingWriters: 0,
+      evidenceIdentities: ["namespace-uid/pod-list-rv"],
+      source: "runtime-provider-census",
+    };
+    const h = harness({
+      operation: operation({
+        phase: "unknown",
+        current: null,
+        target: deployment(),
+        targetEpoch: 5,
+        targetReservationId: "reservation-5",
+        writerAbsenceProof: proof,
+        failureCode: "operation_interrupted_for_recovery",
+        failureReason: "the prior worker stopped during startup",
+      }),
+      initialWriters: [assignment(5)],
+    });
+
+    const recovered = await h.service.execute("op-01", h.context);
+
+    expect(recovered.status).toBe("complete");
+    expect(h.counters.starts).toEqual([5]);
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.counters.quiesces).toHaveLength(0);
+    expect(h.journal.value.failureCode).toBeNull();
+    expect(h.journal.value.failureReason).toBeNull();
+    expect(h.timeline.indexOf("checkpoint:starting-target")).toBeLessThan(
+      h.timeline.indexOf("start:5"),
+    );
+    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([5]);
+  });
+
+  it("does not rearm an unknown target writer without durable prior absence proof", async () => {
+    const h = harness({
+      operation: operation({
+        phase: "unknown",
+        current: null,
+        target: deployment(),
+        targetEpoch: 5,
+        targetReservationId: "reservation-5",
+      }),
+      initialWriters: [assignment(5)],
+    });
+
+    const recovered = await h.service.execute("op-01", h.context);
+
+    expect(recovered).toMatchObject({ status: "unknown", code: "unexpected_writer_present" });
+    expect(h.counters.starts).toHaveLength(0);
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.counters.quiesces).toHaveLength(0);
+    expect(h.journal.value.phase).toBe("unknown");
   });
 
   it("recovers an endpoint activation whose worker exited before its checkpoint", async () => {

@@ -206,7 +206,16 @@ function measureContrast() {
     const [r, g, b] = rgb(value);
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   };
-  const canvas = getComputedStyle(document.documentElement).backgroundColor;
+  // A transparent badge/button must be tested against its actual opaque ancestor,
+  // not the document canvas behind an opaque dark runtime panel.
+  const actualBackground = (element) => {
+    for (let node = element; node; node = node.parentElement) {
+      const color = getComputedStyle(node).backgroundColor;
+      if (color !== "rgba(0, 0, 0, 0)" && color !== "transparent")
+        return color;
+    }
+    return getComputedStyle(document.documentElement).backgroundColor;
+  };
   return [
     document.body,
     document.querySelector("main a"),
@@ -218,9 +227,7 @@ function measureContrast() {
     .map((element) => {
       const style = getComputedStyle(element);
       const foreground = luminance(style.color);
-      const background = luminance(
-        style.backgroundColor === "rgba(0, 0, 0, 0)" ? canvas : style.backgroundColor,
-      );
+      const background = luminance(actualBackground(element));
       return {
         role: element.className || element.tagName,
         ratio:

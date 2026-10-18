@@ -285,7 +285,7 @@ export function renderRepositoryDashboard(
     )
     .join("");
   const operationContent = operations || "<p>No recent operations.</p>";
-  const preview = options.preview ?? dashboard.preview;
+  const preview = options.preview ?? (options.selection ? null : dashboard.preview);
   const configure =
     canConfigure && canSelectConfiguration
       ? configurationForm(

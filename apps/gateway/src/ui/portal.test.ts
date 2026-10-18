@@ -717,3 +717,23 @@ it("retains submitted configuration on authoritative stale-generation errors", a
   expect(html).toContain('name="expectedGeneration" value="5"');
   expect(execute).toHaveBeenCalledTimes(1);
 });
+
+it("retains unavailable draft choices without presenting an older preview as their validation", async () => {
+  const html = await renderRepositoryDashboard(dashboard, {
+    csrfToken: "csrf-token-value",
+    createIdempotencyKey: () => "token_12345678901234567890",
+    selection: {
+      releasePolicy: "pinned",
+      releaseId: "removed-release",
+      moduleIds: ["removed<module>"],
+      resourceProfileId: "removed-profile",
+    },
+    errorMessage: "The approved catalog changed. Review the unavailable selections.",
+  }).text();
+  expect(html).toContain('value="removed-release" selected>Unavailable selection: removed-release');
+  expect(html).toContain('name="moduleIds" value="removed&lt;module&gt;" checked');
+  expect(html).toContain('value="removed-profile" selected>Unavailable selection: removed-profile');
+  expect(html).toContain('data-dirty="true"');
+  expect(html).not.toContain("Supported module configuration");
+  expect(html).toContain("No configuration preview is available yet.");
+});

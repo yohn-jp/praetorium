@@ -42,13 +42,20 @@ function optionsForReleases(
   dashboard: PortalRepositoryDashboard,
   selectedId: string | undefined,
 ): string {
-  return dashboard.approvedReleases
-    .map(
-      (release) =>
-        `<option value="${escapeHtml(release.releaseId)}"${release.releaseId === selectedId ? " selected" : ""}>` +
-        `${escapeHtml(release.label)} · ${escapeHtml(shortDigest(release.imageDigest))}</option>`,
-    )
-    .join("");
+  const missing =
+    selectedId && !dashboard.approvedReleases.some((release) => release.releaseId === selectedId)
+      ? `<option value="${escapeHtml(selectedId)}" selected>Unavailable selection: ${escapeHtml(selectedId)}</option>`
+      : "";
+  return (
+    missing +
+    dashboard.approvedReleases
+      .map(
+        (release) =>
+          `<option value="${escapeHtml(release.releaseId)}"${release.releaseId === selectedId ? " selected" : ""}>` +
+          `${escapeHtml(release.label)} · ${escapeHtml(shortDigest(release.imageDigest))}</option>`,
+      )
+      .join("")
+  );
 }
 
 function optionsForModules(
@@ -56,13 +63,21 @@ function optionsForModules(
   selectedModules: readonly string[],
 ): string {
   const selected = new Set(selectedModules);
+  const missing = selectedModules
+    .filter((id) => !dashboard.modules.some((module) => module.moduleId === id))
+    .map(
+      (id, index) =>
+        `<label class="module-option" for="configuration-unavailable-module-${index}"><input id="configuration-unavailable-module-${index}" type="checkbox" name="moduleIds" value="${escapeHtml(id)}" checked><span>Unavailable selection: ${escapeHtml(id)}</span></label>`,
+    )
+    .join("");
   return (
-    dashboard.modules
-      .map(
-        (module, index) =>
-          `<label class="module-option" for="configuration-module-${index}"><input id="configuration-module-${index}" type="checkbox" name="moduleIds" value="${escapeHtml(module.moduleId)}"${selected.has(module.moduleId) ? " checked" : ""}><span>${escapeHtml(module.label)} <span class="field-help">${escapeHtml(module.version)} · ${escapeHtml(shortDigest(module.artifactDigest))}</span></span></label>`,
-      )
-      .join("") || `<p class="muted">No optional modules are available.</p>`
+    missing +
+      dashboard.modules
+        .map(
+          (module, index) =>
+            `<label class="module-option" for="configuration-module-${index}"><input id="configuration-module-${index}" type="checkbox" name="moduleIds" value="${escapeHtml(module.moduleId)}"${selected.has(module.moduleId) ? " checked" : ""}><span>${escapeHtml(module.label)} <span class="field-help">${escapeHtml(module.version)} · ${escapeHtml(shortDigest(module.artifactDigest))}</span></span></label>`,
+        )
+        .join("") || `<p class="muted">No optional modules are available.</p>`
   );
 }
 
@@ -70,12 +85,20 @@ function optionsForResources(
   dashboard: PortalRepositoryDashboard,
   selectedProfileId: string | undefined,
 ): string {
-  return dashboard.resourceProfiles
-    .map((profile) => {
-      const selected = profile.profileId === selectedProfileId ? " selected" : "";
-      return `<option value="${escapeHtml(profile.profileId)}"${selected}>${escapeHtml(profile.label)}</option>`;
-    })
-    .join("");
+  const missing =
+    selectedProfileId &&
+    !dashboard.resourceProfiles.some((profile) => profile.profileId === selectedProfileId)
+      ? `<option value="${escapeHtml(selectedProfileId)}" selected>Unavailable selection: ${escapeHtml(selectedProfileId)}</option>`
+      : "";
+  return (
+    missing +
+    dashboard.resourceProfiles
+      .map((profile) => {
+        const selected = profile.profileId === selectedProfileId ? " selected" : "";
+        return `<option value="${escapeHtml(profile.profileId)}"${selected}>${escapeHtml(profile.label)}</option>`;
+      })
+      .join("")
+  );
 }
 
 export function configurationForm(
@@ -111,7 +134,7 @@ export function configurationForm(
     `<option value="pinned"${policy === "pinned" ? " selected" : ""}>Pin an approved release</option></select>` +
     `<span class="field-help">Stable follows the approved stable release; pinned keeps the selected approved release.</span></label>` +
     `<label class="form-field" for="configuration-release-id"><span>Approved base release</span><select id="configuration-release-id" name="releaseId" required>${optionsForReleases(dashboard, releaseId)}</select>` +
-    `<span class="field-help">Only releases already approved for this workspace appear here.</span></label>` +
+    `<span class="field-help">Choose an approved release. Unavailable selections are retained for review.</span></label>` +
     `<fieldset class="module-options" aria-describedby="configuration-module-ids-help"><legend>Requested modules</legend>` +
     `${optionsForModules(dashboard, selectedModules)}` +
     `<span class="field-help" id="configuration-module-ids-help">Select optional modules. Required dependencies are shown separately in the preview.</span></fieldset>` +

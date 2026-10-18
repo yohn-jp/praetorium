@@ -185,6 +185,23 @@ describe("T11 persisted canary observations", () => {
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("WHERE instance_id = ? AND repository_id = ?"));
   });
 
+  it("accepts a verified empty repository with no persistence files", async () => {
+    const evidence = sampleEvidence({
+      persistence: {
+        state: "verified",
+        observedRemoteCommit: "e".repeat(40),
+        formats: [],
+      },
+    });
+    const reader = createReleaseCanaryObservationReader(
+      { getById: vi.fn(async () => startOperation()) },
+      database(healthRow(evidence)),
+      () => now,
+    );
+    await expect(reader.latestHealth({ instanceId, repositoryId, operationId }))
+      .resolves.toMatchObject({ checks: { persistence: true } });
+  });
+
   it("keeps absent, stale, cross-epoch, cross-operation, and incomplete samples unknown", async () => {
     const operation = startOperation();
     const missingProbe = sampleEvidence({ uiApiMcpProbeId: undefined });

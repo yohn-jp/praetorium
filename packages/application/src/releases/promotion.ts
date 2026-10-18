@@ -290,8 +290,8 @@ async function advanceCandidate(
         : "stale";
     }
     if (health.kind === "unknown") {
-      // Keep the retry deadline stable until a new observation is recorded.
-      return (await save(deps, lease, {})) ? "retried" : "stale";
+      // Missing observations must not leave the workflow immediately claimable.
+      return (await save(deps, lease, { nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000) })) ? "retried" : "stale";
     }
 
     const maxGap = deps.maxHealthGapMs ?? 2 * 5 * 60 * 1_000;
@@ -307,8 +307,8 @@ async function advanceCandidate(
       nowMs - parsedEvidence.data.observedAt > maxGap ||
       (workflow.lastHealthyAt !== null && parsedEvidence.data.observedAt <= workflow.lastHealthyAt)
     ) {
-      // Missing, duplicate, or rejected evidence does not consume this deadline.
-      return (await save(deps, lease, {})) ? "retried" : "stale";
+      // Invalid/duplicate evidence waits for another bounded observation window.
+      return (await save(deps, lease, { nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000) })) ? "retried" : "stale";
     }
     const healthySince =
       workflow.healthySince === null ||

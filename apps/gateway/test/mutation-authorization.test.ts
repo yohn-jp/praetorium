@@ -69,6 +69,7 @@ async function setup(options: {
   onCredentialStore?: () => void;
   configured?: boolean;
   ready?: boolean;
+  alreadyStarting?: boolean;
   pendingConfiguration?: boolean;
   sourceLimiterAllowed?: boolean;
   credentialBroker?: Exclude<Awaited<ReturnType<GatewayContext["getGitHubCredentialBroker"]>>, undefined>;
@@ -117,6 +118,7 @@ async function setup(options: {
         },
       }
     : baseSnapshot;
+  if (options.alreadyStarting) snapshot.instance.desiredState = "running";
   const repository = {
     repositoryId: REPOSITORY_ID,
     installationId: snapshot.binding.installationId,
@@ -805,6 +807,16 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(response.headers.get("Location")).toBeNull();
     expect(test.desiredRequests).toBe(1);
     expect(test.wakeRateLimitKeys).toEqual([`${USER_ID}:${REPOSITORY_ID}`]);
+  });
+
+  it("does not charge repeated waiting for an already-requested runtime as a new wake", async () => {
+    const test = await setup({ configured: true, ready: false, alreadyStarting: true });
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}?poll=1`, {
+      headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
+    }));
+    expect(response.status).toBe(202);
+    expect(test.desiredRequests).toBe(1);
+    expect(test.wakeRateLimitKeys).toEqual([]);
   });
 
   it("stops direct-entry automatic polling after five refreshes", async () => {

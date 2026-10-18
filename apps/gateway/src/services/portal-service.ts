@@ -358,7 +358,10 @@ async function enterRepository(
 
     let ready: RepositorySnapshot = resolved;
     if (!hasReadyCurrentRuntime(resolved.instance)) {
-      if (!(await context.wakeRateLimiter.consume(`${actor.userId}:${repositoryId}`, context.requestNow))) {
+      // A runtime already requested to run may be in its waiting/polling state.
+      // Only a new transition from stopped to running spends Wake quota.
+      if (resolved.instance.desiredState === "stopped" &&
+        !(await context.wakeRateLimiter.consume(`${actor.userId}:${repositoryId}`, context.requestNow))) {
         return failure("RATE_LIMITED", "Repository wake is temporarily rate limited.", true);
       }
       const desired = await context.controlPlane.requestDesiredState(resolved.instance.instanceId, {

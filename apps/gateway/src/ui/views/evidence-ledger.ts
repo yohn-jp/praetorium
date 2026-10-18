@@ -128,4 +128,13 @@ body:has(.evidence-ledger) .page-shell{max-width:1500px;padding-inline:clamp(16p
 .evidence-incident p{grid-column:1/-1;margin:0;color:#536b5b;font-size:12px;line-height:1.65;overflow-wrap:anywhere}
 .evidence-no-activity{margin:0;font-size:12px;color:#6c8071}
 
+.evidence-runtime .entry-panel>.status-badge{display:block;max-width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.evidence-runtime .entry-panel>.status-neutral{font-size:clamp(30px,4vw,48px);letter-spacing:-.055em}
+@media(max-width:620px){
+ .evidence-runtime .entry-actions{flex-direction:column;flex-wrap:nowrap;align-items:stretch;width:100%}
+ .evidence-runtime .entry-actions>p{flex-basis:auto;width:100%;margin:8px 0}
+ .evidence-runtime .entry-actions>a,.evidence-runtime .entry-actions>.inline-form{width:100%}
+ .evidence-runtime .entry-actions>.inline-form button{width:100%}
+}
+
 `;

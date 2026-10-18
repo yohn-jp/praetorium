@@ -29,6 +29,9 @@ const MAX_INVENTORY_BYTES = 64 * 1024;
 const MAX_CONFIG_BYTES = 32 * 1024;
 const MAX_STORAGE_STATE_BYTES = 2 * 1024 * 1024;
 const MAX_WRITE_BODY_BYTES = 8 * 1024;
+const MAX_BROWSER_MANUSCRIPT_CHARS = 16 * 1024;
+const BROWSER_EDIT_MARKER = "Praetorium T14 browser edit:";
+const OWNED_MANUSCRIPT_PATH = "manuscript/vol-1/ch-1/scene-1.md";
 const ID_PATTERN = /^ins_[0-9A-HJKMNP-TV-Z]{26}$/u;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
@@ -650,6 +653,100 @@ async function verifyApplicationCookies(context, derived) {
   assert.equal(csrf.httpOnly, false);
 }
 
+async function ownedApiJson(page, pathname, inventory, label) {
+  ensureOwnerLifetime(inventory, 1);
+  const response = await page.evaluate(async (path) => {
+    if (!path.startsWith("/api/")) throw new Error("owned API path required");
+    const result = await fetch(path, {
+      cache: "no-store",
+      credentials: "same-origin",
+      redirect: "error",
+    });
+    return { status: result.status, body: await result.json().catch(() => null) };
+  }, pathname);
+  assert.equal(response.status, 200, `${label} must return HTTP 200`);
+  assert.ok(
+    isRecord(response.body) || Array.isArray(response.body),
+    `${label} must return a JSON object or array`,
+  );
+  return response.body;
+}
+
+async function remoteObservation(page, projectId, config, inventory) {
+  const observation = await ownedApiJson(
+    page,
+    `/api/projects/${encodeURIComponent(projectId)}/observation`,
+    inventory,
+    "owned repository observation",
+  );
+  const snapshot = observation.snapshot;
+  assert.equal(observation.state, "fresh", "the owned repository observation must be fresh");
+  assert.ok(isRecord(snapshot), "the repository observation must include its snapshot");
+  assert.equal(snapshot.repository?.provider, "github");
+  assert.equal(String(snapshot.repository?.repositoryId), String(config.repository.id));
+  assert.match(snapshot.remoteCommit ?? "", REVISION_PATTERN);
+  return snapshot;
+}
+
+async function readRemoteScene(page, projectId, sceneId, snapshot, inventory) {
+  const query = new URLSearchParams({ view: "remote", snapshot: snapshot.remoteCommit });
+  const sceneRead = await ownedApiJson(
+    page,
+    `/api/projects/${encodeURIComponent(projectId)}/scenes/${encodeURIComponent(sceneId)}?${query}`,
+    inventory,
+    "pinned remote manuscript",
+  );
+  assert.equal(sceneRead.snapshot?.remoteCommit, snapshot.remoteCommit);
+  assert.equal(sceneRead.scene?.id, sceneId);
+  assert.equal(sceneRead.document?.path, OWNED_MANUSCRIPT_PATH);
+  assert.equal(typeof sceneRead.document?.content, "string");
+  return sceneRead;
+}
+
+async function readCodeMirrorText(textbox) {
+  return textbox.evaluate((element) => {
+    if (element.getAttribute("role") !== "textbox" || element.getAttribute("contenteditable") !== "true") {
+      throw new Error("expected the Scriptorium CodeMirror manuscript editor");
+    }
+    const lines = Array.from(element.children).filter((child) => child.classList.contains("cm-line"));
+    if (lines.length === 0 || lines.length !== element.children.length) {
+      throw new Error("the manuscript editor has an unexpected CodeMirror line structure");
+    }
+    return lines.map((line) => line.textContent ?? "").join("\n");
+  });
+}
+
+function withBoundedBrowserEdit(text, marker) {
+  assert.equal(typeof text, "string", "the editor must contain manuscript text");
+  assert.ok(
+    text.length <= MAX_BROWSER_MANUSCRIPT_CHARS,
+    "the owned manuscript exceeds the edit bound",
+  );
+  const lines = text.split(/\r?\n/u);
+  const markerIndexes = lines.flatMap((line, index) =>
+    line.startsWith(BROWSER_EDIT_MARKER) ? [index] : [],
+  );
+  assert.ok(markerIndexes.length <= 1, "the owned manuscript has multiple acceptance marker lines");
+  const nextMarker = `${BROWSER_EDIT_MARKER} ${marker}`;
+  if (markerIndexes.length === 1) lines[markerIndexes[0]] = nextMarker;
+  else lines.push(nextMarker);
+  const nextText = lines.join("\n");
+  assert.ok(nextText.length <= MAX_BROWSER_MANUSCRIPT_CHARS, "the bounded edit exceeds its limit");
+  return nextText;
+}
+
+function sceneCount(tree) {
+  return (tree?.volumes ?? []).reduce(
+    (volumeTotal, volume) =>
+      volumeTotal +
+      (volume.chapters ?? []).reduce(
+        (chapterTotal, chapter) => chapterTotal + (chapter.scenes ?? []).length,
+        0,
+      ),
+    0,
+  );
+}
+
 test(
   "real Gateway OAuth, repository UI, stopped-origin wake, handoff, and reconfiguration",
   { timeout: 3_600_000 },
@@ -942,6 +1039,195 @@ test(
         undefined,
         "replayed code must not mint application cookies",
       );
+
+      stage = "owned-manuscript-edit-checkpoint-publish-reload";
+      context.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, Math.min(30, config.timeouts.configurationSeconds)),
+      );
+      const projects = await ownedApiJson(page, "/api/projects", inventory, "owned project list");
+      assert.ok(
+        Array.isArray(projects),
+        "the authenticated Scriptorium project list must be an array",
+      );
+      assert.equal(
+        projects.length,
+        1,
+        "the disposable Scriptorium profile must contain only its owned project",
+      );
+      const projectId = projects[0]?.id;
+      assert.equal(typeof projectId, "string");
+      assert.ok(projectId.length > 0);
+      const initialManuscriptSnapshot = await remoteObservation(page, projectId, config, inventory);
+      const initialTree = await ownedApiJson(
+        page,
+        `/api/projects/${encodeURIComponent(projectId)}/tree?${new URLSearchParams({ view: "remote", snapshot: initialManuscriptSnapshot.remoteCommit })}`,
+        inventory,
+        "pinned owned repository tree",
+      );
+      assert.equal(initialTree.snapshot?.remoteCommit, initialManuscriptSnapshot.remoteCommit);
+      assert.equal(
+        sceneCount(initialTree.tree),
+        1,
+        "the owned repository must contain one editable scene",
+      );
+      const ownedScene = initialTree.tree.volumes[0].chapters[0].scenes[0];
+      assert.ok(ownedScene?.id);
+      const initialSceneRead = await readRemoteScene(
+        page,
+        projectId,
+        ownedScene.id,
+        initialManuscriptSnapshot,
+        inventory,
+      );
+      const sceneButtons = page
+        .getByRole("navigation", { name: "作品構成" })
+        .locator("button.scene-button");
+      assert.equal(
+        await sceneButtons.count(),
+        1,
+        "the editor must expose only the owned synthetic scene",
+      );
+      ensureOwnerLifetime(inventory, 5);
+      await sceneButtons.first().click();
+      const editor = page.locator('section[aria-label="原稿エディター"]');
+      await editor.waitFor({ state: "visible" });
+      const manuscript = editor.getByRole("textbox", { name: "原稿 Markdown", exact: true });
+      await manuscript.waitFor({ state: "visible" });
+      const initialEditorText = await readCodeMirrorText(manuscript);
+      assert.equal(
+        initialEditorText,
+        initialSceneRead.scene.text,
+        "the editor must show the selected scene from the pinned owned remote snapshot",
+      );
+      const editMarkerValue = crypto.randomUUID();
+      const editMarker = `${BROWSER_EDIT_MARKER} ${editMarkerValue}`;
+      await manuscript.fill(withBoundedBrowserEdit(initialEditorText, editMarkerValue));
+      const checkpointButton = editor.getByRole("button", { name: "Checkpoint", exact: true });
+      const draftDeadline = Date.now() + 15_000;
+      while (!(await checkpointButton.isEnabled()) && Date.now() < draftDeadline) await delay(100);
+      assert.equal(
+        await checkpointButton.isEnabled(),
+        true,
+        "Checkpoint must become available only after the browser draft is durable",
+      );
+      ensureOwnerLifetime(inventory, 10);
+      await checkpointButton.click();
+      await page
+        .locator('p.durability-message[role="status"]')
+        .getByText(
+          "ローカルチェックポイントを作成しました。GitHub へ保存するまでブラウザーの回復記録を保持します。",
+          { exact: true },
+        )
+        .waitFor({ state: "visible" });
+      const publishButton = editor.getByRole("button", { name: "Save to GitHub", exact: true });
+      await publishButton.waitFor({ state: "visible" });
+      assert.equal(
+        await publishButton.isEnabled(),
+        true,
+        "a local checkpoint must enable GitHub publication",
+      );
+      const publishPath = `/api/projects/${encodeURIComponent(projectId)}/publish`;
+      const publishResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.origin === new URL(page.url()).origin &&
+          url.pathname === publishPath &&
+          response.request().method() === "POST"
+        );
+      });
+      ensureOwnerLifetime(inventory, 10);
+      await publishButton.click();
+      const publishResponse = await publishResponsePromise;
+      assert.equal(
+        publishResponse.status(),
+        200,
+        "the UI must publish the checkpoint through Scriptorium",
+      );
+      const publishReceipt = await publishResponse.json();
+      assert.equal(publishReceipt.state, "confirmed", "GitHub publication must be confirmed");
+      assert.match(publishReceipt.remoteCommit ?? "", REVISION_PATTERN);
+      const acknowledgedPaths = (publishReceipt.acknowledged ?? []).flatMap((item) =>
+        (item.revisions ?? []).map((revision) => revision.path),
+      );
+      assert.deepEqual(
+        [...new Set(acknowledgedPaths)].sort(),
+        [OWNED_MANUSCRIPT_PATH],
+        "the confirmed publication must acknowledge only the owned manuscript path",
+      );
+      await page
+        .locator('p.durability-message[role="status"]')
+        .getByText("GitHub への保存を確認しました。確認済みの操作だけ回復記録から削除しました。", {
+          exact: true,
+        })
+        .waitFor({ state: "visible" });
+      const publishedBadge = editor
+        .locator(".durability-badge.is-current")
+        .filter({ hasText: "Saved to GitHub" });
+      await publishedBadge.waitFor({ state: "visible" });
+
+      const publishDeadline = Date.now() + config.timeouts.configurationSeconds * 1_000;
+      let publishedSnapshot;
+      while (Date.now() < publishDeadline) {
+        const observed = await remoteObservation(page, projectId, config, inventory);
+        if (observed.remoteCommit === publishReceipt.remoteCommit) {
+          publishedSnapshot = observed;
+          break;
+        }
+        await delay(1_000);
+      }
+      assert.ok(
+        publishedSnapshot,
+        "the public repository head must match the confirmed publication receipt",
+      );
+      const publishedSceneRead = await readRemoteScene(
+        page,
+        projectId,
+        ownedScene.id,
+        publishedSnapshot,
+        inventory,
+      );
+      assert.ok(publishedSceneRead.document.content.includes(editMarker));
+      assert.equal(publishedSceneRead.document.path, OWNED_MANUSCRIPT_PATH);
+
+      ensureOwnerLifetime(inventory, 10);
+      const reloaded = await page.reload({ waitUntil: "domcontentloaded" });
+      assert.equal(
+        reloaded?.status(),
+        200,
+        "the connected Scriptorium application must reload successfully",
+      );
+      assert.equal(new URL(page.url()).origin, derived.instanceOrigin.origin);
+      assert.equal(new URL(page.url()).pathname, "/");
+      await page
+        .getByRole("heading", { name: config.instance.applicationHeading, exact: true })
+        .waitFor();
+      const reloadedSceneButtons = page
+        .getByRole("navigation", { name: "作品構成" })
+        .locator("button.scene-button");
+      assert.equal(await reloadedSceneButtons.count(), 1);
+      ensureOwnerLifetime(inventory, 5);
+      await reloadedSceneButtons.first().click();
+      const reloadedEditor = page.locator('section[aria-label="原稿エディター"]');
+      const reloadedManuscript = reloadedEditor.getByRole("textbox", {
+        name: "原稿 Markdown",
+        exact: true,
+      });
+      await reloadedManuscript.waitFor({ state: "visible" });
+      assert.ok((await readCodeMirrorText(reloadedManuscript)).includes(editMarker));
+      await reloadedEditor
+        .locator(".durability-badge.is-current")
+        .filter({ hasText: "Saved to GitHub" })
+        .waitFor({ state: "visible" });
+      const afterReloadSnapshot = await remoteObservation(page, projectId, config, inventory);
+      assert.equal(afterReloadSnapshot.remoteCommit, publishReceipt.remoteCommit);
+      const afterReloadScene = await readRemoteScene(
+        page,
+        projectId,
+        ownedScene.id,
+        afterReloadSnapshot,
+        inventory,
+      );
+      assert.ok(afterReloadScene.document.content.includes(editMarker));
 
       stage = "ui-selection-preview";
       context.setDefaultNavigationTimeout(

@@ -87,7 +87,7 @@ export class ScriptoriumBuildCandidateReceiptReader implements BuildCandidateRec
     }
     const imageReference = `${this.registry.registryHost}/${repository}@${imageDigest}`;
     const exported = await this.rootfsExporter.exportImage(
-      { imageReference, platform: input.expectedInput.platform },
+      { imageReference, platform: input.expectedInput.platform, filePath: COMPOSITION_PATH },
       input.signal ?? new AbortController().signal,
     );
     try {

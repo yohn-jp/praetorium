@@ -7,7 +7,7 @@ is unchanged. Source checks do not certify Hosted acceptance.
 
 Repository identity is GitHub numeric ID `1422456736` (`yohn-jp/praetorium`).
 The campaign started from `e7926f472e12e5f0ec30db88e459328dd08ca58d`.
-The latest integrated and pushed product source is `3ab22dd`.
+The latest integrated and pushed product source is `3ec80b5`.
 The disposable producer and service-image workflows provide separate evidence;
 neither publishes production images.
 
@@ -132,8 +132,15 @@ removed; archived expired inventories are not current acceptance inputs.
   invocation failed in actual Workerd. The real producer bundle still fails
   admission: Workerd throws for Sigstore's omitted-digest ECDSA verification,
   whereas Node 24 verifies the same input. Explicit SHA-256 verifies that exact
-  Rekor signature in Workerd. A compatibility fix and full verification remain
-  in progress; no release or canary success was fabricated.
+  Rekor signature in Workerd. A narrow pinned upstream patch now preserves
+  Node's implicit SHA-256 behavior for EC keys; explicit hashes and non-EC keys
+  remain unchanged. The real producer bundle was admitted as a candidate by
+  the owned Workerd instance with the compatibility change. GHCR tests pass
+  51/51, including real-bundle tamper rejection and Ed25519 preservation.
+  Frozen install and full check pass on integrated `3ec80b5` (29 tasks).
+  Fresh service-image verification
+  [39087477892](https://github.com/yohn-jp/praetorium/actions/runs/39087477892)
+  has started on that cut; its result is pending. No canary success was fabricated.
 - The real Core image declares user `node` (UID/GID 1000). Kubernetes rejected
   the earlier nonnumeric identity with `runAsNonRoot`. The renderer now sets
   UID/GID and volume group 1000. An owned live-policy Pod using the exact image
@@ -142,6 +149,13 @@ removed; archived expired inventories are not current acceptance inputs.
   (29 tasks). Earlier CI
   [39086431028](https://github.com/yohn-jp/praetorium/actions/runs/39086431028)
   passed on `fcff970`; service publication was skipped.
+- Independent G8 measurement used the actual Build Worker entrypoint and a
+  separate empty local Workerd/D1 instance with no release policy or jobs.
+  Startup produced one authenticated claim (HTTP 204); a measured 90.192-second
+  idle window produced zero additional claims. One authenticated receiver POST
+  returned 202 and triggered exactly one additional claim (HTTP 204). BuildKit
+  and registry were not contacted. This demonstrates local trigger behavior;
+  production Cloudflare request, CPU, D1/DO and outage measurements remain open.
 - Production inventory preflight actually ran and stopped at validation. After
   deriving routine fields, outstanding validator inputs are Cloudflare account
   identity, the verified existing production builder public key, three final

@@ -1,0 +1,93 @@
+{
+  "operation": "retain-existing-real-canary-receipt",
+  "receiptDigest": "sha256:988f9f58a69c145d934a26ac170d9ae0d6c39bb407579e001bf9c34f9f00e613",
+  "receiptBytes": 1877,
+  "events": [
+    {
+      "stage": "token-exchange",
+      "status": 200
+    },
+    {
+      "stage": "receipt-head",
+      "status": 404
+    },
+    {
+      "stage": "upload-start",
+      "status": 202
+    },
+    {
+      "stage": "upload-complete",
+      "status": 201
+    },
+    {
+      "stage": "token-exchange",
+      "status": 200
+    },
+    {
+      "stage": "metadata-anchor-head",
+      "status": 404
+    },
+    {
+      "stage": "metadata-anchor-put",
+      "status": 201
+    },
+    {
+      "stage": "token-exchange",
+      "status": 200
+    },
+    {
+      "stage": "other",
+      "status": 307
+    },
+    {
+      "stage": "other",
+      "status": 200
+    }
+  ],
+  "artifactManifestDigest": "sha256:ee1d6daa5d4ecd12863978ce487387cf3d7038b8627db8cbb895b8e912f4a711",
+  "artifactTag": "metadata-sha256-988f9f58a69c145d934a26ac170d9ae0d6c39bb407579e001bf9c34f9f00e613",
+  "readbackBytes": 1877,
+  "success": true,
+  "observedAtUtc": "2026-10-18T08:14:53.388Z",
+  "scope": "Actual existing Canary receipt retained in its existing repository; no application image rebuild or D1 repair",
+  "blobReferenceUnchanged": true,
+  "candidateAdmission": "NOT_COMPLETED",
+  "hostedAcceptance": "NOT_CHECKED",
+  "canonicalProviderReadback": {
+    "sourceCommit": "634dc942c55200e151e2767fb81e3620f8de0e6a",
+    "resultDigest": "sha256:988f9f58a69c145d934a26ac170d9ae0d6c39bb407579e001bf9c34f9f00e613",
+    "readbackBytes": 1877,
+    "success": true,
+    "events": [
+      {
+        "stage": "token-exchange",
+        "status": 200
+      },
+      {
+        "stage": "receipt-head",
+        "status": 200
+      },
+      {
+        "stage": "receipt-head",
+        "status": 200
+      },
+      {
+        "stage": "other",
+        "status": 200
+      },
+      {
+        "stage": "token-exchange",
+        "status": 200
+      },
+      {
+        "stage": "other",
+        "status": 307
+      },
+      {
+        "stage": "other",
+        "status": 200
+      }
+    ],
+    "observedAtUtc": "2026-10-18T08:21:15.329Z"
+  }
+}

@@ -540,3 +540,34 @@ storage fix is being prepared inside the existing GHCR provider; the public
 blob reference, payload bytes, credentials, application-image admission and
 Release/Canary contracts remain unchanged. No new image publication or Build
 retry is started while this retrieval issue remains unresolved.
+
+
+## Metadata retention confirmed (2026-10-18 08:22 UTC)
+
+The same real receipt now has a deterministic OCI artifact manifest in its
+existing GHCR repository. Manifest PUT returned 201, and the separate read
+credential fetched byte-identical receipt content through the canonical
+redirect/digest-checked reader. This confirms the missing-reference diagnosis.
+The blob digest and 1,877 payload bytes did not change. The metadata manifest is
+not a runnable Runtime image or candidate admission bypass.
+[Actual retention and canonical replay evidence](GHCR-RECEIPT-RETENTION-20261018.json).
+
+The existing GHCR provider now ensures that artifact reference when publishing
+metadata, including an already-uploaded orphan blob. The raw uploader preserves
+all previous authority and redirect restrictions; a private helper uploads the
+payload and standard two-byte empty config. The SHA-derived tag is checked
+against deterministic manifest bytes before writing, and its stored digest and
+size are verified afterward. Identical calls reuse the same manifest; an observed
+conflicting tag is refused. The registry tag check/write is not an atomic CAS
+against a different authorized writer; blob content hashes remain authoritative.
+No public API, configuration, credential or admission contract changed.
+Frozen install, all 29 source-check tasks and the GHCR suite pass; read-only
+review found no scoped auth/hash/redirect regression.
+
+With the existing receipt available, the normal Operator API accepted a new
+retry at 08:15:43 UTC using expected workflow revision 6. It moved the same
+candidate to revision 7 and Build attempt 3. The Build Worker reached publishing
+99%; at 08:19:45 UTC it remained running. Process inspection identifies a
+BuildKit local rootfs export before startup inspection, not a proven successful
+artifact admission. Source/image publication continues independently; the
+active Build Worker will not be replaced during a live attempt.

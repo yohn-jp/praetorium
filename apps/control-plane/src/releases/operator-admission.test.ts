@@ -339,3 +339,13 @@ it("returns durable exact replay during an external evidence outage without veri
   expect(retry.execute).not.toHaveBeenCalled();
   expect(routeDeps.releases.findById).not.toHaveBeenCalled();
 });
+
+
+it("reports a bounded retry failure stage without exposing provider errors", async () => {
+  const { routeDeps, retry } = retryFixture();
+  retry.execute.mockRejectedValueOnce(new Error("private provider payload"));
+  const response = await createOperatorReleaseAdmissionRoutes(routeDeps)
+    .request("/release-test/retry", retryRequest());
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: { code: "RELEASE_RETRY_UNAVAILABLE", stage: "commit" } });
+});

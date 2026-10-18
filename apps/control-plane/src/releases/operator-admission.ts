@@ -94,6 +94,7 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
         error instanceof RequestTooLargeError ? 413 : 400,
       );
     }
+    let stage: "receipt" | "candidate" | "evidence" | "commit" = "receipt";
     try {
       const requestHash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
         JSON.stringify({ releaseId: id.data, expectedRevision: request.expectedRevision }),
@@ -112,8 +113,10 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
       if (replay?.kind === "conflict") {
         return c.json({ error: { code: "RELEASE_RETRY_CONFLICT", reason: replay.reason } }, 409);
       }
+      stage = "candidate";
       const candidate = await deps.releases.findById(id.data);
       if (!candidate) return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
+      stage = "evidence";
       const verification = await verifier.verify({
         schemaVersion: 1,
         version: candidate.version,
@@ -129,6 +132,7 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
       if (verification.kind !== "verified") {
         return c.json({ error: { code: "RELEASE_CANDIDATE_DENIED" } }, 422);
       }
+      stage = "commit";
       const result = await deps.retry.execute(command);
       if (result.kind === "not_found") return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
       if (result.kind === "conflict") {
@@ -141,7 +145,7 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
       }
       return c.json({ ...result.status, duplicate: result.duplicate }, result.duplicate ? 200 : 202);
     } catch {
-      return c.json({ error: { code: "RELEASE_RETRY_UNAVAILABLE" } }, 503);
+      return c.json({ error: { code: "RELEASE_RETRY_UNAVAILABLE", stage } }, 503);
     }
   });
 

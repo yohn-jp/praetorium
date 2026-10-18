@@ -234,6 +234,39 @@ removed; archived expired inventories are not current acceptance inputs.
   expired naturally, with no reservation, Pod or broker call. This proves context
   resolution, not a running Hosted application.
 
+- Service publication [39090471416](https://github.com/yohn-jp/praetorium/actions/runs/39090471416)
+  succeeded for all three services at `e6dcf87`. Anonymous strict-TLS GHCR pulls
+  verified index bytes/headers, Linux/amd64 child manifests, config blobs and
+  attached BuildKit provenance content bindings. These provenance content checks
+  do not establish a cryptographic signature. The immutable refs are recorded in
+  [the image ledger](SERVICE-IMAGES-e6dcf87-39090471416.json).
+- `50b5014` fixes another deployment boundary: the canonical Control Plane
+  projection now derives the required Git credential broker locator from the
+  configured Gateway origin. Frozen install, full check (29 tasks) and the eight
+  deployment reproducibility tests passed. This is independent of the current
+  public JWKS 503: owner dashboard inspection confirms three runtime public
+  variables were absent and both existing signing secrets are registered. Owner
+  application is pending; the confirmed nonsecret values are now declared in
+  `apps/control-plane/wrangler.toml`, with `keep_vars=true` preserving other
+  existing remote policy variables. Frozen install, full check (29 tasks) and
+  the actual Wrangler dry-run bundle passed. Keys are preserved.
+- Actual Runtime K3s packet-policy testing passed: both restricted test sources
+  reached an owned target before policy, deny-all blocked both, and the exact
+  allowed-source rule restored only that source. The owned namespace was removed
+  with a UID-preconditioned API deletion and confirmed absent. This is one G7
+  dataplane case, not full cluster/build/recovery acceptance.
+- Separate actual Provisioner startup on an empty owned local CP produced one
+  normal claim. A 90.195-second idle interval produced zero additional claims;
+  one authenticated operation notification returned 202 and triggered exactly
+  one additional claim. All five queue/binding/reservation table counts stayed
+  zero, no provider/external effect ran, and the harness shut down. This interval
+  does not cover the default five-minute recovery claim.
+- A fresh actual Workerd scheduled no-work invocation also completed, made zero
+  outbound calls and left all 24 application table row counts unchanged. Its
+  five D1 API calls / six SQL statements are source-derived, not measured SQL
+  counters or Cloudflare billing. Together these local measurements complement
+  the earlier Build Worker evidence without certifying full G8.
+
 ## Remaining acceptance
 
 No G1–G9 gate has newly passed. An owned disposable GitHub repository is now

@@ -3,6 +3,8 @@ main = "src/worker.ts"
 compatibility_date = "2026-07-30"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
+# Preserve existing remote policy variables not yet declared in this config.
+keep_vars = true
 
 [triggers]
 crons = ["*/5 * * * *"]
@@ -32,3 +34,9 @@ custom_domain = true
 [vars]
 GATEWAY_ORIGIN = "https://praetorium.yohn.jp"
 CONTROL_PLANE_ORIGIN = "https://control.praetorium.yohn.jp"
+INSTANCE_HOST_SUFFIX = "instances.praetorium.yohn.jp"
+PROVISIONER_CLUSTER_ID = "clu_01M552J5HCXXJAPCCPN480JSJN"
+PROVISIONER_WORKER_ID = "clu_01M552J5HCXXJAPCCPN480JSJN-provisioner"
+BUILD_WORKER_ID = "clu_01M552J5HCXXJAPCCPN480JSJN-build-worker"
+RUNTIME_REGISTRY_HOST = "ghcr.io"
+GIT_CREDENTIAL_BROKER_LOCATOR = "https://praetorium.yohn.jp/internal/github/credential"

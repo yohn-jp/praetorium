@@ -1,0 +1,28 @@
+{
+  "sourceRevision": "e6dcf8707a8698d98910240d54698cc31bcf9fc6",
+  "workflowRun": "https://github.com/yohn-jp/praetorium/actions/runs/39090471416",
+  "result": "SUCCESS",
+  "verification": {
+    "anonymousPull": true,
+    "strictSystemTls": true,
+    "indexDigestHeaderAndBytes": true,
+    "amd64ManifestAndConfigDigest": true,
+    "buildkitProvenanceSourceAndSubjectBindings": true,
+    "cryptographicProvenanceSignature": "NOT_CHECKED",
+    "hostedAcceptance": "NOT_ESTABLISHED"
+  },
+  "images": {
+    "provisioner": {
+      "index": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:e3108c8d4674eaba2946a9a80415afdd17a9c8edd526e76412e940c86d123ac5",
+      "linuxAmd64Digest": "sha256:008080cea24f94f91c8390fa2b7f124e9e363252a0b5cb1c4fafb30153117f5f"
+    },
+    "instance-access": {
+      "index": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:733b31f03bf83606d40c41ee8c0e48ca201e7755b34aaa565b670d2938dd017b",
+      "linuxAmd64Digest": "sha256:18687ebfdd6702cda930ed9057fa6a2fc27a354df945c0376af44616aa93f580"
+    },
+    "build-worker": {
+      "index": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:f566341ce1ae28124e337004ec930f567c869ebb66bcfb29f58e68019b563b0c",
+      "linuxAmd64Digest": "sha256:5143534127a202b334a6e1806d6476445da8e36bd09ed40983650c8b0d02f702"
+    }
+  }
+}

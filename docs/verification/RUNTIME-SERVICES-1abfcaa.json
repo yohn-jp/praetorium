@@ -1,0 +1,56 @@
+{
+  "sourceCommit": "1abfcaa2acdb2b9d4a5588c12ac9521bfc6f6e36",
+  "observedAtUtc": "2026-10-18T05:55:56.681567+00:00",
+  "publicationRun": "https://github.com/yohn-jp/praetorium/actions/runs/39101922331",
+  "deployExitCode": 0,
+  "rollouts": [
+    {
+      "namespace": "praetorium-system",
+      "deployment": "praetorium-instance-access",
+      "configuredImage": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:6a3f9a01431c713c25c1797b6ba0d23cb709dda7d318d387d6bdb8a5241c29a4",
+      "podName": "praetorium-instance-access-ccfb886c7-jd5rj",
+      "podUid": "b3149b15-1785-4960-981c-ee1b73e31ea0",
+      "observedContainers": [
+        {
+          "name": "instance-access",
+          "imageId": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:6a3f9a01431c713c25c1797b6ba0d23cb709dda7d318d387d6bdb8a5241c29a4",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "praetorium-system",
+      "deployment": "praetorium-provisioner",
+      "configuredImage": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:01ff2f99adfa4f9b6b230c2384349fe776138067c7d7ad346f1014cd67ccff15",
+      "podName": "praetorium-provisioner-fdd7d6944-gt2q2",
+      "podUid": "a84cb944-f93b-49a9-b313-da4a46f2493f",
+      "observedContainers": [
+        {
+          "name": "provisioner",
+          "imageId": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:01ff2f99adfa4f9b6b230c2384349fe776138067c7d7ad346f1014cd67ccff15",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "praetorium-build",
+      "deployment": "praetorium-build-worker",
+      "configuredImage": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:9341c1c32629a7975adbfc8fafa13b0866032ccaf1acf41b4a60abd7479c2b13",
+      "podName": "praetorium-build-worker-75d697ff7d-tlfgq",
+      "podUid": "deb59ab7-1ca6-4cdb-b58e-511885c3c724",
+      "observedContainers": [
+        {
+          "name": "build-worker",
+          "imageId": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:9341c1c32629a7975adbfc8fafa13b0866032ccaf1acf41b4a60abd7479c2b13",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    }
+  ],
+  "credentialsRotated": false,
+  "cloudflareManagementPerformed": false,
+  "hostedAcceptance": "NOT_CHECKED"
+}

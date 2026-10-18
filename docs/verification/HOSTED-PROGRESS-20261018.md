@@ -359,31 +359,66 @@ removed; archived expired inventories are not current acceptance inputs.
   passed earlier. This is service/configuration readiness, not a real build or
   Runtime acceptance result.
 
+## Current integration state (2026-10-18 05:56 UTC)
+
+The integrated source is `1abfcaa2acdb2b9d4a5588c12ac9521bfc6f6e36`.
+Its frozen install, all 29 check tasks, 67 GHCR tests, and
+[GitHub CI verification](https://github.com/yohn-jp/praetorium/actions/runs/39101243664)
+passed. Admission validates immutable Index/Manifest and Config bytes, platform,
+layer descriptors and total size, producer signatures/provenance, and metadata
+bindings. It no longer downloads and re-hashes layer bodies; the actual image
+puller owns that work. No CPU-budget or paid-plan change is required by this fix.
+
+| Path | Observed result | Remaining connection |
+| --- | --- | --- |
+| Gateway login and repository management | Owner confirmed successful GitHub login and repository management UI | Authenticated application entry after Runtime is ready |
+| Deployment inputs | All eleven Runtime secret roles are complete; existing credentials were preserved except the explicitly approved Instance Access cutover | No further secret collection is currently required |
+| Runtime platform | Four application Deployments available; two ACME certificates Ready; actual Build Worker to BuildKit mTLS connection passed | Per-repository workload from the admitted composition |
+| Public release admission | HTTP 201 at 05:43:58 UTC created candidate `rel_28a87a55-f1b3-4675-b57a-d9f3cca5cb6b`; the normal idempotent retry returned HTTP 200 for the same candidate | Normal Canary build/start/health/promotion; no D1 state rewrite |
+| Owned authoring repository | Repository ID `1423923158` has synthetic project/volume/chapter/scene/manuscript files in setup commit `edf0730` | Actual browser edit, Checkpoint, GitHub save, and reload; the setup push is not that proof |
+| Temporary public Runtime ingress | Owner selected Cloudflare Tunnel; private wildcard route configuration and connector launcher are prepared | Owner-side Tunnel creation, hostname route and connector credential; only this public path waits |
+
+The accepted producer source remains Scriptorium
+`008d5c429ec279a424cafd5b8c4cbee70a613b8e`, with Runtime Base
+`sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52`
+and BuildKit
+`sha256:b0d99ef773188fa451f9aef1a03b52fb26871c152bb7eaebb1863c0cc44bf888`.
+The [public admission receipt](RELEASE-ADMISSION-1abfcaa.json) records the actual
+signed source-release admission. Producer status now identifies that admitted
+source digest, without changing any product gate to PASS. Successful candidate
+admission does not establish a built composition or Stable promotion. Runtime service image publication for this integrated source is
+completed in [run 39101922331](https://github.com/yohn-jp/praetorium/actions/runs/39101922331).
+The canonical K3s deploy completed at 05:55:30 UTC with exit code 0.
+[Actual rollout metadata](RUNTIME-SERVICES-1abfcaa.json) records the three
+configured digest pins and Ready replacement Pods. The existing Prometheus
+Deployment and both certificates also passed the deployment readiness gates.
+No credentials were rotated and no Cloudflare management operation was run.
+
 ## Remaining acceptance
 
-No G1–G9 gate has newly passed. An owned disposable GitHub repository is now
-prepared. G1/G3 still require its real App authorization and authorized browser
-identities. Two principals test permission separation; creating new owner accounts
-is not a prerequisite for the first writer journey. G2 requires Runtime ingress,
-workloads and real authenticated UI/API/MCP entry. G4 requires real compositions,
-registry readback, signature/admission and reuse/failure evidence. G5/G6 require
-real lifecycle, recovery, stable/pinned, canary and rollback evidence. G7 requires
-cluster/build isolation and off-host recovery. G8 implementation is integrated,
-but actual Cloudflare request/CPU/D1/DO measurements and outage recovery remain.
-G9 requires the exact final cut, all seven real categories, independent integrated
-and RC review, approved deployment and the public editing journey.
+The full G1–G9 outcome remains unproven. Public Tunnel setup blocks public
+browser entry, not independent implementation or Build/Runtime integration.
+Previously passed checks and measurements are retained as evidence and are not
+repeated without a changed input or concrete failure.
 
-The next normal G4 queue run is also blocked by release availability: the owned
-stateful Control Plane's only candidate remains `canary_observing`, and its
-normal available-release list is empty. The canary still needs legitimate
-GitHub App/broker authorization and an actual Runtime journey. Public producer
-inputs remove the registry dependency, but do not permit fabricating an
-available release, resetting the canary or bypassing its admission.
+The next product path is normal Canary composition/build and Runtime startup,
+then the real browser edit → Checkpoint → Save to GitHub → same-origin reload.
+The browser runner now performs those actual authoring assertions, including
+the numeric repository identity, the single synthetic manuscript path, confirmed
+publication receipt and remote commit, remote content, and reload persistence.
+Its live run still awaits public ingress and actual browser authentication; a
+dashboard, setup Git push, fixture, or source check cannot substitute for it.
 
-Production `deploy-platform --apply` remains unexecuted. Its concrete effect is
-K3s controllers, secrets, certificates and platform services, receiver wake
-probes, then Cloudflare migration/Worker deployment. The environment record
-identifies targets and effects. The owner has now explicitly authorized publication
-and production delivery. Remaining gates are verified configuration, credentials
-and execution prerequisites, rather than a repeated request for that approval.
-Implementation and verification continue independently of those production gates.
+After that path, the remaining real outcomes are distinct approved compositions
+and cache reuse, safe stop/resume and writer fencing, permission changes and
+credential renewal, Stable/Pinned rollout and recovery, off-host metadata
+recovery, and bounded Cloudflare operation counts. Existing successful substrate
+and admission evidence is reused; only missing product outcomes require new
+execution.
+
+The owner has explicitly authorized publication and production delivery.
+Cloudflare management remains owner-operated. The static K3s platform has
+actually been deployed; an all-in-one `deploy-platform --apply` is not required
+to repeat those completed effects. No production approval is inferred from CI
+alone. Final completion requires the remaining actual product outcomes on the
+identified release cut, with no fabricated PASS or direct D1 failure reset.

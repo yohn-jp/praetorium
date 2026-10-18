@@ -1,10 +1,10 @@
 {
-  "checkedAt": "2026-10-17",
-  "sourceRevision": "a669f5c16faa85d5fcc162241b793eab734d46c2",
+  "checkedAt": "2026-10-18",
+  "sourceRevision": "1abfcaa2acdb2b9d4a5588c12ac9521bfc6f6e36",
   "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
   "previousProducerRevision": "eab0fad7c811aeedabe29fcd214598dc5207c178",
-  "artifactDigest": null,
-  "artifactDigestReason": "Actual final-source Runtime Base, Build Kit, Core, Story and MCP candidates were generated in the owned registry and all three compositions passed the production unsigned candidate inspector and smoke. No Sigstore-signed source release has been admitted and full Hosted product gates have not passed, so accepted Platform artifactDigest remains null.",
+  "artifactDigest": "sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52",
+  "artifactDigestReason": "The signed producer source image was admitted by the real Control Plane with HTTP 201 at 2026-10-18T05:43:58Z. This digest identifies that immutable source release only; composed artifacts, Canary/Stable promotion, browser entry, Git persistence, and full Hosted acceptance remain unverified. See docs/verification/RELEASE-ADMISSION-1abfcaa.json.",
   "producerModified": true,
   "capabilities": [
     {
@@ -251,5 +251,13 @@
   },
   "legacyArcadiaSourceRevision": "b96a03a8734bfff2e5b965e6966007c45a2c7dc9",
   "sourceRepository": "yohn-jp/praetorium",
-  "latestAuditScope": "Historical observation at the older revision named by latestAudit; current campaign evidence follows."
+  "latestAuditScope": "Historical observation at the older revision named by latestAudit; current campaign evidence follows.",
+  "sourceReleaseAdmission": {
+    "status": "ADMITTED_CANDIDATE",
+    "releaseId": "rel_28a87a55-f1b3-4675-b57a-d9f3cca5cb6b",
+    "observedAtUtc": "2026-10-18T05:43:58.898359+00:00",
+    "evidence": "docs/verification/RELEASE-ADMISSION-1abfcaa.json",
+    "canaryPromotion": "NOT_CHECKED",
+    "hostedAcceptance": "NOT_CHECKED"
+  }
 }

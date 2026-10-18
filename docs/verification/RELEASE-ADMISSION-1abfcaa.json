@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "scope": "Real signed producer source-release admission; not Canary/Stable promotion or Hosted acceptance",
+  "sourceRevision": "1abfcaa2acdb2b9d4a5588c12ac9521bfc6f6e36",
+  "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+  "producerTree": "e8b02d09f1ad50ba3fd7f820ef16bcdb5d172ae2",
+  "endpoint": "https://control.praetorium.yohn.jp/v1/operator/releases",
+  "observedAtUtc": "2026-10-18T05:43:58.898359+00:00",
+  "httpStatus": 201,
+  "release": {
+    "id": "rel_28a87a55-f1b3-4675-b57a-d9f3cca5cb6b",
+    "version": "0.1.0-hosted.20261018",
+    "imageDigest": "sha256:93bb59a32e85d9891b1a4d4ece15845d93af677330935fce56e71b79e9875c52",
+    "status": "candidate"
+  },
+  "duplicate": false,
+  "imageRepository": "yohn-jp/praetorium/scriptorium-producer",
+  "signatureRef": "https://raw.githubusercontent.com/yohn-jp/praetorium/e84381b565aa3889f8afad41129d2a9d67bbc232/docs/verification/producer-008d5c4-39092494296/provenance.sigstore.json",
+  "provenanceRef": "https://raw.githubusercontent.com/yohn-jp/praetorium/e84381b565aa3889f8afad41129d2a9d67bbc232/docs/verification/producer-008d5c4-39092494296/provenance.statement.json",
+  "passed": true,
+  "canaryPromotion": "NOT_CHECKED",
+  "hostedAcceptance": "NOT_CHECKED"
+}

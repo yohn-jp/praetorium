@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMcpCredential } from "../src/credential/lifecycle.js";
 import { exchangeMcpCredentialForAccessToken } from "../src/credential/token-exchange.js";
 import { verifyAccessGrant } from "../src/access-grant.js";
@@ -37,7 +37,6 @@ describe("repository-bound MCP token exchange", () => {
       requestedRuntimeEpoch: 4,
       requestedPermissions: ["read", "write"] as const,
       now: NOW,
-      rateLimitKey: "client-1",
       audience: "https://attacker.example.test",
     };
     const exchange = await exchangeMcpCredentialForAccessToken(
@@ -114,13 +113,14 @@ describe("repository-bound MCP token exchange", () => {
       ttlSeconds: 30,
       pepper: PEPPER,
     });
+    const credentialLimit = vi.fn(async () => true);
     const base = {
       credentialStore,
       credentialPepper: PEPPER,
       repositoryAccessChecker: {
         checkBoundAccess: async () => ({ status: "denied" as const }),
       },
-      rateLimiter: { consume: async () => true },
+      rateLimiter: { consume: credentialLimit },
       signingKey: {
         kid: "unused",
         privateKey: await crypto.subtle
@@ -138,7 +138,6 @@ describe("repository-bound MCP token exchange", () => {
       requestedRuntimeEpoch: 4,
       requestedPermissions: ["read"] as const,
       now: NOW,
-      rateLimitKey: "client-1",
     };
 
     expect(await exchangeMcpCredentialForAccessToken(base, input)).toMatchObject({
@@ -151,5 +150,7 @@ describe("repository-bound MCP token exchange", () => {
         now: "2026-10-17T00:00:30.000Z",
       }),
     ).toMatchObject({ ok: false, error: { code: "INVALID_CREDENTIAL" } });
+    // Expired credentials never spend a verified-credential quota.
+    expect(credentialLimit).toHaveBeenCalledOnce();
   });
 });

@@ -21,6 +21,11 @@ import type { KubernetesResource, KubernetesResourceRenderer } from "./types.js"
 
 const APPLICATION_LABEL_KEY = "app.kubernetes.io/name";
 const APPLICATION_LABEL_VALUE = "scriptorium";
+// Current Scriptorium Core OCI images declare USER node (UID:GID 1000:1000);
+// `/data` in that image is owned by the same identity. Keep mounted emptyDirs
+// writable for this non-root runtime while retaining explicit pod identity.
+const SCRIPTORIUM_RUNTIME_UID = 1_000;
+const SCRIPTORIUM_RUNTIME_GID = 1_000;
 
 export interface KubernetesResourceRendererOptions {
   /** Prefix for deterministic per-instance tenant namespaces. */
@@ -457,6 +462,9 @@ function deployment(
           terminationGracePeriodSeconds: app.shutdownTimeoutSeconds,
           securityContext: {
             runAsNonRoot: true,
+            runAsUser: SCRIPTORIUM_RUNTIME_UID,
+            runAsGroup: SCRIPTORIUM_RUNTIME_GID,
+            fsGroup: SCRIPTORIUM_RUNTIME_GID,
             seccompProfile: { type: "RuntimeDefault" },
           },
           containers: [

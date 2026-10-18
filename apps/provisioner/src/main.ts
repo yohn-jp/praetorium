@@ -5,7 +5,7 @@ import { OperationServiceHttpClient } from "./operation-client.js";
 import { ProvisionerMetrics } from "./metrics.js";
 import { HealthServer } from "./health.js";
 import { JsonLogger, ProvisionerWorker } from "./worker.js";
-import { readProvisionerCredential } from "./credentials.js";
+import { readProvisionerCredential, readProvisionerImagePullConfig } from "./credentials.js";
 import { LifecycleProvisionerExecutor } from "./lifecycle-executor.js";
 import { DEFAULT_IDLE_TIMEOUT_MS } from "@praetorium/application/lifecycle";
 import { ProvisionerIdleController } from "./idle-controller.js";
@@ -19,6 +19,7 @@ interface ProvisionerConfig {
   readonly workerId: string;
   readonly clusterId: string;
   readonly runtime: InClusterRuntimeOptions;
+  readonly imagePullConfigPath?: string;
   readonly healthPort: number;
   readonly idleTimeoutMs: number;
   readonly workNotificationToken?: string;
@@ -83,6 +84,15 @@ export function loadProvisionerConfig(env: NodeJS.ProcessEnv = process.env): Pro
   ) {
     throw new TypeError("invalid provisioner idle journal path");
   }
+  const imagePullConfigPath = env.PROVISIONER_IMAGE_PULL_CONFIG_PATH;
+  if (
+    imagePullConfigPath !== undefined &&
+    (imagePullConfigPath.length === 0 ||
+      imagePullConfigPath.length > 1_024 ||
+      !isAbsolute(imagePullConfigPath))
+  ) {
+    throw new TypeError("invalid provisioner image pull config path");
+  }
   return {
     controlPlaneUrl: controlPlaneUrl.replace(/\/+$/u, ""),
     credentialPath: required(env, "PROVISIONER_CREDENTIAL_PATH"),
@@ -94,6 +104,7 @@ export function loadProvisionerConfig(env: NodeJS.ProcessEnv = process.env): Pro
       ? {}
       : { workNotificationToken }),
     ...(idleJournalPath === undefined ? {} : { idleJournalPath }),
+    ...(imagePullConfigPath === undefined ? {} : { imagePullConfigPath }),
     runtime: {
       namespacePrefix,
       clusterId,
@@ -120,6 +131,13 @@ async function waitForAbort(signal: AbortSignal): Promise<void> {
 async function main(): Promise<void> {
   const config = loadProvisionerConfig();
   const credential = await readProvisionerCredential(config.credentialPath);
+  const runtime =
+    config.imagePullConfigPath === undefined
+      ? config.runtime
+      : {
+          ...config.runtime,
+          imagePullConfigJson: await readProvisionerImagePullConfig(config.imagePullConfigPath),
+        };
   if (config.workNotificationToken === credential) {
     throw new TypeError(
       "work notification token must be distinct from the provisioner service token",
@@ -146,7 +164,7 @@ async function main(): Promise<void> {
   const executor = new LifecycleProvisionerExecutor({
     operations,
     workerId: config.workerId,
-    runtime: config.runtime,
+    runtime,
     authProbe,
     assignmentTransport,
   });
@@ -189,7 +207,7 @@ async function main(): Promise<void> {
       operations,
       workerId: config.workerId,
       clusterId: config.clusterId,
-      runtime: config.runtime,
+      runtime,
       idleTimeoutMs: config.idleTimeoutMs,
       ...(config.idleJournalPath === undefined ? {} : { idleJournalPath: config.idleJournalPath }),
       identityTransport: assignmentTransport,

@@ -47,6 +47,8 @@ export interface InClusterRuntimeOptions {
     readonly ephemeralStorageMiB: number;
   };
   readonly maxCapacityAgeMs: number;
+  /** Operator-owned Docker config; kept outside RuntimeInstanceSpec. */
+  readonly imagePullConfigJson?: string;
   readonly convergenceTimeoutMs?: number;
   readonly pollIntervalMs?: number;
   readonly now?: () => number;
@@ -231,6 +233,9 @@ export class KubernetesLifecycleRuntimeAdapter
       namespacePrefix: options.namespacePrefix,
       clusterId: options.clusterId,
       maxCapacityAgeMs: options.maxCapacityAgeMs,
+      ...(options.imagePullConfigJson === undefined
+        ? {}
+        : { imagePullConfigJson: options.imagePullConfigJson }),
       now: this.now,
       rendererOptions: {
         ingressNamespace: options.ingressNamespace,

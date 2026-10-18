@@ -60,6 +60,7 @@ import {
   createKubernetesResourceRenderer,
   type KubernetesResourceRendererOptions,
 } from "./renderer.js";
+import { validateApplicationImagePullConfig } from "./image-pull-config.js";
 import type {
   KubernetesCapacityReservation,
   KubernetesCapacityReservationSource,
@@ -95,6 +96,8 @@ export interface KubernetesRuntimeProviderOptions {
   readonly now?: () => number;
   readonly maxCapacityAgeMs: number;
   readonly maxActivationEvidenceAgeMs?: number;
+  /** Operator-owned Docker config; never part of a RuntimeInstanceSpec. */
+  readonly imagePullConfigJson?: string;
 }
 
 export interface InClusterKubernetesRuntimeProviderOptions
@@ -675,6 +678,17 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
         "terminal",
       );
     }
+    if (options.imagePullConfigJson !== undefined) {
+      try {
+        validateApplicationImagePullConfig(options.imagePullConfigJson);
+      } catch {
+        throw new RuntimeProviderError(
+          "misconfigured",
+          "application image pull configuration is invalid",
+          "terminal",
+        );
+      }
+    }
     this.now = options.now ?? Date.now;
   }
 
@@ -1017,6 +1031,9 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     await this.ensureRuntimeRoleBinding(spec, signal, beforeEffect);
     const resources = this.options.renderer.renderRunning(spec);
     this.validateRenderedResources(resources, spec);
+    const imagePullSecret = this.imagePullSecretResource(spec);
+    if (imagePullSecret !== undefined)
+      await this.upsertResource(imagePullSecret, spec, signal, beforeEffect);
     for (const resource of resources)
       await this.upsertResource(resource, spec, signal, beforeEffect);
 
@@ -1851,6 +1868,68 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
         "terminal",
       );
     }
+    const deploymentPodSpec = record(record(record(deployment)?.spec)?.template)?.spec;
+    const imagePullSecrets = Array.isArray(record(deploymentPodSpec)?.imagePullSecrets)
+      ? (record(deploymentPodSpec)?.imagePullSecrets as unknown[])
+      : [];
+    const expectedImagePullSecret =
+      this.options.imagePullConfigJson === undefined ? undefined : `${baseName}-image-pull`;
+    if (
+      (expectedImagePullSecret === undefined && imagePullSecrets.length !== 0) ||
+      (expectedImagePullSecret !== undefined &&
+        (imagePullSecrets.length !== 1 ||
+          record(imagePullSecrets[0])?.name !== expectedImagePullSecret))
+    ) {
+      throw new RuntimeProviderError(
+        "invalid_spec",
+        "renderer returned an unexpected image pull Secret reference",
+        "terminal",
+      );
+    }
+  }
+
+  private imagePullSecretResource(spec: RunningInstanceSpec): KubernetesResource | undefined {
+    const configJson = this.options.imagePullConfigJson;
+    if (configJson === undefined) return undefined;
+    const name = `${runtimeResourceName(spec.instanceId)}-image-pull`;
+    return {
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: {
+        name,
+        namespace: this.namespaceFor(spec.instanceId),
+        labels: {
+          ...resourceLabels(spec, spec.release.releaseId),
+          "app.kubernetes.io/name": "scriptorium",
+        },
+      },
+      type: "kubernetes.io/dockerconfigjson",
+      data: { ".dockerconfigjson": Buffer.from(configJson, "utf8").toString("base64") },
+    };
+  }
+
+  private assertImagePullSecretShape(
+    value: unknown,
+    identity: InstanceIdentity,
+    namespaceName: string,
+    name: string,
+  ): void {
+    const metadata = assertObjectOwned(value, identity, namespaceName, name);
+    const secret = record(value);
+    const data = record(secret?.data);
+    if (
+      metadata.labels["app.kubernetes.io/name"] !== "scriptorium" ||
+      secret?.type !== "kubernetes.io/dockerconfigjson" ||
+      data === undefined ||
+      Object.keys(data).length !== 1 ||
+      data[".dockerconfigjson"] === undefined
+    ) {
+      throw new RuntimeProviderError(
+        "conflict",
+        "owned image pull Secret has an unexpected shape",
+        "terminal",
+      );
+    }
   }
 
   private validateEndpointResource(
@@ -2041,6 +2120,15 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       resource.metadata.name,
     );
     this.assertNotNewer(metadata.labels, identity);
+    const imagePullSecretName = `${runtimeResourceName(identity.instanceId)}-image-pull`;
+    if (resource.kind === "Secret" && resource.metadata.name === imagePullSecretName) {
+      this.assertImagePullSecretShape(
+        current,
+        identity,
+        resource.metadata.namespace,
+        imagePullSecretName,
+      );
+    }
     if (metadata.deleting)
       throw new RuntimeProviderError("conflict", "runtime resource is deleting", "retryable");
     await beforeEffect();
@@ -2155,6 +2243,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       { kind: "ResourceQuota" as const, name: `${name}-quota` },
       { kind: "LimitRange" as const, name: `${name}-limits` },
       { kind: "Secret" as const, name: `${name}-runtime` },
+      { kind: "Secret" as const, name: `${name}-image-pull` },
       { kind: "ServiceAccount" as const, name: `${name}-app` },
       { kind: "RoleBinding" as const, name: "praetorium-provisioner-runtime" },
     ];
@@ -2190,6 +2279,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       { kind: "ResourceQuota" as const, name: `${name}-quota` },
       { kind: "LimitRange" as const, name: `${name}-limits` },
       { kind: "Secret" as const, name: `${name}-runtime` },
+      { kind: "Secret" as const, name: `${name}-image-pull` },
       { kind: "ServiceAccount" as const, name: `${name}-app` },
       { kind: "RoleBinding" as const, name: "praetorium-provisioner-runtime" },
       { kind: "Deployment" as const, name },
@@ -2212,6 +2302,7 @@ export function createInClusterKubernetesRuntimeProvider(
     ...options.rendererOptions,
     namespacePrefix: options.namespacePrefix,
     clusterId: options.clusterId,
+    includeImagePullSecret: options.imagePullConfigJson !== undefined,
   });
   return new KubernetesRuntimeProvider({
     ...options,

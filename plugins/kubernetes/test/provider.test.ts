@@ -442,6 +442,7 @@ function provider(
   api: FakeKubernetesApi,
   reservations = targetReservations(),
   now = () => Date.now(),
+  imagePullConfigJson?: string,
 ) {
   const renderer = createKubernetesResourceRenderer({
     namespacePrefix: PREFIX,
@@ -452,6 +453,7 @@ function provider(
     controlNamespace: "praetorium-system",
     controlService: "provisioner",
     maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
+    ...(imagePullConfigJson === undefined ? {} : { includeImagePullSecret: true }),
   });
   return new KubernetesRuntimeProvider({
     api,
@@ -461,6 +463,7 @@ function provider(
     reservations,
     now,
     maxCapacityAgeMs: 30_000,
+    ...(imagePullConfigJson === undefined ? {} : { imagePullConfigJson }),
   });
 }
 
@@ -481,6 +484,72 @@ function reservation(
 }
 
 describe("Kubernetes runtime provider", () => {
+  it("creates the exact tenant image pull Secret before referencing it from the Deployment", async () => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const config = JSON.stringify({ auths: { "ghcr.io": { auth: "dXNlcjp0b2tlbg==" } } });
+    const runtime = provider(api, targetReservations(), () => 500_000, config);
+
+    await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+
+    const secret = record(api.objects.get(key("Secret", NAMESPACE, `${DEPLOYMENT}-image-pull`)));
+    const deployment = record(api.objects.get(key("Deployment", NAMESPACE, DEPLOYMENT)));
+    const podSpec = record(record(record(deployment.spec).template).spec);
+    expect(secret.type).toBe("kubernetes.io/dockerconfigjson");
+    expect(Object.keys(record(secret.data))).toEqual([".dockerconfigjson"]);
+    expect(
+      Buffer.from(String(record(secret.data)[".dockerconfigjson"]), "base64").toString("utf8"),
+    ).toBe(config);
+    expect(record(secret.metadata).labels).toMatchObject({
+      "app.kubernetes.io/name": "scriptorium",
+      "arcadia.io/instance-id": INSTANCE_ID,
+      "praetorium.io/repository-id": String(REPOSITORY_ID),
+      "arcadia.io/runtime-cluster-id": CLUSTER_ID,
+    });
+    expect(podSpec.imagePullSecrets).toEqual([{ name: `${DEPLOYMENT}-image-pull` }]);
+    expect(api.writes.indexOf("write:Secret")).toBeLessThan(api.writes.indexOf("write:Deployment"));
+  });
+
+  it("rejects an existing image pull Secret with an unexpected type or key set", async () => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const runtime = provider(
+      api,
+      targetReservations(),
+      () => 500_000,
+      JSON.stringify({ auths: { "ghcr.io": { auth: "dXNlcjp0b2tlbg==" } } }),
+    );
+    api.namespaces.set(NAMESPACE, ownedTenantNamespace());
+    api.objects.set(key("Secret", NAMESPACE, `${DEPLOYMENT}-image-pull`), {
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: {
+        name: `${DEPLOYMENT}-image-pull`,
+        namespace: NAMESPACE,
+        uid: "old-secret",
+        resourceVersion: "5",
+        labels: {
+          ...managedLabels({
+            instanceId: INSTANCE_ID,
+            repositoryId: REPOSITORY_ID,
+            runtimeEpoch: 1,
+            generation: 1,
+            releaseId: RELEASE_ID,
+          }),
+          "arcadia.io/runtime-cluster-id": CLUSTER_ID,
+          "app.kubernetes.io/name": "scriptorium",
+        },
+      },
+      type: "Opaque",
+      data: { unexpected: "c2VjcmV0" },
+    });
+
+    await expect(
+      runtime.ensureRunning(spec(), new AbortController().signal, () => undefined),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(api.objects.has(key("Deployment", NAMESPACE, DEPLOYMENT))).toBe(false);
+  });
+
   it("renders one constrained disk-backed writer and keeps route activation separate", () => {
     const resources = createKubernetesResourceRenderer({
       namespacePrefix: PREFIX,
@@ -1471,7 +1540,12 @@ describe("Kubernetes runtime provider", () => {
   it("removes only runtime workload resources after writer absence and retains the namespace", async () => {
     const api = new FakeKubernetesApi();
     api.addNode();
-    const runtime = provider(api, targetReservations(), () => 900_000);
+    const runtime = provider(
+      api,
+      targetReservations(),
+      () => 900_000,
+      JSON.stringify({ auths: { "ghcr.io": { auth: "dXNlcjp0b2tlbg==" } } }),
+    );
     const hosted = hostedSpec();
     await runtime.ensureRunning(hosted, new AbortController().signal, () => undefined);
     api.addWriterPod(hosted);
@@ -1490,6 +1564,7 @@ describe("Kubernetes runtime provider", () => {
       "ResourceQuota",
       "LimitRange",
       "Secret",
+      "Secret",
       "ServiceAccount",
       "RoleBinding",
     ]);
@@ -1507,6 +1582,7 @@ describe("Kubernetes runtime provider", () => {
       false,
     );
     expect(api.objects.has(key("Secret", NAMESPACE, `${DEPLOYMENT}-runtime`))).toBe(false);
+    expect(api.objects.has(key("Secret", NAMESPACE, `${DEPLOYMENT}-image-pull`))).toBe(false);
     expect(api.namespaces.has(NAMESPACE)).toBe(true);
     expect(api.writes).not.toContain("delete:Namespace");
   });

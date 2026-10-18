@@ -39,6 +39,8 @@ export interface KubernetesResourceRendererOptions {
   readonly controlService: string;
   /** Hard operator ceilings; producer requests are checked against these. */
   readonly maximumResources: RuntimeResourceQuantities;
+  /** Add the deterministic Provisioner-managed image pull Secret reference. */
+  readonly includeImagePullSecret?: boolean;
 }
 
 function failInvalid(message: string): never {
@@ -452,6 +454,9 @@ function deployment(
         metadata: { labels: podLabels },
         spec: {
           serviceAccountName: `${name}-app`,
+          ...(options.includeImagePullSecret === true
+            ? { imagePullSecrets: [{ name: `${name}-image-pull` }] }
+            : {}),
           automountServiceAccountToken: false,
           // Retain the old writer in the API census during a node partition.
           // Default 300-second eviction cannot prove its process has stopped.

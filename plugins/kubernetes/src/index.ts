@@ -14,6 +14,7 @@ export {
   createKubernetesResourceRenderer,
   type KubernetesResourceRendererOptions,
 } from "./kubernetes/renderer.js";
+export { validateApplicationImagePullConfig } from "./kubernetes/image-pull-config.js";
 export {
   readKubernetesCapacity,
   type KubernetesCapacityOptions,

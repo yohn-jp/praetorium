@@ -85,7 +85,7 @@
 | D1の世代・CAS・冪等キー | 同一Repositoryの一つのWriter、リトライ・競合防止 | **維持**。変更通知の導入とは独立 |
 | Operation/Buildの短時間Lease/Heartbeat | ワーカー停止/二重報告の防止 | **維持**。ただし空振りWork検索のためにHeartbeatは不要 |
 | Quiesce/Writer census/credential retirement | 未公開原稿・古いGit Writerを守る初期要件 | **維持**。K8s Pod ReadyやLease expiryでは代替不可 |
-| OCI Digest/署名/Closure/Smoke | 任意の不正ビルドや壊れたModule closureを拒否 | **維持** |
+| 固定Catalog／RecipeとOCI Digest・署名 | 任意パッケージ・コマンド・Dockerfileのビルドを入口で拒否し、承認済み構成と成果物を紐付ける | **維持**。信頼済みProducerが検証済みのClosureをPraetorium側で再走査する経路と重複Smokeは撤廃。実起動はk3s Readiness／Canaryで検証 |
 | KubernetesのLiveness/Readiness | コンテナの死活をK8sが扱う | **維持**。Control Planeによる周期的な「死活管理」は不要 |
 | RepositoryCoordinator DO | D1 CASに加えて一部変更要求を同一Repoで直列化 | **要判断**。DOに永続正本はなく、必要性・対象API・コストを再検証する |
 | UserAuthState/EphemeralCode DO | 原子的なセッション/one-use consume/token refresh | **必要性の根拠がある**。DOという製品名だけを理由に除去しない |

@@ -46,6 +46,10 @@ the disposable producer verification workflow is a separate verification additio
   identified an artifact naming collision on workflow reruns; names now include
   the build attempt, and the signer receives the successful build's exact
   metadata artifact name through its job output. Actual producer CI is pending.
+  The first run, [39084385532](https://github.com/yohn-jp/praetorium/actions/runs/39084385532),
+  passed certificate/tool pins and producer frozen install, then failed because
+  the host build's nested `pnpm` command had no PATH shim. The harness now creates
+  its own Corepack pnpm shim before invoking the unchanged producer build.
 - [CI 39083200410](https://github.com/yohn-jp/praetorium/actions/runs/39083200410)
   passed on `9d4a1d9`; service-image publication was skipped. Later source still
   needs its own CI result. No release tag or production deployment was made.

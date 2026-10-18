@@ -50,6 +50,7 @@ buildctl --version | grep -F 'v0.34.0'
 SCRIPTORIUM_DOCKERFILE_SHA256="$(sha256sum "$SCRIPTORIUM_ROOT/Dockerfile" | awk '{print $1}')"
 test "$SCRIPTORIUM_DOCKERFILE_SHA256" = "005b540188d5337e103bb4e5aba17c0ae4be3439c17d02b170a6b3d9a28ce350"
 
+corepack enable --install-directory "$BIN" pnpm
 (
   cd "$SCRIPTORIUM_ROOT"
   corepack pnpm@12.10.1 install --frozen-lockfile

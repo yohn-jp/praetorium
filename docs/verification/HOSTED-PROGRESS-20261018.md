@@ -376,7 +376,7 @@ puller owns that work. No CPU-budget or paid-plan change is required by this fix
 | Runtime platform | Four application Deployments available; two ACME certificates Ready; actual Build Worker to BuildKit mTLS connection passed | Per-repository workload from the admitted composition |
 | Public release admission | HTTP 201 at 05:43:58 UTC created candidate `rel_28a87a55-f1b3-4675-b57a-d9f3cca5cb6b`; the normal idempotent retry returned HTTP 200 for the same candidate | Normal Canary build/start/health/promotion; no D1 state rewrite |
 | Owned authoring repository | Repository ID `1423923158` has synthetic project/volume/chapter/scene/manuscript files in setup commit `edf0730` | Actual browser edit, Checkpoint, GitHub save, and reload; the setup push is not that proof |
-| Temporary public Runtime ingress | Owner selected Cloudflare Tunnel; private wildcard route configuration and connector launcher are prepared | Owner-side Tunnel creation, hostname route and connector credential; only this public path waits |
+| Public Runtime ingress | Owner-configured Caddy; all three sampled hostnames pass trusted public HTTPS; both authenticated notification routes return 202; stopped-instance navigation redirects to Gateway | Running tenant Pod and actual authenticated application entry; no Cloudflare Tunnel is needed |
 
 The accepted producer source remains Scriptorium
 `008d5c429ec279a424cafd5b8c4cbee70a613b8e`, with Runtime Base
@@ -396,8 +396,12 @@ No credentials were rotated and no Cloudflare management operation was run.
 
 ## Remaining acceptance
 
-The full G1–G9 outcome remains unproven. Public Tunnel setup blocks public
-browser entry, not independent implementation or Build/Runtime integration.
+The full G1–G9 outcome remains unproven. The owner-configured Caddy public
+route now passes the [actual public ingress checks](PUBLIC-INGRESS-CADDY-20261018.json).
+Both notification receivers accepted their authenticated hints. The instance
+currently returns `INSTANCE_STARTING`, and browser navigation redirects to its
+Gateway entry. No tenant Pod was present at the observation; the next dependency
+is normal Release/Canary/Build progression, not public Tunnel setup.
 Previously passed checks and measurements are retained as evidence and are not
 repeated without a changed input or concrete failure.
 
@@ -406,7 +410,7 @@ then the real browser edit → Checkpoint → Save to GitHub → same-origin rel
 The browser runner now performs those actual authoring assertions, including
 the numeric repository identity, the single synthetic manuscript path, confirmed
 publication receipt and remote commit, remote content, and reload persistence.
-Its live run still awaits public ingress and actual browser authentication; a
+Its live run still awaits a running tenant and actual browser authentication; a
 dashboard, setup Git push, fixture, or source check cannot substitute for it.
 
 After that path, the remaining real outcomes are distinct approved compositions

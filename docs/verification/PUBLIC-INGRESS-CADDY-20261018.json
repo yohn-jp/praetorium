@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "sourceRevision": "abbfb099f3d5bd57d76354fbcc11b7907e7e4e79",
+  "observedAtUtc": "2026-10-18T07:16:28.869518+00:00",
+  "scope": "Real public TLS, work notification delivery and stopped-instance fallback; not authenticated Scriptorium/browser/Git acceptance",
+  "publicIngress": "Owner-configured Caddy",
+  "ownerReportedUpstream": "https://10.7.0.31:443",
+  "wildcardHostname": "*.instances.praetorium.yohn.jp",
+  "publicTls": {
+    "verification": "System CA and requested hostname verification enabled",
+    "verifiedHosts": [
+      "notify-provisioner.instances.praetorium.yohn.jp",
+      "notify-build.instances.praetorium.yohn.jp",
+      "ins-01m56estantnhv8ba5j1pcnnqj.instances.praetorium.yohn.jp"
+    ]
+  },
+  "workNotifications": {
+    "command": "node scripts/verify-work-notifications.mjs --inventory <private-inventory> --secret-files <private-secret-files>",
+    "provisionerStatus": 202,
+    "buildStatus": 202,
+    "credentialsIncludedInEvidence": false,
+    "cloudflareNotificationConfiguration": "NOT_CHECKED_CURRENT_OWNER_AUTH_REQUIRED"
+  },
+  "instanceFallback": {
+    "instanceId": "ins_01M56ESTANTNHV8BA5J1PCNNQJ",
+    "apiRequestStatus": 503,
+    "apiErrorCode": "INSTANCE_STARTING",
+    "navigationStatus": 302,
+    "navigationLocation": "https://praetorium.yohn.jp/entry/ins_01M56ESTANTNHV8BA5J1PCNNQJ"
+  },
+  "caddyUpstreamCertificateVerificationPolicy": "NOT_CHECKED_CADDY_CONFIGURATION_NOT_AVAILABLE",
+  "tenantPod": "NOT_PRESENT_AT_OBSERVATION",
+  "hostedAcceptance": "NOT_CHECKED"
+}

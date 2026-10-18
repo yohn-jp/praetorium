@@ -308,6 +308,27 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
              SELECT 1 FROM operations o
              WHERE o.instance_id = logical_instances.instance_id
                AND o.status IN ('pending', 'claimed', 'running')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM release_candidate_workflows w
+             WHERE (
+               w.state = 'canary_starting'
+               AND EXISTS (
+                 SELECT 1 FROM idempotency_records plan
+                 JOIN deployment_revisions canary_revision
+                   ON canary_revision.revision_id = plan.response_id
+                 WHERE plan.scope = 'repository:' || CAST(logical_instances.repository_id AS TEXT)
+                   AND plan.idempotency_key = 'stable-canary-plan:' || w.release_id
+                   AND plan.response_kind = 'configuration-plan'
+                   AND canary_revision.instance_id = logical_instances.instance_id
+                   AND canary_revision.repository_id = logical_instances.repository_id
+                   AND canary_revision.actor_id = 'system:stable-release-canary'
+                   AND json_extract(canary_revision.selection_json, '$.releaseId') = w.release_id
+               )
+             ) OR (
+               w.state IN ('canary_observing', 'canary_cleanup')
+               AND w.canary_runtime_id = logical_instances.instance_id
+             )
            )`,
       )
       .bind(

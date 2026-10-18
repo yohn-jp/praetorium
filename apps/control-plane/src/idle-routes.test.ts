@@ -4,7 +4,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { ZodError } from "zod";
-import { RepositoryRegistryService } from "@praetorium/application/instances";
+import { InstanceService, RepositoryRegistryService } from "@praetorium/application/instances";
 import { OperationService } from "@praetorium/application/operations";
 import { D1PlatformStore } from "@praetorium/persistence/d1";
 import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
@@ -319,6 +319,132 @@ describe("Control Plane provisioner idle routes", () => {
     ).toEqual({ actor_kind: "provisioner", actor_id: WORKER_ID, action: "instance.stop" });
   });
 
+  it("keeps the exact active release canary out of idle-stop while allowing ordinary and cleanup stops", async () => {
+    const finalHealthSampleAt = NOW + 15 * 60_000;
+    const h = createHarness(finalHealthSampleAt);
+    await h.addReadyInstance("ins_canary_guard", 82);
+    await h.addReadyInstance("ins_impostor_guard", 84);
+    await h.addReadyInstance("ins_normal_guard", 83);
+    h.database
+      .prepare(
+        `INSERT INTO release_candidates (
+           release_id, image_digest, version, image_repository, status, candidate_json, created_at
+         ) VALUES ('rel_canary_guard', ?, '1.0.0', 'ghcr.io/praetorium/test', 'candidate', '{}', ?)`,
+      )
+      .run(`sha256:${"e".repeat(64)}`, new Date(NOW).toISOString());
+    h.database
+      .prepare(
+        `INSERT INTO idempotency_records (
+           scope, idempotency_key, request_hash, response_kind, response_id, created_at
+         ) VALUES ('repository:82', 'stable-canary-plan:rel_canary_guard', 'plan-hash',
+                   'configuration-plan', 'revision-ins_canary_guard', ?)`,
+      )
+      .run(NOW);
+    h.database
+      .prepare(
+        `INSERT INTO idempotency_records (
+           scope, idempotency_key, request_hash, response_kind, response_id, created_at
+         ) VALUES ('repository:84', 'stable-canary-plan:rel_canary_guard', 'user-plan-hash',
+                   'configuration-plan', 'revision-ins_impostor_guard', ?)`,
+      )
+      .run(NOW);
+    const canarySelection = JSON.stringify({
+      releaseId: "rel_canary_guard",
+      requestedModules: [],
+      resourceProfileId: "small",
+      policy: "pinned",
+    });
+    h.database
+      .prepare(
+        "UPDATE deployment_revisions SET selection_json = ?, actor_id = ? WHERE revision_id = ?",
+      )
+      .run(canarySelection, "system:stable-release-canary", "revision-ins_canary_guard");
+    h.database
+      .prepare(
+        "UPDATE deployment_revisions SET selection_json = ?, actor_id = ? WHERE revision_id = ?",
+      )
+      .run(canarySelection, "user-84", "revision-ins_impostor_guard");
+    h.database
+      .prepare(
+        `INSERT INTO release_candidate_workflows (
+           release_id, state, revision, attempts, next_attempt_at, lease_owner, lease_epoch,
+           lease_expires_at, canary_artifact_digest, canary_build_key, canary_runtime_id,
+           canary_operation_id, healthy_since, last_healthy_at, last_health_evidence_json,
+           cleanup_evidence_json, follower_cursor, follower_planning_complete,
+           canary_cleanup_complete, cleanup_disposition, failure_code, updated_at
+         ) VALUES ('rel_canary_guard', 'canary_starting', 0, 0, NULL, NULL, 0, NULL,
+                   NULL, 'build-key-ins_canary_guard', NULL, NULL, NULL, NULL, NULL, NULL,
+                   NULL, 0, 0, NULL, NULL, ?)`,
+      )
+      .run(NOW);
+
+    const idleStop = (instanceId: string, repositoryId: number) =>
+      h.request("/internal/provisioner/idle-stop", {
+        workerId: WORKER_ID,
+        clusterId: CLUSTER_ID,
+        instanceId,
+        repositoryId,
+        expectedGeneration: 1,
+        expectedRuntimeEpoch: 1,
+      });
+
+    const starting = await idleStop("ins_canary_guard", 82);
+    expect(starting.status).toBe(409);
+    expect(
+      h.database
+        .prepare("SELECT desired_state, generation FROM logical_instances WHERE instance_id = ?")
+        .get("ins_canary_guard"),
+    ).toEqual({ desired_state: "running", generation: 1 });
+
+    const unrelatedSameKey = await idleStop("ins_impostor_guard", 84);
+    expect(unrelatedSameKey.status).toBe(200);
+
+    h.database
+      .prepare(
+        `UPDATE release_candidate_workflows
+            SET state = 'canary_observing', canary_runtime_id = 'ins_canary_guard',
+                healthy_since = ?, last_healthy_at = ?, next_attempt_at = ?,
+                last_health_evidence_json = '{}'
+          WHERE release_id = 'rel_canary_guard'`,
+      )
+      .run(NOW + 5 * 60_000, NOW + 10 * 60_000, finalHealthSampleAt);
+    // The final canary sample is due now; its asynchronous promotion callback has not yet changed D1.
+    const observing = await idleStop("ins_canary_guard", 82);
+    expect(observing.status).toBe(409);
+
+    h.database
+      .prepare(
+        "UPDATE release_candidate_workflows SET state = 'canary_cleanup' WHERE release_id = ?",
+      )
+      .run("rel_canary_guard");
+    const cleanup = await idleStop("ins_canary_guard", 82);
+    expect(cleanup.status).toBe(409);
+
+    const ordinary = await idleStop("ins_normal_guard", 83);
+    expect(ordinary.status).toBe(200);
+
+    const canarySnapshot = await h.store.getByRepositoryId(82);
+    expect(canarySnapshot).not.toBeNull();
+    const cleanupStop = await new InstanceService(
+      h.store,
+      () => "op_release_canary_cleanup",
+    ).requestDesiredState({
+      repositoryId: 82,
+      bindingEpoch: canarySnapshot!.binding.bindingEpoch,
+      authorizationRevision: canarySnapshot!.binding.authorizationRevision,
+      desiredState: "stopped",
+      actorId: "system:stable-release-canary",
+      idempotencyKey: "stable-canary-stop:rel_canary_guard",
+      requestId: "t11-canary-stop:op-canary-start",
+      now: finalHealthSampleAt,
+    });
+    expect(cleanupStop.operation).toMatchObject({
+      id: "op_release_canary_cleanup",
+      kind: "stop",
+      status: "pending",
+    });
+  });
+
   it("rejects stale, suspended, cross-cluster, or active-operation stop requests without mutation", async () => {
     const cases = [
       {
@@ -466,11 +592,17 @@ describe("Control Plane provisioner idle routes", () => {
   });
 });
 
-function createHarness() {
+function createHarness(routeNow = NOW) {
   const database = new DatabaseSync(":memory:");
   activeDatabases.push(database);
   database.exec("PRAGMA foreign_keys = ON");
   database.exec(readFileSync(fileURLToPath(schemaUrl), "utf8"));
+  database.exec(
+    readFileSync(
+      new URL("../migrations/0002_stable_release_rollouts.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   const db = new SqliteD1Database(database);
   const store = new D1PlatformStore(db);
   let nextInstanceId = "unused-instance";
@@ -497,7 +629,7 @@ function createHarness() {
       credentialIssuer,
       workerId: WORKER_ID,
       clusterId: CLUSTER_ID,
-      now: () => NOW,
+      now: () => routeNow,
       newOperationId: () => `op_idle_${String(++operationNumber).padStart(3, "0")}`,
       ...(canaryHealthSchedule ? { canaryHealthSchedule } : {}),
       resolveCurrentRuntime,

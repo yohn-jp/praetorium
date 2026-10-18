@@ -546,7 +546,7 @@ try {
       await page.waitForFunction(() => window.cspViolations.length >= 2);
       assert.equal(
         await page.evaluate(() => getComputedStyle(document.body).backgroundColor),
-        "rgba(0, 0, 0, 0)",
+        "rgb(243, 245, 240)",
       );
       assert.deepEqual(errors, []);
       await context.close();

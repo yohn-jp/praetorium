@@ -173,6 +173,112 @@ function assertPublicOperation(operation, operationId, instanceId) {
   }
 }
 
+async function verifyFencedRuntimeIdentityOnRealD1(worker, gatewaySecret, provisionerSecret, instanceId) {
+  // Intentionally use the migrated Miniflare D1 database, not Node's SQLite.
+  // Only this disposable fixture is mutated; no external Kubernetes/Cloudflare.
+  const db = await worker.getD1Database("CONTROL_PLANE_DB");
+  const now = Date.now();
+  const epoch = 5;
+  const generation = 8;
+  const operationId = "op-ci-runtime-identity-5";
+  const reservationId = "res-ci-runtime-identity-5";
+  const leaseToken = "ci-runtime-identity-lease-".padEnd(64, "x");
+  const proof = {
+    instanceId,
+    repositoryId: testRepository.repositoryId,
+    retiredRuntimeEpoch: null,
+    providerObservationId: "ci-provider-observation-5",
+    censusObservedAt: new Date(now - 1_000).toISOString(),
+    remainingWriters: 0,
+    evidenceIdentities: ["ci-owned-disposable-census"],
+    source: "runtime-provider-census",
+  };
+  const absence = JSON.stringify({
+    schemaVersion: 1,
+    lifecycle: { instanceId, repositoryId: testRepository.repositoryId, writerAbsenceProof: proof },
+    writerAbsenceProof: proof,
+  });
+  const current = JSON.stringify({
+    schemaVersion: 1,
+    lifecycle: { instanceId, repositoryId: testRepository.repositoryId, phase: "starting-target", writerAbsenceProof: proof },
+    writerAbsenceProof: proof,
+  });
+  await db.prepare("UPDATE repository_bindings SET suspended=0 WHERE repository_id=?")
+    .bind(testRepository.repositoryId).run();
+  await db.prepare(
+    `UPDATE logical_instances
+       SET generation=?, runtime_epoch=?, observed_state='absent',
+           observed_generation=NULL, observed_runtime_epoch=NULL, observed_revision_id=NULL,
+           current_artifact_digest=NULL, desired_state='running',
+           reservation_state='reserved', reservation_id=?, updated_at=?
+     WHERE instance_id=? AND repository_id=?`,
+  ).bind(generation, epoch, reservationId, now, instanceId, testRepository.repositoryId).run();
+  await db.prepare(
+    `INSERT INTO runtime_reservations (
+       reservation_id, instance_id, repository_id, runtime_epoch, generation,
+       cluster_id, status, capacity_snapshot_epoch, cpu_milli, memory_mib,
+       ephemeral_storage_mib, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, 'test-cluster', 'reserved', 1, 100, 256, 128, ?, ?)`,
+  ).bind(reservationId, instanceId, testRepository.repositoryId, epoch, generation, now - 1_000, now - 1_000).run();
+  await db.prepare(
+    `INSERT INTO operations (
+       operation_id, instance_id, repository_id, generation, runtime_epoch, kind,
+       status, phase, attempt, lease_epoch, worker_id, lease_token, lease_expires_at,
+       report_sequence, checkpoint_sequence, checkpoint_json, cluster_id, reservation_id,
+       idempotency_scope, idempotency_key, request_hash, actor_id,
+       authorization_revision, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, 'redeploy',
+       'running', 'starting-target', 1, 4, 'test-worker', ?, ?,
+       1, 2, ?, 'test-cluster', ?,
+       ?, 'ci-target-lease', 'ci-target-request', '12345', 7, ?, ?)`,
+  ).bind(operationId, instanceId, testRepository.repositoryId, generation, epoch,
+    leaseToken, now + 60_000, current, reservationId,
+    `repo:${testRepository.repositoryId}`, now - 1_000, now).run();
+  await db.prepare(
+    `INSERT INTO operation_checkpoints (
+       operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at
+     ) VALUES (?, 1, 'old-writer-absent', ?, ?, 'test-worker', ?)`,
+  ).bind(operationId, epoch, absence, now - 500).run();
+  await db.prepare(
+    `INSERT INTO operation_checkpoints (
+       operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at
+     ) VALUES (?, 2, 'starting-target', ?, ?, 'test-worker', ?)`,
+  ).bind(operationId, epoch, current, now - 400).run();
+
+  const bindingUrl = `https://control-plane.test/internal/runtime-bindings/${testRepository.repositoryId}`;
+  const bindingResponse = await worker.dispatchFetch(bindingUrl, {
+    headers: gatewayHeaders(gatewaySecret),
+  });
+  assert.equal(bindingResponse.status, 200, "real D1 selects the fenced post-absence target");
+  assert.equal((await bindingResponse.json()).authority, "post-absence-target");
+  const payload = {
+    runtimeId: reservationId,
+    instanceId,
+    repositoryId: testRepository.repositoryId,
+    installationId: testRepository.installationId,
+    runtimeEpoch: epoch,
+    leaseId: reservationId,
+    workerId: "test-worker",
+    clusterId: "test-cluster",
+    operationId,
+    leaseToken,
+    leaseEpoch: 4,
+  };
+  const issued = await postJson(worker, "/internal/provisioner/runtime-identity",
+    provisionerSecret, payload, "Authorization");
+  assert.equal(issued.response.status, 200,
+    `real Workerd/D1 must issue a fenced target identity, got ${JSON.stringify(issued.body)}`);
+  assert.equal(typeof issued.body.token, "string");
+  const stale = await postJson(worker, "/internal/provisioner/runtime-identity",
+    provisionerSecret, { ...payload, leaseEpoch: 3 }, "Authorization");
+  assert.equal(stale.response.status, 409, "wrong lease epoch must be fenced by real D1");
+  await db.prepare("UPDATE operations SET lease_expires_at=? WHERE operation_id=?")
+    .bind(now - 1, operationId).run();
+  const expired = await postJson(worker, "/internal/provisioner/runtime-identity",
+    provisionerSecret, payload, "Authorization");
+  assert.equal(expired.response.status, 409, "expired operation lease must be rejected");
+}
+
 test("production Control Plane Worker uses migrated D1 and persistent repository Durable Object", async () => {
   await assertOwnedDisposableInventory();
   const workerInfo = await stat(workerEntryPath).catch(() => null);
@@ -708,6 +814,7 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
       )
       .first();
     assert.equal(maintenance, null, "scheduled recovery does not append advisory GC audits");
+    await verifyFencedRuntimeIdentityOnRealD1(miniflare, secrets.gateway, secrets.provisioner, instanceId);
   } finally {
     await miniflare?.dispose();
     await rm(persistenceRoot, { recursive: true, force: true });

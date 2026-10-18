@@ -2,6 +2,12 @@ export interface GatewayEnv {
   readonly USER_AUTH_STATE: DurableObjectNamespace;
   readonly EPHEMERAL_CODES: DurableObjectNamespace;
   readonly GATEWAY_KV: KVNamespace;
+  readonly LOGIN_RATE_LIMIT: RateLimit;
+  readonly MCP_SOURCE_RATE_LIMIT: RateLimit;
+  readonly MCP_CREDENTIAL_RATE_LIMIT: RateLimit;
+  readonly RUNTIME_GIT_RATE_LIMIT: RateLimit;
+  readonly WAKE_RATE_LIMIT: RateLimit;
+  readonly MUTATION_RECEIPT_RATE_LIMIT: RateLimit;
   readonly CONTROL_PLANE: Fetcher;
   readonly GATEWAY_ENVIRONMENT?: string;
   readonly GATEWAY_ORIGIN?: string;

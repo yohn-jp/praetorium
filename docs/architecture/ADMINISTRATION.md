@@ -79,7 +79,7 @@ kubectl --context "$CTX" -n praetorium-admin port-forward --address 127.0.0.1 sv
 - Headlampのログインには**既存の許可済み管理者の短命Kubernetes Token**等を使用し、その認可範囲が`kubectl auth can-i`で一致することを確認する。管理者向けClusterRoleBindingをこのアドオンが勝手に生成することはない。
 - 導入検証: Namespaceの`restricted`、Headlamp Deployment/ServiceのReady、`ClusterIP`のみ、Ingress/NodePort/ClusterRoleBindingが追加されないこと、未認証のKubernetes操作が拒否されること、明示的なRBAC権限内のNode/Pod/Events/Logsだけが見えることを確認する。
 - レンダー/CI検証と実クラスタ受入は異なる。対象Cluster、Chart版、リソースUID、RBACの実結果がない限り「本番配備済み」と報告しない。
-- Rollbackは同じ明示的contextで`kubectl delete -k infrastructure/kubernetes/addons/headlamp`（**このアドオンのNamespace/HelmRelease/HelmRepository/NetworkPolicyだけ**）とし、テナントNamespaceや既存のFlux Controllerには触れない。意図した場合以外は実行しない。
+- Rollbackはまず`flux-system/praetorium-headlamp`のHelmReleaseを削除し、Fluxによるreleaseのuninstallが完了したことを確認する。その後、アドオンのNetworkPolicy、HelmRepository、Namespaceを削除する。Namespaceを先に消すとuninstallを妨げるため、`kubectl delete -k`による一括削除はしない。テナントNamespaceや既存のFlux Controllerには触れない。本番での撤去も別途承認を必要とする。
 
 ## 6. 残すべき判断と非ゴール
 

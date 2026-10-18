@@ -216,7 +216,13 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
       capacity,
       producer,
       authProbe: this.options.authProbe
-        .withEndpointResolver((assignment, signal) => runtime.controlEndpoint(assignment, signal))
+        .withEndpointResolver(async (assignment, signal) => {
+          // A recovered completion checkpoint skips start(), including its
+          // identity renewal loop. Remote snapshot reads still need a current
+          // repository proof; renew through the existing fenced provider.
+          await runtime.refreshRuntimeIdentity(assignment, context.assertLease, signal);
+          return runtime.controlEndpoint(assignment, signal);
+        })
         .forLease(claim, this.options.workerId),
       runtime,
       routes: runtime,

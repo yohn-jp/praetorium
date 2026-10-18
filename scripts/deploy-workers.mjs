@@ -159,6 +159,7 @@ function inspectTemplates() {
     "BUILD_WORK_NOTIFICATION_URL",
     "RELEASE_POLICY_JSON",
     "RUNTIME_REGISTRY_HOST",
+    "GIT_CREDENTIAL_BROKER_LOCATOR",
   ].sort();
   if (
     Object.keys(controlPlane.vars ?? {})
@@ -292,6 +293,7 @@ try {
       "INSTANCE_HOST_SUFFIX",
       "RELEASE_POLICY_JSON",
       "RUNTIME_REGISTRY_HOST",
+      "GIT_CREDENTIAL_BROKER_LOCATOR",
       ...(notificationsEnabled
         ? ["PROVISIONER_WORK_NOTIFICATION_URL", "BUILD_WORK_NOTIFICATION_URL"]
         : []),

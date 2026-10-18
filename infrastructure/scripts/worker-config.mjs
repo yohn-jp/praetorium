@@ -73,6 +73,13 @@ export function renderWorkerTemplate(template, inventory, worker) {
     const variables = {};
     setStringVariable(variables, "CONTROL_PLANE_ORIGIN", inventory.domains.controlPlaneUrl);
     setStringVariable(variables, "GATEWAY_ORIGIN", inventory.domains.gatewayOrigin);
+    setStringVariable(
+      variables,
+      "GIT_CREDENTIAL_BROKER_LOCATOR",
+      inventory.domains.gatewayOrigin == null
+        ? null
+        : new URL("/internal/github/credential", inventory.domains.gatewayOrigin).href,
+    );
     setStringVariable(variables, "INSTANCE_HOST_SUFFIX", inventory.domains.instanceHostnameSuffix);
     setStringVariable(
       variables,

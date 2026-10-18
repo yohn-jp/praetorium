@@ -42,9 +42,13 @@ test("K3s deployment inventory has a distinct, fail-closed authority", () => {
 
 test("worker template uses the same inventory source for both endpoints", () => {
   const inventory = json("infrastructure/test/disposable-inventory.json");
+  inventory.domains.gatewayOrigin = "https://gateway.praetorium.example.net";
   const template = readFileSync(path.join(root, "infrastructure/workers/control-plane.template.json"), "utf8");
   const projected = JSON.parse(renderWorkerTemplate(template, inventory, "control-plane"));
   assert.equal(projected.vars.PROVISIONER_CLUSTER_ID, inventory.clusterId);
+  assert.equal(projected.vars.RUNTIME_REGISTRY_HOST, new URL(inventory.buildPolicy.registryUrl).host);
+  assert.equal(projected.vars.GIT_CREDENTIAL_BROKER_LOCATOR,
+    new URL("/internal/github/credential", inventory.domains.gatewayOrigin).href);
   assert.equal(projected.vars.PROVISIONER_WORKER_ID, inventory.clusterId + "-provisioner");
   assert.equal(projected.d1_databases[0].binding, "CONTROL_PLANE_DB");
   assert.equal(projected.vars.PROVISIONER_WORK_NOTIFICATION_URL, undefined);

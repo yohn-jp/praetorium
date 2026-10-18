@@ -993,6 +993,11 @@ export function createGatewayRouter(context: GatewayContext): Hono {
   app.get("/entry/:instanceId", (c) => handleDirectEntry(c.req.raw, context, c.req.param("instanceId")));
   app.get("/", (c) => portal(c.req.raw));
   app.get("/repositories/:repositoryId", (c) => portal(c.req.raw));
+  app.get("/repositories/:repositoryId/actions", (c) => {
+    const target = new URL(c.req.url);
+    target.pathname = target.pathname.slice(0, -"/actions".length);
+    return c.redirect(`${target.pathname}${target.search}`, 303);
+  });
   app.post("/repositories/:repositoryId/actions", (c) => portal(c.req.raw));
   app.notFound((c) => errorResponse(c.req.raw, "NOT_FOUND", "no route matches this request", context.requestId));
   app.onError(() => errorResponse(new Request(context.config.origin), "INTERNAL", "internal error", context.requestId));

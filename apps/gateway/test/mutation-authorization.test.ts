@@ -306,6 +306,22 @@ async function setup(options: {
 }
 
 describe("Gateway mutation authorization endpoint", () => {
+  it("redirects legacy GET action URLs to the dashboard without portal activity", async () => {
+    const test = await setup();
+    const response = await test.router.fetch(new Request(
+      `${ORIGIN}/repositories/${REPOSITORY_ID}/actions?ui=mobile&poll=3`,
+    ));
+    const location = response.headers.get("location");
+
+    expect(response.status).toBe(303);
+    expect(location).not.toBeNull();
+    expect(new URL(location!, ORIGIN).pathname).toBe(`/repositories/${REPOSITORY_ID}`);
+    expect(new URL(location!, ORIGIN).search).toBe("?ui=mobile&poll=3");
+    expect(test.repositoryReads).toBe(0);
+    expect(test.accessChecks).toBe(0);
+    expect(test.desiredRequests).toBe(0);
+  });
+
   it("routes runtime Git credential issuance only through an explicitly configured broker", async () => {
     const valid = {
       operation: "fetch",

@@ -106,6 +106,7 @@ export function pollingScript(nonce: string, pollCount: number): string {
       ? ""
       : `<script nonce="${escapeHtml(nonce)}">` +
         `const n=${safeCount};const u=new URL(location.href);` +
+        `if(u.pathname.endsWith('/actions'))u.pathname=u.pathname.slice(0,-8);` +
         `u.searchParams.set('poll',String(n+1));` +
         `setTimeout(()=>{if(document.querySelector('[data-configuration-form]')?.dataset.dirty==='true')return;u.hash=location.hash;location.replace(u.toString());},Math.min(16000,1000*2**n));` +
         `</script>`;

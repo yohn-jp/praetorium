@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import {
   createPortalHandler,
@@ -6,6 +7,7 @@ import {
   renderRepositoryDashboard,
   renderRepositoryList,
 } from "./index.js";
+import { pollingScript } from "./views/operations.js";
 import type {
   PortalHandlerDependencies,
   PortalOperation,
@@ -571,6 +573,33 @@ describe("server-rendered management UI", () => {
     expect(first).toContain("dataset.dirty");
     expect(last).toContain("beforeunload");
     expect(last).toContain("Refresh status");
+  });
+
+  it("polls the dashboard after an action POST and keeps dirty-form navigation blocked", () => {
+    const script = pollingScript("script-nonce", 0).match(
+      /<script nonce="[^"]+">([\s\S]*?)<\/script>/u,
+    )?.[1];
+    expect(script).toBeDefined();
+
+    const run = (dirty: boolean): string[] => {
+      const replacements: string[] = [];
+      runInNewContext(script!, {
+        URL,
+        location: {
+          href: "https://gateway.example/repositories/123456789/actions?ui=desktop#configuration",
+          hash: "#configuration",
+          replace: (value: string) => replacements.push(value),
+        },
+        document: { querySelector: () => ({ dataset: { dirty: String(dirty) } }) },
+        setTimeout: (callback: () => void) => callback(),
+      });
+      return replacements;
+    };
+
+    expect(run(false)).toEqual([
+      "https://gateway.example/repositories/123456789?ui=desktop&poll=1#configuration",
+    ]);
+    expect(run(true)).toEqual([]);
   });
 
   it("keeps handoff codes in a no-store POST body and rejects untrusted destinations", async () => {

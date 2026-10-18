@@ -494,7 +494,11 @@ async function moduleDisplayNames(form) {
         return name && version ? { id: input.value, displayName: `${name} (${version})` } : null;
       }),
     );
-  return new Map(options.filter((option) => option !== null).map((option) => [option.id, option.displayName]));
+  if (options.some((option) => option === null)) return null;
+  const byId = new Map(options.map((option) => [option.id, option.displayName]));
+  const names = [...byId.values()];
+  if (names.length !== new Set(names).size) return null;
+  return byId;
 }
 
 function sameSelection(left, right) {
@@ -910,15 +914,9 @@ test(
         1,
         "the live repository list must show the owned repository",
       );
-      const manageRepository = page.getByRole("link", {
-        name: "Manage repository",
-        exact: true,
-      });
-      assert.equal(
-        await manageRepository.count(),
-        1,
-        "the owned repository must expose its management link",
-      );
+      // Other authorized repositories can have their own management links.
+      // Follow only the link bound to this run's owned repository.
+      const manageRepository = repositoryLink;
       const manageUrl = new URL(
         await manageRepository.getAttribute("href"),
         derived.gatewayOrigin.origin,

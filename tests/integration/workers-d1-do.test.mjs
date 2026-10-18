@@ -756,6 +756,7 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
           workerId: "t14-owned-release-worker",
           clusterId: "test-cluster",
           operatorActorId: "t14-owned-operator",
+          canaryProbeActorId: 12345,
           signerIdentityAllowlist: [{ subjectAlternativeName: "t14-owned-producer@test.invalid" }],
           canary: {
             owner: "sophia uid=1000",

@@ -1,0 +1,36 @@
+{
+  "imageSourceCommit": "bef4eb7c9059281fe4b503185923b4eb964c02cd",
+  "deploymentSourceCommit": "d4eebbb0807b25e11e2e072f57a1d3ce33f5d580",
+  "publicationRun": "https://github.com/yohn-jp/praetorium/actions/runs/39108408228",
+  "observedAtUtc": "2026-10-18T07:53:01.725651+00:00",
+  "deployExitCode": 0,
+  "namespace": "praetorium-build",
+  "deployment": "praetorium-build-worker",
+  "configuredImage": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:305c263e7d38e68f5da4db8d30d70312d9e1e84e9acf44c003342b352af3f39f",
+  "readyReplicas": 1,
+  "pods": [
+    {
+      "name": "praetorium-build-worker-76d68d49f4-7s9pf",
+      "uid": "97f687d2-f8eb-473a-89ad-2ad65d60e94f",
+      "containers": [
+        {
+          "name": "build-worker",
+          "imageId": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:305c263e7d38e68f5da4db8d30d70312d9e1e84e9acf44c003342b352af3f39f",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    }
+  ],
+  "caReadVerification": {
+    "runtimeUid": 10001,
+    "bytes": 181305,
+    "directoryModes": "0755",
+    "pemParsed": true
+  },
+  "otherServiceImagePinsChanged": false,
+  "credentialsRotated": false,
+  "cloudflareManagementPerformed": false,
+  "canaryBuild": "BLOCKED_RETRY_SQL_EXPRESSION_DEPTH",
+  "hostedAcceptance": "NOT_CHECKED"
+}

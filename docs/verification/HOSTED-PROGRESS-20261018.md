@@ -464,3 +464,31 @@ replay fix and found no remaining actionable defect in this scoped change.
 These source results do not certify a successful real Canary or Hosted browser
 session. The remaining sequence is replacement Build Worker readiness, normal
 Operator retry, actual Build/Canary/Runtime progression, then authoring acceptance.
+
+
+## Recovery deployment and D1 compatibility (2026-10-18 07:55 UTC)
+
+The CA-directory correction publication succeeded. The canonical Runtime deploy
+completed with exit code 0 at 07:44:22 UTC. The replacement Build Worker is Ready
+with zero restarts and can parse the 181,305-byte public CA bundle under its
+actual UID 10001. Only its image pin changed; no credentials changed.
+[Live deployment receipt](RUNTIME-BUILD-WORKER-CA-bef4eb7.json).
+
+The Operator status API is deployed and returns the existing candidate and
+blocked workflow. A normal retry passed authentication, persisted candidate
+loading and external immutable evidence verification, then failed inside D1.
+The durable workflow remained blocked at revision 3 and the failed Build attempt
+was retained. A fresh local Miniflare D1 reproduction identified the initial
+retry UPDATE's 60-term conjunction exceeding D1's expression-depth limit of 100.
+This was a limitation missed by the Node SQLite test adapter, not missing
+Cloudflare configuration or credentials.
+
+The canonical SQL fix groups the same predicates into four parenthesized groups.
+It preserves every gate and placeholder order; separate read-only review found
+no defect. Fresh Miniflare D1 then accepted the retry, let the ordinary queue
+claim attempt 2 at lease epoch 3, and accepted the exact duplicate without another
+mutation. This uses synthetic local inputs and proves D1 compatibility only;
+it is not a real Hosted Build or browser acceptance result.
+[Bounded local D1 result](CANARY-RETRY-D1-DEPTH-20261018.json).
+The next action is deploy this source correction and retry the same real
+candidate through the Operator API; no remote SQL repair is required.

@@ -363,3 +363,14 @@ it("classifies a missing D1 schema through nested causes without returning SQL",
     code: "RELEASE_RETRY_UNAVAILABLE", stage: "commit", reason: "schema_missing",
   } });
 });
+
+
+it("identifies D1 expression limits without returning SQL or error payloads", async () => {
+  const { routeDeps, retry } = retryFixture();
+  retry.execute.mockRejectedValueOnce(new Error("D1_ERROR: Expression tree is too large (maximum depth 100): SQLITE_ERROR"));
+  const response = await createOperatorReleaseAdmissionRoutes(routeDeps)
+    .request("/release-test/retry", retryRequest());
+  expect(await response.json()).toEqual({ error: {
+    code: "RELEASE_RETRY_UNAVAILABLE", stage: "commit", reason: "query_limit",
+  } });
+});

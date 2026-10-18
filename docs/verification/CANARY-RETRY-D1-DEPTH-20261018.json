@@ -1,0 +1,17 @@
+{
+  "scope": "fresh local Miniflare D1 only; production compiled adapter invoked inside Workerd",
+  "fixtureOnly": true,
+  "migrationStatementsApplied": 45,
+  "seedStatementsApplied": 9,
+  "retryKind": "accepted",
+  "retryDuplicate": false,
+  "retryBuildStatus": "pending",
+  "normalNextClaim": {
+    "attempt": 2,
+    "leaseEpoch": 3
+  },
+  "replayKind": "accepted",
+  "replayDuplicate": true,
+  "remoteD1MutationsPerformed": false,
+  "hostedAcceptance": "NOT_CHECKED"
+}

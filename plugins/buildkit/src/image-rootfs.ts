@@ -32,9 +32,9 @@ export type BuildKitImageRootfs = {
 
 /**
  * Exports and inspects one digest-pinned image using the configured isolated
- * BuildKit worker. The temporary Dockerfile copies only that image's merged
- * rootfs and runs its configured entrypoint under BuildKit's networkless RUN
- * sandbox before the export can complete.
+ * BuildKit worker. Metadata-only mode exports one explicitly selected file;
+ * full inspection mode copies the merged rootfs and runs its configured
+ * entrypoint under BuildKit's networkless RUN sandbox before export.
  */
 export class BuildKitImageRootfsExporter {
   private readonly runBuildctl: BuildctlRunner;

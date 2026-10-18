@@ -181,17 +181,17 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
         return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
       await deps.retireCredentials(operation);
     }
-    return c.json(operation);
+    return c.json({ operation });
   });
   app.post("/advance-epoch", async (c) => {
     const input = Advance.parse(await boundedJson(c.req.raw));
     scoped(input);
-    return c.json(
-      await deps.operations.advanceRuntimeEpochForRecovery({
+    return c.json({
+      operation: await deps.operations.advanceRuntimeEpochForRecovery({
         ...input,
         now: deps.now(),
       }),
-    );
+    });
   });
   app.post("/report", async (c) => {
     const input = Report.parse(await boundedJson(c.req.raw));

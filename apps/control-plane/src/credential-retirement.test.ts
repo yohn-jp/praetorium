@@ -176,6 +176,37 @@ describe("known credential retirement barrier", () => {
       });
     expect((await request()).status).toBe(503);
     pending = false;
-    expect((await request()).status).toBe(200);
+    const response = await request();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ operation: absent });
+  });
+
+  it("returns the recovered operation in the provisioner client's operation envelope", async () => {
+    const recovered = { ...operation, runtimeEpoch: 5 } as OperationRecord;
+    const app = createProvisionerRoutes({
+      operations: {
+        async advanceRuntimeEpochForRecovery() {
+          return recovered;
+        },
+      } as unknown as OperationService,
+      workerId: "worker-test",
+      clusterId: "cluster-test",
+      now: () => 1,
+      resolveRuntimeContext: async () => ({}),
+    });
+    const response = await app.request("/advance-epoch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operationId: operation.id,
+        workerId: "worker-test",
+        leaseToken: "l".repeat(32),
+        leaseEpoch: 1,
+        expectedRuntimeEpoch: 4,
+        checkpoint: {},
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ operation: recovered });
   });
 });

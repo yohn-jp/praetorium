@@ -7,7 +7,7 @@ is unchanged. Source checks do not certify Hosted acceptance.
 
 Repository identity is GitHub numeric ID `1422456736` (`yohn-jp/praetorium`).
 The campaign started from `e7926f472e12e5f0ec30db88e459328dd08ca58d`.
-The latest integrated and pushed product source is `3ec80b5`.
+The latest integrated and pushed product source is `5ca00e2`.
 The disposable producer and service-image workflows provide separate evidence;
 neither publishes production images.
 
@@ -148,6 +148,34 @@ removed; archived expired inventories are not current acceptance inputs.
   on `3ec80b5` and documentation cut `6596ac6`. The latter's actual bundled
   Workers/D1/DO runner passed; six other categories remain BLOCKED/NOT_CHECKED,
   so the aggregate correctly exited 2. No canary success was fabricated.
+- All three `3ec80b5` service archives were authenticated-decrypted, checked
+  against their reports and imported with preserved digests into the owned
+  registry. Strict-TLS raw-manifest and registry-header readback matched all
+  three candidate digests. No public GHCR publication occurred.
+- The actual Build Worker claimed the canary job and built an image, but its
+  terminal report initially returned 503. The owned BuildKit registry needed
+  explicit HTTPS for its loopback host; that configuration was corrected
+  without changing the production daemon. A separate real D1 exception exposed
+  a missing literal NULL for audit `request_id` in `D1BuildStore.recordReport`,
+  causing a parameter-binding count mismatch. `5ca00e2` fixes the SQL and adds
+  an actual transactional SQLite regression. Frozen install, full check and
+  [source CI 39088779771](https://github.com/yohn-jp/praetorium/actions/runs/39088779771)
+  passed. The actual Workers/D1/DO category, now including the Workerd crypto
+  regression, also passed on that cut; six other categories remain unverified.
+- On clean `5ca00e2` Workerd, the real Build Worker success report returned
+  HTTP 200 with `accepted=true`. API and read-only D1 readback confirmed build
+  `succeeded` and an admitted revision with image digest
+  `sha256:51d699ab516f6c57df54745530384821fc2934db173b4cdeb10d8bcf6deb36d2`.
+  Normal scheduled-handler progression created the ordinary canary redeploy
+  operation; no reservation, assignment or health result was fabricated.
+  Runtime execution and healthy canary completion remain separate checks.
+- The owned Kind cluster now has the pinned Traefik controller (2/2 Ready)
+  and established IngressRoute CRD. The fresh Provisioner image passed verified
+  CP HTTPS, actual ServiceAccount Kubernetes API access and PodIP reachability
+  checks using a bounded local network fixture. The exact candidate image was
+  pulled into containerd with strict TLS and its manifest digest preserved.
+  These are readiness proofs, not a running assigned Scriptorium or public
+  ingress acceptance. Kind packet-policy enforcement remains NOT_CHECKED.
 - The real Core image declares user `node` (UID/GID 1000). Kubernetes rejected
   the earlier nonnumeric identity with `runAsNonRoot`. The renderer now sets
   UID/GID and volume group 1000. An owned live-policy Pod using the exact image
@@ -163,6 +191,11 @@ removed; archived expired inventories are not current acceptance inputs.
   returned 202 and triggered exactly one additional claim (HTTP 204). BuildKit
   and registry were not contacted. This demonstrates local trigger behavior;
   production Cloudflare request, CPU, D1/DO and outage measurements remain open.
+  Existing active Build traces record 30 monitored queue requests across four
+  separate bounded attempts: four claimed jobs, one empty claim, 21 heartbeats,
+  three 503 reports and one accepted report. The successful claim-to-report
+  window was 18.101 seconds. Earlier attempts were stopped manually; these
+  traces do not certify automatic outage recovery or total platform cost.
 - Production inventory preflight actually ran and stopped at validation. After
   deriving routine fields, outstanding validator inputs are Cloudflare account
   identity, the verified existing production builder public key, three final

@@ -293,6 +293,14 @@ function image(value: string | null): string {
   return value ? escapeHtml(value) : "Not built";
 }
 
+function shortDigest(value: string): string {
+  const algorithmPrefix = "sha256:";
+  if (value.startsWith(algorithmPrefix) && value.length > algorithmPrefix.length + 12) {
+    return `${algorithmPrefix}${value.slice(algorithmPrefix.length, algorithmPrefix.length + 12)}…`;
+  }
+  return value.length > 24 ? `${value.slice(0, 21)}…` : value;
+}
+
 function safeCount(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
@@ -516,7 +524,7 @@ function optionsForReleases(
     .map(
       (release) =>
         `<option value="${escapeHtml(release.releaseId)}"${release.releaseId === selectedId ? " selected" : ""}>` +
-        `${escapeHtml(release.label)} · ${escapeHtml(release.imageDigest)}</option>`,
+        `${escapeHtml(release.label)} · ${escapeHtml(shortDigest(release.imageDigest))}</option>`,
     )
     .join("");
 }
@@ -530,7 +538,7 @@ function optionsForModules(
     .map(
       (module) =>
         `<option value="${escapeHtml(module.moduleId)}"${selected.has(module.moduleId) ? " selected" : ""}>` +
-        `${escapeHtml(module.label)} (${escapeHtml(module.version)} · ${escapeHtml(module.artifactDigest)})</option>`,
+        `${escapeHtml(module.label)} (${escapeHtml(module.version)} · ${escapeHtml(shortDigest(module.artifactDigest))})</option>`,
     )
     .join("");
 }
@@ -616,18 +624,18 @@ function configurationForm(
     [];
   const resourceProfileId = preview?.resourceProfileId ?? dashboard.desired?.resourceProfileId;
   const canSave = preview?.state !== "unsupported" && preview?.state !== "unavailable";
-  const formFields = (prefix: string) =>
+  const formFields = () =>
     `<div class="form-grid">` +
-    `<label class="form-field" for="${prefix}-release-policy"><span>Release policy</span><select id="${prefix}-release-policy" name="releasePolicy" required>` +
+    `<label class="form-field" for="configuration-release-policy"><span>Release policy</span><select id="configuration-release-policy" name="releasePolicy" required>` +
     `<option value="stable"${policy === "stable" ? " selected" : ""}>Follow stable releases</option>` +
     `<option value="pinned"${policy === "pinned" ? " selected" : ""}>Pin an approved release</option></select>` +
     `<span class="field-help">Stable follows the approved stable release; pinned keeps the selected approved release.</span></label>` +
-    `<label class="form-field" for="${prefix}-release-id"><span>Approved base release</span><select id="${prefix}-release-id" name="releaseId" required>${optionsForReleases(dashboard, releaseId)}</select>` +
+    `<label class="form-field" for="configuration-release-id"><span>Approved base release</span><select id="configuration-release-id" name="releaseId" required>${optionsForReleases(dashboard, releaseId)}</select>` +
     `<span class="field-help">Only releases already approved for this workspace appear here.</span></label>` +
-    `<label class="form-field" for="${prefix}-module-ids"><span>Requested modules</span><select id="${prefix}-module-ids" name="moduleIds" multiple size="${Math.min(Math.max(dashboard.modules.length, 2), 8)}" aria-describedby="${prefix}-module-ids-help">` +
+    `<label class="form-field" for="configuration-module-ids"><span>Requested modules</span><select id="configuration-module-ids" name="moduleIds" multiple size="${Math.min(Math.max(dashboard.modules.length, 2), 8)}" aria-describedby="configuration-module-ids-help">` +
     `${optionsForModules(dashboard, selectedModules)}</select>` +
-    `<span class="field-help" id="${prefix}-module-ids-help">Use Ctrl or Command to select more than one module. Required dependencies are shown in the preview.</span></label>` +
-    `<label class="form-field" for="${prefix}-resource-profile"><span>Resource profile</span><select id="${prefix}-resource-profile" name="resourceProfileId" required>${optionsForResources(dashboard, resourceProfileId)}</select>` +
+    `<span class="field-help" id="configuration-module-ids-help">Use Ctrl or Command to select more than one module. Required dependencies are shown in the preview.</span></label>` +
+    `<label class="form-field" for="configuration-resource-profile"><span>Resource profile</span><select id="configuration-resource-profile" name="resourceProfileId" required>${optionsForResources(dashboard, resourceProfileId)}</select>` +
     `<span class="field-help">The application service checks this profile against current operator limits.</span></label></div>`;
   return (
     `<section class="configuration-panel" aria-labelledby="configuration"><p class="eyebrow">Configuration</p>` +
@@ -637,12 +645,10 @@ function configurationForm(
     `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
     `<input type="hidden" name="idempotencyKey" value="${escapeHtml(createIdempotencyKey())}">` +
     `<input type="hidden" name="expectedGeneration" value="${dashboard.generation}">` +
-    `<input type="hidden" name="action" value="configure">` +
-    `${formFields("save")}<div class="form-actions"><button class="button" type="submit"${canSave ? "" : " disabled"}>Save configuration and build</button></div></form>` +
-    `<form method="post" action="${actionPath}">` +
-    `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
-    `<input type="hidden" name="action" value="preview">` +
-    `${formFields("preview")}<div class="form-actions"><button type="submit" class="button button-secondary">Preview selection</button></div></form></section>`
+    `${formFields()}<div class="form-actions">` +
+    `<button class="button" type="submit" name="action" value="configure"${canSave ? "" : " disabled"}>Save configuration and build</button>` +
+    `<button type="submit" class="button button-secondary" name="action" value="preview">Preview selection</button>` +
+    `</div></form></section>`
   );
 }
 

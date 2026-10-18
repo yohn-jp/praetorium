@@ -236,8 +236,16 @@ describe("server-rendered management UI", () => {
     expect(html).toContain('name="expectedGeneration" value="4"');
     expect(html).toContain('name="csrfToken" value="csrf-token-value"');
     expect(html).toContain('name="idempotencyKey" value="token_12345678901234567890"');
-    expect(html).toContain('aria-describedby="save-module-ids-help"');
-    expect(html).toContain('aria-describedby="preview-module-ids-help"');
+    expect(html).toContain('aria-describedby="configuration-module-ids-help"');
+
+    const configurationSection = /<section class="configuration-panel" aria-labelledby="configuration">([\s\S]*?)<\/section>/.exec(html)?.[1];
+    expect(configurationSection).toBeDefined();
+    expect(configurationSection!.match(/<form\b/g)).toHaveLength(1);
+    expect(configurationSection).toContain('name="action" value="configure"');
+    expect(configurationSection).toContain('name="action" value="preview"');
+    for (const field of ["csrfToken", "idempotencyKey", "expectedGeneration", "releasePolicy", "releaseId", "moduleIds", "resourceProfileId"]) {
+      expect(configurationSection!.match(new RegExp(`name="${field}"`, "g"))).toHaveLength(1);
+    }
 
     const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
     expect(new Set(ids).size).toBe(ids.length);
@@ -545,8 +553,78 @@ describe("server-rendered management UI", () => {
     expect(html).toContain('<option value="search" selected>');
     expect(html).toContain('<option value="pinned" selected>');
     expect(html).toContain('name="action" value="configure"');
-    expect(html).toContain('class="button" type="submit" disabled>Save configuration and build');
+    expect(html).toContain('class="button" type="submit" name="action" value="configure" disabled>Save configuration and build');
     expect(html).not.toContain("<script>release");
+  });
+
+  it("shortens digest labels without changing approved option values", async () => {
+    const longDigest = `sha256:${"c".repeat(64)}`;
+    const html = await renderRepositoryDashboard(
+      {
+        ...dashboard,
+        approvedReleases: [{ releaseId: "rel_01", label: "Stable 1.2", imageDigest: longDigest }],
+        modules: [{ moduleId: "editor", label: "Editor", version: "2.0.0", artifactDigest: longDigest }],
+      },
+      {
+        csrfToken: "csrf-token-value",
+        createIdempotencyKey: () => "token_12345678901234567890",
+      },
+    ).text();
+
+    expect(html).toContain(`<option value="rel_01" selected>Stable 1.2 · sha256:${"c".repeat(12)}…</option>`);
+    expect(html).toContain(`<option value="editor" selected>Editor (2.0.0 · sha256:${"c".repeat(12)}…)</option>`);
+    expect(html).not.toContain(longDigest);
+  });
+
+  it("routes preview and save buttons with the shared configuration selection", async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true as const,
+        value: { kind: "preview" as const, preview: dashboard.preview! },
+      })
+      .mockResolvedValueOnce({
+        ok: true as const,
+        value: { kind: "configuration" as const, revisionId: "rev_next", buildId: "build_next" },
+      });
+    const service: PortalService = {
+      listRepositories: async () => ({ ok: true, value: repositoryList }),
+      getRepository: async () => ({ ok: true, value: dashboard }),
+      execute,
+    };
+    const handler = createPortalHandler(sessionDependencies(service));
+    const sharedFields = {
+      csrfToken: "csrf-token-value",
+      expectedGeneration: "4",
+      idempotencyKey: "config-key-1234567890123456",
+      releasePolicy: "pinned",
+      releaseId: "rel_01",
+      moduleIds: "editor",
+      resourceProfileId: "balanced",
+    };
+
+    const previewResponse = await handler(actionRequest({ ...sharedFields, action: "preview" }));
+    const previewHtml = await previewResponse.text();
+    expect(previewResponse.status).toBe(200);
+    expect(execute).toHaveBeenNthCalledWith(1, { userId: "user_01" }, "123456789", {
+      kind: "preview",
+      releasePolicy: "pinned",
+      releaseId: "rel_01",
+      moduleIds: ["editor"],
+      resourceProfileId: "balanced",
+    });
+    expect(previewHtml).toContain("Supported module configuration");
+
+    const configureResponse = await handler(actionRequest({ ...sharedFields, action: "configure" }));
+    expect(configureResponse.status).toBe(202);
+    expect(execute).toHaveBeenNthCalledWith(2, { userId: "user_01" }, "123456789", {
+      kind: "configure",
+      expectedGeneration: 4,
+      idempotencyKey: "config-key-1234567890123456",
+      releasePolicy: "pinned",
+      releaseId: "rel_01",
+      moduleIds: ["editor"],
+      resourceProfileId: "balanced",
+    });
   });
 
   it("bounds automatic progress refresh and exposes a manual retry after the limit", async () => {

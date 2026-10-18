@@ -6,3 +6,5 @@ allowBuilds:
   esbuild: true
   sharp: false
   workerd: true
+patchedDependencies:
+  '@sigstore/core@4.0.1': plugins/ghcr/patches/@sigstore__core@4.0.1.patch

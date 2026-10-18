@@ -10,7 +10,7 @@ import {
   type UserId,
 } from "@praetorium/auth";
 import type { AccessDecision } from "@praetorium/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createGatewayRouter } from "../src/router.js";
 import type { GatewayContext } from "../src/context.js";
 import {
@@ -363,6 +363,55 @@ describe("Gateway mutation authorization endpoint", () => {
     }));
     expect(unknownOperation.status).toBe(400);
     expect(receivedOperation).toBe("fetch");
+  });
+
+  it("logs only allowlisted runtime Git broker rejection reasons", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const body = JSON.stringify({
+      operation: "fetch",
+      proof: {
+        serviceToken: "runtime-service-token-long-enough",
+        runtimeId: "runtime-1",
+        instanceId: INSTANCE_ID,
+        repositoryId: REPOSITORY_ID,
+        installationId: 83_104,
+        runtimeEpoch: 7,
+        leaseId: "lease-1",
+      },
+    });
+    const requestForReason = async (reason: string) => {
+      const test = await setup({
+        credentialBroker: {
+          async issue() {
+            return { status: "denied", reason };
+          },
+        },
+      });
+      return test.router.fetch(new Request(`${ORIGIN}/internal/github/credential`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      }));
+    };
+    try {
+      const response = await requestForReason("repository_binding_stale");
+      expect(response.status).toBe(401);
+      expect(warning).toHaveBeenCalledWith(JSON.stringify({
+        event: "runtime_git_credential_rejected",
+        status: "denied",
+        reason: "repository_binding_stale",
+      }));
+
+      await requestForReason("private-token-value");
+      expect(warning).toHaveBeenLastCalledWith(JSON.stringify({
+        event: "runtime_git_credential_rejected",
+        status: "denied",
+        reason: "unknown",
+      }));
+      expect(warning.mock.calls.flat().join(" ")).not.toContain("private-token-value");
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("rejects duplicate host-only session and CSRF cookie names", async () => {

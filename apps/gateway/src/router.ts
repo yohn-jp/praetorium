@@ -65,6 +65,26 @@ const MAX_INTERNAL_BODY_BYTES = 8_192;
 const INSTANCE_STARTING_RETRY_SECONDS = 5;
 const MAX_DIRECT_ENTRY_POLLS = 5;
 const TOKEN_PERMISSIONS = new Set(["read", "write", "maintain", "admin"]);
+const RUNTIME_GIT_BROKER_REASONS = new Set([
+  "invalid_operation",
+  "invalid_request_time",
+  "runtime_identity_unavailable",
+  "runtime_identity_invalid",
+  "runtime_binding_unavailable",
+  "runtime_binding_stale",
+  "repository_binding_unavailable",
+  "repository_binding_stale",
+  "mutation_receipt_verification_unavailable",
+  "mutation_receipt_keys_unavailable",
+  "mutation_receipt_invalid",
+  "mutation_receipt_authorization_stale",
+  "actor_authorization_unavailable",
+  "publish_actor_not_authorized",
+  "runtime_credential_registry_unavailable",
+  "runtime_retired",
+  "installation_credential_unavailable",
+  "installation_not_active",
+]);
 const MutationReceiptRequestSchema = z.strictObject({
   operationId: z.string().min(1).max(128).refine((value) => !hasControlCharacters(value)),
   payloadDigest: DigestSchema,
@@ -663,6 +683,11 @@ async function handleRuntimeGitCredential(request: Request, context: GatewayCont
     }
     const result = await githubCredentialBroker.issue({ ...parsed.data, now: context.requestNow });
     if (result.status === "issued") return json(result.credential);
+    console.warn(JSON.stringify({
+      event: "runtime_git_credential_rejected",
+      status: result.status,
+      reason: RUNTIME_GIT_BROKER_REASONS.has(result.reason) ? result.reason : "unknown",
+    }));
     if (result.status === "denied") return errorResponse(request, "UNAUTHENTICATED", "runtime credential is not authorized", context.requestId);
     return unavailable(request, context);
   } catch {

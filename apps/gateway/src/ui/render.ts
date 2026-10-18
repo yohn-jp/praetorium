@@ -334,6 +334,15 @@ export function renderRepositoryDashboard(
         access,
         current,
         desired,
+        evidence: (() => {
+          const recent = options.notice ?? dashboard.operations[0];
+          if (!recent) return '<p class="evidence-no-activity">No recent operation.</p>';
+          const summary = recent.error ?? recent.message ?? "No further information available.";
+          return '<div class="evidence-incident"><span class="evidence-incident-label">LATEST OPERATION · ' +
+            escapeHtml(recent.kind) + '</span>' +
+            statusBadge(operationStateLabel(recent.state), recent.state) +
+            '<p>' + escapeHtml(summary) + '</p></div>';
+        })(),
         policy: statusBadge(
           dashboard.releasePolicy.kind === "stable" ? "Follow stable" : "Pinned release",
           dashboard.releasePolicy.kind,

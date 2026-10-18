@@ -1,3 +1,4 @@
+import { evidenceLedgerRepository } from "./evidence-ledger.js";
 import type { RepositoryDetailView, RepositoryListView } from "../presentation.js";
 
 /**
@@ -338,25 +339,5 @@ export function desktopRepositories(view: RepositoryListView): string {
 }
 
 export function desktopRepository(view: RepositoryDetailView): string {
-  return (
-    `<div class="desktop-composition desktop-repository-detail">` +
-    `<header class="desktop-detail-heading"><div>${view.heading}` +
-    `<div class="desktop-detail-state">${view.runtime}${view.access}</div></div></header>` +
-    `<nav class="desktop-section-nav" aria-label="Repository sections">` +
-    `<a href="#overview">Overview</a><a href="#configuration">Configuration</a>` +
-    `<a href="#activity">Activity</a></nav>` +
-    `<section id="overview" class="desktop-region desktop-overview" aria-labelledby="desktop-overview-heading">` +
-    `<h2 id="desktop-overview-heading">Deployment</h2>` +
-    `<div class="desktop-deployment-comparison"><div class="desktop-deployment">${view.current}</div>` +
-    `<div class="desktop-deployment">${view.desired}</div></div></section>` +
-    `<section id="configuration" class="desktop-region desktop-configuration" aria-labelledby="desktop-configuration-heading">` +
-    `<h2 id="desktop-configuration-heading">Configuration</h2>` +
-    `<div class="desktop-configuration-layout"><div class="desktop-configuration-main">${view.policy}${view.configuration}</div>` +
-    `<aside class="desktop-limits">${view.limits}</aside></div>` +
-    `<div class="desktop-preview">${view.preview}</div></section>` +
-    `<section id="activity" class="desktop-region desktop-activity" aria-labelledby="desktop-activity-heading">` +
-    `<h2 id="desktop-activity-heading">Activity</h2>` +
-    `<div class="desktop-activity-content"><div class="desktop-operations">${view.operations}</div>` +
-    `<div class="desktop-redeploy">${view.redeploy}</div></div></section></div>`
-  );
+  return evidenceLedgerRepository(view, "desktop");
 }

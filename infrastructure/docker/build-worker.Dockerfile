@@ -42,11 +42,14 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=buildkit-client --chmod=0555 ${BUILDKIT_CLIENT_BUILDCTL_PATH} ${PRAETORIUM_BUILDKIT_BUILDCTL_PATH}
 COPY --from=build --chmod=0444 /workspace/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-RUN node -e 'for (const key of ["NODE_RUNTIME_IMAGE", "BUILDKIT_CLIENT_IMAGE"]) { if (!/^(?:[a-z0-9.-]+(?::[0-9]+)?\/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$/.test(process.env[key] ?? "")) throw new Error(`${key} must be a repository-qualified immutable digest`); }' \
+RUN chmod 0755 /etc/ssl /etc/ssl/certs \
+  && node -e 'for (const key of ["NODE_RUNTIME_IMAGE", "BUILDKIT_CLIENT_IMAGE"]) { if (!/^(?:[a-z0-9.-]+(?::[0-9]+)?\/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$/.test(process.env[key] ?? "")) throw new Error(`${key} must be a repository-qualified immutable digest`); }' \
   && test -s /etc/ssl/certs/ca-certificates.crt \
   && node -e 'const fs = require("node:fs"); const tls = require("node:tls"); const bundle = fs.readFileSync("/etc/ssl/certs/ca-certificates.crt", "utf8"); if (!bundle.includes("-----BEGIN CERTIFICATE-----")) throw new Error("CA bundle is empty"); tls.createSecureContext({ ca: bundle });' \
   && test -x "$PRAETORIUM_BUILDKIT_BUILDCTL_PATH" \
   && "$PRAETORIUM_BUILDKIT_BUILDCTL_PATH" --version
 COPY --from=build --chown=node:node /runtime/ ./
 USER node
+# Validate the same non-root identity used by the deployment, including directory traversal.
+RUN node -e 'const fs = require("node:fs"); const tls = require("node:tls"); tls.createSecureContext({ ca: fs.readFileSync("/etc/ssl/certs/ca-certificates.crt", "utf8") });'
 CMD ["node", "dist/main.js"]

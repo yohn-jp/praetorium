@@ -53,6 +53,7 @@ export function releasePolicy(inventory) {
   if (
     release.workerId === null ||
     release.operatorActorId === null ||
+    release.canaryProbeActorId === null ||
     release.signerIdentityAllowlist.length === 0 ||
     canary.owner === null ||
     canary.repositoryId === null ||
@@ -68,6 +69,7 @@ export function releasePolicy(inventory) {
     workerId: release.workerId,
     clusterId: inventory.clusterId,
     operatorActorId: release.operatorActorId,
+    canaryProbeActorId: release.canaryProbeActorId,
     signerIdentityAllowlist: release.signerIdentityAllowlist,
     canary,
   };

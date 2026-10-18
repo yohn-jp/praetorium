@@ -564,6 +564,7 @@
       "required": [
         "workerId",
         "operatorActorId",
+        "canaryProbeActorId",
         "signerIdentityAllowlist",
         "canary"
       ],
@@ -582,6 +583,10 @@
           ],
           "minLength": 1,
           "maxLength": 128
+        },
+        "canaryProbeActorId": {
+          "type": ["integer", "null"],
+          "minimum": 1
         },
         "signerIdentityAllowlist": {
           "type": "array",

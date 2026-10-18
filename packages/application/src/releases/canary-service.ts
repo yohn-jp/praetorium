@@ -163,9 +163,9 @@ export class ServiceBackedDisposableCanary
       !Number.isSafeInteger(binding.repositoryId) ||
       binding.repositoryId <= 0 ||
       !Number.isSafeInteger(binding.bindingEpoch) ||
-      binding.bindingEpoch <= 0 ||
+      binding.bindingEpoch < 0 ||
       !Number.isSafeInteger(binding.authorizationRevision) ||
-      binding.authorizationRevision <= 0 ||
+      binding.authorizationRevision < 0 ||
       !binding.instanceId ||
       !binding.resourceProfileId ||
       new Set(binding.requestedModules).size !== binding.requestedModules.length

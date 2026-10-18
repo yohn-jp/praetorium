@@ -341,6 +341,23 @@ removed; archived expired inventories are not current acceptance inputs.
   authorized Wrangler login on this terminal. Frozen install and all 29 check
   tasks passed after preparation. Builder trust, registry read/write and DNS
   token inputs remain unresolved, along with ingress and ACME contact.
+- Subsequent owner correction established an existing Gateway Instance Access
+  credential; its initial candidate was excluded until the owner explicitly
+  approved the one-credential cutover after confirming no recoverable source.
+  It is now restored as an approved candidate pending operator registration.
+  Initial builder trust and its matching private signer are also prepared,
+  bringing staged roles to eight of eleven; GHCR read/write and DNS inputs
+  remain absent. The private interactive collector accepts these three inputs
+  and optional ACME contact without displaying entered credentials.
+- `a71d622` supplies actual Wrangler Build policy and fixes its canonical OCI
+  allowlist to include the producer inputs and composition metadata as well as
+  candidate outputs. Frozen install, all 29 check tasks, 15 deployment tests and
+  Wrangler dry-run passed. Its Cloudflare build succeeded. Read-only public
+  probes at 03:55:22 UTC now return 401 without the Build credential and 405 for
+  authenticated GET to the POST-only claim route; Build auth is verified and
+  the earlier 503 is resolved without making a claim. Provisioner auth also
+  passed earlier. This is service/configuration readiness, not a real build or
+  Runtime acceptance result.
 
 ## Remaining acceptance
 

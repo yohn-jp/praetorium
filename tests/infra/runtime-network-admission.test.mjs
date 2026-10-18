@@ -73,6 +73,33 @@ const spec = {
 };
 
 const resources = renderer.renderRunning(spec);
+const hostedAssignment = {
+  contractVersion: "scriptorium-platform/v1",
+  instanceId,
+  repositoryId,
+  repositoryLocator: "https://github.com/example/hosted-runtime-fixture",
+  defaultBranchPolicy: "protected",
+  runtimeEpoch: spec.runtimeEpoch,
+  imageDigest: digest,
+  compositionManifestDigest: digest,
+  enabledModuleIds: [],
+  credentialBrokerLocator: "https://broker.example.test/internal/github-credential-broker",
+  controlServicePolicy: {
+    issuer: "https://control.example.test",
+    jwksUrl: "https://control.example.test/.well-known/runtime-identity-jwks.json",
+    audience: "praetorium-runtime",
+  },
+  grantPolicy: {
+    issuer: "https://control.example.test",
+    jwksUrl: "https://control.example.test/.well-known/runtime-grant-jwks.json",
+    audience: "praetorium-runtime",
+  },
+};
+const hostedResources = renderer.renderRunning({
+  ...spec,
+  scriptoriumAssignment: hostedAssignment,
+  runtimeIdentityProof: "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.fixture-proof",
+});
 const networkPolicy = resources.find((resource) => resource.kind === "NetworkPolicy");
 const stoppedNetworkPolicy = renderer
   .renderStopped({ ...spec, release: null })
@@ -98,6 +125,12 @@ const namespaceObject = {
     },
   },
 };
+const runtimeNamespaceObject = structuredClone(namespaceObject);
+Object.assign(runtimeNamespaceObject.metadata.labels, {
+  "pod-security.kubernetes.io/enforce": "restricted",
+  "pod-security.kubernetes.io/audit": "restricted",
+  "pod-security.kubernetes.io/warn": "restricted",
+});
 
 function scenario(name, allow, object) {
   return {
@@ -115,6 +148,28 @@ function rejected(name, object, mutate) {
   const changed = structuredClone(object);
   mutate(changed);
   return scenario(name, false, changed);
+}
+
+function runtimeResourceScenario(name, allow, object, resource, operation = "CREATE", oldObject = null) {
+  return {
+    name,
+    allow,
+    object,
+    oldObject,
+    namespaceObject: structuredClone(runtimeNamespaceObject),
+    request: { userInfo: { username: writer }, resource: { resource }, operation },
+    params: null,
+  };
+}
+
+function normalizedSecret(secret) {
+  const object = structuredClone(secret);
+  const stringData = object.stringData;
+  delete object.stringData;
+  object.data = Object.fromEntries(
+    Object.entries(stringData).map(([key, value]) => [key, Buffer.from(value).toString("base64")]),
+  );
+  return object;
 }
 
 const networkPolicyScenarios = [
@@ -305,6 +360,90 @@ const routeScenarios = [
   }),
 ];
 
+const publicService = resources.find(
+  (resource) => resource.kind === "Service" && !resource.metadata.name.endsWith("-control"),
+);
+const controlService = resources.find(
+  (resource) => resource.kind === "Service" && resource.metadata.name.endsWith("-control"),
+);
+const hostedSecret = hostedResources.find((resource) => resource.kind === "Secret");
+const imagePullSecret = hostedSecret && {
+  ...structuredClone(hostedSecret),
+  metadata: {
+    ...structuredClone(hostedSecret.metadata),
+    name: hostedSecret.metadata.name.replace(/-runtime$/u, "-image-pull"),
+  },
+  type: "kubernetes.io/dockerconfigjson",
+  stringData: { ".dockerconfigjson": JSON.stringify({ auths: { "ghcr.io": {} } }) },
+};
+assert.ok(publicService, "the renderer must emit its public runtime Service");
+assert.ok(controlService, "the renderer must emit its recovery control Service");
+assert.ok(hostedSecret, "the hosted renderer must emit its runtime assignment Secret");
+assert.ok(imagePullSecret, "the fixed image pull Secret contract fixture must be present");
+
+const runtimeResourceScenarios = [
+  runtimeResourceScenario("actual-public-service", true, structuredClone(publicService), "services"),
+  runtimeResourceScenario("actual-control-service", true, structuredClone(controlService), "services"),
+  runtimeResourceScenario("api-normalized-hosted-runtime-secret", true, normalizedSecret(hostedSecret), "secrets"),
+  runtimeResourceScenario(
+    "api-normalized-image-pull-secret-contract",
+    true,
+    normalizedSecret(imagePullSecret),
+    "secrets",
+  ),
+  (() => {
+    const object = normalizedSecret(hostedSecret);
+    return runtimeResourceScenario(
+      "runtime-secret-refresh-normalized-data-shape",
+      true,
+      object,
+      "secrets",
+      "UPDATE",
+      structuredClone(object),
+    );
+  })(),
+  (() => {
+    const object = structuredClone(controlService);
+    delete object.spec.selector["praetorium.io/runtime-epoch"];
+    return runtimeResourceScenario("control-service-without-epoch-fence", false, object, "services");
+  })(),
+  (() => {
+    const object = structuredClone(controlService);
+    object.spec.publishNotReadyAddresses = false;
+    return runtimeResourceScenario("control-service-not-published-before-ready", false, object, "services");
+  })(),
+  (() => {
+    const object = structuredClone(publicService);
+    object.spec.publishNotReadyAddresses = true;
+    return runtimeResourceScenario("public-service-publishes-before-ready", false, object, "services");
+  })(),
+  (() => {
+    const object = normalizedSecret(hostedSecret);
+    object.data["unowned.txt"] = Buffer.from("unexpected").toString("base64");
+    return runtimeResourceScenario("runtime-secret-extra-string-key", false, object, "secrets");
+  })(),
+  (() => {
+    const object = normalizedSecret(hostedSecret);
+    object.type = "kubernetes.io/tls";
+    return runtimeResourceScenario("runtime-secret-wrong-type", false, object, "secrets");
+  })(),
+  (() => {
+    const object = normalizedSecret(hostedSecret);
+    object.metadata.name += "-foreign";
+    return runtimeResourceScenario("runtime-secret-foreign-name", false, object, "secrets");
+  })(),
+  (() => {
+    const object = normalizedSecret(imagePullSecret);
+    object.data.extra = Buffer.from("unexpected").toString("base64");
+    return runtimeResourceScenario("image-pull-secret-extra-key", false, object, "secrets");
+  })(),
+  (() => {
+    const object = normalizedSecret(imagePullSecret);
+    object.type = "Opaque";
+    return runtimeResourceScenario("image-pull-secret-wrong-type", false, object, "secrets");
+  })(),
+];
+
 test("target admission covers the actual renderer's tenant policy and endpoint shapes", () => {
   assert.equal(networkPolicy.apiVersion, "networking.k8s.io/v1");
   assert.equal(ingressRoute.apiVersion, "traefik.io/v1alpha1");
@@ -365,6 +504,8 @@ test("target admission covers the actual renderer's tenant policy and endpoint s
 test("CEL review scenarios include actual positive objects and admission-shape regressions", () => {
   assert.ok(networkPolicyScenarios.filter((testCase) => !testCase.allow).length >= 10);
   assert.ok(routeScenarios.filter((testCase) => !testCase.allow).length >= 8);
+  assert.ok(runtimeResourceScenarios.filter((testCase) => testCase.allow).length >= 4);
+  assert.ok(runtimeResourceScenarios.filter((testCase) => !testCase.allow).length >= 5);
   assert.equal(
     networkPolicyScenarios[0].object.metadata.labels["praetorium.io/repository-id"],
     String(repositoryId),
@@ -402,6 +543,7 @@ test("CEL review scenarios include actual positive objects and admission-shape r
       JSON.stringify({
         "praetorium-provisioner-tenant-networkpolicy": networkPolicyScenarios,
         "praetorium-provisioner-tenant-ingressroute": routeScenarios,
+        "praetorium-provisioner-runtime-resources": runtimeResourceScenarios,
       }),
     );
   }

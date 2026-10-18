@@ -101,7 +101,7 @@ spec:
       - apiGroups: [""]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["limitranges", "resourcequotas", "serviceaccounts", "services"]
+        resources: ["limitranges", "resourcequotas", "secrets", "serviceaccounts", "services"]
       - apiGroups: ["apps"]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
@@ -153,7 +153,17 @@ spec:
                 ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-quota"
                 : request.resource.resource == "limitranges"
                   ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-limits"
-                  : (request.resource.resource in ["services", "deployments", "ingressroutes"]
+                  : request.resource.resource == "secrets"
+                    ? (object.metadata.name in [
+                        "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-runtime",
+                        "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-image-pull"
+                      ] ? object.metadata.name : "")
+                    : request.resource.resource == "services"
+                      ? (object.metadata.name in [
+                          "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii(),
+                          "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-control"
+                        ] ? object.metadata.name : "")
+                      : (request.resource.resource in ["deployments", "ingressroutes"]
                     ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii()
                     : "")
         ) &&
@@ -170,6 +180,51 @@ spec:
         object.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
         object.metadata.labels["app.kubernetes.io/name"] == "scriptorium"
       message: The Provisioner may mutate only the fixed resource names with complete instance, repository, generation, and cluster ownership labels.
+    - expression: >-
+        request.resource.resource != "services" || (
+          object.spec.type == "ClusterIP" &&
+          object.spec.ports.size() == 1 &&
+          object.spec.ports[0].name == "http" &&
+          object.spec.ports[0].protocol == "TCP" &&
+          object.spec.ports[0].port >= 1 &&
+          object.spec.ports[0].port <= 65535 &&
+          (
+            object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii()
+              ? object.spec.selector.size() == 2 &&
+                object.spec.selector["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+                object.spec.selector["app.kubernetes.io/name"] == "scriptorium" &&
+                (!has(object.spec.publishNotReadyAddresses) || object.spec.publishNotReadyAddresses == false)
+              : object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-control" &&
+                object.spec.selector.size() == 4 &&
+                object.spec.selector["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+                object.spec.selector["app.kubernetes.io/name"] == "scriptorium" &&
+                object.spec.selector["praetorium.io/runtime-epoch"] == object.metadata.labels["praetorium.io/runtime-epoch"] &&
+                object.spec.selector["arcadia.io/generation"] == object.metadata.labels["arcadia.io/generation"] &&
+                has(object.spec.publishNotReadyAddresses) && object.spec.publishNotReadyAddresses == true
+          )
+        )
+      message: Runtime Services must use the public selector or the epoch-fenced recovery selector; only the recovery Service may publish not-ready addresses.
+    - expression: >-
+        request.resource.resource != "secrets" || (
+          object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-runtime"
+            ? object.type == "Opaque" &&
+              has(object.data) &&
+              object.data.size() == 2 &&
+              "runtime-assignment.json" in object.data &&
+              "runtime-identity.jwt" in object.data &&
+              object.data["runtime-assignment.json"].size() > 0 &&
+              object.data["runtime-assignment.json"].size() <= 131072 &&
+              object.data["runtime-identity.jwt"].size() >= 16 &&
+              object.data["runtime-identity.jwt"].size() <= 4096
+            : object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-image-pull" &&
+              object.type == "kubernetes.io/dockerconfigjson" &&
+              has(object.data) &&
+              object.data.size() == 1 &&
+              ".dockerconfigjson" in object.data &&
+              object.data[".dockerconfigjson"].size() > 0 &&
+              object.data[".dockerconfigjson"].size() <= 131072
+        )
+      message: Runtime Secrets must match the fixed assignment projection or image-pull credential name, type, and key set.
     - expression: >-
         request.operation != "UPDATE" || (
           oldObject.metadata.namespace == namespaceObject.metadata.name &&
@@ -215,7 +270,7 @@ spec:
       - apiGroups: [""]
         apiVersions: ["v1"]
         operations: ["DELETE"]
-        resources: ["limitranges", "resourcequotas", "serviceaccounts", "services"]
+        resources: ["limitranges", "resourcequotas", "secrets", "serviceaccounts", "services"]
       - apiGroups: ["apps"]
         apiVersions: ["v1"]
         operations: ["DELETE"]
@@ -267,7 +322,17 @@ spec:
                 ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-quota"
                 : request.resource.resource == "limitranges"
                   ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-limits"
-                  : (request.resource.resource in ["services", "deployments", "ingressroutes"]
+                  : request.resource.resource == "secrets"
+                    ? (oldObject.metadata.name in [
+                        "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-runtime",
+                        "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-image-pull"
+                      ] ? oldObject.metadata.name : "")
+                    : request.resource.resource == "services"
+                      ? (oldObject.metadata.name in [
+                          "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii(),
+                          "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-control"
+                        ] ? oldObject.metadata.name : "")
+                      : (request.resource.resource in ["deployments", "ingressroutes"]
                     ? "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii()
                     : "")
         ) &&

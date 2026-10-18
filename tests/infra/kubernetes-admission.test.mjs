@@ -292,7 +292,7 @@ test("runtime resource admission covers the renderer's exact kinds and delete ol
         apiGroups: [""],
         apiVersions: ["v1"],
         operations: ["CREATE", "UPDATE"],
-        resources: ["limitranges", "resourcequotas", "serviceaccounts", "services"],
+        resources: ["limitranges", "resourcequotas", "secrets", "serviceaccounts", "services"],
       },
       {
         apiGroups: ["apps"],
@@ -336,6 +336,7 @@ test("runtime resource admission covers the renderer's exact kinds and delete ol
   for (const kind of [
     "ServiceAccount",
     "Service",
+    "Secret",
     "LimitRange",
     "ResourceQuota",
     "Deployment",
@@ -360,8 +361,24 @@ test("runtime resource admission covers the renderer's exact kinds and delete ol
   assert.match(expressions[1], /object\.metadata\.labels\["praetorium\.io\/repository-id"\]/u);
   assert.match(expressions[1], /object\.metadata\.labels\["praetorium\.io\/runtime-epoch"\]/u);
   assert.match(expressions[1], /object\.metadata\.labels\["arcadia\.io\/generation"\]/u);
-  assert.match(expressions[2], /request\.operation != "UPDATE"/u);
-  assert.match(expressions[2], /oldObject\.metadata\.labels\["arcadia\.io\/instance-id"\]/u);
+  assert.match(expressions[1], /request\.resource\.resource == "secrets"/u);
+  assert.match(expressions[1], /request\.resource\.resource == "services"/u);
+  assert.match(expressions[1], /-control/u);
+  assert.match(expressions[1], /-runtime/u);
+  assert.match(expressions[1], /-image-pull/u);
+  assert.match(expressions[2], /publishNotReadyAddresses/u);
+  assert.match(expressions[2], /praetorium\.io\/runtime-epoch/u);
+  assert.match(expressions[2], /arcadia\.io\/generation/u);
+  assert.match(expressions[3], /object\.type == "Opaque"/u);
+  assert.match(expressions[3], /object\.data\.size\(\) == 2/u);
+  assert.match(expressions[3], /object\.data\.size\(\) == 1/u);
+  assert.doesNotMatch(expressions[3], /stringData/u);
+  assert.match(expressions[3], /runtime-assignment\.json/u);
+  assert.match(expressions[3], /runtime-identity\.jwt/u);
+  assert.match(expressions[3], /kubernetes\.io\/dockerconfigjson/u);
+  assert.match(expressions[3], /\.dockerconfigjson/u);
+  assert.match(expressions[4], /request\.operation != "UPDATE"/u);
+  assert.match(expressions[4], /oldObject\.metadata\.labels\["arcadia\.io\/instance-id"\]/u);
 
   const deleteExpressions = runtimeResourceDeletePolicy.spec.validations.map(
     ({ expression }) => expression,
@@ -451,7 +468,6 @@ test("the boundary excludes legacy data operations and unrelated runtime resourc
     "data-deletion-state",
     "data-deletion-authorized",
     "configmaps",
-    "secrets",
     "jobs",
     "pods",
     "PathPrefix",

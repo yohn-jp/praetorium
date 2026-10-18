@@ -48,7 +48,7 @@ rules:
     resources: ["pods"]
     verbs: ["list"]
   - apiGroups: [""]
-    resources: ["limitranges", "resourcequotas", "serviceaccounts", "services"]
+    resources: ["limitranges", "resourcequotas", "secrets", "serviceaccounts", "services"]
     verbs: ["get", "create", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]

@@ -250,13 +250,18 @@ test("tenant Role grants per-instance runtime resource operations and no data or
       assert.ok(allows(tenant, group, resource, verb), `missing ${group}/${resource}:${verb}`);
     }
   }
+  for (const verb of ["get", "create", "patch", "delete"]) {
+    assert.ok(allows(tenant, "", "secrets", verb), `missing core/secrets:${verb}`);
+  }
+  for (const verb of ["list", "watch", "update"]) {
+    assert.ok(!allows(tenant, "", "secrets", verb), `unexpected core/secrets:${verb}`);
+  }
   assert.ok(allows(tenant, "", "pods", "list"));
   assert.ok(!allows(tenant, "", "pods", "get"));
   for (const [group, resource, verb] of [
     ["", "pods", "create"],
     ["", "pods", "patch"],
     ["", "pods", "delete"],
-    ["", "secrets", "get"],
     ["", "configmaps", "get"],
     ["", "persistentvolumeclaims", "delete"],
     ["batch", "jobs", "create"],
@@ -297,6 +302,10 @@ test("tenant Role grants per-instance runtime resource operations and no data or
       "/services:delete",
       "/services:get",
       "/services:patch",
+      "/secrets:create",
+      "/secrets:delete",
+      "/secrets:get",
+      "/secrets:patch",
     ].sort(),
   );
 });
@@ -347,6 +356,7 @@ test("provider verbs and API paths remain covered by the RBAC graph", () => {
       "LimitRange",
       "NetworkPolicy",
       "ResourceQuota",
+      "Secret",
       "Service",
       "ServiceAccount",
     ].sort(),

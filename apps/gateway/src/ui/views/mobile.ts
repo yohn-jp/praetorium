@@ -1,3 +1,4 @@
+import { evidenceLedgerRepository } from "./evidence-ledger.js";
 import type {
   RepositoryDetailView,
   RepositoryListView,
@@ -109,31 +110,5 @@ export function mobileRepositories(view: RepositoryListView): string {
 
 /** Arrange one repository's authoritative fragments into the mobile task composition. */
 export function mobileRepository(view: RepositoryDetailView): string {
-  return (
-    `<div class="mobile-repository">` +
-    `<header class="mobile-repository-heading"><div class="mobile-repository-title">${view.heading}</div>` +
-    `<div class="mobile-repository-state"><div class="mobile-repository-runtime">${view.runtime}</div>` +
-    `<div class="mobile-repository-access">${view.access}</div></div></header>` +
-    `<nav class="mobile-section-nav" aria-label="Repository sections">` +
-    `<a href="#overview">Overview</a><a href="#configuration">Configuration</a><a href="#activity">Activity</a></nav>` +
-    `<section id="overview" class="mobile-overview" aria-labelledby="mobile-overview-heading">` +
-    `<h2 id="mobile-overview-heading" class="mobile-section-heading">Overview</h2>` +
-    `<div class="mobile-deployment-summaries">` +
-    `<section class="mobile-deployment-summary" aria-label="Current deployment">` +
-    `${view.current}</section>` +
-    `<section class="mobile-deployment-summary" aria-label="Desired deployment">` +
-    `${view.desired}</section></div></section>` +
-    `<section id="configuration" class="mobile-configuration-section" aria-labelledby="mobile-configuration-heading">` +
-    `<h2 id="mobile-configuration-heading" class="mobile-section-heading">Configuration</h2>` +
-    `<div class="mobile-policy-summary"><h3>Release policy</h3>${view.policy}</div>` +
-    `<div class="mobile-configuration-content">${view.configuration}</div>` +
-    `<div class="mobile-limits-summary"><div class="mobile-limits-content">${view.limits}</div></div>` +
-    `<div class="mobile-preview-summary"><div class="mobile-preview-content">${view.preview}</div></div></section>` +
-    `<section id="activity" class="mobile-activity" aria-labelledby="mobile-activity-heading">` +
-    `<h2 id="mobile-activity-heading" class="mobile-section-heading">Activity</h2>` +
-    `<div class="mobile-operations-summary"><div class="mobile-operations-content">${view.operations}</div></div>` +
-    optionalFragment(view.redeploy, "mobile-redeploy-summary") +
-    `</section>` +
-    `</div>`
-  );
+  return evidenceLedgerRepository(view, "mobile");
 }

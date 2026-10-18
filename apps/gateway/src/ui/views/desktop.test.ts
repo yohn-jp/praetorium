@@ -64,6 +64,7 @@ describe("Desktop repository compositions", () => {
       heading: `<h1>owner/project</h1>`,
       runtime: `<span>Ready</span>`,
       access: `<span>Maintain</span>`,
+      evidence: `<p>Build failed while runtime remains Ready</p>`,
       current: `<section aria-label="Current deployment"><h3>Current</h3><code>sha256:current</code></section>`,
       desired: `<section aria-label="Desired deployment"><h3>Desired</h3><code>sha256:desired</code></section>`,
       policy: `<p>Release policy: stable</p>`,
@@ -80,6 +81,9 @@ describe("Desktop repository compositions", () => {
     expect(html).toContain(`<a href="#configuration">Configuration</a>`);
     expect(html).toContain(`<a href="#activity">Activity</a>`);
     expect(html).toContain(`<section id="overview"`);
+    expect(html).toContain(`evidence-workspace`);
+    expect(html).toContain(`Build failed while runtime remains Ready`);
+    expect(html.indexOf(`Build failed while runtime remains Ready`)).toBeLessThan(html.indexOf(view.current));
     expect(html.indexOf(view.current)).toBeLessThan(html.indexOf(view.desired));
     expect(html).toContain(
       `<div class="desktop-configuration-main">${view.policy}${view.configuration}</div>`,

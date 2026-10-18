@@ -1,3 +1,4 @@
+import { EVIDENCE_LEDGER_STYLES } from "./views/evidence-ledger.js";
 import { DESKTOP_STYLES } from "./views/desktop.js";
 import { MOBILE_STYLES } from "./views/mobile.js";
 import type { PortalUiMode } from "./presentation.js";
@@ -91,9 +92,9 @@ body[data-ui="mobile"] .form-grid { grid-template-columns:1fr; }
 `;
 
 export const PORTAL_STYLE_HASHES = {
-  desktop: "0wTdYv7w3NXNqnAiAFXUbqmfUle/d846oc1gmLApKV4=",
-  mobile: "xa7bKC1GLGJEx5UXvZ+WkbK82QQXCv7m4kenKunpxWA=",
+  desktop: "3zfjGgipfXke4tfQeb++guV+Wixo2H6u5XTDbMV31sY=",
+  mobile: "+bzHxvAzJJ6YIta2ra3yN1hK+7Px4xP99SY10iVj9So=",
 } as const;
 export function portalStyles(mode: PortalUiMode): string {
-  return PORTAL_STYLES + (mode === "mobile" ? MOBILE_STYLES : DESKTOP_STYLES);
+  return PORTAL_STYLES + (mode === "mobile" ? MOBILE_STYLES : DESKTOP_STYLES) + EVIDENCE_LEDGER_STYLES;
 }

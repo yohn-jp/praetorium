@@ -605,6 +605,51 @@ describe("GHCR OCI registry adapter", () => {
     expect(seen[2]?.body).toEqual(bytes);
   });
 
+  it("accepts GHCR's singular upload path and preserves its returned path and query", async () => {
+    const bytes = encoder.encode('{"schemaVersion":"scriptorium-composition/v1"}\n');
+    const digest = await digestOf(bytes);
+    const uploadPath = `/v2/${repository}/blobs/upload/owned-session`;
+    const seen: Array<{ method: string; url: URL; body?: Uint8Array }> = [];
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      const method = init?.method ?? "GET";
+      seen.push({
+        method,
+        url,
+        ...(method === "PUT" && init?.body !== undefined
+          ? { body: new Uint8Array(await new Response(init.body).arrayBuffer()) }
+          : {}),
+      });
+      if (method === "HEAD") return new Response(null, { status: 404 });
+      if (method === "POST") {
+        return new Response(null, {
+          status: 202,
+          headers: {
+            location: `https://127.0.0.1:35009${uploadPath}?state=owned%2Bstate&part=first`,
+          },
+        });
+      }
+      if (method === "PUT") return new Response(null, { status: 201, headers: { "docker-content-digest": digest } });
+      throw new Error("unexpected registry method: " + method);
+    }) as typeof fetch;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      registryUrl: "https://127.0.0.1:35009",
+      allowAnonymousLoopbackPublish: true,
+      allowedRepositories: [repository],
+      publishRepositories: [repository],
+      fetch: fetcher,
+    });
+
+    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
+    expect(seen.map(({ method }) => method)).toEqual(["HEAD", "POST", "PUT"]);
+    expect(seen[2]?.url.pathname).toBe(uploadPath);
+    expect(seen[2]?.url.searchParams.get("state")).toBe("owned+state");
+    expect(seen[2]?.url.searchParams.get("part")).toBe("first");
+    expect(seen[2]?.url.searchParams.get("digest")).toBe(digest);
+    expect(seen[2]?.body).toEqual(bytes);
+  });
+
   it("requires explicit anonymous loopback publication opt-in", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = new GhcrRegistryClient({
@@ -651,6 +696,33 @@ describe("GHCR OCI registry adapter", () => {
           status: 202,
           headers: { location: "/v2/" + repository + "/blobs/uploads/%2e%2e%2fother" },
         });
+      }
+      if (init?.method === "PUT") puts += 1;
+      throw new Error("unexpected registry method: " + (init?.method ?? "GET"));
+    }) as typeof fetch;
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      registryUrl: "https://127.0.0.1:35009",
+      allowAnonymousLoopbackPublish: true,
+      allowedRepositories: [repository],
+      publishRepositories: [repository],
+      fetch: fetcher,
+    });
+
+    await expect(client.publishBlob(repository, bytes)).rejects.toMatchObject({ reason: "invalid_content" });
+    expect(puts).toBe(0);
+  });
+
+  it.each([
+    ["unrelated repository", `https://127.0.0.1:35009/v2/praetorium/unrelated/blobs/upload/session`],
+    ["external origin", `https://registry-attacker.example.test/v2/${repository}/blobs/upload/session`],
+  ])("rejects a %s upload location before sending composition bytes", async (_label, location) => {
+    const bytes = encoder.encode('{"schemaVersion":"scriptorium-composition/v1"}');
+    let puts = 0;
+    const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "HEAD") return new Response(null, { status: 404 });
+      if (init?.method === "POST") {
+        return new Response(null, { status: 202, headers: { location } });
       }
       if (init?.method === "PUT") puts += 1;
       throw new Error("unexpected registry method: " + (init?.method ?? "GET"));

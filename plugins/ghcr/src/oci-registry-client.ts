@@ -522,10 +522,14 @@ export class GhcrRegistryClient {
           throw new RegistryError("invalid_content", "registry omitted or oversized the upload location");
         }
         const resolved = new URL(location, this.baseUrl);
-        const uploadPrefix = `/v2/${repo}/blobs/uploads/`;
-        const uploadId = resolved.pathname.startsWith(uploadPrefix)
-          ? resolved.pathname.slice(uploadPrefix.length).replace(/\/$/u, "")
-          : "";
+        const uploadPrefixes = [
+          `/v2/${repo}/blobs/uploads/`,
+          `/v2/${repo}/blobs/upload/`,
+        ];
+        const uploadPrefix = uploadPrefixes.find((prefix) => resolved.pathname.startsWith(prefix));
+        const uploadId = uploadPrefix === undefined
+          ? ""
+          : resolved.pathname.slice(uploadPrefix.length).replace(/\/$/u, "");
         if (
           resolved.origin !== this.baseUrl.origin ||
           resolved.username !== "" ||

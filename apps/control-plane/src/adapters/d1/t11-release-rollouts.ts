@@ -20,11 +20,95 @@ import {
   type StableRolloutRepository,
 } from "@praetorium/application/rollouts";
 import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
+import type {
+  ReleaseRetryCommand,
+  ReleaseRetryResult,
+  ReleaseRetryStatus,
+} from "../../releases/retry-contract.js";
 
 /** D1 bind values accepted by the persisted T11 statements. */
 export type D1BindValue = string | number | null | ArrayBuffer | Uint8Array;
 export type { D1PreparedStatement, D1Result };
 export type T11D1Database = D1Database;
+
+type OperatorRetryStatusRow = {
+  readonly release_id: string;
+  readonly version: string;
+  readonly image_digest: string;
+  readonly candidate_status: "candidate" | "available";
+  readonly workflow_state: CandidateWorkflow["state"];
+  readonly workflow_revision: number;
+  readonly workflow_failure_code: string | null;
+  readonly workflow_attempts: number;
+  readonly workflow_next_attempt_at: number | null;
+  readonly canary_build_key: string | null;
+  readonly canary_operation_id: string | null;
+  readonly build_id: string | null;
+  readonly build_status: string | null;
+  readonly build_attempt_count: number | null;
+  readonly build_progress_json: string | null;
+  readonly build_failure_json: string | null;
+};
+
+type OperatorRetryContextRow = {
+  readonly candidate_json: string;
+  readonly candidate_status: "candidate" | "available";
+  readonly workflow_state: CandidateWorkflow["state"];
+  readonly workflow_revision: number;
+  readonly workflow_failure_code: string | null;
+  readonly workflow_lease_owner: string | null;
+  readonly workflow_lease_expires_at: number | null;
+  readonly workflow_canary_artifact_digest: string | null;
+  readonly workflow_canary_runtime_id: string | null;
+  readonly workflow_canary_operation_id: string | null;
+  readonly workflow_healthy_since: number | null;
+  readonly workflow_last_healthy_at: number | null;
+  readonly workflow_last_health_evidence_json: string | null;
+  readonly workflow_cleanup_evidence_json: string | null;
+  readonly workflow_follower_cursor: string | null;
+  readonly workflow_follower_planning_complete: number;
+  readonly workflow_canary_cleanup_complete: number;
+  readonly workflow_cleanup_disposition: string | null;
+  readonly canary_build_key: string;
+  readonly revision_id: string;
+  readonly revision_status: string;
+  readonly revision_artifact_digest: string | null;
+  readonly revision_actor_id: string;
+  readonly revision_selection_json: string;
+  readonly revision_generation: number;
+  readonly build_id: string;
+  readonly build_status: string;
+  readonly build_failure_json: string | null;
+  readonly build_active_attempt_id: string | null;
+  readonly build_lease_epoch: number;
+  readonly build_key: string;
+  readonly build_attempt_count: number;
+  readonly instance_generation: number;
+  readonly instance_runtime_epoch: number;
+  readonly instance_desired_state: string;
+  readonly instance_observed_state: string;
+  readonly instance_observed_generation: number | null;
+  readonly instance_observed_runtime_epoch: number | null;
+  readonly instance_desired_revision_id: string | null;
+  readonly instance_desired_artifact_digest: string | null;
+  readonly instance_reservation_state: string;
+  readonly instance_reservation_id: string | null;
+  readonly binding_suspended: number;
+  readonly binding_epoch: number;
+  readonly authorization_revision: number;
+  readonly active_attempt_status: string | null;
+  readonly active_attempt_epoch: number | null;
+  readonly has_instance_operations: number;
+  readonly has_instance_reservations: number;
+  readonly has_runtime_health_observations: number;
+  readonly has_build_artifacts: number;
+};
+
+type RetryIdempotencyRow = {
+  readonly request_hash: string;
+  readonly response_kind: string;
+  readonly response_id: string;
+};
 
 export type FencedUpdateResult =
   | { readonly kind: "dispatched"; readonly operationId: string; readonly generation: number }
@@ -350,6 +434,339 @@ export class D1T11ReleaseRolloutStore
     private readonly stagedActivator: StagedRolloutActivator,
     private readonly createOperationId: () => string = () => crypto.randomUUID(),
   ) {}
+
+  private assertOneChange(): D1PreparedStatement {
+    return this.db.prepare(
+      "INSERT INTO platform_transaction_sentinel(id) SELECT 1 WHERE changes() <> 1",
+    );
+  }
+
+  /** Returns only bounded status fields suitable for an authenticated operator client. */
+  async getReleaseRetryStatus(releaseId: string): Promise<ReleaseRetryStatus | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT c.release_id, c.version, c.image_digest, c.status AS candidate_status,
+                w.state AS workflow_state, w.revision AS workflow_revision,
+                w.failure_code AS workflow_failure_code, w.attempts AS workflow_attempts,
+                w.next_attempt_at AS workflow_next_attempt_at,
+                w.canary_build_key, w.canary_operation_id,
+                b.build_id, b.status AS build_status, b.attempt_count AS build_attempt_count,
+                b.progress_json AS build_progress_json, b.failure_json AS build_failure_json
+           FROM release_candidates c
+           JOIN release_candidate_workflows w ON w.release_id = c.release_id
+           LEFT JOIN builds b ON b.build_key = w.canary_build_key
+          WHERE c.release_id = ? LIMIT 1`,
+      )
+      .bind(releaseId)
+      .first<OperatorRetryStatusRow>();
+    return row ? operatorRetryStatus(row) : null;
+  }
+
+  /** Resolves an accepted retry receipt without requiring external evidence verification. */
+  async findPreRuntimeCanaryRetry(
+    input: Pick<ReleaseRetryCommand, "releaseId" | "idempotencyKey" | "requestHash">,
+  ): Promise<ReleaseRetryResult | null> {
+    const prior = await this.readRetryIdempotency(`release:${input.releaseId}`, input.idempotencyKey);
+    if (!prior) return null;
+    if (
+      prior.request_hash !== input.requestHash ||
+      prior.response_kind !== "release-canary-build-retry" ||
+      prior.response_id !== input.releaseId
+    ) {
+      return { kind: "conflict", reason: "idempotency_key_reused" };
+    }
+    const status = await this.getReleaseRetryStatus(input.releaseId);
+    return status ? { kind: "accepted", duplicate: true, status } : { kind: "not_found" };
+  }
+
+  /**
+   * Resets only a failed, pre-runtime canary build through one guarded D1 batch.
+   * The failed attempt row remains immutable; the build lease epoch and workflow
+   * lease epoch advance so delayed reports and workflow owners are fenced.
+   */
+  async retryPreRuntimeCanaryBuild(
+    input: ReleaseRetryCommand,
+  ): Promise<ReleaseRetryResult> {
+    const prior = await this.findPreRuntimeCanaryRetry(input);
+    if (prior) return prior;
+
+    const scope = `release:${input.releaseId}`;
+    const status = await this.getReleaseRetryStatus(input.releaseId);
+    if (!status) return { kind: "not_found" };
+    if (status.workflow.revision !== input.expectedRevision) {
+      return { kind: "conflict", reason: "stale_or_ineligible" };
+    }
+
+    const context = await this.readOperatorRetryContext(input);
+    if (!context || !isEligiblePreRuntimeCanaryRetry(context, input.canary)) {
+      return { kind: "conflict", reason: "stale_or_ineligible" };
+    }
+    const candidate = ReleaseCandidateSchema.parse(JSON.parse(context.candidate_json) as unknown);
+    const modulesJson = JSON.stringify([...input.canary.requestedModules].sort());
+    const common = {
+      releaseId: input.releaseId,
+      candidateJson: context.candidate_json,
+      expectedRevision: input.expectedRevision,
+      canary: input.canary,
+      modulesJson,
+    };
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `UPDATE builds SET status = 'pending', lease_epoch = lease_epoch + 1,
+               active_attempt_id = NULL, worker_id = NULL, lease_token = NULL,
+               lease_expires_at = NULL, report_sequence = 0, last_report_digest = NULL,
+               progress_json = NULL, cancel_requested = 0, candidate_ref = NULL,
+               manifest_digest = NULL, artifact_digest = NULL, failure_json = NULL, updated_at = ?
+           WHERE build_id = ? AND status = 'failed'
+             AND EXISTS (${retryEligibilitySql("failed", "failed")})`,
+        )
+        .bind(input.now, context.build_id, ...retryEligibilityValues(common)),
+      this.assertOneChange(),
+      this.db
+        .prepare(
+          `UPDATE deployment_revisions SET status = 'building', artifact_digest = NULL
+           WHERE revision_id = ? AND status = 'failed' AND artifact_digest IS NULL
+             AND EXISTS (
+               SELECT 1 FROM release_candidate_workflows w
+               JOIN release_candidates c ON c.release_id = w.release_id
+               JOIN builds b ON b.build_key = w.canary_build_key
+               JOIN idempotency_records p
+                 ON p.scope = ?
+                AND p.idempotency_key = 'stable-canary-plan:' || c.release_id
+                AND p.response_kind = 'configuration-plan'
+               JOIN logical_instances i ON i.instance_id = ?
+               JOIN repository_bindings rb ON rb.repository_id = ? AND rb.instance_id = i.instance_id
+               WHERE w.release_id = ? AND w.state = 'blocked'
+                 AND w.failure_code = 'canary_build_failed' AND w.revision = ?
+                 AND w.lease_owner IS NULL AND w.lease_expires_at IS NULL
+                 AND w.canary_build_key = b.build_key AND b.status = 'pending'
+                 AND p.response_id = deployment_revisions.revision_id
+                 AND deployment_revisions.build_id = b.build_id
+                 AND deployment_revisions.instance_id = i.instance_id
+                 AND deployment_revisions.repository_id = i.repository_id
+                 AND deployment_revisions.actor_id = 'system:stable-release-canary'
+                 AND json_extract(deployment_revisions.selection_json, '$.releaseId') = c.release_id
+                 AND json_extract(deployment_revisions.selection_json, '$.policy') = 'pinned'
+                 AND json_extract(deployment_revisions.selection_json, '$.resourceProfileId') = ?
+                 AND json_extract(deployment_revisions.selection_json, '$.requestedModules') = ?
+                 AND rb.binding_epoch = ? AND rb.authorization_revision = ? AND rb.suspended = 0
+                 AND i.generation = deployment_revisions.generation
+                 AND i.desired_revision_id = deployment_revisions.revision_id
+                 AND i.desired_state = 'stopped' AND i.observed_state = 'absent'
+                 AND i.observed_generation IS NULL AND i.observed_runtime_epoch IS NULL
+                 AND i.runtime_epoch = 0 AND i.reservation_state IN ('none', 'released')
+                 AND i.reservation_id IS NULL AND i.desired_artifact_digest IS NULL
+                 AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id)
+                 AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id)
+                 AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.build_id = b.build_id)
+             )`,
+        )
+        .bind(
+          context.revision_id,
+          `repository:${input.canary.repositoryId}`,
+          input.canary.instanceId,
+          input.canary.repositoryId,
+          input.releaseId,
+          input.expectedRevision,
+          input.canary.resourceProfileId,
+          modulesJson,
+          input.canary.bindingEpoch,
+          input.canary.authorizationRevision,
+        ),
+      this.assertOneChange(),
+      this.db
+        .prepare(
+          `UPDATE release_candidate_workflows
+              SET state = 'canary_building', revision = revision + 1, attempts = attempts + 1,
+                  next_attempt_at = NULL, lease_owner = NULL, lease_epoch = lease_epoch + 1,
+                  lease_expires_at = NULL, canary_artifact_digest = NULL,
+                  canary_runtime_id = NULL, canary_operation_id = NULL, healthy_since = NULL,
+                  last_healthy_at = NULL, last_health_evidence_json = NULL,
+                  cleanup_evidence_json = NULL, follower_cursor = NULL,
+                  follower_planning_complete = 0, canary_cleanup_complete = 0,
+                  cleanup_disposition = NULL, failure_code = NULL, updated_at = ?
+            WHERE release_id = ? AND revision = ? AND state = 'blocked'
+              AND failure_code = 'canary_build_failed'
+              AND EXISTS (
+                SELECT 1 FROM release_candidates c
+                JOIN idempotency_records p
+                  ON p.scope = ?
+                 AND p.idempotency_key = 'stable-canary-plan:' || c.release_id
+                 AND p.response_kind = 'configuration-plan'
+                JOIN deployment_revisions d ON d.revision_id = p.response_id
+                JOIN builds b ON b.build_key = release_candidate_workflows.canary_build_key
+                JOIN logical_instances i ON i.instance_id = ?
+                JOIN repository_bindings rb ON rb.repository_id = ? AND rb.instance_id = i.instance_id
+                WHERE c.release_id = release_candidate_workflows.release_id
+                  AND c.status = 'candidate' AND d.status = 'building' AND d.artifact_digest IS NULL
+                  AND d.build_id = b.build_id AND b.status = 'pending'
+                  AND d.instance_id = i.instance_id AND d.repository_id = i.repository_id
+                  AND d.actor_id = 'system:stable-release-canary'
+                  AND json_extract(d.selection_json, '$.releaseId') = c.release_id
+                  AND json_extract(d.selection_json, '$.policy') = 'pinned'
+                  AND json_extract(d.selection_json, '$.resourceProfileId') = ?
+                  AND json_extract(d.selection_json, '$.requestedModules') = ?
+                  AND p.response_id = d.revision_id AND rb.binding_epoch = ?
+                  AND rb.authorization_revision = ? AND rb.suspended = 0
+                  AND i.generation = d.generation AND i.desired_revision_id = d.revision_id
+                  AND i.desired_state = 'stopped' AND i.observed_state = 'absent'
+                  AND i.observed_generation IS NULL AND i.observed_runtime_epoch IS NULL
+                  AND i.runtime_epoch = 0 AND i.reservation_state IN ('none', 'released')
+                  AND i.reservation_id IS NULL AND i.desired_artifact_digest IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id)
+                  AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id)
+                  AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.build_id = b.build_id)
+              )`,
+        )
+        .bind(
+          input.now,
+          input.releaseId,
+          input.expectedRevision,
+          `repository:${input.canary.repositoryId}`,
+          input.canary.instanceId,
+          input.canary.repositoryId,
+          input.canary.resourceProfileId,
+          modulesJson,
+          input.canary.bindingEpoch,
+          input.canary.authorizationRevision,
+        ),
+      this.assertOneChange(),
+      this.db
+        .prepare(
+          `INSERT INTO idempotency_records
+             (scope, idempotency_key, request_hash, response_kind, response_id, created_at)
+           VALUES (?, ?, ?, 'release-canary-build-retry', ?, ?)`,
+        )
+        .bind(scope, input.idempotencyKey, input.requestHash, input.releaseId, input.now),
+      this.assertOneChange(),
+      this.db
+        .prepare(
+          `INSERT INTO audit_events
+             (event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
+              action, outcome, request_id, metadata_json, occurred_at)
+           VALUES (?, ?, ?, NULL, ?, 'operator', 'release.canary-build.retried',
+                   'accepted', ?, ?, ?)`,
+        )
+        .bind(
+          `aud_canary_retry_${crypto.randomUUID()}`,
+          input.canary.repositoryId,
+          input.canary.instanceId,
+          input.actorId,
+          input.requestId,
+          JSON.stringify({
+            releaseId: candidate.id,
+            buildId: context.build_id,
+            previousWorkflowRevision: input.expectedRevision,
+            workflowRevision: input.expectedRevision + 1,
+          }),
+          input.now,
+        ),
+      this.assertOneChange(),
+    ];
+
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      if (isTransactionAssertion(error)) {
+        return { kind: "conflict", reason: "stale_or_ineligible" };
+      }
+      if (isConstraintError(error)) {
+        const raced = await this.readRetryIdempotency(scope, input.idempotencyKey);
+        if (raced) {
+          if (
+            raced.request_hash !== input.requestHash ||
+            raced.response_kind !== "release-canary-build-retry" ||
+            raced.response_id !== input.releaseId
+          ) {
+            return { kind: "conflict", reason: "idempotency_key_reused" };
+          }
+          const duplicateStatus = await this.getReleaseRetryStatus(input.releaseId);
+          return duplicateStatus
+            ? { kind: "accepted", duplicate: true, status: duplicateStatus }
+            : { kind: "not_found" };
+        }
+      }
+      throw error;
+    }
+
+    const updated = await this.getReleaseRetryStatus(input.releaseId);
+    return updated
+      ? { kind: "accepted", duplicate: false, status: updated }
+      : { kind: "not_found" };
+  }
+
+  private async readOperatorRetryContext(
+    input: ReleaseRetryCommand,
+  ): Promise<OperatorRetryContextRow | null> {
+    return this.db
+      .prepare(
+        `SELECT c.candidate_json, c.status AS candidate_status,
+                w.state AS workflow_state, w.revision AS workflow_revision,
+                w.failure_code AS workflow_failure_code, w.lease_owner AS workflow_lease_owner,
+                w.lease_expires_at AS workflow_lease_expires_at,
+                w.canary_artifact_digest AS workflow_canary_artifact_digest,
+                w.canary_runtime_id AS workflow_canary_runtime_id,
+                w.canary_operation_id AS workflow_canary_operation_id,
+                w.healthy_since AS workflow_healthy_since, w.last_healthy_at AS workflow_last_healthy_at,
+                w.last_health_evidence_json AS workflow_last_health_evidence_json,
+                w.cleanup_evidence_json AS workflow_cleanup_evidence_json,
+                w.follower_cursor AS workflow_follower_cursor,
+                w.follower_planning_complete AS workflow_follower_planning_complete,
+                w.canary_cleanup_complete AS workflow_canary_cleanup_complete,
+                w.cleanup_disposition AS workflow_cleanup_disposition,
+                w.canary_build_key, d.revision_id, d.status AS revision_status,
+                d.artifact_digest AS revision_artifact_digest, d.actor_id AS revision_actor_id,
+                d.selection_json AS revision_selection_json, d.generation AS revision_generation,
+                b.build_id, b.status AS build_status, b.failure_json AS build_failure_json,
+                b.active_attempt_id AS build_active_attempt_id, b.lease_epoch AS build_lease_epoch,
+                b.build_key, b.attempt_count AS build_attempt_count,
+                i.generation AS instance_generation, i.runtime_epoch AS instance_runtime_epoch,
+                i.desired_state AS instance_desired_state, i.observed_state AS instance_observed_state,
+                i.observed_generation AS instance_observed_generation,
+                i.observed_runtime_epoch AS instance_observed_runtime_epoch,
+                i.desired_revision_id AS instance_desired_revision_id,
+                i.desired_artifact_digest AS instance_desired_artifact_digest,
+                i.reservation_state AS instance_reservation_state, i.reservation_id AS instance_reservation_id,
+                rb.suspended AS binding_suspended, rb.binding_epoch, rb.authorization_revision,
+                a.status AS active_attempt_status, a.lease_epoch AS active_attempt_epoch,
+                EXISTS (SELECT 1 FROM operations op WHERE op.instance_id = i.instance_id) AS has_instance_operations,
+                EXISTS (SELECT 1 FROM runtime_reservations rr WHERE rr.instance_id = i.instance_id) AS has_instance_reservations,
+                EXISTS (SELECT 1 FROM runtime_health_observations ho WHERE ho.instance_id = i.instance_id) AS has_runtime_health_observations,
+                EXISTS (SELECT 1 FROM artifacts ar WHERE ar.build_id = b.build_id) AS has_build_artifacts
+           FROM release_candidates c
+           JOIN release_candidate_workflows w ON w.release_id = c.release_id
+           JOIN idempotency_records p
+             ON p.scope = ?
+            AND p.idempotency_key = 'stable-canary-plan:' || c.release_id
+            AND p.response_kind = 'configuration-plan'
+           JOIN deployment_revisions d ON d.revision_id = p.response_id
+           JOIN logical_instances i ON i.instance_id = d.instance_id
+           JOIN repository_bindings rb ON rb.repository_id = ? AND rb.instance_id = i.instance_id
+           JOIN builds b ON b.build_id = d.build_id AND b.build_key = w.canary_build_key
+           LEFT JOIN build_attempts a ON a.attempt_id = b.active_attempt_id AND a.build_id = b.build_id
+          WHERE c.release_id = ? LIMIT 1`,
+      )
+      .bind(
+        `repository:${input.canary.repositoryId}`,
+        input.canary.repositoryId,
+        input.releaseId,
+      )
+      .first<OperatorRetryContextRow>();
+  }
+
+  private async readRetryIdempotency(
+    scope: string,
+    key: string,
+  ): Promise<RetryIdempotencyRow | null> {
+    return this.db
+      .prepare(
+        `SELECT request_hash, response_kind, response_id
+           FROM idempotency_records WHERE scope = ? AND idempotency_key = ? LIMIT 1`,
+      )
+      .bind(scope, key)
+      .first<RetryIdempotencyRow>();
+  }
 
   async getCanaryHealthSchedule(
     input: CanaryHealthScheduleInput,
@@ -1356,4 +1773,243 @@ export class D1T11ReleaseRolloutStore
       .first<{ readonly found: number }>();
     return row !== null;
   }
+}
+
+function operatorRetryStatus(row: OperatorRetryStatusRow): ReleaseRetryStatus {
+  const buildFailure = safeBuildFailure(row.build_failure_json);
+  return {
+    release: {
+      id: row.release_id,
+      version: row.version,
+      imageDigest: row.image_digest,
+      status: row.candidate_status,
+    },
+    workflow: {
+      state: row.workflow_state,
+      revision: row.workflow_revision,
+      failureCode: row.workflow_failure_code,
+      attempts: row.workflow_attempts,
+      nextAttemptAt: row.workflow_next_attempt_at,
+      canaryBuildKey: row.canary_build_key,
+      canaryOperationId: row.canary_operation_id,
+    },
+    build:
+      row.build_id && row.build_status
+        ? {
+            id: row.build_id,
+            status: row.build_status,
+            attemptCount: row.build_attempt_count ?? 0,
+            progress: safeBuildProgress(row.build_progress_json),
+            failure: buildFailure,
+          }
+        : null,
+  };
+}
+
+function safeBuildProgress(
+  value: string | null,
+): NonNullable<ReleaseRetryStatus["build"]>["progress"] {
+  if (!value) return null;
+  try {
+    const progress: unknown = JSON.parse(value);
+    if (typeof progress !== "object" || progress === null || Array.isArray(progress)) return null;
+    const item = progress as Record<string, unknown>;
+    if (
+      item.stage !== "preparing" &&
+      item.stage !== "building" &&
+      item.stage !== "publishing"
+    ) {
+      return null;
+    }
+    if (
+      item.percent !== null &&
+      (typeof item.percent !== "number" || !Number.isFinite(item.percent) || item.percent < 0 || item.percent > 100)
+    ) {
+      return null;
+    }
+    return { stage: item.stage, percent: item.percent };
+  } catch {
+    return null;
+  }
+}
+
+function safeBuildFailure(
+  value: string | null,
+): NonNullable<ReleaseRetryStatus["build"]>["failure"] {
+  if (!value) return null;
+  try {
+    const failure: unknown = JSON.parse(value);
+    if (typeof failure !== "object" || failure === null || Array.isArray(failure)) return null;
+    const item = failure as Record<string, unknown>;
+    if (
+      item.code !== "BUILD_FAILED" &&
+      item.code !== "BUILD_TIMEOUT" &&
+      item.code !== "BUILD_CANCELED"
+    ) {
+      return null;
+    }
+    return { code: item.code, retryable: item.retryable === true };
+  } catch {
+    return null;
+  }
+}
+
+function isEligiblePreRuntimeCanaryRetry(
+  row: OperatorRetryContextRow,
+  canary: ReleaseRetryCommand["canary"],
+): boolean {
+  let candidate: ReleaseCandidate;
+  let selection: unknown;
+  let failure: unknown;
+  try {
+    candidate = ReleaseCandidateSchema.parse(JSON.parse(row.candidate_json) as unknown);
+    selection = JSON.parse(row.revision_selection_json) as unknown;
+    failure = row.build_failure_json ? (JSON.parse(row.build_failure_json) as unknown) : null;
+  } catch {
+    return false;
+  }
+  const selected =
+    typeof selection === "object" && selection !== null && !Array.isArray(selection)
+      ? (selection as Record<string, unknown>)
+      : null;
+  const buildFailure =
+    typeof failure === "object" && failure !== null && !Array.isArray(failure)
+      ? (failure as Record<string, unknown>)
+      : null;
+  const requestedModules = [...canary.requestedModules].sort();
+  return (
+    candidate.id.length > 0 &&
+    candidate.status === "candidate" &&
+    row.candidate_status === "candidate" &&
+    row.workflow_state === "blocked" &&
+    row.workflow_failure_code === "canary_build_failed" &&
+    row.workflow_lease_owner === null &&
+    row.workflow_lease_expires_at === null &&
+    row.workflow_canary_artifact_digest === null &&
+    row.workflow_canary_runtime_id === null &&
+    row.workflow_canary_operation_id === null &&
+    row.workflow_healthy_since === null &&
+    row.workflow_last_healthy_at === null &&
+    row.workflow_last_health_evidence_json === null &&
+    row.workflow_cleanup_evidence_json === null &&
+    row.workflow_follower_cursor === null &&
+    row.workflow_follower_planning_complete === 0 &&
+    row.workflow_canary_cleanup_complete === 0 &&
+    row.workflow_cleanup_disposition === null &&
+    row.canary_build_key === row.build_key &&
+    row.revision_id.length > 0 &&
+    row.revision_status === "failed" &&
+    row.revision_artifact_digest === null &&
+    row.revision_actor_id === "system:stable-release-canary" &&
+    row.revision_generation === row.instance_generation &&
+    row.build_status === "failed" &&
+    (buildFailure?.code === "BUILD_FAILED" || buildFailure?.code === "BUILD_TIMEOUT") &&
+    row.build_active_attempt_id !== null &&
+    row.active_attempt_status === "failed" &&
+    row.active_attempt_epoch === row.build_lease_epoch &&
+    row.build_attempt_count > 0 &&
+    row.binding_suspended === 0 &&
+    row.binding_epoch === canary.bindingEpoch &&
+    row.authorization_revision === canary.authorizationRevision &&
+    row.instance_generation === row.revision_generation &&
+    row.instance_runtime_epoch === 0 &&
+    row.instance_desired_state === "stopped" &&
+    row.instance_observed_state === "absent" &&
+    row.instance_observed_generation === null &&
+    row.instance_observed_runtime_epoch === null &&
+    row.instance_desired_revision_id === row.revision_id &&
+    row.instance_desired_artifact_digest === null &&
+    (row.instance_reservation_state === "none" || row.instance_reservation_state === "released") &&
+    row.instance_reservation_id === null &&
+    row.has_instance_operations === 0 &&
+    row.has_instance_reservations === 0 &&
+    row.has_runtime_health_observations === 0 &&
+    row.has_build_artifacts === 0 &&
+    selected !== null &&
+    selected.releaseId === candidate.id &&
+    selected.policy === "pinned" &&
+    selected.resourceProfileId === canary.resourceProfileId &&
+    Array.isArray(selected.requestedModules) &&
+    selected.requestedModules.length === requestedModules.length &&
+    selected.requestedModules.every((module, index) => module === requestedModules[index])
+  );
+}
+
+function retryEligibilitySql(buildStatus: "failed", revisionStatus: "failed"): string {
+  return `SELECT 1 FROM release_candidate_workflows w
+    JOIN release_candidates c ON c.release_id = w.release_id
+    JOIN idempotency_records p
+      ON p.scope = ?
+     AND p.idempotency_key = 'stable-canary-plan:' || c.release_id
+     AND p.response_kind = 'configuration-plan'
+    JOIN deployment_revisions d ON d.revision_id = p.response_id
+    JOIN logical_instances i ON i.instance_id = ?
+    JOIN repository_bindings rb ON rb.repository_id = ? AND rb.instance_id = i.instance_id
+    JOIN builds b ON b.build_key = w.canary_build_key AND b.build_id = d.build_id
+    JOIN build_attempts a ON a.attempt_id = b.active_attempt_id AND a.build_id = b.build_id
+   WHERE c.release_id = ? AND c.candidate_json = ? AND c.status = 'candidate'
+     AND w.release_id = c.release_id AND w.revision = ? AND w.state = 'blocked'
+     AND w.failure_code = 'canary_build_failed' AND w.lease_owner IS NULL
+     AND w.lease_expires_at IS NULL AND w.canary_artifact_digest IS NULL
+     AND w.canary_runtime_id IS NULL AND w.canary_operation_id IS NULL
+     AND w.healthy_since IS NULL AND w.last_healthy_at IS NULL
+     AND w.last_health_evidence_json IS NULL AND w.cleanup_evidence_json IS NULL
+     AND w.follower_cursor IS NULL AND w.follower_planning_complete = 0
+     AND w.canary_cleanup_complete = 0 AND w.cleanup_disposition IS NULL
+     AND d.status = '${revisionStatus}' AND d.artifact_digest IS NULL
+     AND d.actor_id = 'system:stable-release-canary' AND d.instance_id = i.instance_id
+     AND d.repository_id = i.repository_id AND d.generation = i.generation
+     AND json_extract(d.selection_json, '$.releaseId') = c.release_id
+     AND json_extract(d.selection_json, '$.policy') = 'pinned'
+     AND json_extract(d.selection_json, '$.resourceProfileId') = ?
+     AND json_extract(d.selection_json, '$.requestedModules') = ?
+     AND p.response_id = d.revision_id AND b.build_id = builds.build_id
+     AND b.build_key = w.canary_build_key AND b.status = '${buildStatus}'
+     AND b.failure_json IS NOT NULL
+     AND json_extract(b.failure_json, '$.code') IN ('BUILD_FAILED', 'BUILD_TIMEOUT')
+     AND b.active_attempt_id IS NOT NULL AND a.status = 'failed'
+     AND a.lease_epoch = b.lease_epoch AND b.attempt_count > 0
+     AND b.cancel_requested = 0 AND b.artifact_digest IS NULL
+     AND b.candidate_ref IS NULL AND b.manifest_digest IS NULL
+     AND rb.binding_epoch = ? AND rb.authorization_revision = ? AND rb.suspended = 0
+     AND i.desired_revision_id = d.revision_id AND i.desired_state = 'stopped'
+     AND i.observed_state = 'absent' AND i.observed_generation IS NULL
+     AND i.observed_runtime_epoch IS NULL AND i.runtime_epoch = 0
+     AND i.reservation_state IN ('none', 'released') AND i.reservation_id IS NULL
+     AND i.desired_artifact_digest IS NULL
+     AND NOT EXISTS (SELECT 1 FROM operations op WHERE op.instance_id = i.instance_id)
+     AND NOT EXISTS (SELECT 1 FROM runtime_reservations rr WHERE rr.instance_id = i.instance_id)
+     AND NOT EXISTS (SELECT 1 FROM runtime_health_observations ho WHERE ho.instance_id = i.instance_id)
+     AND NOT EXISTS (SELECT 1 FROM artifacts ar WHERE ar.build_id = b.build_id)`;
+}
+
+function retryEligibilityValues(input: {
+  readonly releaseId: string;
+  readonly candidateJson: string;
+  readonly expectedRevision: number;
+  readonly canary: ReleaseRetryCommand["canary"];
+  readonly modulesJson: string;
+}): readonly D1BindValue[] {
+  return [
+    `repository:${input.canary.repositoryId}`,
+    input.canary.instanceId,
+    input.canary.repositoryId,
+    input.releaseId,
+    input.candidateJson,
+    input.expectedRevision,
+    input.canary.resourceProfileId,
+    input.modulesJson,
+    input.canary.bindingEpoch,
+    input.canary.authorizationRevision,
+  ];
+}
+
+function isTransactionAssertion(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("platform_transaction_sentinel");
+}
+
+function isConstraintError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /unique constraint|constraint failed/iu.test(message);
 }

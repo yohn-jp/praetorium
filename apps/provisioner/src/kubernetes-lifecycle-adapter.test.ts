@@ -331,19 +331,21 @@ describe("runtime identity renewal after a controller outage", () => {
     });
     const provider = {
       ensureRunning: vi.fn(async () => {
+        inspectionCount += 1;
         if (Date.now() > initialExpiry && !proofRefreshed)
           startupObservedBeyondInitialExpiry = true;
-        return proofRefreshed && Date.now() >= initialExpiry + 10_000
-          ? { status: "unchanged" as const }
-          : { status: "pending" as const };
-      }),
-      inspect: vi.fn(async () => {
-        inspectionCount += 1;
-        // A prior generation may still be shutting down. It must not arm
-        // renewal, even though its container happens to share the image.
-        return observation(
-          inspectionCount === 1 ? assignment.generation - 1 : assignment.generation,
-        );
+        return {
+          status:
+            proofRefreshed && Date.now() >= initialExpiry + 10_000
+              ? ("unchanged" as const)
+              : ("pending" as const),
+          // A prior generation may still be shutting down. It must not arm
+          // renewal, even though its container happens to share the image.
+          observation: observation(
+            inspectionCount === 1 ? assignment.generation - 1 : assignment.generation,
+          ),
+          progress: [],
+        };
       }),
       readRuntimeIdentityProjection: vi.fn(async () => ({
         assignment: projected,

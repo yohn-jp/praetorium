@@ -305,7 +305,7 @@ export class KubernetesLifecycleRuntimeAdapter
         this.startIdentityRenewal(assignment, beforeEffect, signal);
         return;
       }
-      if (await this.hasMatchingProjectedWriter(assignment, signal)) {
+      if (await this.hasMatchingProjectedWriter(assignment, result.observation, signal)) {
         // A hosted runtime may need its repository proof to finish startup.
         // Start renewal only after the all-epoch census identifies this exact
         // target writer and its mounted projection matches the assignment.
@@ -318,19 +318,25 @@ export class KubernetesLifecycleRuntimeAdapter
 
   private async hasMatchingProjectedWriter(
     assignment: RuntimeAssignment,
+    observation: RuntimeObservation,
     signal?: AbortSignal,
   ): Promise<boolean> {
     if (this.identityTransport === undefined) return false;
-    const observation = await this.provider.inspect(parseIdentity(assignment), signal);
     const census = observation.writerCensus;
     const writer = census.pods[0];
     if (
       census.scope !== "instance-repository-all-epochs" ||
       census.complete !== true ||
+      observation.observationId.length === 0 ||
+      !Number.isSafeInteger(observation.observedAt) ||
+      observation.observedAt < 1 ||
       census.queriedNamespace.length === 0 ||
       census.namespaceUid === null ||
+      census.namespaceUid.length === 0 ||
       census.namespaceResourceVersion === null ||
+      census.namespaceResourceVersion.length === 0 ||
       census.listResourceVersion === null ||
+      census.listResourceVersion.length === 0 ||
       census.queriedPodCount !== 1 ||
       census.pods.length !== 1 ||
       writer === undefined ||

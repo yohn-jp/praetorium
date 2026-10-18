@@ -1,0 +1,42 @@
+{
+  "operation": "publish-existing-real-canary-receipt",
+  "receiptDigest": "sha256:988f9f58a69c145d934a26ac170d9ae0d6c39bb407579e001bf9c34f9f00e613",
+  "receiptBytes": 1877,
+  "events": [
+    {
+      "stage": "token-exchange",
+      "status": 200
+    },
+    {
+      "stage": "receipt-head",
+      "status": 404
+    },
+    {
+      "stage": "upload-start",
+      "status": 202,
+      "locationShape": {
+        "length": 87,
+        "protocol": "https:",
+        "hostname": "ghcr.io",
+        "hasUser": false,
+        "hasPassword": false,
+        "hasHash": false,
+        "expectedPrefix": false,
+        "singularUploadPrefix": true,
+        "pathShape": "/v2/yohn-jp/praetorium/compositions/blobs/upload/<opaque:38>",
+        "unexpectedCharCodes": null,
+        "queryLength": 0
+      }
+    }
+  ],
+  "success": false,
+  "reason": "invalid_content",
+  "observedAtUtc": "2026-10-18T08:07:22.948Z",
+  "scope": "Actual owned attempt 2 receipt publication; no new image build; no D1 repair",
+  "candidateImageDigest": "sha256:446a6a8a6703ebe54cc2ef924f71a885eabccf35b0397be6177cebb2f776ce99",
+  "buildKitSolve": "SUCCEEDED",
+  "rootfsExport": "SUCCEEDED",
+  "receiptSchemaAndBindings": "PASS",
+  "candidateAdmission": "NOT_COMPLETED",
+  "hostedAcceptance": "NOT_CHECKED"
+}

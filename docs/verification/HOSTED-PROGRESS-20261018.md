@@ -492,3 +492,51 @@ it is not a real Hosted Build or browser acceptance result.
 [Bounded local D1 result](CANARY-RETRY-D1-DEPTH-20261018.json).
 The next action is deploy this source correction and retry the same real
 candidate through the Operator API; no remote SQL repair is required.
+
+
+## Real retry and GHCR receipt upload (2026-10-18 08:08 UTC)
+
+The SQL correction is deployed. At 07:57:14 UTC the real Operator retry returned
+HTTP 202, retained the original candidate, and moved the workflow from blocked
+revision 3 to `canary_building` revision 4. The durable scheduler then advanced
+revision 5. An authenticated direct work hint returned 202 and the ordinary
+Build Worker claimed attempt 2. Cloudflare's automatic hint delivery remains
+unconfirmed; direct hint acceptance is not evidence of those Worker bindings.
+[Source CI 39109487290](https://github.com/yohn-jp/praetorium/actions/runs/39109487290)
+passed on `8710ef1054b733d42e08f2a61373880c22ae4991`.
+
+Attempt 2 reached successful BuildKit solve and rootfs export. The image was
+published at `sha256:446a6a8a6703ebe54cc2ef924f71a885eabccf35b0397be6177cebb2f776ce99`.
+It then failed before candidate admission. Only the existing image's 49,279-byte
+metadata layer was read to recover the embedded 1,877-byte Composition receipt.
+Its schema, build-input key and composition bindings validate against the
+original Build Key; no image rebuild or admission bypass was used.
+
+The canonical receipt publication reproduced the failure: token exchange 200,
+absent-blob HEAD 404, upload-start POST 202, followed by local rejection of the
+returned Location. GHCR returns the same-origin, same-repository
+`/blobs/upload/<opaque-id>` path, while this client only permits
+`/blobs/uploads/<opaque-id>`. No upload URL, credential or remote response body
+is recorded here. The [OCI POST/PUT contract](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#post-then-put)
+requires using the returned Location; the plural form is an example, not the
+only valid shape. The scoped fix retains all authority, origin, repository,
+opaque-ID and query bounds while accepting GHCR's singular form.
+
+Canary promotion, a tenant Pod, and real browser editing/Git save/reload remain
+unproven. Receipt upload repair and a normal idempotent Canary retry are next;
+failed D1 rows have not been rewritten by hand.
+
+
+The singular upload fix passed all 29 source-check tasks and 70 GHCR tests;
+read-only review confirmed all target/authority bounds remain intact. The fixed
+canonical client then completed the real receipt POST/PUT (202/201). A separate
+pull-credential readback returned 404. Read-only comparison across read pull,
+write pull, and write pull/push tokens found matching HEAD 200 but GET
+`BLOB_UNKNOWN` in every case; the repository also has no tags/manifests. This
+rules out the read credential as the cause and suggests the unreferenced blob
+needs an OCI artifact manifest before GHCR will serve it. That remains an
+inference until the canonical retention correction is exercised. A metadata
+storage fix is being prepared inside the existing GHCR provider; the public
+blob reference, payload bytes, credentials, application-image admission and
+Release/Canary contracts remain unchanged. No new image publication or Build
+retry is started while this retrieval issue remains unresolved.

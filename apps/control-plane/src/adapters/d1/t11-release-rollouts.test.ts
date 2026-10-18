@@ -352,6 +352,34 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     expect(targeted.map(({ candidate: item }) => item.id)).toEqual([release.id]);
   });
 
+  it("keeps same-owner same-timestamp targeted claims isolated by release", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const releases = store(db);
+    const firstRelease = candidate("release-a", "1.0.0", DIGEST);
+    const secondRelease = candidate("release-b", "1.0.1", `sha256:${"c".repeat(64)}`);
+    await releases.createCandidate(firstRelease);
+    await releases.createCandidate(secondRelease);
+
+    const first = await releases.claimCandidateWork({
+      owner: "shared-worker",
+      now: NOW,
+      leaseMs: 60_000,
+      limit: 1,
+      releaseId: firstRelease.id,
+    });
+    const second = await releases.claimCandidateWork({
+      owner: "shared-worker",
+      now: NOW,
+      leaseMs: 60_000,
+      limit: 1,
+      releaseId: secondRelease.id,
+    });
+
+    expect(first.map(({ candidate: item }) => item.id)).toEqual([firstRelease.id]);
+    expect(second.map(({ candidate: item }) => item.id)).toEqual([secondRelease.id]);
+  });
+
   it("rolls back candidate and audit if atomic admission cannot create its workflow", async () => {
     const db = new SQLiteD1();
     installSchema(db);

@@ -154,13 +154,20 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
       notifyWork("operation", instanceId),
   };
   const scheduled = { promotions, rollouts: rolloutDependencies };
-  const progressCanaryHealth = (operationId: string) =>
-    progressCanaryHealthAfterEvidence({
+  const progressCanaryHealth = (operationId: string) => {
+    const healthProgressWorkerId = `${deps.workerId}:canary-health:${crypto.randomUUID()}`;
+    return progressCanaryHealthAfterEvidence({
       findReleaseId: () => releases.findCanaryReleaseId(operationId),
       prepare: () => releases.prepareCanaryHealthProgress({ operationId, now: deps.clock.nowMs() }),
       advance: async (releaseId) =>
-        (await advanceStablePromotions(promotions, { limit: 1, releaseId })).claimed,
+        (
+          await advanceStablePromotions(
+            { ...promotions, workerId: healthProgressWorkerId },
+            { limit: 1, releaseId },
+          )
+        ).claimed,
     });
+  };
   const operatorReleaseAdmission = createOperatorReleaseAdmissionRoutes({
     releases,
     registry: deps.registry,

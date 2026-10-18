@@ -857,16 +857,25 @@ export class D1T11ReleaseRolloutStore
   }): Promise<readonly CandidateWorkLease[]> {
     const limit = Math.max(1, Math.min(10, Math.trunc(input.limit)));
     const expiresAt = input.now + input.leaseMs;
-    const releaseFilter = input.releaseId ? "AND release_id = ?" : "";
+    const hasReleaseId = input.releaseId !== undefined;
+    const releaseIdValues: D1BindValue[] = input.releaseId === undefined ? [] : [input.releaseId];
+    const releaseFilter = hasReleaseId ? "AND release_id = ?" : "";
+    const selectedReleaseFilter = hasReleaseId ? "AND w.release_id = ?" : "";
     const claimValues: D1BindValue[] = [
       input.owner,
       expiresAt,
       input.now,
       input.now,
       input.now,
-      ...(input.releaseId ? [input.releaseId] : []),
+      ...releaseIdValues,
       limit,
       input.now,
+    ];
+    const selectedValues: D1BindValue[] = [
+      input.owner,
+      expiresAt,
+      input.now,
+      ...releaseIdValues,
     ];
     const results = await this.db.batch([
       this.db
@@ -899,9 +908,10 @@ export class D1T11ReleaseRolloutStore
              FROM release_candidate_workflows AS w
              JOIN release_candidates AS c ON c.release_id = w.release_id
             WHERE w.lease_owner = ? AND w.lease_expires_at = ? AND w.updated_at = ?
+              ${selectedReleaseFilter}
             ORDER BY COALESCE(w.next_attempt_at, 0), w.release_id`,
         )
-        .bind(input.owner, expiresAt, input.now),
+        .bind(...selectedValues),
     ]);
     const rows = (results[1]?.results ?? []) as readonly (CandidateRow & WorkflowRow)[];
     return rows.map((row) => {

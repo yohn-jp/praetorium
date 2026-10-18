@@ -1,3 +1,4 @@
+import { evidenceLedgerRepositories } from "./repository-ledger-list.js";
 import { evidenceLedgerRepository } from "./evidence-ledger.js";
 import type {
   RepositoryDetailView,
@@ -96,16 +97,7 @@ function repositoryRow(view: RepositoryRowView): string {
 
 /** Arrange already escaped, authoritative fragments into the mobile repository list. */
 export function mobileRepositories(view: RepositoryListView): string {
-  const content = view.rows.length
-    ? `<ol class="mobile-repository-list">${view.rows.map(repositoryRow).join("")}</ol>`
-    : `<div class="mobile-repository-empty">${view.empty}</div>`;
-  return (
-    `<div class="mobile-repositories">` +
-    `<header class="mobile-repositories-heading">${view.heading}</header>` +
-    optionalFragment(view.connection, "mobile-repositories-connection") +
-    content +
-    `</div>`
-  );
+  return evidenceLedgerRepositories(view, "mobile");
 }
 
 /** Arrange one repository's authoritative fragments into the mobile task composition. */

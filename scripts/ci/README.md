@@ -35,8 +35,31 @@ Actions artifacts expire and are not stable no-redirect evidence URLs. A public
 proof committed to this repository still requires exact-byte readback from its
 immutable commit URL before admission.
 
-No service image is pushed to a public registry, and no release, Cloudflare,
-D1, DNS or Kubernetes deployment is performed by this workflow.
+By default, no image is pushed to a registry. An explicit
+`publish_public_producer_inputs` dispatch option enables a separate publication
+path for only Runtime Base and Build Kit. The build job still has no OIDC or
+package-write permission; it uploads those two plaintext OCI archives as
+one-day artifacts (with a 1 GiB aggregate cap) alongside the ciphertext
+evidence. Core and Story archives remain ciphertext-only. The signer continues
+to receive JSON metadata only and has `id-token: write` without package-write
+permission. A publisher job starts only after signer success, revalidates the
+pinned source and report, verifies the exact Cosign identity, checks each OCI
+archive descriptor against the signed catalog digest, and copies the exact
+bytes with Skopeo `--preserve-digests` into
+`ghcr.io/yohn-jp/praetorium/scriptorium-producer`. Its only write permission is
+`packages: write`; it uses the short-lived `GITHUB_TOKEN` inside that job and
+does not rewrite the signed metadata. Skopeo is pinned to
+`quay.io/skopeo/stable@sha256:8342e1e8d7b12d0bd3bf53ce8f4fde7ed876277aa8e4345f53937a505309e6b5`
+and checked as version 1.21.0.
+
+The publisher records authenticated digest readback and separately checks
+anonymous pull access. If an anonymous readback is blocked, the job writes the
+HTTP result to its step summary and fails with
+`PUBLIC_AVAILABILITY_BLOCKED`; it leaves the already-pushed images in place. A
+new GHCR package can remain private after a successful push; a package owner
+must set its visibility to Public before anonymous runtime pulls can pass.
+This workflow does not change package visibility or perform a release,
+Cloudflare, D1, DNS or Kubernetes deployment.
 
 `verify-service-images.yml` separately builds the current exact Praetorium
 commit's Provisioner, Instance Access and Build Worker Dockerfiles using the

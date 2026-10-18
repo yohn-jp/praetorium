@@ -7,6 +7,11 @@ on:
         description: Base64 PEM of the pinned public CI recipient certificate
         required: true
         type: string
+      publish_public_producer_inputs:
+        description: Publish only the Runtime Base and Build Kit OCI inputs after signed metadata validation
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -24,15 +29,21 @@ jobs:
       contents: read
     outputs:
       metadata-artifact-name: ${{ steps.evidence-names.outputs.metadata }}
+      public-images-artifact-name: ${{ steps.evidence-names.outputs.public-images }}
+      build-attempt: ${{ steps.evidence-names.outputs.attempt }}
     env:
       SCRIPTORIUM_REVISION: 008d5c429ec279a424cafd5b8c4cbee70a613b8e
       RECIPIENT_CERT_B64: ${{ inputs.recipient_cert_b64 }}
+      PUBLISH_PUBLIC_PRODUCER_IMAGES: ${{ inputs.publish_public_producer_inputs }}
 
     steps:
       - name: Identify this build attempt's metadata artifact
         id: evidence-names
         shell: bash
-        run: printf 'metadata=scriptorium-producer-metadata-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+        run: |
+          printf 'metadata=scriptorium-producer-metadata-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          printf 'public-images=scriptorium-producer-public-inputs-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          printf 'attempt=%s\n' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
       - name: Checkout Praetorium workflow scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,16 +91,31 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload only Runtime Base and Build Kit OCI inputs for opt-in publication
+        if: inputs.publish_public_producer_inputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.evidence-names.outputs.public-images }}
+          path: |
+            ${{ runner.temp }}/scriptorium-producer-evidence-${{ github.run_id }}-${{ github.run_attempt }}/runtime-base.oci.tar
+            ${{ runner.temp }}/scriptorium-producer-evidence-${{ github.run_id }}-${{ github.run_attempt }}/build-kit.oci.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
   sign-producer-metadata:
     needs: build-producer
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      signed-metadata-artifact-name: ${{ steps.signed-metadata-name.outputs.name }}
     permissions:
       contents: read
       id-token: write
     env:
       SCRIPTORIUM_REVISION: 008d5c429ec279a424cafd5b8c4cbee70a613b8e
+      PUBLISH_PUBLIC_PRODUCER_IMAGES: ${{ inputs.publish_public_producer_inputs }}
 
     steps:
       - name: Checkout Praetorium-owned validation scripts
@@ -171,10 +197,15 @@ jobs:
             printf 'This is producer metadata evidence only; it does not admit a hosted runtime or publish an image.\n'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Identify signed metadata artifact for this attempt
+        id: signed-metadata-name
+        shell: bash
+        run: printf 'name=scriptorium-producer-signed-metadata-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
       - name: Upload public SLSA statement and Sigstore bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: scriptorium-producer-signed-metadata-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.signed-metadata-name.outputs.name }}
           path: |
             ${{ runner.temp }}/scriptorium-producer-metadata/build-catalog.json
             ${{ runner.temp }}/scriptorium-producer-metadata/runtime-metadata.json
@@ -182,3 +213,132 @@ jobs:
             ${{ runner.temp }}/provenance.sigstore.json
           if-no-files-found: error
           retention-days: 1
+
+  publish-producer-inputs:
+    needs:
+      - build-producer
+      - sign-producer-metadata
+    if: github.ref == 'refs/heads/main' && inputs.publish_public_producer_inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SCRIPTORIUM_REVISION: 008d5c429ec279a424cafd5b8c4cbee70a613b8e
+      IMAGE_REPOSITORY: ghcr.io/yohn-jp/praetorium/scriptorium-producer
+      SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:8342e1e8d7b12d0bd3bf53ce8f4fde7ed876277aa8e4345f53937a505309e6b5
+
+    steps:
+      - name: Checkout Praetorium-owned publication validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: praetorium
+          persist-credentials: false
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.22.0
+
+      - name: Fetch exact pinned Scriptorium source as validator input
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$GITHUB_WORKSPACE/scriptorium"
+          git init --quiet "$source_dir"
+          git -C "$source_dir" remote add origin https://github.com/yohn-jp/scriptorium.git
+          git -C "$source_dir" fetch --depth=1 origin "$SCRIPTORIUM_REVISION"
+          git -C "$source_dir" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$source_dir" rev-parse HEAD)" = "$SCRIPTORIUM_REVISION"
+          test -z "$(git -C "$source_dir" status --porcelain)"
+          test "$(git -C "$source_dir" remote get-url origin)" = "https://github.com/yohn-jp/scriptorium.git"
+
+      - name: Download producer metadata from this build attempt
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.build-producer.outputs.metadata-artifact-name }}
+          path: ${{ runner.temp }}/scriptorium-producer-metadata
+
+      - name: Download the successful signer's metadata bundle
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.sign-producer-metadata.outputs.signed-metadata-artifact-name }}
+          path: ${{ runner.temp }}/scriptorium-producer-signed-metadata
+
+      - name: Download only the two opted-in public OCI input archives
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.build-producer.outputs.public-images-artifact-name }}
+          path: ${{ runner.temp }}/scriptorium-producer-public-inputs
+
+      - name: Revalidate the exact metadata and producer source
+        shell: bash
+        env:
+          SCRIPTORIUM_ROOT: ${{ github.workspace }}/scriptorium
+          PRODUCER_METADATA_DIR: ${{ runner.temp }}/scriptorium-producer-metadata
+          PUBLISH_PUBLIC_PRODUCER_IMAGES: "true"
+        run: node "$GITHUB_WORKSPACE/praetorium/scripts/ci/validate-producer-attestation.mjs"
+
+      - name: Download and verify pinned Cosign
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign="$RUNNER_TEMP/cosign"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64 \
+            --output "$cosign"
+          printf '%s  %s\n' 4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71 "$cosign" | sha256sum --check
+          chmod 0755 "$cosign"
+          "$cosign" version | grep -F 'v3.1.3'
+
+      - name: Verify the successful signer bundle and exact workflow identity
+        shell: bash
+        env:
+          COSIGN_IDENTITY: https://github.com/yohn-jp/praetorium/.github/workflows/scriptorium-producer-verification.yml@refs/heads/main
+          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/cosign" verify-blob-attestation --new-bundle-format=true \
+            --bundle "$RUNNER_TEMP/scriptorium-producer-signed-metadata/provenance.sigstore.json" \
+            --type https://slsa.dev/provenance/v1 \
+            --certificate-identity "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_ISSUER" \
+            "$RUNNER_TEMP/scriptorium-producer-metadata/build-catalog.json"
+
+      - name: Verify pinned Skopeo image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm "$SKOPEO_IMAGE" --version | grep -Fx 'skopeo version 1.21.0'
+
+      - name: Publish the exact signed producer inputs with digest preservation
+        shell: bash
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_AUTH_DIR: ${{ runner.temp }}/ghcr-auth
+          PRODUCER_METADATA_DIR: ${{ runner.temp }}/scriptorium-producer-metadata
+          PRODUCER_SIGNED_METADATA_DIR: ${{ runner.temp }}/scriptorium-producer-signed-metadata
+          PRODUCER_PUBLIC_INPUTS_DIR: ${{ runner.temp }}/scriptorium-producer-public-inputs
+          PUBLICATION_SUMMARY: ${{ runner.temp }}/producer-publication-summary.json
+          PRODUCER_BUILD_ATTEMPT: ${{ needs.build-producer.outputs.build-attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 -p "$GHCR_AUTH_DIR"
+          trap 'rm -rf "$GHCR_AUTH_DIR"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker --config "$GHCR_AUTH_DIR" login ghcr.io --username "$GHCR_USERNAME" --password-stdin
+          chmod 600 "$GHCR_AUTH_DIR/config.json"
+          unset GHCR_TOKEN GHCR_USERNAME
+          set +e
+          node "$GITHUB_WORKSPACE/praetorium/scripts/ci/publish-producer-inputs.mjs"
+          publish_status=$?
+          set -e
+          if [ -f "$PUBLICATION_SUMMARY" ]; then
+            cat "$PUBLICATION_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'PUBLIC_AVAILABILITY_BLOCKED: publisher failed before writing its readback summary (exit %s).\n' \
+              "$publish_status" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$publish_status"

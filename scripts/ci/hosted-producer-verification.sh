@@ -219,6 +219,14 @@ RUNTIME_METADATA_SHA256="$(sha256sum "$OUT/runtime-metadata.json" | awk '{print 
 CATALOG_SHA256="$(sha256sum "$OUT/build-catalog.json" | awk '{print $1}')"
 STATEMENT_SHA256="$(sha256sum "$OUT/provenance.statement.json" | awk '{print $1}')"
 
+if [ "${PUBLISH_PUBLIC_PRODUCER_IMAGES:-false}" = "true" ]; then
+  REGISTRY_PUBLICATION="deferred to separate Praetorium GHCR publisher after signer success"
+  ARTIFACT_PUBLICATION="ciphertext evidence plus two one-day OCI publication inputs"
+else
+  REGISTRY_PUBLICATION="loopback disposable registry only"
+  ARTIFACT_PUBLICATION="ciphertext-only one-day GitHub Actions artifact"
+fi
+
 cp "$OUT/build-catalog.json" "$OUT/metadata/"
 cp "$OUT/runtime-metadata.json" "$OUT/metadata/"
 cp "$OUT/provenance.statement.json" "$OUT/metadata/"
@@ -255,8 +263,8 @@ cat > "$OUT/metadata/build-report.json" <<REPORT
     "sizeBytes": $ENCRYPTED_EVIDENCE_BYTES,
     "maxSizeBytes": $MAX_EVIDENCE_CMS_BYTES
   },
-  "registryPublication": "loopback disposable registry only",
-  "artifactPublication": "ciphertext-only one-day GitHub Actions artifact"
+  "registryPublication": "$REGISTRY_PUBLICATION",
+  "artifactPublication": "$ARTIFACT_PUBLICATION"
 }
 REPORT
 
@@ -270,8 +278,14 @@ REPORT
   printf 'Core composition digest: %s\n' "$CORE_DIGEST"
   printf 'Story composition digest: %s\n' "$STORY_DIGEST"
   printf 'Encrypted evidence size: %s / %s bytes\n' "$ENCRYPTED_EVIDENCE_BYTES" "$MAX_EVIDENCE_CMS_BYTES"
-  printf 'Uploads: ciphertext-only OCI evidence plus separate public metadata; one-day retention.\n'
+  if [ "${PUBLISH_PUBLIC_PRODUCER_IMAGES:-false}" = "true" ]; then
+    printf 'Uploads: ciphertext evidence, separate public metadata, and only the Runtime Base/Build Kit OCI publication inputs; one-day retention.\n'
+    printf 'Registry publication runs in a separate job only after signed metadata validation; anonymous GHCR availability is checked separately.\n'
+    printf 'Core and Story OCI archives remain only inside ciphertext evidence.\n'
+  else
+    printf 'Uploads: ciphertext-only OCI evidence plus separate public metadata; one-day retention.\n'
+    printf 'No plaintext OCI archive is uploaded to Actions artifacts.\n'
+  fi
   printf 'Signing and source validation are performed in a separate metadata-only job.\n'
-  printf 'No plaintext OCI archive is uploaded to Actions artifacts.\n'
   printf 'This records actual producer builds and compositions only; it does not certify Control Plane admission or hosted runtime acceptance.\n'
 } >> "$GITHUB_STEP_SUMMARY"

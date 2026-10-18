@@ -372,6 +372,13 @@ function validateImageMetadata(metadata, name, reportEntry) {
 }
 
 function validateBuildReport(report, metadata) {
+  const publishPublicProducerImages = process.env.PUBLISH_PUBLIC_PRODUCER_IMAGES === "true";
+  const expectedRegistryPublication = publishPublicProducerImages
+    ? "deferred to separate Praetorium GHCR publisher after signer success"
+    : "loopback disposable registry only";
+  const expectedArtifactPublication = publishPublicProducerImages
+    ? "ciphertext evidence plus two one-day OCI publication inputs"
+    : "ciphertext-only one-day GitHub Actions artifact";
   exactKeys(
     report,
     [
@@ -404,8 +411,8 @@ function validateBuildReport(report, metadata) {
     report.cosignIdentity !== cosignIdentity ||
     report.cosignIssuer !== cosignIssuer ||
     report.recipientCertificateFingerprintSha256 !== recipientFingerprint ||
-    report.registryPublication !== "loopback disposable registry only" ||
-    report.artifactPublication !== "ciphertext-only one-day GitHub Actions artifact"
+    report.registryPublication !== expectedRegistryPublication ||
+    report.artifactPublication !== expectedArtifactPublication
   ) {
     fail("build report identity or publication boundary is invalid");
   }

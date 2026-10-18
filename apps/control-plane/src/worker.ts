@@ -341,6 +341,8 @@ export default {
   ): Promise<Response> {
     try {
       const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/healthz")
+        return Response.json({ status: "ok" }, { headers: { "Cache-Control": "no-store" } });
       const coordinated =
         request.method === "POST" &&
         (/^\/v1\/repositories\/resolve$/.test(url.pathname) ||

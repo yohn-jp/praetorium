@@ -915,6 +915,15 @@ export class ProvisionerIdleController {
         tracked.retryMs = INITIAL_RETRY_INTERVAL_MS;
         return;
       }
+      if (candidate.activeCanaryHealth) {
+        // Keep the journaled meaningful-activity deadline, but let the
+        // authenticated canary schedule drive the next wake. The Control
+        // Plane also fences idle-stop atomically while this workflow is active.
+        tracked.idleCheckAt = undefined;
+        tracked.retryAt = undefined;
+        tracked.retryMs = INITIAL_RETRY_INTERVAL_MS;
+        return;
+      }
 
       const observation: IdleObservation = {
         instanceId: candidate.instanceId,
@@ -1034,6 +1043,11 @@ export class ProvisionerIdleController {
       for (const [key, retry] of tracked.healthProbeRetries) {
         if (retry.trigger.kind === "canary") tracked.healthProbeRetries.delete(key);
       }
+      // The candidate snapshot may still say canary health is active. Refresh
+      // this exact assignment before making its preserved idle deadline due
+      // again, even if the workflow transition notification was lost.
+      this.enqueueRefresh(tracked.assignment.instanceId);
+      this.availability.notify();
       return;
     }
     if (due.nextCheckAt === null || due.healthOperationId === null) {

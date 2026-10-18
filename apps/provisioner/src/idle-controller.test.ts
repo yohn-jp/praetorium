@@ -761,7 +761,6 @@ describe("ProvisionerIdleController", () => {
     const recordHealth = vi.fn(async () => ({ recorded: true as const }));
     const h = harness({
       candidate: candidate({ activeCanaryHealth: true, healthNextCheckAt: now - 1 }),
-      activityOffsetMs: 0,
       status: verifiedProducerStatus(),
       runtimeObservation: providerObservation({ imageDigest: platformDigest }),
       canaryHealthDue: async (currentNow) => ({
@@ -775,11 +774,13 @@ describe("ProvisionerIdleController", () => {
     });
 
     await h.controller.scanOnce();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
     expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
     await h.controller.processDueOnce();
     expect(h.runtimeCanaryHealthDue).toHaveBeenCalledOnce();
     expect(verifyObserved).toHaveBeenCalledOnce();
     expect(recordHealth).toHaveBeenCalledOnce();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
 
     await h.controller.processDueOnce();
     expect(h.runtimeCanaryHealthDue).toHaveBeenCalledOnce();
@@ -789,6 +790,71 @@ describe("ProvisionerIdleController", () => {
     expect(h.runtimeCanaryHealthDue).toHaveBeenCalledTimes(2);
     expect(verifyObserved).toHaveBeenCalledOnce();
     expect(recordHealth).toHaveBeenCalledOnce();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the overdue idle candidate after canary health ends without a notification", async () => {
+    let canaryActive = true;
+    const h = harness({
+      candidate: candidate({
+        activeCanaryHealth: true,
+        healthNextCheckAt: now - 1,
+        healthOperationId: "op_canary_idle_recheck_01",
+      }),
+      canaryHealthDue: async (currentNow) =>
+        canaryActive
+          ? {
+              active: true,
+              nextCheckAt: currentNow + 5 * 60_000,
+              sampleDueAt: null,
+              healthOperationId: "op_canary_idle_recheck_01",
+            }
+          : {
+              active: false,
+              nextCheckAt: null,
+              sampleDueAt: null,
+              healthOperationId: null,
+            },
+      readCandidate: () =>
+        candidate({
+          activeCanaryHealth: false,
+          healthNextCheckAt: null,
+          healthOperationId: null,
+        }),
+    });
+
+    await h.controller.scanOnce();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+    const journal = new IdleDeadlineJournal(h.journalPath);
+    await journal.load();
+    expect(
+      journal.get({ instanceId, repositoryId, generation: 7, runtimeEpoch: 9, clusterId }),
+    ).toEqual(
+      expect.objectContaining({
+        lastMeaningfulActivityAt: now - 16 * 60_000,
+        deadlineAt: now - 60_000,
+      }),
+    );
+    await h.controller.processDueOnce();
+    await h.controller.processDueOnce();
+    expect(h.runtimeCanaryHealthDue).toHaveBeenCalledOnce();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+    expect(h.readIdleCandidate).not.toHaveBeenCalled();
+
+    canaryActive = false;
+    h.advance(5 * 60_000);
+    await h.controller.processDueOnce();
+
+    expect(h.runtimeCanaryHealthDue).toHaveBeenCalledTimes(2);
+    expect(h.readIdleCandidate).toHaveBeenCalledOnce();
+    expect(h.readIdleCandidate).toHaveBeenCalledWith({
+      workerId: "worker-a",
+      clusterId,
+      instanceId,
+      signal: expect.any(AbortSignal),
+    });
+    expect(h.createIdleStop).toHaveBeenCalledOnce();
+    expect(h.listIdleCandidates).toHaveBeenCalledOnce();
   });
 
   it("retries a failed canary sample on a bounded timer and waits before querying again", async () => {

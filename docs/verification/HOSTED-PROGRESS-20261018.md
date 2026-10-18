@@ -7,11 +7,12 @@ is unchanged. Source checks do not certify Hosted acceptance.
 
 Repository identity is GitHub numeric ID `1422456736` (`yohn-jp/praetorium`).
 The campaign started from `e7926f472e12e5f0ec30db88e459328dd08ca58d`.
-The latest integrated and pushed source is `e6dcf87` (product fixes through `5ca00e2`).
+The latest integrated product source is `c47a074`; image publication below records
+its own exact source cut. Product checks remain distinct from real Hosted proof.
 The disposable producer and service-image workflows provide separate evidence;
 neither publishes production images. The separate service publication workflow now
 accepts an exact main revision and uses its existing scoped GitHub Actions token;
-manual publication of `e6dcf87` is running as
+manual publication of `e6dcf87` succeeded as
 [39090471416](https://github.com/yohn-jp/praetorium/actions/runs/39090471416).
 Frozen install, full check (29 tasks), actionlint, eight deployment reproducibility
 tests and four extracted publication-guard cases passed before dispatch.
@@ -266,6 +267,45 @@ removed; archived expired inventories are not current acceptance inputs.
   five D1 API calls / six SQL statements are source-derived, not measured SQL
   counters or Cloudflare billing. Together these local measurements complement
   the earlier Build Worker evidence without certifying full G8.
+
+- Public Control Plane control and runtime-identity JWKS now both return HTTP
+  200 after its automatic build. The actual Cloudflare check for `98ea9e5`
+  identifies the Control Plane deployment; Gateway check metadata identifies
+  `49407db`. Their provider-issued dashboard links resolve to the same account,
+  which is now filled in the private inventory without requesting a credential.
+- A real owner browser initially reached a GitHub 404. Public GitHub App metadata
+  showed the tracked OAuth client ID was mistyped. `49407db` fixes Gateway and
+  inventory from the App API value; public redirect readback matched it after
+  automatic deployment. The owner then reported opening the repository
+  list/management page. This is owner-confirmed login progress, not the G1
+  multi-principal test or an editing/push proof.
+- `370a0a1` adds responsive repository/management views and a fenced stop action;
+  `c47a074` uses one shared configuration form for preview/save and shortens only
+  digest display. Frozen install and full check passed (29 tasks, Gateway 116
+  tests). Six synthetic-fixture browser views at desktop/mobile widths passed
+  CSP, browser-error and overflow checks. The public error renderer exposes the
+  same hashed stylesheet, and Cloudflare's actual `c47a074` Gateway build plus
+  GitHub CI succeeded. Authenticated management still needs real journey tests.
+- Existing production BuildKit port 1234 accepted the existing mTLS client and
+  returned one worker; a request without its client certificate was TLS-rejected.
+  The existing daemon unit invokes rootlesskit. Runtime kubeconfig and these
+  existing client files are prepared privately, with verified cluster/TLS/key
+  identity. No production platform apply or key rotation occurred.
+- Private deployment input preparation now has four of eleven roles ready:
+  existing BuildKit client material, valid anonymous application-image pull
+  config, and two inactive new dedicated notification tokens. Seven private
+  roles remain unresolved; the full deploy cannot run from that partial manifest.
+  Inventory validation has zero errors and two blockers: trusted production
+  Build Worker public key and ACME contact. Actual public ingress/DNS remains
+  a separate prerequisite.
+- The operator-approved producer publisher in `95da17f` uses a separate
+  packages-write job after source validation and Sigstore signing. Six guard
+  tests include digest/subject/DSSE rejection before copy and a nonzero blocked
+  result when anonymous pull fails. Actual run
+  [39092494296](https://github.com/yohn-jp/praetorium/actions/runs/39092494296)
+  built and signed successfully but stopped at the pinned Skopeo version-string
+  guard before any image push. The exact signed artifacts are retained for a
+  scoped retry; public producer availability is not established by that run.
 
 ## Remaining acceptance
 

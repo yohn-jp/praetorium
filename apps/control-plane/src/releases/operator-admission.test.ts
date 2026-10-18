@@ -347,5 +347,19 @@ it("reports a bounded retry failure stage without exposing provider errors", asy
   const response = await createOperatorReleaseAdmissionRoutes(routeDeps)
     .request("/release-test/retry", retryRequest());
   expect(response.status).toBe(503);
-  expect(await response.json()).toEqual({ error: { code: "RELEASE_RETRY_UNAVAILABLE", stage: "commit" } });
+  expect(await response.json()).toEqual({ error: { code: "RELEASE_RETRY_UNAVAILABLE", stage: "commit", reason: "provider_unavailable" } });
+});
+
+
+it("classifies a missing D1 schema through nested causes without returning SQL", async () => {
+  const { routeDeps, retry } = retryFixture();
+  retry.execute.mockRejectedValueOnce(new Error("provider failure", {
+    cause: new Error("D1_ERROR: no such table: internal_table: SQLITE_ERROR"),
+  }));
+  const response = await createOperatorReleaseAdmissionRoutes(routeDeps)
+    .request("/release-test/retry", retryRequest());
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: {
+    code: "RELEASE_RETRY_UNAVAILABLE", stage: "commit", reason: "schema_missing",
+  } });
 });

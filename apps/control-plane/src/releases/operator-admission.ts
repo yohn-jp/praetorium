@@ -144,8 +144,8 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
         // The retry is durable; the existing recovery scheduler owns missed hints.
       }
       return c.json({ ...result.status, duplicate: result.duplicate }, result.duplicate ? 200 : 202);
-    } catch {
-      return c.json({ error: { code: "RELEASE_RETRY_UNAVAILABLE", stage } }, 503);
+    } catch (error) {
+      return c.json({ error: { code: "RELEASE_RETRY_UNAVAILABLE", stage, reason: retryFailureReason(error) } }, 503);
     }
   });
 
@@ -240,4 +240,17 @@ async function readBoundedJson(request: Request, maxBytes: number): Promise<unkn
 
 function validRequestId(value: string | undefined): string | null {
   return value && /^[A-Za-z0-9_.:-]{1,128}$/u.test(value) ? value : null;
+}
+
+
+/** Classify provider failures without returning SQL, credentials or error messages. */
+function retryFailureReason(error: unknown): "schema_missing" | "binding_invalid" | "constraint" | "provider_unavailable" {
+  let current = error;
+  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+    if (/no such (?:table|column)|has no column named/iu.test(current.message)) return "schema_missing";
+    if (/D1_BIND_ERROR|wrong number of parameter|incorrect number of bindings/iu.test(current.message)) return "binding_invalid";
+    if (/SQLITE_CONSTRAINT|constraint failed/iu.test(current.message)) return "constraint";
+    current = current.cause;
+  }
+  return "provider_unavailable";
 }

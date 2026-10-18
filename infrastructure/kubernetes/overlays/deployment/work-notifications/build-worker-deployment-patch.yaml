@@ -9,7 +9,7 @@ spec:
       containers:
         - name: build-worker
           ports:
-            - name: work-notification
+            - name: work-notify
               containerPort: 8788
               protocol: TCP
           env:

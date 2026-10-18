@@ -129,14 +129,15 @@ async function main() {
   const skopeoImage = requireEnvironment("SKOPEO_IMAGE");
   const targetRepository = requireEnvironment("IMAGE_REPOSITORY");
   const revision = requireEnvironment("SCRIPTORIUM_REVISION");
-  const runId = requireEnvironment("GITHUB_RUN_ID");
+  const publisherRunId = requireEnvironment("GITHUB_RUN_ID");
+  const producerRunId = requireEnvironment("PRODUCER_RUN_ID");
   const buildAttempt = requireEnvironment("PRODUCER_BUILD_ATTEMPT");
   const summaryPath = requireEnvironment("PUBLICATION_SUMMARY");
 
   if (revision !== expectedRevision || targetRepository !== expectedTargetRepository) {
     fail("Pinned source revision or Praetorium-owned target repository differs from policy");
   }
-  if (!/^\d+$/u.test(runId) || !/^\d+$/u.test(buildAttempt))
+  if (!/^\d+$/u.test(publisherRunId) || !/^\d+$/u.test(producerRunId) || !/^\d+$/u.test(buildAttempt))
     fail("Workflow build attempt identifier is invalid");
 
   const report = await readJson(metadataDirectory, "build-report.json");
@@ -277,7 +278,7 @@ async function main() {
   const authMount = `type=bind,src=${authFile},dst=/auth/config.json,readonly`;
   const publications = [];
   for (const image of prepared) {
-    const tag = `source-${revision}-run-${runId}-build-attempt-${buildAttempt}-${image.name}`;
+    const tag = `source-${revision}-run-${producerRunId}-build-attempt-${buildAttempt}-${image.name}`;
     const copyResult = runContainer(
       skopeoImage,
       [
@@ -324,7 +325,8 @@ async function main() {
     schemaVersion: "praetorium-scriptorium-producer-publication/v1",
     sourceRevision: revision,
     targetRepository,
-    workflowRun: { id: runId, buildAttempt },
+    producerWorkflowRun: { id: producerRunId, attempt: buildAttempt },
+    publisherWorkflowRun: { id: publisherRunId },
     archiveAggregateBytes: aggregateBytes,
     archiveMaximumBytes: maximumAggregateArchiveBytes,
     images: publications,

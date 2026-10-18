@@ -185,7 +185,8 @@ function runPublisher(fixture, { anonymousBlocked = false } = {}) {
     SKOPEO_IMAGE: "quay.io/skopeo/stable@sha256:fixture",
     IMAGE_REPOSITORY: targetRepository,
     SCRIPTORIUM_REVISION: revision,
-    GITHUB_RUN_ID: "1234567890",
+    GITHUB_RUN_ID: "9876543210",
+    PRODUCER_RUN_ID: "1234567890",
     PRODUCER_BUILD_ATTEMPT: "2",
     PUBLICATION_SUMMARY: path.join(fixture.root, "summary.json"),
     DOCKER_TRACE_FILE: fixture.traceFile,
@@ -217,8 +218,20 @@ test("valid digest-bound metadata copies both exact OCI descriptors", async () =
     const result = runPublisher(fixture);
     assert.equal(result.status, 0, result.stderr);
     const trace = await dockerTrace(fixture);
-    assert.equal(trace.filter((args) => args.includes("copy")).length, 2);
+    const copyCommands = trace.filter((args) => args.includes("copy"));
+    assert.equal(copyCommands.length, 2);
+    assert.ok(
+      copyCommands.every((args) =>
+        args.some((argument) =>
+          argument.startsWith(
+            `docker://${targetRepository}:source-${revision}-run-1234567890-build-attempt-2-`,
+          ),
+        ),
+      ),
+    );
     const summary = JSON.parse(await readFile(path.join(fixture.root, "summary.json"), "utf8"));
+    assert.deepEqual(summary.producerWorkflowRun, { id: "1234567890", attempt: "2" });
+    assert.deepEqual(summary.publisherWorkflowRun, { id: "9876543210" });
     assert.deepEqual(
       summary.images.map((image) => image.digest),
       [fixture.runtimeDigest, fixture.buildKitDigest],

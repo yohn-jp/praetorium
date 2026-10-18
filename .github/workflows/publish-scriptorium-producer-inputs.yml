@@ -1,0 +1,163 @@
+name: Publish signed Scriptorium producer inputs (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      producer_run_id:
+        required: true
+        type: string
+      producer_run_attempt:
+        required: true
+        type: string
+      metadata_artifact_name:
+        required: true
+        type: string
+      signed_artifact_name:
+        required: true
+        type: string
+      public_inputs_artifact_name:
+        required: true
+        type: string
+    secrets:
+      GHCR_TOKEN:
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    env:
+      SCRIPTORIUM_REVISION: 008d5c429ec279a424cafd5b8c4cbee70a613b8e
+      IMAGE_REPOSITORY: ghcr.io/yohn-jp/praetorium/scriptorium-producer
+      SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:8342e1e8d7b12d0bd3bf53ce8f4fde7ed876277aa8e4345f53937a505309e6b5
+      PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+      PRODUCER_BUILD_ATTEMPT: ${{ inputs.producer_run_attempt }}
+    steps:
+      - name: Check out trusted Praetorium publication validators
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: praetorium
+          persist-credentials: false
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.22.0
+
+      - name: Fetch exact pinned Scriptorium source as inert validator input
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$GITHUB_WORKSPACE/scriptorium"
+          git init --quiet "$source_dir"
+          git -C "$source_dir" remote add origin https://github.com/yohn-jp/scriptorium.git
+          git -C "$source_dir" fetch --depth=1 origin "$SCRIPTORIUM_REVISION"
+          git -C "$source_dir" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$source_dir" rev-parse HEAD)" = "$SCRIPTORIUM_REVISION"
+          test -z "$(git -C "$source_dir" status --porcelain)"
+          test "$(git -C "$source_dir" remote get-url origin)" = "https://github.com/yohn-jp/scriptorium.git"
+
+      - name: Download exact producer metadata from its original run attempt
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.metadata_artifact_name }}
+          path: ${{ runner.temp }}/scriptorium-producer-metadata
+          run-id: ${{ inputs.producer_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact successful signer bundle from its original run attempt
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.signed_artifact_name }}
+          path: ${{ runner.temp }}/scriptorium-producer-signed-metadata
+          run-id: ${{ inputs.producer_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Download only the original two public OCI input archives
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.public_inputs_artifact_name }}
+          path: ${{ runner.temp }}/scriptorium-producer-public-inputs
+          run-id: ${{ inputs.producer_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+
+      - name: Revalidate exact metadata and producer source without executing producer code
+        shell: bash
+        env:
+          SCRIPTORIUM_ROOT: ${{ github.workspace }}/scriptorium
+          PRODUCER_METADATA_DIR: ${{ runner.temp }}/scriptorium-producer-metadata
+          PUBLISH_PUBLIC_PRODUCER_IMAGES: "true"
+        run: node "$GITHUB_WORKSPACE/praetorium/scripts/ci/validate-producer-attestation.mjs"
+
+      - name: Download and verify pinned Cosign
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign="$RUNNER_TEMP/cosign"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64 \
+            --output "$cosign"
+          printf '%s  %s\n' 4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71 "$cosign" | sha256sum --check
+          chmod 0755 "$cosign"
+          "$cosign" version | grep -F 'v3.1.3'
+
+      - name: Verify the original successful signer bundle and workflow identity
+        shell: bash
+        env:
+          COSIGN_IDENTITY: https://github.com/yohn-jp/praetorium/.github/workflows/scriptorium-producer-verification.yml@refs/heads/main
+          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/cosign" verify-blob-attestation --new-bundle-format=true \
+            --bundle "$RUNNER_TEMP/scriptorium-producer-signed-metadata/provenance.sigstore.json" \
+            --type https://slsa.dev/provenance/v1 \
+            --certificate-identity "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_ISSUER" \
+            "$RUNNER_TEMP/scriptorium-producer-metadata/build-catalog.json"
+
+      - name: Verify pinned Skopeo image
+        shell: bash
+        env:
+          CONTAINER_RUNTIME: docker
+        run: bash "$GITHUB_WORKSPACE/praetorium/scripts/ci/verify-pinned-skopeo.sh"
+
+      - name: Publish the original signed producer inputs with digest preservation
+        shell: bash
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_AUTH_DIR: ${{ runner.temp }}/ghcr-auth
+          PRODUCER_METADATA_DIR: ${{ runner.temp }}/scriptorium-producer-metadata
+          PRODUCER_SIGNED_METADATA_DIR: ${{ runner.temp }}/scriptorium-producer-signed-metadata
+          PRODUCER_PUBLIC_INPUTS_DIR: ${{ runner.temp }}/scriptorium-producer-public-inputs
+          PUBLICATION_SUMMARY: ${{ runner.temp }}/producer-publication-summary.json
+        run: |
+          set -euo pipefail
+          mkdir -m 700 -p "$GHCR_AUTH_DIR"
+          trap 'rm -rf "$GHCR_AUTH_DIR"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker --config "$GHCR_AUTH_DIR" login ghcr.io --username "$GHCR_USERNAME" --password-stdin
+          chmod 600 "$GHCR_AUTH_DIR/config.json"
+          unset GHCR_TOKEN GHCR_USERNAME
+          set +e
+          node "$GITHUB_WORKSPACE/praetorium/scripts/ci/publish-producer-inputs.mjs"
+          publish_status=$?
+          set -e
+          if [ -f "$PUBLICATION_SUMMARY" ]; then
+            cat "$PUBLICATION_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'PUBLIC_AVAILABILITY_BLOCKED: publisher failed before writing its readback summary (exit %s).\n' \
+              "$publish_status" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$publish_status"

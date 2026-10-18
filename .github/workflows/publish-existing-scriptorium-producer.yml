@@ -1,0 +1,141 @@
+name: Publish already-signed Scriptorium producer inputs
+
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id:
+        description: Successful Scriptorium producer build and signer workflow run ID
+        required: true
+        type: string
+      producer_run_attempt:
+        description: Exact successful producer attempt whose artifacts should be published
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: scriptorium-producer-publication-${{ inputs.producer_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate-producer-run:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      producer-head-sha: ${{ steps.validate.outputs.producer-head-sha }}
+      metadata-artifact-name: ${{ steps.validate.outputs.metadata-artifact-name }}
+      signed-artifact-name: ${{ steps.validate.outputs.signed-artifact-name }}
+      public-inputs-artifact-name: ${{ steps.validate.outputs.public-inputs-artifact-name }}
+    steps:
+      - name: Validate original workflow identity, successful producer jobs, and exact artifacts
+        id: validate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.producer_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.producer_run_attempt }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] || {
+            echo "Producer run ID must be a positive decimal integer" >&2
+            exit 1
+          }
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,2}$ ]] || {
+            echo "Producer run attempt must be a positive decimal integer" >&2
+            exit 1
+          }
+
+          run_json="$RUNNER_TEMP/producer-run.json"
+          workflow_json="$RUNNER_TEMP/producer-workflow.json"
+          jobs_json="$RUNNER_TEMP/producer-jobs.json"
+          artifacts_json="$RUNNER_TEMP/producer-artifacts.json"
+          gh api "repos/$EXPECTED_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$run_json"
+
+          workflow_id="$(jq -er '.workflow_id | select(type == "number")' "$run_json")"
+          gh api "repos/$EXPECTED_REPOSITORY/actions/workflows/$workflow_id" > "$workflow_json"
+          jq -e \
+            --arg run_id "$SOURCE_RUN_ID" \
+            --arg attempt "$SOURCE_RUN_ATTEMPT" \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg repository_id "$EXPECTED_REPOSITORY_ID" \
+            '
+              (.id | tostring) == $run_id and
+              (.run_attempt | tostring) == $attempt and
+              .event == "workflow_dispatch" and
+              .status == "completed" and
+              .conclusion == "failure" and
+              .head_branch == "main" and
+              (.head_sha | test("^[0-9a-f]{40}$")) and
+              .repository.full_name == $repository and
+              (.repository.id | tostring) == $repository_id and
+              .head_repository.full_name == $repository and
+              (.head_repository.id | tostring) == $repository_id
+            ' "$run_json" > /dev/null
+          jq -e \
+            '.path == ".github/workflows/scriptorium-producer-verification.yml"' \
+            "$workflow_json" > /dev/null
+
+          gh api \
+            "repos/$EXPECTED_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT/jobs?per_page=100" \
+            > "$jobs_json"
+          jq -e '
+            (.jobs | map(select(.name == "build-producer"))) as $build |
+            (.jobs | map(select(.name == "sign-producer-metadata"))) as $sign |
+            (.jobs | map(select(.name == "publish-producer-inputs"))) as $publish |
+            ($build | length) == 1 and $build[0].conclusion == "success" and
+            ($sign | length) == 1 and $sign[0].conclusion == "success" and
+            ($publish | length) == 1 and $publish[0].conclusion == "failure" and
+            ($publish[0].steps | map(select(.conclusion == "failure") | .name)) == ["Verify pinned Skopeo image"] and
+            any($publish[0].steps[]; .name == "Publish the exact signed producer inputs with digest preservation" and .conclusion == "skipped")
+          ' "$jobs_json" > /dev/null
+
+          gh api "repos/$EXPECTED_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+            > "$artifacts_json"
+          metadata_name="scriptorium-producer-metadata-$SOURCE_RUN_ID-$SOURCE_RUN_ATTEMPT"
+          signed_name="scriptorium-producer-signed-metadata-$SOURCE_RUN_ID-$SOURCE_RUN_ATTEMPT"
+          public_inputs_name="scriptorium-producer-public-inputs-$SOURCE_RUN_ID-$SOURCE_RUN_ATTEMPT"
+          jq -e \
+            --arg metadata "$metadata_name" \
+            --arg signed "$signed_name" \
+            --arg public_inputs "$public_inputs_name" \
+            '
+              (.artifacts | map(select(.name == $metadata and .expired == false and .size_in_bytes > 0 and .size_in_bytes <= 16777216)) | length) == 1 and
+              (.artifacts | map(select(.name == $signed and .expired == false and .size_in_bytes > 0 and .size_in_bytes <= 16777216)) | length) == 1 and
+              (.artifacts | map(select(.name == $public_inputs and .expired == false and .size_in_bytes > 0 and .size_in_bytes <= 1073741824)) | length) == 1
+            ' "$artifacts_json" > /dev/null
+
+          producer_head_sha="$(jq -er '.head_sha' "$run_json")"
+          printf 'producer-head-sha=%s\n' "$producer_head_sha" >> "$GITHUB_OUTPUT"
+          printf 'metadata-artifact-name=%s\n' "$metadata_name" >> "$GITHUB_OUTPUT"
+          printf 'signed-artifact-name=%s\n' "$signed_name" >> "$GITHUB_OUTPUT"
+          printf 'public-inputs-artifact-name=%s\n' "$public_inputs_name" >> "$GITHUB_OUTPUT"
+          printf 'Validated producer run %s attempt %s (%s) from the same repository main workflow.\n' \
+            "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT" "$producer_head_sha" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Build and signer jobs succeeded; the only failed publisher step was the pinned Skopeo version guard before any copy.\n' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  publish-existing-inputs:
+    needs: validate-producer-run
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/publish-scriptorium-producer-inputs.yml
+    with:
+      producer_run_id: ${{ inputs.producer_run_id }}
+      producer_run_attempt: ${{ inputs.producer_run_attempt }}
+      metadata_artifact_name: ${{ needs.validate-producer-run.outputs.metadata-artifact-name }}
+      signed_artifact_name: ${{ needs.validate-producer-run.outputs.signed-artifact-name }}
+      public_inputs_artifact_name: ${{ needs.validate-producer-run.outputs.public-inputs-artifact-name }}
+    secrets:
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      actions: read
+      contents: read
+      packages: write

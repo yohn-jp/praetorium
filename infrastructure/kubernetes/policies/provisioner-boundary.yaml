@@ -182,47 +182,47 @@ spec:
       message: The Provisioner may mutate only the fixed resource names with complete instance, repository, generation, and cluster ownership labels.
     - expression: >-
         request.resource.resource != "services" || (
-          object.spec.type == "ClusterIP" &&
-          object.spec.ports.size() == 1 &&
-          object.spec.ports[0].name == "http" &&
-          object.spec.ports[0].protocol == "TCP" &&
-          object.spec.ports[0].port >= 1 &&
-          object.spec.ports[0].port <= 65535 &&
+          dyn(object).spec.type == "ClusterIP" &&
+          dyn(object).spec.ports.size() == 1 &&
+          dyn(object).spec.ports[0].name == "http" &&
+          dyn(object).spec.ports[0].protocol == "TCP" &&
+          dyn(object).spec.ports[0].port >= 1 &&
+          dyn(object).spec.ports[0].port <= 65535 &&
           (
             object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii()
-              ? object.spec.selector.size() == 2 &&
-                object.spec.selector["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
-                object.spec.selector["app.kubernetes.io/name"] == "scriptorium" &&
-                (!has(object.spec.publishNotReadyAddresses) || object.spec.publishNotReadyAddresses == false)
+              ? dyn(object).spec.selector.size() == 2 &&
+                dyn(object).spec.selector["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+                dyn(object).spec.selector["app.kubernetes.io/name"] == "scriptorium" &&
+                (!has(dyn(object).spec.publishNotReadyAddresses) || dyn(object).spec.publishNotReadyAddresses == false)
               : object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-control" &&
-                object.spec.selector.size() == 4 &&
-                object.spec.selector["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
-                object.spec.selector["app.kubernetes.io/name"] == "scriptorium" &&
-                object.spec.selector["praetorium.io/runtime-epoch"] == object.metadata.labels["praetorium.io/runtime-epoch"] &&
-                object.spec.selector["arcadia.io/generation"] == object.metadata.labels["arcadia.io/generation"] &&
-                has(object.spec.publishNotReadyAddresses) && object.spec.publishNotReadyAddresses == true
+                dyn(object).spec.selector.size() == 4 &&
+                dyn(object).spec.selector["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+                dyn(object).spec.selector["app.kubernetes.io/name"] == "scriptorium" &&
+                dyn(object).spec.selector["praetorium.io/runtime-epoch"] == object.metadata.labels["praetorium.io/runtime-epoch"] &&
+                dyn(object).spec.selector["arcadia.io/generation"] == object.metadata.labels["arcadia.io/generation"] &&
+                has(dyn(object).spec.publishNotReadyAddresses) && dyn(object).spec.publishNotReadyAddresses == true
           )
         )
       message: Runtime Services must use the public selector or the epoch-fenced recovery selector; only the recovery Service may publish not-ready addresses.
     - expression: >-
         request.resource.resource != "secrets" || (
           object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-runtime"
-            ? object.type == "Opaque" &&
-              has(object.data) &&
-              object.data.size() == 2 &&
-              "runtime-assignment.json" in object.data &&
-              "runtime-identity.jwt" in object.data &&
-              object.data["runtime-assignment.json"].size() > 0 &&
-              object.data["runtime-assignment.json"].size() <= 131072 &&
-              object.data["runtime-identity.jwt"].size() >= 16 &&
-              object.data["runtime-identity.jwt"].size() <= 4096
+            ? dyn(object).type == "Opaque" &&
+              has(dyn(object).data) &&
+              dyn(object).data.size() == 2 &&
+              "runtime-assignment.json" in dyn(object).data &&
+              "runtime-identity.jwt" in dyn(object).data &&
+              dyn(object).data["runtime-assignment.json"].size() > 0 &&
+              dyn(object).data["runtime-assignment.json"].size() <= 131072 &&
+              dyn(object).data["runtime-identity.jwt"].size() >= 16 &&
+              dyn(object).data["runtime-identity.jwt"].size() <= 4096
             : object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-image-pull" &&
-              object.type == "kubernetes.io/dockerconfigjson" &&
-              has(object.data) &&
-              object.data.size() == 1 &&
-              ".dockerconfigjson" in object.data &&
-              object.data[".dockerconfigjson"].size() > 0 &&
-              object.data[".dockerconfigjson"].size() <= 131072
+              dyn(object).type == "kubernetes.io/dockerconfigjson" &&
+              has(dyn(object).data) &&
+              dyn(object).data.size() == 1 &&
+              ".dockerconfigjson" in dyn(object).data &&
+              dyn(object).data[".dockerconfigjson"].size() > 0 &&
+              dyn(object).data[".dockerconfigjson"].size() <= 131072
         )
       message: Runtime Secrets must match the fixed assignment projection or image-pull credential name, type, and key set.
     - expression: >-

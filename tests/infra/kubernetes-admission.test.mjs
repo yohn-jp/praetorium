@@ -369,9 +369,12 @@ test("runtime resource admission covers the renderer's exact kinds and delete ol
   assert.match(expressions[2], /publishNotReadyAddresses/u);
   assert.match(expressions[2], /praetorium\.io\/runtime-epoch/u);
   assert.match(expressions[2], /arcadia\.io\/generation/u);
-  assert.match(expressions[3], /object\.type == "Opaque"/u);
-  assert.match(expressions[3], /object\.data\.size\(\) == 2/u);
-  assert.match(expressions[3], /object\.data\.size\(\) == 1/u);
+  assert.match(expressions[2], /dyn\(object\)\.spec/u);
+  assert.doesNotMatch(expressions[2], /object\.spec/u);
+  assert.match(expressions[3], /dyn\(object\)\.type == "Opaque"/u);
+  assert.match(expressions[3], /dyn\(object\)\.data\.size\(\) == 2/u);
+  assert.match(expressions[3], /dyn\(object\)\.data\.size\(\) == 1/u);
+  assert.doesNotMatch(expressions[3], /object\.(?:type|data)/u);
   assert.doesNotMatch(expressions[3], /stringData/u);
   assert.match(expressions[3], /runtime-assignment\.json/u);
   assert.match(expressions[3], /runtime-identity\.jwt/u);

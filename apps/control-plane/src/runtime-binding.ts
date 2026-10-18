@@ -45,6 +45,7 @@ const POST_ABSENCE_PHASES = new Set([
   "starting-target",
   "target-ready",
   "route-activated",
+  "complete",
 ]);
 
 function checkpointProofPredicate(checkpoint: string, instance: string, nowSlot: string): string {
@@ -199,7 +200,7 @@ export function createRuntimeBindingMetadataReader(
                AND o.kind IN ('start', 'redeploy', 'update')
                AND o.status IN ('claimed', 'running')
                AND o.lease_expires_at > ?
-               AND o.phase IN ('old-writer-absent', 'starting-target', 'target-ready', 'route-activated')
+               AND o.phase IN ('old-writer-absent', 'starting-target', 'target-ready', 'route-activated', 'complete')
                AND latest.phase = o.phase
                AND latest.checkpoint_json = o.checkpoint_json
                AND o.generation = i.generation AND o.runtime_epoch = i.runtime_epoch

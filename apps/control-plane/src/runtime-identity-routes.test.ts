@@ -104,7 +104,12 @@ function installSchema(db: SQLiteD1): void {
     db.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
 }
 
-function insertInstance(db: SQLiteD1, withTargetOperation: boolean): void {
+function insertInstance(
+  db: SQLiteD1,
+  withTargetOperation: boolean,
+  targetPhase: "starting-target" | "complete" = "starting-target",
+  proofRetiredRuntimeEpoch: number | null = 4,
+): void {
   db.database
     .prepare(
       `INSERT INTO logical_instances (
@@ -145,7 +150,7 @@ function insertInstance(db: SQLiteD1, withTargetOperation: boolean): void {
   const proof = {
     instanceId: INSTANCE_ID,
     repositoryId: REPOSITORY_ID,
-    retiredRuntimeEpoch: 4,
+    retiredRuntimeEpoch: proofRetiredRuntimeEpoch,
     providerObservationId: "provider-observation-61",
     censusObservedAt: new Date(NOW - 500).toISOString(),
     remainingWriters: 0,
@@ -162,7 +167,7 @@ function insertInstance(db: SQLiteD1, withTargetOperation: boolean): void {
     lifecycle: {
       instanceId: INSTANCE_ID,
       repositoryId: REPOSITORY_ID,
-      phase: "starting-target",
+      phase: targetPhase,
       writerAbsenceProof: proof,
     },
     writerAbsenceProof: proof,
@@ -184,13 +189,14 @@ function insertInstance(db: SQLiteD1, withTargetOperation: boolean): void {
          report_sequence, checkpoint_sequence, checkpoint_json, cluster_id, reservation_id,
          idempotency_scope, idempotency_key, request_hash, actor_id,
          authorization_revision, created_at, updated_at
-       ) VALUES (?, ?, ?, 8, 5, 'redeploy', 'running', 'starting-target', 1, 4, ?, ?, ?,
+       ) VALUES (?, ?, ?, 8, 5, 'redeploy', 'running', ?, 1, 4, ?, ?, ?,
          1, 2, ?, ?, ?, 'repo:7001', 'request-5', 'request-hash', 'user-1', 3, ?, ?)`,
     )
     .run(
       OPERATION_ID,
       INSTANCE_ID,
       REPOSITORY_ID,
+      targetPhase,
       WORKER_ID,
       LEASE_TOKEN,
       NOW + 17_000,
@@ -211,15 +217,19 @@ function insertInstance(db: SQLiteD1, withTargetOperation: boolean): void {
     .prepare(
       `INSERT INTO operation_checkpoints (
          operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at
-       ) VALUES (?, 2, 'starting-target', 5, ?, ?, ?)`,
+       ) VALUES (?, 2, ?, 5, ?, ?, ?)`,
     )
-    .run(OPERATION_ID, currentCheckpoint, WORKER_ID, NOW - 400);
+    .run(OPERATION_ID, targetPhase, currentCheckpoint, WORKER_ID, NOW - 400);
 }
 
-async function harness(withTargetOperation: boolean) {
+async function harness(
+  withTargetOperation: boolean,
+  targetPhase: "starting-target" | "complete" = "starting-target",
+  proofRetiredRuntimeEpoch: number | null = 4,
+) {
   const db = new SQLiteD1();
   installSchema(db);
-  insertInstance(db, withTargetOperation);
+  insertInstance(db, withTargetOperation, targetPhase, proofRetiredRuntimeEpoch);
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
     "sign",
     "verify",
@@ -252,6 +262,14 @@ function baseRequest(overrides: Record<string, unknown> = {}): Record<string, un
     clusterId: CLUSTER_ID,
     ...overrides,
   };
+}
+
+function markTargetInstanceAbsent(db: SQLiteD1): void {
+  db.database
+    .prepare(
+      "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
+    )
+    .run(INSTANCE_ID);
 }
 
 function decodeBase64Url(value: string): Uint8Array {
@@ -509,6 +527,71 @@ describe("runtime identity routes", () => {
       body: JSON.stringify(targetRequest),
     });
     expect(expiredLease.status).toBe(409);
+  });
+
+  it("retains post-absence identity authority through complete only for the live running lease and exact proof", async () => {
+    const targetRequest = baseRequest({
+      runtimeId: TARGET_RESERVATION_ID,
+      runtimeEpoch: 5,
+      leaseId: TARGET_RESERVATION_ID,
+      operationId: OPERATION_ID,
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+    });
+    const complete = await harness(true, "complete", null);
+    markTargetInstanceAbsent(complete.db);
+    const accepted = await complete.app.request("/internal/provisioner/runtime-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(targetRequest),
+    });
+    expect(accepted.status).toBe(200);
+
+    const terminal = await harness(true, "complete", null);
+    markTargetInstanceAbsent(terminal.db);
+    terminal.db.database
+      .prepare("UPDATE operations SET status = 'succeeded' WHERE operation_id = ?")
+      .run(OPERATION_ID);
+    const terminalResponse = await terminal.app.request("/internal/provisioner/runtime-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(targetRequest),
+    });
+    expect(terminalResponse.status).toBe(409);
+
+    const expired = await harness(true, "complete", null);
+    markTargetInstanceAbsent(expired.db);
+    expired.db.database
+      .prepare("UPDATE operations SET lease_expires_at = ? WHERE operation_id = ?")
+      .run(NOW - 1, OPERATION_ID);
+    const expiredResponse = await expired.app.request("/internal/provisioner/runtime-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(targetRequest),
+    });
+    expect(expiredResponse.status).toBe(409);
+
+    const mismatchedProof = await harness(true, "complete", null);
+    markTargetInstanceAbsent(mismatchedProof.db);
+    const latest = JSON.parse(
+      mismatchedProof.db.database
+        .prepare("SELECT checkpoint_json FROM operation_checkpoints WHERE operation_id = ? AND sequence = 2")
+        .get(OPERATION_ID)?.checkpoint_json as string,
+    ) as { writerAbsenceProof: { providerObservationId: string } };
+    latest.writerAbsenceProof.providerObservationId = "different-provider-observation";
+    const checkpointJson = JSON.stringify(latest);
+    mismatchedProof.db.database
+      .prepare("UPDATE operation_checkpoints SET checkpoint_json = ? WHERE operation_id = ? AND sequence = 2")
+      .run(checkpointJson, OPERATION_ID);
+    mismatchedProof.db.database
+      .prepare("UPDATE operations SET checkpoint_json = ? WHERE operation_id = ?")
+      .run(checkpointJson, OPERATION_ID);
+    const proofResponse = await mismatchedProof.app.request("/internal/provisioner/runtime-identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(targetRequest),
+    });
+    expect(proofResponse.status).toBe(409);
   });
 
   it("enforces the actual streamed JSON body limit", async () => {

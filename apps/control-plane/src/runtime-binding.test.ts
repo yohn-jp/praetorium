@@ -133,6 +133,7 @@ function seedInstance(
     readonly targetReservationId?: string;
     readonly proofRetiredRuntimeEpoch?: number | null;
     readonly operationLeaseExpiresAt?: number;
+    readonly targetPhase?: "starting-target" | "complete";
     readonly currentReservationStatus?: "reserved" | "allocated" | "released";
     readonly operationCheckpointSequence?: number;
   } = {},
@@ -140,6 +141,7 @@ function seedInstance(
   const repositoryId = options.repositoryId ?? 7001;
   const installationId = options.installationId ?? 9001;
   const targetReservationId = options.targetReservationId ?? "res_target-5";
+  const targetPhase = options.targetPhase ?? "starting-target";
   db.database
     .prepare(
       `INSERT INTO logical_instances (
@@ -192,7 +194,7 @@ function seedInstance(
     lifecycle: {
       instanceId: "ins_repo-7001",
       repositoryId,
-      phase: "starting-target",
+        phase: targetPhase,
       writerAbsenceProof: proof,
     },
     writerAbsenceProof: proof,
@@ -223,11 +225,12 @@ function seedInstance(
          idempotency_scope, idempotency_key, request_hash, actor_id,
          authorization_revision, created_at, updated_at
        ) VALUES ('op-target-5', 'ins_repo-7001', ?, 8, 5, 'redeploy', 'running',
-         'starting-target', 1, 1, 'provisioner-1', 'lease-secret', ?, 1, ?, ?,
+         ?, 1, 1, 'provisioner-1', 'lease-secret', ?, 1, ?, ?,
          'cluster-1', ?, 'repo:7001', 'request-5', 'request-hash', 'user-1', 3, ?, ?)`,
     )
     .run(
       repositoryId,
+      targetPhase,
       options.operationLeaseExpiresAt ?? NOW + 30_000,
       checkpointSequence,
       currentCheckpoint,
@@ -246,9 +249,9 @@ function seedInstance(
     .prepare(
       `INSERT INTO operation_checkpoints (
          operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at
-       ) VALUES ('op-target-5', 2, 'starting-target', 5, ?, 'provisioner-1', ?)`,
+       ) VALUES ('op-target-5', 2, ?, 5, ?, 'provisioner-1', ?)`,
     )
-    .run(currentCheckpoint, NOW - 400);
+    .run(targetPhase, currentCheckpoint, NOW - 400);
 }
 
 function createDatabase(options?: Parameters<typeof seedInstance>[1]): SQLiteD1 {
@@ -473,6 +476,78 @@ describe("Control Plane runtime binding metadata", () => {
       active: true,
       authority: "post-absence-target",
     });
+  });
+
+  it("keeps exact post-absence target authority through complete while the operation lease is running", async () => {
+    const db = createDatabase({ targetPhase: "complete", proofRetiredRuntimeEpoch: null });
+    db.database
+      .prepare(
+        "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
+      )
+      .run("ins_repo-7001");
+    const reader = createRuntimeBindingMetadataReader({ db, now: () => NOW });
+
+    await expect(reader.getCurrent(7001)).resolves.toEqual({
+      repositoryId: 7001,
+      installationId: 9001,
+      instanceId: "ins_repo-7001",
+      runtimeId: "res_target-5",
+      runtimeEpoch: 5,
+      leaseId: "res_target-5",
+      clusterId: "cluster-1",
+      active: true,
+      authority: "post-absence-target",
+    });
+
+    const expired = createDatabase({
+      targetPhase: "complete",
+      proofRetiredRuntimeEpoch: null,
+      operationLeaseExpiresAt: NOW - 1,
+    });
+    expired.database
+      .prepare(
+        "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
+      )
+      .run("ins_repo-7001");
+    await expect(
+      createRuntimeBindingMetadataReader({ db: expired, now: () => NOW }).getCurrent(7001),
+    ).resolves.toBeNull();
+
+    const terminal = createDatabase({ targetPhase: "complete", proofRetiredRuntimeEpoch: null });
+    terminal.database
+      .prepare(
+        "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
+      )
+      .run("ins_repo-7001");
+    terminal.database
+      .prepare("UPDATE operations SET status = 'succeeded' WHERE operation_id = 'op-target-5'")
+      .run();
+    await expect(
+      createRuntimeBindingMetadataReader({ db: terminal, now: () => NOW }).getCurrent(7001),
+    ).resolves.toBeNull();
+
+    const mismatchedProof = createDatabase({ targetPhase: "complete", proofRetiredRuntimeEpoch: null });
+    mismatchedProof.database
+      .prepare(
+        "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
+      )
+      .run("ins_repo-7001");
+    const latest = JSON.parse(
+      mismatchedProof.database
+        .prepare("SELECT checkpoint_json FROM operation_checkpoints WHERE operation_id = ? AND sequence = 2")
+        .get("op-target-5")?.checkpoint_json as string,
+    ) as { writerAbsenceProof: { providerObservationId: string } };
+    latest.writerAbsenceProof.providerObservationId = "different-provider-observation";
+    const checkpointJson = JSON.stringify(latest);
+    mismatchedProof.database
+      .prepare("UPDATE operation_checkpoints SET checkpoint_json = ? WHERE operation_id = ? AND sequence = 2")
+      .run(checkpointJson, "op-target-5");
+    mismatchedProof.database
+      .prepare("UPDATE operations SET checkpoint_json = ? WHERE operation_id = ?")
+      .run(checkpointJson, "op-target-5");
+    await expect(
+      createRuntimeBindingMetadataReader({ db: mismatchedProof, now: () => NOW }).getCurrent(7001),
+    ).resolves.toBeNull();
   });
 
   it.each(["active", "revocation_pending"] as const)(

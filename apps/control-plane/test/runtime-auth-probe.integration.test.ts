@@ -233,7 +233,10 @@ function artifactStatement(
   });
 }
 
-function operation(generation = GENERATION): OperationRecord {
+function operation(
+  generation = GENERATION,
+  phase: OperationRecord["phase"] = "starting-target",
+): OperationRecord {
   return {
     id: OPERATION_ID,
     instanceId: INSTANCE_ID,
@@ -252,7 +255,7 @@ function operation(generation = GENERATION): OperationRecord {
     buildId: "build-12",
     prerequisiteBuildId: null,
     idempotencyKey: "request-12",
-    phase: "starting-target",
+    phase,
     workerId: WORKER_ID,
     leaseToken: LEASE_TOKEN,
     requestHash: "request-hash",
@@ -405,6 +408,49 @@ async function makeHarness(
 }
 
 describe("Control Plane to Gateway runtime auth probe", () => {
+  it("authorizes the final target readiness probe while complete is running and its report is pending", async () => {
+    const { controlPlane } = await makeHarness(
+      true,
+      operation(GENERATION, "complete"),
+      artifactStatement(),
+      "12345",
+      [],
+      {
+        instance: {
+          observedState: "absent",
+          observedRuntimeEpoch: null,
+          clusterId: null,
+          reservationState: "reserved",
+        },
+        runtimeBinding: {
+          repositoryId: REPOSITORY_ID,
+          installationId: INSTALLATION_ID,
+          instanceId: INSTANCE_ID,
+          runtimeId: "reservation-12",
+          runtimeEpoch: RUNTIME_EPOCH,
+          leaseId: "reservation-12",
+          clusterId: CLUSTER_ID,
+          active: true,
+          authority: "post-absence-target",
+        },
+      },
+    );
+
+    const response = await controlPlane.request(`/operations/${OPERATION_ID}/auth-probe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "lease",
+        workerId: WORKER_ID,
+        leaseToken: LEASE_TOKEN,
+        leaseEpoch: 3,
+        assignment: assignment(),
+      }),
+    });
+
+    expect(response.status, await response.clone().text()).toBe(200);
+  });
+
   it("uses the active post-absence target reservation to verify the cluster before the first ready observation", async () => {
     const { controlPlane } = await makeHarness(
       true,

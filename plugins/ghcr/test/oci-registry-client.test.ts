@@ -32,6 +32,29 @@ async function digestOf(bytes: Uint8Array): Promise<string> {
   return sha256Digest(bytes);
 }
 
+async function metadataArtifactFixture(payload: Uint8Array) {
+  const payloadDigest = await digestOf(payload);
+  const emptyConfig = encoder.encode("{}");
+  const emptyConfigDigest = await digestOf(emptyConfig);
+  const tag = `metadata-sha256-${payloadDigest.slice("sha256:".length)}`;
+  const manifest = encoder.encode(JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    artifactType: "application/vnd.praetorium.metadata.v1+json",
+    config: {
+      mediaType: "application/vnd.oci.empty.v1+json",
+      digest: emptyConfigDigest,
+      size: emptyConfig.byteLength,
+    },
+    layers: [{
+      mediaType: "application/vnd.praetorium.metadata.v1+json",
+      digest: payloadDigest,
+      size: payload.byteLength,
+    }],
+  }));
+  return { payloadDigest, emptyConfig, emptyConfigDigest, tag, manifest, manifestDigest: await digestOf(manifest) };
+}
+
 interface ImageFixture {
   readonly rootBytes: Uint8Array;
   readonly rootDigest: string;
@@ -544,37 +567,72 @@ describe("GHCR OCI registry adapter", () => {
     await expect(client.issuePublishAuth("praetorium/runtime-base")).rejects.toBeInstanceOf(RegistryError);
   });
 
-  it("publishes exact composition bytes only to an allowlisted owned loopback repository", async () => {
+  it("publishes exact composition bytes under a deterministic metadata artifact manifest", async () => {
     const bytes = encoder.encode('{"schemaVersion":"scriptorium-composition/v1"}\n');
-    const digest = await digestOf(bytes);
+    const artifact = await metadataArtifactFixture(bytes);
+    const blobs = new Map<string, Uint8Array>();
+    const manifests = new Map<string, { bytes: Uint8Array; digest: string }>();
     const seen: Array<{ method: string; path: string; authorization: string | null; body?: Uint8Array }> = [];
-    let uploaded = false;
+    let uploadCount = 0;
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       const method = init?.method ?? "GET";
-      if (method === "HEAD") {
+      if (url.pathname === "/token") return new Response(JSON.stringify({ token: "test-token" }));
+
+      const manifestPrefix = `/v2/${repository}/manifests/`;
+      if (url.pathname.startsWith(manifestPrefix) && method === "GET") {
+        const tag = decodeURIComponent(url.pathname.slice(manifestPrefix.length));
+        const manifest = manifests.get(tag);
         seen.push({ method, path: url.pathname, authorization: new Headers(init?.headers).get("authorization") });
-        return new Response(null, {
-          status: uploaded ? 200 : 404,
-          headers: uploaded ? { "docker-content-digest": digest } : undefined,
-        });
+        return manifest === undefined
+          ? new Response(null, { status: 404 })
+          : new Response(manifest.bytes, {
+            headers: {
+              "content-type": "application/vnd.oci.image.manifest.v1+json",
+              "docker-content-digest": manifest.digest,
+            },
+          });
       }
-      if (method === "POST") {
+      if (url.pathname.startsWith(manifestPrefix) && method === "PUT") {
+        const tag = decodeURIComponent(url.pathname.slice(manifestPrefix.length));
+        const body = new Uint8Array(await new Response(init?.body).arrayBuffer());
+        const digest = await digestOf(body);
+        manifests.set(tag, { bytes: body, digest });
+        seen.push({ method, path: url.pathname, authorization: new Headers(init?.headers).get("authorization"), body });
+        return new Response(null, { status: 201, headers: { "docker-content-digest": digest } });
+      }
+
+      const blobPrefix = `/v2/${repository}/blobs/`;
+      if (url.pathname.startsWith(blobPrefix) && method === "POST") {
+        const form = uploadCount++ === 0 ? "upload" : "uploads";
+        const id = `owned-session-${uploadCount}`;
         seen.push({ method, path: url.pathname, authorization: new Headers(init?.headers).get("authorization") });
         return new Response(null, {
           status: 202,
-          headers: { location: "/v2/" + repository + "/blobs/uploads/owned-session?state=owned" },
+          headers: { location: `/v2/${repository}/blobs/${form}/${id}?state=owned%2Bstate&part=first` },
         });
       }
-      if (method === "PUT") {
-        seen.push({
-          method,
-          path: url.pathname + url.search,
-          authorization: new Headers(init?.headers).get("authorization"),
-          body: new Uint8Array(await new Response(init?.body).arrayBuffer()),
-        });
-        uploaded = true;
+      if (url.pathname.includes("/blobs/upload") && method === "PUT") {
+        const digest = url.searchParams.get("digest");
+        if (digest === null) throw new Error("blob upload omitted its digest query");
+        const body = new Uint8Array(await new Response(init?.body).arrayBuffer());
+        blobs.set(digest, body);
+        seen.push({ method, path: url.pathname + url.search, authorization: new Headers(init?.headers).get("authorization"), body });
         return new Response(null, { status: 201, headers: { "docker-content-digest": digest } });
+      }
+      if (url.pathname.startsWith(blobPrefix) && (method === "HEAD" || method === "GET")) {
+        const digest = decodeURIComponent(url.pathname.slice(blobPrefix.length));
+        const blob = blobs.get(digest);
+        seen.push({ method, path: url.pathname, authorization: new Headers(init?.headers).get("authorization") });
+        if (blob === undefined) return new Response(null, { status: 404 });
+        return method === "HEAD"
+          ? new Response(null, { status: 200, headers: { "docker-content-digest": digest } })
+          : new Response(blob, {
+            headers: {
+              "content-type": "application/vnd.praetorium.metadata.v1+json",
+              "docker-content-digest": digest,
+            },
+          });
       }
       throw new Error("unexpected registry method: " + method);
     }) as typeof fetch;
@@ -594,60 +652,126 @@ describe("GHCR OCI registry adapter", () => {
       actions: ["pull", "push"],
       token: "",
     });
-    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
-    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
+    await expect(client.publishBlob(repository, bytes)).resolves.toBe(artifact.payloadDigest);
+    const stored = await client.readBlob(repository, artifact.payloadDigest);
+    expect(stored.bytes).toEqual(bytes);
+    await expect(client.publishBlob(repository, bytes)).resolves.toBe(artifact.payloadDigest);
+    const requestCount = seen.length;
     await expect(client.publishBlob("praetorium/runtime-base", bytes)).rejects.toMatchObject({ reason: "unauthorized" });
     await expect(client.issuePublishAuth("praetorium/runtime-base")).rejects.toMatchObject({ reason: "unauthorized" });
+    expect(seen).toHaveLength(requestCount);
 
-    expect(seen.map(({ method }) => method)).toEqual(["HEAD", "POST", "PUT", "HEAD"]);
-    expect(seen.every(({ authorization }) => authorization === null)).toBe(true);
-    expect(seen[2]?.path).toContain("state=owned&digest=" + encodeURIComponent(digest));
-    expect(seen[2]?.body).toEqual(bytes);
+    const blobUploads = seen.filter(({ method, path }) => method === "PUT" && path.includes("/blobs/upload"));
+    expect(blobUploads).toHaveLength(2);
+    expect(blobUploads.map(({ body }) => body)).toEqual([bytes, artifact.emptyConfig]);
+    const payloadUploadUrl = new URL(blobUploads[0]!.path, "https://127.0.0.1:35009");
+    expect(payloadUploadUrl.pathname).toBe(`/v2/${repository}/blobs/upload/owned-session-1`);
+    expect(payloadUploadUrl.searchParams.get("state")).toBe("owned+state");
+    expect(payloadUploadUrl.searchParams.get("part")).toBe("first");
+    expect(payloadUploadUrl.searchParams.get("digest")).toBe(artifact.payloadDigest);
+    expect(new URL(blobUploads[1]!.path, "https://127.0.0.1:35009").pathname)
+      .toBe(`/v2/${repository}/blobs/uploads/owned-session-2`);
+
+    const manifestUploads = seen.filter(({ method, path }) => method === "PUT" && path.includes("/manifests/"));
+    expect(manifestUploads).toHaveLength(1);
+    expect(manifestUploads[0]?.path).toBe(`/v2/${repository}/manifests/${artifact.tag}`);
+    expect(manifestUploads[0]?.body).toEqual(artifact.manifest);
+    expect(manifestUploads[0]?.authorization).toBeNull();
+    expect(seen.every(({ authorization }) => authorization === null || authorization === "Bearer test-token")).toBe(true);
   });
 
-  it("accepts GHCR's singular upload path and preserves its returned path and query", async () => {
+  it("anchors a pre-existing orphan metadata blob for pull and refuses a conflicting deterministic tag", async () => {
     const bytes = encoder.encode('{"schemaVersion":"scriptorium-composition/v1"}\n');
-    const digest = await digestOf(bytes);
-    const uploadPath = `/v2/${repository}/blobs/upload/owned-session`;
-    const seen: Array<{ method: string; url: URL; body?: Uint8Array }> = [];
+    const artifact = await metadataArtifactFixture(bytes);
+    let storedArtifact: { bytes: Uint8Array; digest: string } | undefined;
+    let artifactUploadCount = 0;
+    let blobUploadCount = 0;
+    const seen: Array<{ method: string; path: string }> = [];
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       const method = init?.method ?? "GET";
-      seen.push({
-        method,
-        url,
-        ...(method === "PUT" && init?.body !== undefined
-          ? { body: new Uint8Array(await new Response(init.body).arrayBuffer()) }
-          : {}),
-      });
-      if (method === "HEAD") return new Response(null, { status: 404 });
-      if (method === "POST") {
+      if (url.pathname === "/token") return new Response(JSON.stringify({ token: "test-token" }));
+
+      const manifestPrefix = `/v2/${repository}/manifests/`;
+      if (url.pathname.startsWith(manifestPrefix) && method === "GET") {
+        const tag = decodeURIComponent(url.pathname.slice(manifestPrefix.length));
+        if (tag !== artifact.tag) throw new Error("unexpected metadata artifact tag");
+        seen.push({ method, path: url.pathname });
+        return storedArtifact === undefined
+          ? new Response(null, { status: 404 })
+          : new Response(storedArtifact.bytes, {
+            headers: {
+              "content-type": "application/vnd.oci.image.manifest.v1+json",
+              "docker-content-digest": storedArtifact.digest,
+            },
+          });
+      }
+      if (url.pathname.startsWith(manifestPrefix) && method === "PUT") {
+        const body = new Uint8Array(await new Response(init?.body).arrayBuffer());
+        const digest = await digestOf(body);
+        storedArtifact = { bytes: body, digest };
+        artifactUploadCount += 1;
+        seen.push({ method, path: url.pathname });
+        return new Response(null, { status: 201, headers: { "docker-content-digest": digest } });
+      }
+
+      const blobPrefix = `/v2/${repository}/blobs/`;
+      if (url.pathname.startsWith(blobPrefix) && method === "HEAD") {
+        const digest = decodeURIComponent(url.pathname.slice(blobPrefix.length));
+        seen.push({ method, path: url.pathname });
+        const exists = digest === artifact.payloadDigest || digest === artifact.emptyConfigDigest;
         return new Response(null, {
-          status: 202,
-          headers: {
-            location: `https://127.0.0.1:35009${uploadPath}?state=owned%2Bstate&part=first`,
-          },
+          status: exists ? 200 : 404,
+          headers: exists ? { "docker-content-digest": digest } : undefined,
         });
       }
-      if (method === "PUT") return new Response(null, { status: 201, headers: { "docker-content-digest": digest } });
+      if (url.pathname === `/v2/${repository}/blobs/${encodeURIComponent(artifact.payloadDigest)}` && method === "GET") {
+        seen.push({ method, path: url.pathname });
+        return storedArtifact === undefined
+          ? new Response(JSON.stringify({ errors: [{ code: "BLOB_UNKNOWN" }] }), { status: 404 })
+          : new Response(bytes, {
+            headers: {
+              "content-type": "application/vnd.praetorium.metadata.v1+json",
+              "docker-content-digest": artifact.payloadDigest,
+            },
+          });
+      }
+      if (method === "POST" || (method === "PUT" && url.pathname.includes("/blobs/"))) {
+        blobUploadCount += 1;
+      }
       throw new Error("unexpected registry method: " + method);
     }) as typeof fetch;
     const client = new GhcrRegistryClient({
       ...imageLimits,
-      registryUrl: "https://127.0.0.1:35009",
-      allowAnonymousLoopbackPublish: true,
+      registryUrl: "https://registry.example.test",
       allowedRepositories: [repository],
       publishRepositories: [repository],
+      pullCredential: { username: "runtime-reader", password: "read-secret" },
+      publishCredential: { username: "build-publisher", password: "push-secret" },
       fetch: fetcher,
     });
 
-    await expect(client.publishBlob(repository, bytes)).resolves.toBe(digest);
-    expect(seen.map(({ method }) => method)).toEqual(["HEAD", "POST", "PUT"]);
-    expect(seen[2]?.url.pathname).toBe(uploadPath);
-    expect(seen[2]?.url.searchParams.get("state")).toBe("owned+state");
-    expect(seen[2]?.url.searchParams.get("part")).toBe("first");
-    expect(seen[2]?.url.searchParams.get("digest")).toBe(digest);
-    expect(seen[2]?.body).toEqual(bytes);
+    await expect(client.readBlob(repository, artifact.payloadDigest)).rejects.toMatchObject({ reason: "not_found" });
+    await expect(client.publishBlob(repository, bytes)).resolves.toBe(artifact.payloadDigest);
+    const stored = await client.readBlob(repository, artifact.payloadDigest);
+    expect(stored.bytes).toEqual(bytes);
+    expect(storedArtifact?.bytes).toEqual(artifact.manifest);
+    expect(storedArtifact?.digest).toBe(artifact.manifestDigest);
+    expect(artifactUploadCount).toBe(1);
+    expect(blobUploadCount).toBe(0);
+
+    const conflictingManifest = encoder.encode(JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      artifactType: "application/vnd.praetorium.other-metadata.v1+json",
+      config: { mediaType: "application/vnd.oci.empty.v1+json", digest: artifact.emptyConfigDigest, size: 2 },
+      layers: [],
+    }));
+    storedArtifact = { bytes: conflictingManifest, digest: await digestOf(conflictingManifest) };
+    await expect(client.publishBlob(repository, bytes)).rejects.toMatchObject({ reason: "invalid_content" });
+    expect(artifactUploadCount).toBe(1);
+    expect(blobUploadCount).toBe(0);
+    expect(seen.filter(({ method, path }) => method === "GET" && path.includes("/blobs/")).length).toBe(2);
   });
 
   it("requires explicit anonymous loopback publication opt-in", async () => {

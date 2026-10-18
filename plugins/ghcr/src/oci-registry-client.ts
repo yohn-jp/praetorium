@@ -18,6 +18,11 @@ const MANIFEST_ACCEPT = [
   "application/vnd.oci.image.config.v1+json",
   "application/json",
 ].join(", ");
+const OCI_IMAGE_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json";
+const OCI_EMPTY_CONFIG_MEDIA_TYPE = "application/vnd.oci.empty.v1+json";
+const PRAETORIUM_METADATA_MEDIA_TYPE = "application/vnd.praetorium.metadata.v1+json";
+const PRAETORIUM_METADATA_TAG_PREFIX = "metadata-sha256-";
+const OCI_EMPTY_CONFIG_BYTES = new TextEncoder().encode("{}");
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 8 * 1024 * 1024;
 const MAX_TIMER_MS = 2_147_483_647;
@@ -473,7 +478,20 @@ export class GhcrRegistryClient {
     const token = anonymousLoopbackPublisher && !this.options.publishCredential
       ? ""
       : await this.getToken(repo, ["pull", "push"], this.options.publishCredential, signal);
-    const blobUrl = new URL(`/v2/${repo}/blobs/${encodeURIComponent(digest)}`, this.baseUrl);
+    await this.publishRawBlob(repo, bytes, token, signal);
+    const emptyConfigDigest = await this.publishRawBlob(repo, OCI_EMPTY_CONFIG_BYTES, token, signal);
+    await this.publishMetadataArtifact(repo, digest, bytes.byteLength, emptyConfigDigest, token, signal);
+    return digest;
+  }
+
+  private async publishRawBlob(
+    repository: string,
+    bytes: Uint8Array,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<Sha256Digest> {
+    const digest = await sha256Digest(bytes);
+    const blobUrl = new URL(`/v2/${repository}/blobs/${encodeURIComponent(digest)}`, this.baseUrl);
     const authorization = new Headers();
     if (token) authorization.set("authorization", `Bearer ${token}`);
     const alreadyPresent = await this.withRegistryRequest<boolean>(
@@ -503,7 +521,7 @@ export class GhcrRegistryClient {
     );
     if (alreadyPresent) return digest;
 
-    const uploadUrl = new URL(`/v2/${repo}/blobs/uploads/`, this.baseUrl);
+    const uploadUrl = new URL(`/v2/${repository}/blobs/uploads/`, this.baseUrl);
     const uploadLocation = await this.withRegistryRequest<URL>(
       uploadUrl,
       { method: "POST", headers: authorization, redirect: "manual" },
@@ -523,8 +541,8 @@ export class GhcrRegistryClient {
         }
         const resolved = new URL(location, this.baseUrl);
         const uploadPrefixes = [
-          `/v2/${repo}/blobs/uploads/`,
-          `/v2/${repo}/blobs/upload/`,
+          `/v2/${repository}/blobs/uploads/`,
+          `/v2/${repository}/blobs/upload/`,
         ];
         const uploadPrefix = uploadPrefixes.find((prefix) => resolved.pathname.startsWith(prefix));
         const uploadId = uploadPrefix === undefined
@@ -577,6 +595,79 @@ export class GhcrRegistryClient {
       },
     );
     return digest;
+  }
+
+  private async publishMetadataArtifact(
+    repository: string,
+    payloadDigest: Sha256Digest,
+    payloadSize: number,
+    emptyConfigDigest: Sha256Digest,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const artifactBytes = new TextEncoder().encode(JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+      artifactType: PRAETORIUM_METADATA_MEDIA_TYPE,
+      config: {
+        mediaType: OCI_EMPTY_CONFIG_MEDIA_TYPE,
+        digest: emptyConfigDigest,
+        size: OCI_EMPTY_CONFIG_BYTES.byteLength,
+      },
+      layers: [{
+        mediaType: PRAETORIUM_METADATA_MEDIA_TYPE,
+        digest: payloadDigest,
+        size: payloadSize,
+      }],
+    }));
+    const artifactDigest = await sha256Digest(artifactBytes);
+    const tag = `${PRAETORIUM_METADATA_TAG_PREFIX}${payloadDigest.slice("sha256:".length)}`;
+
+    try {
+      const existing = await this.fetchManifest(repository, tag, token, null, signal);
+      if (existing.digest !== artifactDigest || existing.bytes.byteLength !== artifactBytes.byteLength) {
+        throw new RegistryError("invalid_content", "metadata artifact tag already refers to different content");
+      }
+      return;
+    } catch (error) {
+      if (!(error instanceof RegistryError) || error.reason !== "not_found") throw error;
+    }
+
+    const manifestUrl = new URL(`/v2/${repository}/manifests/${encodeURIComponent(tag)}`, this.baseUrl);
+    await this.withRegistryRequest(
+      manifestUrl,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: Buffer.from(artifactBytes),
+        redirect: "manual",
+      },
+      signal,
+      "metadata artifact manifest upload",
+      async (response) => {
+        if (response.status === 401 || response.status === 403) {
+          throw new RegistryError("unauthorized", "registry denied metadata artifact manifest upload");
+        }
+        if (response.status === 429) throw new RegistryError("rate_limited", "registry rate limit exceeded");
+        if (response.status !== 201) {
+          throw new RegistryError("unavailable", `registry metadata artifact manifest upload returned ${response.status}`);
+        }
+        const headerDigest = response.headers.get("docker-content-digest");
+        if (headerDigest !== null && headerDigest !== artifactDigest) {
+          throw new RegistryError("invalid_content", "registry stored metadata artifact under a different digest");
+        }
+        void response.body?.cancel().catch(() => undefined);
+        return undefined;
+      },
+    );
+
+    const stored = await this.fetchManifest(repository, tag, token, artifactDigest, signal);
+    if (stored.bytes.byteLength !== artifactBytes.byteLength) {
+      throw new RegistryError("invalid_content", "registry metadata artifact manifest size does not match uploaded bytes");
+    }
   }
 
   private async withAbortBudget<T>(

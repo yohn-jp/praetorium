@@ -8,6 +8,7 @@ import test from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Miniflare } from "miniflare";
+import "./sigstore-workerd-compat.test.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const workerEntryPath = path.join(repositoryRoot, "apps/control-plane/src/worker.ts");

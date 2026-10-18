@@ -203,6 +203,11 @@ export type PortalCommand =
       readonly idempotencyKey: string;
     }
   | {
+      readonly kind: "stop";
+      readonly expectedGeneration: number;
+      readonly idempotencyKey: string;
+    }
+  | {
       readonly kind: "retry";
       readonly operationId: string;
       readonly idempotencyKey: string;
@@ -255,7 +260,11 @@ export interface PortalHandlerDependencies {
   /** Connects to Gateway's established session authority. */
   readonly authenticate: (request: Request) => Promise<PortalSessionResult>;
   /** Connects to Gateway's exact-origin, session-derived CSRF verifier. */
-  readonly verifyCsrf: (request: Request, session: PortalSession, form: FormData) => Promise<boolean>;
+  readonly verifyCsrf: (
+    request: Request,
+    session: PortalSession,
+    form: FormData,
+  ) => Promise<boolean>;
   /** Must use a cryptographically secure token source supplied by Gateway auth. */
   readonly createToken: () => string;
 }

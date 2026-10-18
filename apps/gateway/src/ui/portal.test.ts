@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   createPortalHandler,
@@ -194,7 +195,7 @@ describe("server-rendered management UI", () => {
     expect(html).toContain('action="/repositories/123456789/actions"');
     expect(html).toContain('name="action" value="enter"');
     expect(html).toContain('name="csrfToken" value="csrf-token-value"');
-    expect(html).toContain("Open repository");
+    expect(html).toContain("Connect repository");
     expect(html).not.toContain('action="/repositories/987654321/actions"');
     expect(html).not.toContain("Manage repository");
   });
@@ -206,15 +207,75 @@ describe("server-rendered management UI", () => {
     }).text();
 
     expect(html).toContain("sha256:current-image");
-    expect(html).toContain("Requested modules: Editor (2.0.0)");
-    expect(html).toContain("Required dependencies: Search (1.4.0)");
-    expect(html).toContain("Build: Failed");
+    expect(html).toContain("Requested modules:</strong><br>Editor (2.0.0)");
+    expect(html).toContain("Required dependencies:</strong><br>Search (1.4.0)");
+    expect(html).toContain(">Failed</span>");
     expect(html).toContain("PRODUCER_REJECTED");
     expect(html).toContain("Ephemeral storage");
     expect(html).toContain("Operator limits");
     expect(html).toContain("even though the image digest is unchanged");
-    expect(html).toContain("Enter application");
+    expect(html).toContain("Open application");
     expect(html).toContain("Preview selection");
+  });
+
+  it("renders a responsive management dashboard with CSP-authorized styling and fenced maintainer controls", async () => {
+    const response = renderRepositoryDashboard(dashboard, {
+      csrfToken: "csrf-token-value",
+      createIdempotencyKey: () => "token_12345678901234567890",
+    });
+    const html = await response.text();
+    const css = /<style>([\s\S]*?)<\/style>/.exec(html)?.[1];
+    expect(css).toBeDefined();
+    const hash = createHash("sha256").update(css!).digest("base64");
+    expect(response.headers.get("Content-Security-Policy")).toContain(`style-src 'sha256-${hash}'`);
+    expect(css).toContain("@media (max-width: 760px)");
+    expect(html).toContain("Application status");
+    expect(html).toContain("Deployment");
+    expect(html).toContain("Build and operation progress");
+    expect(html).toContain('name="action" value="stop"');
+    expect(html).toContain('name="expectedGeneration" value="4"');
+    expect(html).toContain('name="csrfToken" value="csrf-token-value"');
+    expect(html).toContain('name="idempotencyKey" value="token_12345678901234567890"');
+    expect(html).toContain('aria-describedby="save-module-ids-help"');
+    expect(html).toContain('aria-describedby="preview-module-ids-help"');
+
+    const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+
+    const readOnlyHtml = await renderRepositoryDashboard(readOnlyDashboard(), {
+      csrfToken: "csrf-token-value",
+      createIdempotencyKey: () => "token_12345678901234567890",
+    }).text();
+    expect(readOnlyHtml).not.toContain('name="action" value="stop"');
+    expect(readOnlyHtml).toContain("Changes require current repository maintain or admin access.");
+  });
+
+  it("guides an unconfigured repository to approved setup instead of offering a start that cannot work", async () => {
+    const unconfigured: PortalRepositoryDashboard = {
+      ...dashboard,
+      repository: {
+        ...summary,
+        currentImageDigest: null,
+        desiredImageDigest: null,
+        instance: { state: "stopped", instanceId: "ins_01", retryable: false, reason: null },
+      },
+      current: null,
+      desired: null,
+      preview: null,
+      build: null,
+      operations: [],
+    };
+    const html = await renderRepositoryDashboard(unconfigured, {
+      csrfToken: "csrf-token-value",
+      createIdempotencyKey: () => "token_12345678901234567890",
+    }).text();
+
+    expect(html).toContain('href="#configuration">Choose an approved configuration below</a>');
+    expect(html).toContain("save it to build and start the application");
+    expect(html).not.toContain('name="action" value="enter"');
+    expect(html).not.toContain("Wait for the application to become ready");
+    expect(html).toContain('id="configuration"');
+    expect(html).toContain('name="action" value="configure"');
   });
 
   it("renders service errors and build failures without claiming a deploy succeeded", async () => {
@@ -252,7 +313,7 @@ describe("server-rendered management UI", () => {
       },
     ).text();
 
-    expect(html).toContain("Build: Building");
+    expect(html).toContain(">Building</span>");
     expect(html).toContain('value="73"');
     expect(html).toContain("setTimeout");
     expect(html).toContain("No recent operations.");
@@ -396,9 +457,50 @@ describe("server-rendered management UI", () => {
 
     expect(response.status).toBe(202);
     expect(execute).toHaveBeenCalledWith({ userId: "user_01" }, "123456789", { kind: "enter" });
-    expect(html).toContain("Start or wait for application");
+    expect(html).toContain("Start application");
     expect(html).toContain("Starting the stopped instance.");
     expect(html).toContain("sha256:current-image");
+  });
+
+  it("routes a CSRF-protected stop form to the current operation status", async () => {
+    const stopOperation: PortalOperation = {
+      ...operation,
+      operationId: "op_stop_01",
+      kind: "stop",
+      state: "queued",
+      progressPercent: null,
+      message: "The fenced stop request is queued.",
+      error: null,
+      retryable: false,
+    };
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      value: { kind: "operation" as const, operation: stopOperation },
+    }));
+    const service: PortalService = {
+      listRepositories: async () => ({ ok: true, value: repositoryList }),
+      getRepository: async () => ({ ok: true, value: dashboard }),
+      execute,
+    };
+    const handler = createPortalHandler(sessionDependencies(service));
+    const response = await handler(
+      actionRequest({
+        csrfToken: "csrf-token-value",
+        action: "stop",
+        expectedGeneration: "4",
+        idempotencyKey: "stop-key-1234567890123456",
+      }),
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(202);
+    expect(execute).toHaveBeenCalledWith({ userId: "user_01" }, "123456789", {
+      kind: "stop",
+      expectedGeneration: 4,
+      idempotencyKey: "stop-key-1234567890123456",
+    });
+    expect(html).toContain("The fenced stop request is queued.");
+    expect(html).toContain("Stop application");
   });
 
   it("shows unsupported producer previews and escapes resolver reasons", async () => {
@@ -438,12 +540,12 @@ describe("server-rendered management UI", () => {
     const html = await response.text();
     expect(response.status).toBe(200);
     expect(html).toContain("Unsupported module configuration");
-    expect(html).toContain("Required dependencies: Editor (2.0.0)");
+    expect(html).toContain("Required dependencies:</dt><dd>Editor (2.0.0)</dd>");
     expect(html).toContain("Incompatible with &lt;script&gt;release&lt;/script&gt;");
     expect(html).toContain('<option value="search" selected>');
     expect(html).toContain('<option value="pinned" selected>');
     expect(html).toContain('name="action" value="configure"');
-    expect(html).toContain('type="submit" disabled>Save and build');
+    expect(html).toContain('class="button" type="submit" disabled>Save configuration and build');
     expect(html).not.toContain("<script>release");
   });
 

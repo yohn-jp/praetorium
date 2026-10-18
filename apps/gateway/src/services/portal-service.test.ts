@@ -225,11 +225,15 @@ function actionService(allowMaintain = true) {
     getDashboard: vi.fn(async () => activeManagement),
     previewConfiguration: vi.fn(async () => previewResult),
     planConfiguration: vi.fn(async () => planResult),
-    requestDesiredState: vi.fn(async () => ({
-      ...activeSnapshot,
-      operation: management.operations[0],
-      replayed: false,
-    })),
+    requestDesiredState: vi.fn(async (requestedInstanceId: string, input: Record<string, unknown>) => {
+      void requestedInstanceId;
+      void input;
+      return {
+        ...activeSnapshot,
+        operation: management.operations[0],
+        replayed: false,
+      };
+    }),
     retryOperation: vi.fn(async () => ({
       id: "operation-retry-1",
       instanceId,
@@ -550,6 +554,54 @@ describe("PortalService Control Plane projection", () => {
       idempotencyKey: "redeploy-idempotency-key-01",
     }));
     expect(checkedEpochs).toEqual([4]);
+  });
+
+  it("stops a ready runtime through the normal fenced desired-state request", async () => {
+    const { service, controlPlane, githubAccess, checkedEpochs, activeSnapshot } = actionService();
+    const result = await service.execute({ userId: "12345" }, "41", {
+      kind: "stop",
+      expectedGeneration: activeSnapshot.instance.generation,
+      idempotencyKey: "stop-idempotency-key-01",
+    });
+
+    expect(result).toMatchObject({ ok: true, value: { kind: "operation" } });
+    expect(githubAccess.authorize).toHaveBeenCalledWith("12345", 41, "maintain");
+    expect(controlPlane.requestDesiredState).toHaveBeenCalledWith(instanceId, expect.objectContaining({
+      actorId: "12345",
+      desiredState: "stopped",
+      expectedGeneration: activeSnapshot.instance.generation,
+      bindingEpoch: activeSnapshot.binding.bindingEpoch,
+      authorizationRevision: activeSnapshot.binding.authorizationRevision,
+      idempotencyKey: "stop-idempotency-key-01",
+      requestId: "config-request",
+      now: Date.parse("2027-01-15T00:00:00.000Z"),
+    }));
+    expect(controlPlane.requestDesiredState.mock.calls[0]?.[1]).not.toHaveProperty("forceNewRuntime");
+    expect(checkedEpochs).toEqual([4]);
+  });
+
+  it("denies stop to read-only users without mutating the Control Plane", async () => {
+    const { service, controlPlane } = actionService(false);
+    const result = await service.execute({ userId: "12345" }, "41", {
+      kind: "stop",
+      expectedGeneration: 2,
+      idempotencyKey: "stop-idempotency-key-02",
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    expect(controlPlane.requestDesiredState).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale stop generations without mutating the Control Plane", async () => {
+    const { service, controlPlane, activeSnapshot } = actionService();
+    const result = await service.execute({ userId: "12345" }, "41", {
+      kind: "stop",
+      expectedGeneration: activeSnapshot.instance.generation - 1,
+      idempotencyKey: "stop-idempotency-key-03",
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "CONFLICT" } });
+    expect(controlPlane.requestDesiredState).not.toHaveBeenCalled();
   });
 
   it("keeps a ready current runtime accessible while a desired build advances the epoch", async () => {

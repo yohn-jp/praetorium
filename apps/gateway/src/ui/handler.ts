@@ -247,6 +247,15 @@ function parseAction(form: FormData): ParsedAction | null {
       command: { kind: "redeploy", expectedGeneration: generation, idempotencyKey: key },
     };
   }
+  if (action === "stop") {
+    const generation = expectedGeneration(form);
+    const key = idempotencyKey(form);
+    if (generation === null || !key) return null;
+    return {
+      kind: "execute",
+      command: { kind: "stop", expectedGeneration: generation, idempotencyKey: key },
+    };
+  }
   if (action === "retry") {
     const operationId = formString(form, "operationId");
     const key = idempotencyKey(form);
@@ -280,7 +289,10 @@ function makeDashboardResponse(
   const operationInProgress =
     options.notice?.state === "queued" ||
     options.notice?.state === "running" ||
-    (dashboard.build !== null && ["reserved", "pending", "claimed", "running", "verifying"].includes(dashboard.build.status)) ||
+    (dashboard.build !== null &&
+      ["reserved", "pending", "claimed", "running", "verifying"].includes(
+        dashboard.build.status,
+      )) ||
     dashboard.operations.some(
       (operation) => operation.state === "queued" || operation.state === "running",
     );
@@ -471,9 +483,12 @@ export function createPortalHandler(
       return renderPortalError(commandResult.error.message, errorStatus(commandResult.error.code));
     const dashboard = await loadDashboard(dependencies, identity.session.actor, route.repositoryId);
     return dashboard.ok
-      ? makeDashboardResponse(dashboard.value, dependencies, identity.session, {
-          notice: commandResult.value.operation,
-        })
+      ? withStatus(
+          makeDashboardResponse(dashboard.value, dependencies, identity.session, {
+            notice: commandResult.value.operation,
+          }),
+          202,
+        )
       : renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
   };
 }

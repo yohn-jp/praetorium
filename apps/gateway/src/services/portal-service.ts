@@ -539,6 +539,31 @@ export function createPortalService(context: GatewayContext): PortalService {
           return { ok: false, error: mapControlPlaneError(error) };
         }
       }
+      if (command.kind === "stop") {
+        if (command.expectedGeneration !== snapshot.instance.generation) {
+          return failure("CONFLICT", "Repository state changed. Reload and try again.");
+        }
+        if (!hasReadyCurrentRuntime(snapshot.instance)) {
+          return failure("CONFLICT", "The current runtime is not ready to stop. Refresh status before trying again.");
+        }
+        try {
+          const result = await context.controlPlane.requestDesiredState(snapshot.instance.instanceId, {
+            actorId: actor.userId,
+            expectedGeneration: command.expectedGeneration,
+            desiredState: "stopped",
+            idempotencyKey: command.idempotencyKey,
+            bindingEpoch: snapshot.binding.bindingEpoch,
+            authorizationRevision,
+            requestId: context.requestId,
+            now: Date.parse(context.requestNow),
+          });
+          return result.operation
+            ? success({ kind: "operation", operation: operation(result.operation) })
+            : failure("CONFLICT", "The instance is already stopped. Refresh status to confirm.");
+        } catch (error) {
+          return { ok: false, error: mapControlPlaneError(error) };
+        }
+      }
       if (command.kind === "redeploy") {
         if (command.expectedGeneration !== snapshot.instance.generation) {
           return failure("CONFLICT", "Repository state changed. Reload and try again.");

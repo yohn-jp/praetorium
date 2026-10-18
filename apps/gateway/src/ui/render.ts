@@ -11,6 +11,134 @@ import type {
 
 const MAX_AUTOMATIC_POLLS = 5;
 
+const PORTAL_STYLES = `
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #16283f;
+  background: #f2f5fa;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ink: #16283f;
+  --muted: #5b6d84;
+  --line: #d9e2ed;
+  --surface: #ffffff;
+  --surface-soft: #f7f9fc;
+  --brand: #2455c7;
+  --brand-dark: #1b429e;
+  --good: #176e55;
+  --good-soft: #e7f5ee;
+  --warn: #895c05;
+  --warn-soft: #fff4d8;
+  --bad: #a12f34;
+  --bad-soft: #fff0ef;
+  --shadow: 0 12px 32px rgb(22 40 63 / 6%);
+}
+* { box-sizing: border-box; }
+body { min-width: 320px; margin: 0; background: #f2f5fa; color: var(--ink); line-height: 1.55; }
+a { color: var(--brand-dark); text-underline-offset: .18em; }
+a:hover { color: #102f7b; }
+a:focus-visible, button:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #77a7ff; outline-offset: 3px; }
+.skip-link { position: absolute; z-index: 2; top: .5rem; left: .5rem; transform: translateY(-180%); padding: .6rem .8rem; border-radius: .5rem; background: #fff; color: var(--ink); }
+.skip-link:focus { transform: translateY(0); }
+.topbar { background: #fff; border-bottom: 1px solid var(--line); }
+.topbar-inner, .page-shell, .footer-inner { width: min(1120px, calc(100% - 2rem)); margin-inline: auto; }
+.topbar-inner { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.brand { display: inline-flex; align-items: center; gap: .7rem; color: var(--ink); font-size: 1.03rem; font-weight: 800; letter-spacing: -.025em; text-decoration: none; }
+.brand-mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: var(--brand); color: #fff; font-size: .95rem; }
+.topbar nav { display: flex; align-items: center; gap: 1.2rem; }
+.topbar nav a { font-size: .9rem; font-weight: 650; text-decoration: none; }
+.page-shell { min-height: calc(100vh - 122px); padding-block: 2rem 3.5rem; }
+.page-footer { border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+.footer-inner { display: flex; justify-content: space-between; gap: 1rem; padding-block: 1rem; }
+.page-heading { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.4rem; }
+.page-heading h1 { margin: .1rem 0 .35rem; font-size: clamp(1.8rem, 4vw, 2.45rem); letter-spacing: -.045em; line-height: 1.12; overflow-wrap: anywhere; }
+.page-heading p { max-width: 68ch; margin: 0; color: var(--muted); }
+.eyebrow { margin: 0 0 .35rem; color: var(--brand-dark); font-size: .73rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.breadcrumb { margin: 0 0 .75rem; color: var(--muted); font-size: .88rem; }
+.breadcrumb a { font-weight: 650; }
+.panel, section { min-width: 0; margin: 1rem 0; padding: clamp(1rem, 2.5vw, 1.4rem); border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+.panel h2, section > h2 { margin: 0 0 .8rem; font-size: 1.12rem; letter-spacing: -.02em; }
+section > h3 { margin: 0 0 .7rem; font-size: 1rem; }
+section > h4 { margin: 1rem 0 .35rem; font-size: .9rem; }
+p { margin-block: .55rem; }
+.muted, .field-help, .empty-state { color: var(--muted); }
+.status-panel { display: flex; align-items: flex-start; gap: .8rem; border-left: 4px solid var(--brand); }
+.status-panel > div { min-width: 0; }
+.status-panel p { margin: .15rem 0; }
+.status-badge { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 1.7rem; padding: .15rem .62rem; border: 1px solid transparent; border-radius: 999px; font-size: .77rem; font-weight: 750; line-height: 1.25; white-space: nowrap; }
+.status-good { border-color: #b8dfce; background: var(--good-soft); color: var(--good); }
+.status-warn { border-color: #f0d58e; background: var(--warn-soft); color: var(--warn); }
+.status-bad { border-color: #efc0bd; background: var(--bad-soft); color: var(--bad); }
+.status-neutral { border-color: var(--line); background: #f2f5f8; color: #506278; }
+.repository-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem; margin: 0; padding: 0; list-style: none; }
+.repository-card { display: flex; min-width: 0; flex-direction: column; gap: 1rem; padding: 1.2rem; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+.repository-card h2 { min-width: 0; margin: 0; font-size: 1.12rem; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.card-heading, .panel-heading, .card-actions { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+.card-heading > div, .panel-heading > div { min-width: 0; }
+.repo-facts, .artifact-facts, .resource-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); gap: .75rem; margin: 0; }
+.fact { min-width: 0; padding: .72rem; border-radius: 10px; background: var(--surface-soft); }
+.fact dt { color: var(--muted); font-size: .75rem; font-weight: 700; }
+.fact dd { margin: .2rem 0 0; font-size: .91rem; font-weight: 680; overflow-wrap: anywhere; }
+.digest { display: block; max-width: 100%; overflow-wrap: anywhere; font-size: .82rem; }
+.card-actions { flex-wrap: wrap; justify-content: flex-start; margin-top: auto; }
+.button, button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: .4rem; padding: .65rem 1rem; border: 1px solid transparent; border-radius: 10px; background: var(--brand); color: #fff; font: inherit; font-size: .9rem; font-weight: 750; line-height: 1.2; text-align: center; text-decoration: none; cursor: pointer; }
+.button:hover, button:hover { background: var(--brand-dark); color: #fff; }
+.button-secondary, button.button-secondary { border-color: #c8d5e5; background: #fff; color: #263e5c; }
+.button-secondary:hover, button.button-secondary:hover { border-color: #9fb4ce; background: #f5f8fc; color: #142b47; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+.inline-form { display: inline-flex; margin: 0; }
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: .9rem; }
+.status-card { padding: 1rem; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); }
+.status-card h2, .status-card h3 { margin: 0 0 .55rem; font-size: .93rem; }
+.status-card p:last-child { margin-bottom: 0; }
+.dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(270px, .7fr); align-items: start; gap: 1rem; }
+.dashboard-grid > section { margin: 0; }
+.entry-panel { border-top: 4px solid var(--brand); }
+.entry-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: 1rem; }
+.entry-actions form { margin: 0; }
+.release-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: .8rem; }
+.release-card { min-width: 0; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.release-card h3 { margin: 0 0 .65rem; font-size: .96rem; }
+.release-card p { font-size: .9rem; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.form-field { display: flex; min-width: 0; flex-direction: column; gap: .4rem; font-size: .88rem; font-weight: 700; }
+.form-field select { width: 100%; min-height: 44px; padding: .62rem .7rem; border: 1px solid #bccadd; border-radius: 9px; background: #fff; color: var(--ink); font: inherit; font-weight: 500; }
+.form-field select[multiple] { min-height: 9rem; padding: .25rem; }
+.field-help { font-size: .78rem; font-weight: 450; }
+.preview-facts { display: grid; gap: .55rem; margin-block: .8rem; }
+.preview-facts > div { display: grid; grid-template-columns: minmax(130px, .35fr) 1fr; gap: .7rem; }
+.preview-facts dt { color: var(--muted); font-size: .84rem; font-weight: 700; }
+.preview-facts dd { margin: 0; overflow-wrap: anywhere; }
+.form-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
+.alert { padding: .85rem 1rem; border: 1px solid #efc0bd; border-radius: 11px; background: var(--bad-soft); color: #782328; }
+.alert p { margin: .2rem 0; }
+.operation-list { display: grid; gap: .75rem; }
+.operation-card { padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.operation-card h3 { margin: 0 0 .35rem; font-size: .95rem; }
+.operation-card code, .operation-card p { overflow-wrap: anywhere; }
+.progress-track { display: block; width: 100%; height: .75rem; margin-block: .55rem; accent-color: var(--brand); }
+.empty-state { padding: 1.2rem; border: 1px dashed #b9c7d8; border-radius: 12px; text-align: center; }
+details { margin-top: .2rem; }
+summary { color: var(--brand-dark); font-size: .86rem; font-weight: 700; cursor: pointer; }
+dl { margin-block: .6rem; }
+code { border-radius: 4px; background: #eef2f7; padding: .08rem .28rem; }
+@media (max-width: 760px) {
+  .page-shell { padding-top: 1.2rem; }
+  .topbar-inner, .footer-inner { width: min(100% - 1.25rem, 1120px); }
+  .page-shell { width: min(100% - 1.25rem, 1120px); }
+  .dashboard-grid { grid-template-columns: 1fr; }
+  .form-grid { grid-template-columns: 1fr; }
+  .card-heading, .panel-heading { align-items: flex-start; }
+  .footer-inner { flex-direction: column; gap: .2rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+`;
+
+const PORTAL_STYLE_HASH = "tniWXQE2icKDoxxO9zKijFshF09e1uhaQMJiWb8q630=";
+
 export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -34,14 +162,22 @@ function page(
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
       `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-      `<title>${escapeHtml(title)}</title></head><body><main>${body}</main></body></html>`,
+      `<meta name="color-scheme" content="light">` +
+      `<title>${escapeHtml(title)}</title><style>${PORTAL_STYLES}</style></head><body>` +
+      `<a class="skip-link" href="#main-content">Skip to main content</a>` +
+      `<header class="topbar"><div class="topbar-inner">` +
+      `<a class="brand" href="/"><span class="brand-mark" aria-hidden="true">P</span><span>Praetorium</span></a>` +
+      `<nav aria-label="Primary"><a href="/">Repositories</a></nav></div></header>` +
+      `<main id="main-content" class="page-shell">${body}</main>` +
+      `<footer class="page-footer"><div class="footer-inner"><span>Praetorium repository workspace</span>` +
+      `<span>Access is checked with your current GitHub permissions.</span></div></footer></body></html>`,
     {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
         "Content-Security-Policy":
           `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; ` +
-          `form-action ${formAction}${scriptPolicy}`,
+          `form-action ${formAction}; style-src 'sha256-${PORTAL_STYLE_HASH}'${scriptPolicy}`,
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
       },
@@ -52,8 +188,9 @@ function page(
 export function renderPortalError(message: string, status = 503): Response {
   const response = page(
     "Repository management",
-    `<h1>Repository management</h1><p role="alert">${escapeHtml(message)}</p>` +
-      `<p><a href="/">Retry</a></p>`,
+    `<header class="page-heading"><div><p class="eyebrow">Praetorium workspace</p>` +
+      `<h1>Repository management</h1><p class="alert" role="alert">${escapeHtml(message)}</p></div></header>` +
+      `<p><a class="button button-secondary" href="/">Return to repositories</a></p>`,
   );
   return new Response(response.body, { status, headers: response.headers });
 }
@@ -107,6 +244,32 @@ function instanceStateLabel(state: PortalRepositorySummary["instance"]["state"])
   }
 }
 
+function statusTone(state: string): string {
+  if (["active", "ready", "succeeded", "valid", "write", "maintain", "admin"].includes(state))
+    return "status-good";
+  if (
+    ["pending", "starting", "queued", "running", "blocked", "unknown", "unavailable"].includes(
+      state,
+    )
+  )
+    return "status-warn";
+  if (
+    ["suspended", "removed", "failed", "canceled", "cancelled", "unsupported", "none"].includes(
+      state,
+    )
+  )
+    return "status-bad";
+  return "status-neutral";
+}
+
+function statusBadge(label: string, state: string): string {
+  return `<span class="status-badge ${statusTone(state)}">${escapeHtml(label)}</span>`;
+}
+
+function canStopDashboard(dashboard: PortalRepositoryDashboard): boolean {
+  return dashboard.canConfigure && dashboard.repository.instance.state === "ready";
+}
+
 function operationStateLabel(state: PortalOperation["state"]): string {
   switch (state) {
     case "queued":
@@ -145,32 +308,46 @@ function memory(value: number): string {
 
 function resources(value: PortalResources): string {
   return (
-    `<dl><dt>CPU</dt><dd>${cpu(value.cpuMilli)}</dd>` +
-    `<dt>Memory</dt><dd>${memory(value.memoryMiB)}</dd>` +
-    `<dt>Ephemeral storage</dt><dd>${memory(value.ephemeralStorageMiB)}</dd></dl>`
+    `<dl class="resource-facts">` +
+    `<div class="fact"><dt>CPU</dt><dd>${cpu(value.cpuMilli)}</dd></div>` +
+    `<div class="fact"><dt>Memory</dt><dd>${memory(value.memoryMiB)}</dd></div>` +
+    `<div class="fact"><dt>Ephemeral storage</dt><dd>${memory(value.ephemeralStorageMiB)}</dd></div></dl>`
   );
 }
 
 function limits(dashboard: PortalRepositoryDashboard): string {
   const limit = dashboard.resourceLimits;
   return (
-    `<section aria-labelledby="resource-limits"><h3 id="resource-limits">Operator limits</h3>` +
-    `<dl><dt>CPU</dt><dd>${limit.cpuMilli === null ? "Unavailable" : cpu(limit.cpuMilli)}</dd>` +
-    `<dt>Memory</dt><dd>${limit.memoryMiB === null ? "Unavailable" : memory(limit.memoryMiB)}</dd>` +
-    `<dt>Ephemeral storage</dt><dd>${limit.ephemeralStorageMiB === null ? "Unavailable" : memory(limit.ephemeralStorageMiB)}</dd></dl></section>`
+    `<section aria-labelledby="resource-limits"><div class="panel-heading"><div><p class="eyebrow">Capacity</p>` +
+    `<h2 id="resource-limits">Operator limits</h2></div></div>` +
+    `<dl class="resource-facts">` +
+    `<div class="fact"><dt>CPU</dt><dd>${limit.cpuMilli === null ? "Unavailable" : cpu(limit.cpuMilli)}</dd></div>` +
+    `<div class="fact"><dt>Memory</dt><dd>${limit.memoryMiB === null ? "Unavailable" : memory(limit.memoryMiB)}</dd></div>` +
+    `<div class="fact"><dt>Ephemeral storage</dt><dd>${limit.ephemeralStorageMiB === null ? "Unavailable" : memory(limit.ephemeralStorageMiB)}</dd></div>` +
+    `</dl></section>`
   );
 }
 
-function buildStatusLabel(status: NonNullable<PortalRepositoryDashboard["build"]>["status"]): string {
+function buildStatusLabel(
+  status: NonNullable<PortalRepositoryDashboard["build"]>["status"],
+): string {
   switch (status) {
-    case "reserved": return "Reserved";
-    case "pending": return "Queued";
-    case "claimed": return "Claimed";
-    case "running": return "Building";
-    case "verifying": return "Verifying artifact";
-    case "succeeded": return "Complete";
-    case "failed": return "Failed";
-    case "cancelled": return "Canceled";
+    case "reserved":
+      return "Reserved";
+    case "pending":
+      return "Queued";
+    case "claimed":
+      return "Claimed";
+    case "running":
+      return "Building";
+    case "verifying":
+      return "Verifying artifact";
+    case "succeeded":
+      return "Complete";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Canceled";
   }
 }
 
@@ -181,14 +358,16 @@ function buildStatus(build: PortalRepositoryDashboard["build"]): string {
     Number.isFinite(build.progressPercent) &&
     build.progressPercent >= 0 &&
     build.progressPercent <= 100
-      ? `<progress max="100" value="${build.progressPercent}">${build.progressPercent}%</progress>`
+      ? `<progress class="progress-track" max="100" value="${build.progressPercent}" aria-label="Build progress">${build.progressPercent}%</progress>`
       : "";
   const stage = build.stage ? `<p>Build stage: ${escapeHtml(build.stage)}</p>` : "";
-  const error = build.errorCode ? `<p role="alert">Build error: ${escapeHtml(build.errorCode)}</p>` : "";
+  const error = build.errorCode
+    ? `<p role="alert">Build error: ${escapeHtml(build.errorCode)}</p>`
+    : "";
   return (
-    `<article><h3>Build: ${buildStatusLabel(build.status)}</h3>` +
+    `<article class="operation-card"><div class="panel-heading"><h3>Configuration build</h3>${statusBadge(buildStatusLabel(build.status), build.status)}</div>` +
     `<p>Build <code>${escapeHtml(build.buildId)}</code></p>` +
-    `<p>Build key <code>${escapeHtml(build.buildKey)}</code></p>` +
+    `<p>Build key <code class="digest">${escapeHtml(build.buildKey)}</code></p>` +
     `${stage}${progress}${error}</article>`
   );
 }
@@ -214,14 +393,14 @@ function artifactSection(
   if (!artifact) return `<section><h3>${title}</h3><p>None</p></section>`;
   const required = artifact.includedModules.filter((id) => !artifact.requestedModules.includes(id));
   return (
-    `<section><h3>${title}</h3>` +
-    `<p>Composed image: <code>${image(artifact.composedImageDigest)}</code></p>` +
-    `<p>Base release: ${escapeHtml(artifact.releaseLabel ?? "Unavailable")} ` +
-    `(<code>${escapeHtml(artifact.baseImageDigest ?? "Unavailable")}</code>)</p>` +
-    `<p>Requested modules: ${moduleNames(artifact.requestedModules, dashboard)}</p>` +
-    `<p>Included modules: ${moduleNames(artifact.includedModules, dashboard)}</p>` +
-    `<p>Required dependencies: ${moduleNames(required, dashboard)}</p>` +
-    `<h4>Resource allocation</h4>${resources(artifact.resources)}</section>`
+    `<article class="release-card"><h3>${title}</h3>` +
+    `<p><strong>Composed image</strong><code class="digest">${image(artifact.composedImageDigest)}</code></p>` +
+    `<p><strong>Base release</strong><br>${escapeHtml(artifact.releaseLabel ?? "Unavailable")} ` +
+    `(<code class="digest">${escapeHtml(artifact.baseImageDigest ?? "Unavailable")}</code>)</p>` +
+    `<p><strong>Requested modules:</strong><br>${moduleNames(artifact.requestedModules, dashboard)}</p>` +
+    `<p><strong>Included modules:</strong><br>${moduleNames(artifact.includedModules, dashboard)}</p>` +
+    `<p><strong>Required dependencies:</strong><br>${moduleNames(required, dashboard)}</p>` +
+    `<h4>Resource allocation</h4>${resources(artifact.resources)}</article>`
   );
 }
 
@@ -232,7 +411,7 @@ function summaryItem(
 ): string {
   const status = escapeHtml(instanceStateLabel(repository.instance.state));
   const details = repository.instance.reason
-    ? `<p>${escapeHtml(repository.instance.reason)}</p>`
+    ? `<p class="muted">${escapeHtml(repository.instance.reason)}</p>`
     : "";
   const repositoryPath = `/repositories/${encodeURIComponent(repository.repositoryId)}`;
   const canEnter =
@@ -243,24 +422,28 @@ function summaryItem(
     ? `<form method="post" action="${repositoryPath}/actions">` +
       `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
       `<input type="hidden" name="action" value="enter">` +
-      `<button type="submit">Open repository</button></form>`
+      `<button type="submit" class="button button-secondary">${repository.instance.instanceId ? "Open application" : "Connect repository"}</button></form>`
     : "";
-  const action =
+  const manage =
     canEnter && repository.instance.instanceId
-      ? `<p><a href="${repositoryPath}">Manage repository</a></p>`
+      ? `<a class="button" href="${repositoryPath}">Manage repository</a>`
       : "";
   const operation = repository.operation
-    ? `<p>Latest ${escapeHtml(repository.operation.kind)} operation: ` +
-      `${escapeHtml(operationStateLabel(repository.operation.state))}</p>`
+    ? `<p class="operation-summary">Latest ${escapeHtml(repository.operation.kind)}: ` +
+      `${statusBadge(operationStateLabel(repository.operation.state), repository.operation.state)}</p>`
     : "";
+  const imageFacts =
+    `<details><summary>Image revisions</summary><dl class="artifact-facts">` +
+    `<div class="fact"><dt>Current</dt><dd><code class="digest">${image(repository.currentImageDigest)}</code></dd></div>` +
+    `<div class="fact"><dt>Desired</dt><dd><code class="digest">${image(repository.desiredImageDigest)}</code></dd></div></dl></details>`;
   return (
-    `<li><h2>${escapeHtml(repository.fullName)}</h2>` +
-    `<p>GitHub App: ${escapeHtml(installationLabel(repository.installation))}</p>` +
-    `<p>Repository access: ${escapeHtml(permissionLabel(repository.permission))}</p>` +
-    `<p>Instance: ${status}</p>${details}` +
-    `<p>Current image: <code>${image(repository.currentImageDigest)}</code></p>` +
-    `<p>Desired image: <code>${image(repository.desiredImageDigest)}</code></p>` +
-    `${operation}${enter}${action}</li>`
+    `<li class="repository-card"><header class="card-heading"><div><p class="eyebrow">GitHub repository</p>` +
+    `<h2>${escapeHtml(repository.fullName)}</h2></div>${statusBadge(status, repository.instance.state)}</header>` +
+    `<dl class="repo-facts">` +
+    `<div class="fact"><dt>GitHub App</dt><dd>${escapeHtml(installationLabel(repository.installation))}</dd></div>` +
+    `<div class="fact"><dt>Your access</dt><dd>${escapeHtml(permissionLabel(repository.permission))}</dd></div></dl>` +
+    `${details}` +
+    `${operation}${imageFacts}<div class="card-actions">${manage}${enter}</div></li>`
   );
 }
 
@@ -270,8 +453,8 @@ export function renderRepositoryList(list: PortalRepositoryList, csrfToken: stri
     .map((repository) => summaryItem(repository, csrfToken, appInstalled))
     .join("");
   const content = list.repositories.length
-    ? `<ul>${repos}</ul>`
-    : `<p>No repositories are available to this GitHub account.</p>`;
+    ? `<ul class="repository-grid">${repos}</ul>`
+    : `<div class="empty-state"><h3>No repositories available</h3><p>There are no repositories available to this GitHub account through the installed Praetorium App.</p></div>`;
   const retry =
     list.githubApp.installationState === "suspended" ||
     list.githubApp.installationState === "pending" ||
@@ -280,14 +463,18 @@ export function renderRepositoryList(list: PortalRepositoryList, csrfToken: stri
       : "";
   return page(
     "Repository management",
-    `<h1>Repository management</h1>` +
-      `<section><h2>GitHub App installation</h2>` +
-      `<p>Status: ${escapeHtml(installationLabel(list.githubApp.installationState))}</p>` +
-      `<p>${escapeHtml(list.githubApp.message)}</p>${retry}</section>` +
-      `<section><h2>Repositories</h2>${content}</section>` +
-      `<form method="post" action="/auth/logout">` +
+    `<header class="page-heading"><div><p class="eyebrow">Workspace</p><h1>Your repositories</h1>` +
+      `<p>Choose a connected repository to review its approved release, configuration, and runtime status.</p></div>` +
+      `<form class="inline-form" method="post" action="/auth/logout">` +
       `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
-      `<button type="submit">Sign out</button></form>`,
+      `<button type="submit" class="button button-secondary">Sign out</button></form></header>` +
+      `<section class="status-panel" aria-labelledby="github-installation"><div>` +
+      `<p class="eyebrow">GitHub connection</p><h2 id="github-installation">Praetorium App installation</h2>` +
+      `<p>${escapeHtml(list.githubApp.message)}</p>${retry}</div>` +
+      `${statusBadge(installationLabel(list.githubApp.installationState), list.githubApp.installationState)}</section>` +
+      `<section aria-labelledby="repositories-heading"><div class="panel-heading"><div>` +
+      `<p class="eyebrow">Repository access</p><h2 id="repositories-heading">Repositories</h2></div>` +
+      `<span class="muted">${list.repositories.length} available</span></div>${content}</section>`,
   );
 }
 
@@ -303,19 +490,20 @@ function modulePreview(
         ? "Unsupported module configuration"
         : "Preview unavailable";
   const reasons = preview.unsupportedReasons.length
-    ? `<ul>${preview.unsupportedReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`
+    ? `<ul class="preview-reasons">${preview.unsupportedReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`
     : "";
   const resourceDetails = preview.resources
     ? `<h4>Resolved resource allocation</h4>${resources(preview.resources)}`
     : "";
   return (
-    `<div role="status"><p>${stateText}</p>` +
-    `<p>Requested modules: ${moduleNames(preview.requestedModules, dashboard)}</p>` +
-    `<p>Included modules: ${moduleNames(preview.includedModules, dashboard)}</p>` +
-    `<p>Required dependencies: ${moduleNames(
+    `<div role="status" aria-live="polite">${statusBadge(stateText, preview.state)}` +
+    `<dl class="preview-facts">` +
+    `<div><dt>Requested modules:</dt><dd>${moduleNames(preview.requestedModules, dashboard)}</dd></div>` +
+    `<div><dt>Included modules:</dt><dd>${moduleNames(preview.includedModules, dashboard)}</dd></div>` +
+    `<div><dt>Required dependencies:</dt><dd>${moduleNames(
       preview.includedModules.filter((id) => !preview.requestedModules.includes(id)),
       dashboard,
-    )}</p>` +
+    )}</dd></div></dl>` +
     `${reasons}${resourceDetails}</div>`
   );
 }
@@ -367,10 +555,10 @@ function mutationForm(
   label: string,
 ): string {
   return (
-    `<form method="post" action="${action}">` +
+    `<form class="inline-form" method="post" action="${action}">` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
     `<input type="hidden" name="idempotencyKey" value="${escapeHtml(idempotencyKey)}">` +
-    `${body}<button type="submit">${label}</button></form>`
+    `${body}<button class="button button-secondary" type="submit">${label}</button></form>`
   );
 }
 
@@ -386,7 +574,7 @@ function operationView(
     Number.isFinite(operation.progressPercent) &&
     operation.progressPercent >= 0 &&
     operation.progressPercent <= 100
-      ? `<progress max="100" value="${operation.progressPercent}">${operation.progressPercent}%</progress>`
+      ? `<progress class="progress-track" max="100" value="${operation.progressPercent}" aria-label="${escapeHtml(operation.kind)} progress">${operation.progressPercent}%</progress>`
       : "";
   const message = operation.message ? `<p>${escapeHtml(operation.message)}</p>` : "";
   const error = operation.error ? `<p role="alert">${escapeHtml(operation.error)}</p>` : "";
@@ -402,7 +590,8 @@ function operationView(
         )
       : "";
   return (
-    `<article><h3>${escapeHtml(operation.kind)}: ${escapeHtml(operationStateLabel(operation.state))}</h3>` +
+    `<article class="operation-card"><div class="panel-heading"><h3>${escapeHtml(operation.kind)}</h3>` +
+    `${statusBadge(operationStateLabel(operation.state), operation.state)}</div>` +
     `<p>Operation <code>${escapeHtml(operation.operationId)}</code></p>${progress}${message}${error}${retry}</article>`
   );
 }
@@ -427,28 +616,33 @@ function configurationForm(
     [];
   const resourceProfileId = preview?.resourceProfileId ?? dashboard.desired?.resourceProfileId;
   const canSave = preview?.state !== "unsupported" && preview?.state !== "unavailable";
-  const formFields =
-    `<input type="hidden" name="action" value="configure">` +
-    `<input type="hidden" name="expectedGeneration" value="${dashboard.generation}">` +
-    `<label>Release policy <select name="releasePolicy">` +
+  const formFields = (prefix: string) =>
+    `<div class="form-grid">` +
+    `<label class="form-field" for="${prefix}-release-policy"><span>Release policy</span><select id="${prefix}-release-policy" name="releasePolicy" required>` +
     `<option value="stable"${policy === "stable" ? " selected" : ""}>Follow stable releases</option>` +
-    `<option value="pinned"${policy === "pinned" ? " selected" : ""}>Pin an approved release</option></select></label>` +
-    `<label>Approved base release <select name="releaseId">${optionsForReleases(dashboard, releaseId)}</select></label>` +
-    `<label>Requested modules <select name="moduleIds" multiple size="${Math.min(Math.max(dashboard.modules.length, 2), 12)}">` +
-    `${optionsForModules(dashboard, selectedModules)}</select></label>` +
-    `<label>Resource profile <select name="resourceProfileId">${optionsForResources(dashboard, resourceProfileId)}</select></label>`;
+    `<option value="pinned"${policy === "pinned" ? " selected" : ""}>Pin an approved release</option></select>` +
+    `<span class="field-help">Stable follows the approved stable release; pinned keeps the selected approved release.</span></label>` +
+    `<label class="form-field" for="${prefix}-release-id"><span>Approved base release</span><select id="${prefix}-release-id" name="releaseId" required>${optionsForReleases(dashboard, releaseId)}</select>` +
+    `<span class="field-help">Only releases already approved for this workspace appear here.</span></label>` +
+    `<label class="form-field" for="${prefix}-module-ids"><span>Requested modules</span><select id="${prefix}-module-ids" name="moduleIds" multiple size="${Math.min(Math.max(dashboard.modules.length, 2), 8)}" aria-describedby="${prefix}-module-ids-help">` +
+    `${optionsForModules(dashboard, selectedModules)}</select>` +
+    `<span class="field-help" id="${prefix}-module-ids-help">Use Ctrl or Command to select more than one module. Required dependencies are shown in the preview.</span></label>` +
+    `<label class="form-field" for="${prefix}-resource-profile"><span>Resource profile</span><select id="${prefix}-resource-profile" name="resourceProfileId" required>${optionsForResources(dashboard, resourceProfileId)}</select>` +
+    `<span class="field-help">The application service checks this profile against current operator limits.</span></label></div>`;
   return (
-    `<section aria-labelledby="configuration"><h3 id="configuration">Desired configuration</h3>` +
-    `<p>The selected modules and resource profile are validated by the application service.</p>` +
+    `<section class="configuration-panel" aria-labelledby="configuration"><p class="eyebrow">Configuration</p>` +
+    `<h2 id="configuration">Desired configuration</h2>` +
+    `<p class="muted">Preview your selection before saving. A saved configuration starts a verified build.</p>` +
     `<form method="post" action="${actionPath}">` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
     `<input type="hidden" name="idempotencyKey" value="${escapeHtml(createIdempotencyKey())}">` +
-    `${formFields}<button type="submit"${canSave ? "" : " disabled"}>Save and build</button></form>` +
+    `<input type="hidden" name="expectedGeneration" value="${dashboard.generation}">` +
+    `<input type="hidden" name="action" value="configure">` +
+    `${formFields("save")}<div class="form-actions"><button class="button" type="submit"${canSave ? "" : " disabled"}>Save configuration and build</button></div></form>` +
     `<form method="post" action="${actionPath}">` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
     `<input type="hidden" name="action" value="preview">` +
-    `${formFields.replace('<input type="hidden" name="action" value="configure">', "")}` +
-    `<button type="submit">Preview selection</button></form></section>`
+    `${formFields("preview")}<div class="form-actions"><button type="submit" class="button button-secondary">Preview selection</button></div></form></section>`
   );
 }
 
@@ -484,46 +678,77 @@ export function renderRepositoryDashboard(
   const repositoryId = encodeURIComponent(dashboard.repository.repositoryId);
   const actionPath = `/repositories/${repositoryId}/actions`;
   const access =
-    `<p>GitHub App: ${escapeHtml(installationLabel(dashboard.repository.installation))}</p>` +
-    `<p>Repository access: ${escapeHtml(permissionLabel(dashboard.repository.permission))}</p>`;
+    `<div class="status-grid">` +
+    `<article class="status-card"><h3>GitHub App</h3>${statusBadge(installationLabel(dashboard.repository.installation), dashboard.repository.installation)}</article>` +
+    `<article class="status-card"><h3>Your repository access</h3>${statusBadge(permissionLabel(dashboard.repository.permission), dashboard.repository.permission)}</article>` +
+    `</div>`;
   const current = artifactSection("Current deployment", dashboard.current, dashboard);
   const desired = artifactSection("Desired deployment", dashboard.desired, dashboard);
   const reason = dashboard.repository.instance.reason
-    ? `<p role="status">${escapeHtml(dashboard.repository.instance.reason)}</p>`
+    ? `<p class="muted" role="status">${escapeHtml(dashboard.repository.instance.reason)}</p>`
     : "";
   const instanceState = dashboard.repository.instance.state;
+  const canConfigure = dashboard.canConfigure;
+  const canSelectConfiguration =
+    dashboard.approvedReleases.length > 0 && dashboard.resourceProfiles.length > 0;
+  const needsInitialConfiguration = dashboard.current === null && dashboard.desired === null;
   const canEnter =
     dashboard.repository.installation === "active" &&
     ["read", "write", "maintain", "admin"].includes(dashboard.repository.permission);
   const entryLabel =
     instanceState === "ready"
-      ? "Enter application"
-      : instanceState === "failed" || instanceState === "blocked"
-        ? "Retry application start"
-        : "Start or wait for application";
+      ? "Open application"
+      : instanceState === "stopped"
+        ? "Start application"
+        : instanceState === "starting"
+          ? "Check application"
+          : instanceState === "failed" || instanceState === "blocked"
+            ? "Retry application start"
+            : "Application status unavailable";
   const shouldOfferEntry =
     canEnter &&
+    !needsInitialConfiguration &&
     (instanceState === "ready" ||
       instanceState === "starting" ||
       instanceState === "stopped" ||
       ((instanceState === "failed" || instanceState === "blocked") &&
         dashboard.repository.instance.retryable));
   const enter = shouldOfferEntry
-    ? `<form method="post" action="${actionPath}">` +
+    ? `<form class="inline-form" method="post" action="${actionPath}">` +
       `<input type="hidden" name="csrfToken" value="${escapeHtml(options.csrfToken)}">` +
-      `<input type="hidden" name="action" value="enter"><button type="submit">${entryLabel}</button></form>`
-    : `<p>Application status: ${escapeHtml(instanceStateLabel(instanceState))}</p>` +
-      `<p>Wait for the application to become ready, then refresh status.</p>`;
-  const refresh = `<p><a href="/repositories/${repositoryId}">Refresh status</a></p>`;
+      `<input type="hidden" name="action" value="enter"><button class="button" type="submit">${entryLabel}</button></form>`
+    : needsInitialConfiguration
+      ? canConfigure && canSelectConfiguration
+        ? `<p class="muted" role="status">Configuration is required before this application can start. <a href="#configuration">Choose an approved configuration below</a>, then save it to build and start the application.</p>`
+        : canConfigure
+          ? `<p class="muted" role="status">Configuration is required before this application can start. No approved release and resource profile are currently available.</p>`
+          : `<p class="muted" role="status">Configuration is required before this application can start. Ask a repository maintainer or administrator to choose an approved release and resource profile.</p>`
+      : `<p>Application status: ${escapeHtml(instanceStateLabel(instanceState))}</p>` +
+        `<p>Wait for the application to become ready, then refresh status.</p>`;
+  const refresh = `<a class="button button-secondary" href="/repositories/${repositoryId}">Refresh status</a>`;
+  const stop = canStopDashboard(dashboard)
+    ? mutationForm(
+        actionPath,
+        options.csrfToken,
+        options.createIdempotencyKey(),
+        `<input type="hidden" name="action" value="stop">` +
+          `<input type="hidden" name="expectedGeneration" value="${dashboard.generation}">`,
+        "Stop application",
+      )
+    : "";
   const latest =
     options.notice && (options.notice.state === "queued" || options.notice.state === "running")
       ? options.notice
       : dashboard.operations.find(
           (operation) => operation.state === "queued" || operation.state === "running",
         );
-  const activeBuild = dashboard.build !== null && ["reserved", "pending", "claimed", "running", "verifying"].includes(dashboard.build.status);
+  const activeBuild =
+    dashboard.build !== null &&
+    ["reserved", "pending", "claimed", "running", "verifying"].includes(dashboard.build.status);
   const polling =
-    (latest || activeBuild) && options.scriptNonce ? pollingScript(options.scriptNonce, options.pollCount ?? 0) : "";
+    (latest || activeBuild) && options.scriptNonce
+      ? pollingScript(options.scriptNonce, options.pollCount ?? 0)
+      : "";
   const operations = [...(options.notice ? [options.notice] : []), ...dashboard.operations]
     .map((operation) =>
       operationView(
@@ -537,9 +762,6 @@ export function renderRepositoryDashboard(
     .join("");
   const operationContent = operations || "<p>No recent operations.</p>";
   const preview = options.preview ?? dashboard.preview;
-  const canConfigure = dashboard.canConfigure;
-  const canSelectConfiguration =
-    dashboard.approvedReleases.length > 0 && dashboard.resourceProfiles.length > 0;
   const configure =
     canConfigure && canSelectConfiguration
       ? configurationForm(
@@ -550,25 +772,28 @@ export function renderRepositoryDashboard(
           preview,
         )
       : canConfigure
-        ? `<p>No approved release and resource profile are currently available for a configuration change.</p>`
-        : `<p>Configuration changes require current repository maintain or admin access.</p>`;
+        ? `<section class="configuration-panel"><p class="eyebrow">Configuration</p><h2>Desired configuration</h2>` +
+          `<p class="alert" role="status">No approved release and resource profile are currently available. Once they are approved, choose them here to configure and start the application.</p></section>`
+        : `<section class="configuration-panel"><p class="eyebrow">Configuration</p><h2>Desired configuration</h2>` +
+          `<p class="muted">Changes require current repository maintain or admin access. You can review the approved configuration and runtime status above.</p></section>`;
   const sameImage =
     dashboard.current?.composedImageDigest !== null &&
     dashboard.current?.composedImageDigest === dashboard.desired?.composedImageDigest;
   const redeploy =
     canConfigure && (dashboard.current !== null || dashboard.desired !== null)
-      ? mutationForm(
+      ? `<section class="configuration-panel"><p class="eyebrow">Runtime action</p><h2>Redeploy</h2>` +
+        `<p class="muted">A redeploy creates a new runtime epoch${sameImage ? " even though the image digest is unchanged" : ""}.</p>` +
+        `${mutationForm(
           actionPath,
           options.csrfToken,
           options.createIdempotencyKey(),
           `<input type="hidden" name="action" value="redeploy">` +
             `<input type="hidden" name="expectedGeneration" value="${dashboard.generation}">`,
           "Redeploy current configuration",
-        ) +
-        `<p>A redeploy creates a new runtime epoch${sameImage ? " even though the image digest is unchanged" : ""}.</p>`
+        )}</section>`
       : "";
   const selectedPreview =
-    `<section aria-labelledby="module-preview"><h3 id="module-preview">Module resolution</h3>` +
+    `<section aria-labelledby="module-preview"><p class="eyebrow">Configuration preview</p><h2 id="module-preview">Module resolution</h2>` +
     `${modulePreview(preview, dashboard)}</section>`;
   const activeOperation = latest !== undefined || activeBuild;
   const automaticStatus =
@@ -577,16 +802,26 @@ export function renderRepositoryDashboard(
       : polling;
   return page(
     dashboard.repository.fullName,
-    `<p><a href="/">All repositories</a></p><h1>${escapeHtml(dashboard.repository.fullName)}</h1>` +
-      `${access}<p>Instance: ${escapeHtml(instanceStateLabel(dashboard.repository.instance.state))}</p>${reason}` +
-      `<section aria-labelledby="entry"><h2 id="entry">Application entry</h2>${enter}${refresh}</section>` +
-      `<section aria-labelledby="deployments"><h2 id="deployments">Deployment</h2>` +
-      `<p>Release policy: ${dashboard.releasePolicy.kind === "stable" ? "Follow stable" : "Pinned"}</p>` +
-      `${current}${desired}</section>${limits(dashboard)}${selectedPreview}` +
-      `<section aria-labelledby="operations"><h2 id="operations">Build and operation progress</h2>` +
-      `${options.errorMessage ? `<p role="alert">${escapeHtml(options.errorMessage)}</p>` : ""}` +
-      `${automaticStatus}${buildStatus(dashboard.build)}${operationContent}</section>${configure}${redeploy}`,
-    (activeOperation || activeBuild) && options.scriptNonce ? { scriptNonce: options.scriptNonce } : {},
+    `<header class="page-heading"><div><p class="breadcrumb"><a href="/">Repositories</a> / ${escapeHtml(dashboard.repository.fullName)}</p>` +
+      `<p class="eyebrow">Repository management</p><h1>${escapeHtml(dashboard.repository.fullName)}</h1>` +
+      `<p>Review the current runtime, approved deployment, and repository configuration.</p></div>` +
+      `${statusBadge(instanceStateLabel(instanceState), instanceState)}</header>` +
+      `<div class="dashboard-grid"><section class="entry-panel" aria-labelledby="entry"><p class="eyebrow">Runtime</p>` +
+      `<h2 id="entry">Application status</h2>${reason}` +
+      `<p>The current instance is <strong>${escapeHtml(instanceStateLabel(instanceState))}</strong>.</p>` +
+      `<div class="entry-actions">${enter}${stop}${refresh}</div></section>` +
+      `<section aria-labelledby="access-heading"><p class="eyebrow">Authorization</p><h2 id="access-heading">Access and permissions</h2>${access}</section></div>` +
+      `<section aria-labelledby="deployments"><div class="panel-heading"><div><p class="eyebrow">Images and policy</p>` +
+      `<h2 id="deployments">Deployment</h2></div>${statusBadge(dashboard.releasePolicy.kind === "stable" ? "Follow stable" : "Pinned release", dashboard.releasePolicy.kind)}</div>` +
+      `<div class="release-cards">${current}${desired}</div></section>${limits(dashboard)}${selectedPreview}` +
+      `<section aria-labelledby="operations"><div class="panel-heading"><div><p class="eyebrow">Live status</p>` +
+      `<h2 id="operations">Build and operation progress</h2></div>${activeOperation ? statusBadge("In progress", "running") : ""}</div>` +
+      `${options.errorMessage ? `<p class="alert" role="alert">${escapeHtml(options.errorMessage)}</p>` : ""}` +
+      `${automaticStatus}${buildStatus(dashboard.build)}<div class="operation-list">${operationContent}</div></section>` +
+      `${configure}${redeploy}`,
+    (activeOperation || activeBuild) && options.scriptNonce
+      ? { scriptNonce: options.scriptNonce }
+      : {},
   );
 }
 

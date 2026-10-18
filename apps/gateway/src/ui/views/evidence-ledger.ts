@@ -129,7 +129,7 @@ body:has(.evidence-ledger) .page-shell{max-width:1500px;padding-inline:clamp(16p
 .evidence-no-activity{margin:0;font-size:12px;color:#6c8071}
 
 .evidence-runtime .entry-panel>.status-badge{display:block;max-width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere}
-.evidence-runtime .entry-panel>.status-neutral{font-size:clamp(30px,4vw,48px);letter-spacing:-.055em}
+.evidence-runtime .entry-panel[data-runtime-state="unknown"]>.status-badge{font-size:clamp(29px,4vw,48px);letter-spacing:-.055em}
 @media(max-width:620px){
  .evidence-runtime .entry-actions{flex-direction:column;flex-wrap:nowrap;align-items:stretch;width:100%}
  .evidence-runtime .entry-actions>p{flex-basis:auto;width:100%;margin:8px 0}

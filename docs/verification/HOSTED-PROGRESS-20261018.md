@@ -7,9 +7,14 @@ is unchanged. Source checks do not certify Hosted acceptance.
 
 Repository identity is GitHub numeric ID `1422456736` (`yohn-jp/praetorium`).
 The campaign started from `e7926f472e12e5f0ec30db88e459328dd08ca58d`.
-The latest integrated and pushed product source is `5ca00e2`.
+The latest integrated and pushed source is `e6dcf87` (product fixes through `5ca00e2`).
 The disposable producer and service-image workflows provide separate evidence;
-neither publishes production images.
+neither publishes production images. The separate service publication workflow now
+accepts an exact main revision and uses its existing scoped GitHub Actions token;
+manual publication of `e6dcf87` is running as
+[39090471416](https://github.com/yohn-jp/praetorium/actions/runs/39090471416).
+Frozen install, full check (29 tasks), actionlint, eight deployment reproducibility
+tests and four extracted publication-guard cases passed before dispatch.
 
 - Build and Provisioner use authenticated, coalesced local work notifications
   and five-minute recovery claims, replacing one- and two-second empty claims.
@@ -184,7 +189,9 @@ removed; archived expired inventories are not current acceptance inputs.
   `https://praetorium.yohn.jp/internal/github/credential`. These are not missing
   owner-provided URLs. What remains unverified is real broker trust and GitHub
   authorization for the canary's synthetic repository/installation IDs. No
-  authorized real test repository or browser principals have been established.
+  authorized real test repository or browser principals had been established at
+  that earlier snapshot. A private, explicitly owned disposable repository has
+  since been created; its GitHub App installation authorization remains unverified.
   The utility worker was stopped; no assignment or broker authority was forged,
   and the blocked operation was not reset through direct D1 writes.
 - The real Core image declares user `node` (UID/GID 1000). Kubernetes rejected
@@ -214,14 +221,25 @@ removed; archived expired inventories are not current acceptance inputs.
   Prometheus digest was verified against Docker Hub, including its Linux/amd64
   child manifest. Runtime public L4/DNS/TLS,
   management/secret references and authorized real browser principals remain
-  separate external gates. Public Control Plane `/healthz` returns 503; remote
-  revision/configuration is unknown. The source health-route correction is
-  integrated but has not been deployed. No production apply ran.
+  separate external gates. Latest public Gateway and Control Plane `/healthz`
+  probes both return HTTP 200, superseding the earlier Control Plane 503. Remote
+  revision/configuration remains unknown. Root has not deployed the source
+  health fix, and no production apply ran.
+
+- After the two known runtime-policy bindings were applied, a normal authenticated
+  Provisioner claim returned HTTP 200 and resolved the admitted artifact, runtime
+  epoch and broker locator. No direct D1 reset was used. Provider startup was
+  withheld because the old canary binding names synthetic GitHub IDs: canonical
+  Scriptorium startup would immediately request a real Git credential. The lease
+  expired naturally, with no reservation, Pod or broker call. This proves context
+  resolution, not a running Hosted application.
 
 ## Remaining acceptance
 
-No G1–G9 gate has newly passed. G1/G3 require an owned disposable GitHub repository
-and authorized writer/reader browser identities. G2 requires Runtime ingress,
+No G1–G9 gate has newly passed. An owned disposable GitHub repository is now
+prepared. G1/G3 still require its real App authorization and authorized browser
+identities. Two principals test permission separation; creating new owner accounts
+is not a prerequisite for the first writer journey. G2 requires Runtime ingress,
 workloads and real authenticated UI/API/MCP entry. G4 requires real compositions,
 registry readback, signature/admission and reuse/failure evidence. G5/G6 require
 real lifecycle, recovery, stable/pinned, canary and rollback evidence. G7 requires
@@ -233,5 +251,7 @@ and RC review, approved deployment and the public editing journey.
 Production `deploy-platform --apply` remains unexecuted. Its concrete effect is
 K3s controllers, secrets, certificates and platform services, receiver wake
 probes, then Cloudflare migration/Worker deployment. The environment record
-identifies targets and effects; approval must apply to resolved concrete inputs.
+identifies targets and effects. The owner has now explicitly authorized publication
+and production delivery. Remaining gates are verified configuration, credentials
+and execution prerequisites, rather than a repeated request for that approval.
 Implementation and verification continue independently of those production gates.

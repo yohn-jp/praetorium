@@ -56,7 +56,7 @@ export function evidenceLedgerRepository(
  * then configuration and operation history. Shared by explicit Desktop/Mobile
  * views; the browser does not silently select presentation mode.
  */
-export const EVIDENCE_LEDGER_STYLES = \`
+export const EVIDENCE_LEDGER_STYLES = `
 body:has(.evidence-ledger){--ink:#17372f;--muted:#596f66;--line:#d6e1da;--surface:#fff;--surface-soft:#eef2ed;--brand:#235d4b;--brand-dark:#174937;--good:#146447;--good-soft:#e5f2e9;--warn:#885421;--bad:#a44337;background:#f3f5f0}
 body:has(.evidence-ledger) .topbar{background:#fdfefb;border-bottom:1px solid #dbe4dc}
 body:has(.evidence-ledger) .brand-mark{background:#143e31}
@@ -120,4 +120,4 @@ body:has(.evidence-ledger) .page-shell{max-width:1500px;padding-inline:clamp(16p
 @media(max-width:980px){.evidence-workspace{grid-template-columns:minmax(0,1fr)}.evidence-runtime{min-height:295px}.evidence-runtime .entry-panel{padding:20px 0}.evidence-deployment-comparison{grid-template-columns:repeat(2,minmax(0,1fr))}.evidence-configuration .desktop-configuration-layout,.evidence-activity .desktop-activity-content{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:620px){body:has(.evidence-ledger) .page-shell{padding-inline:15px}.evidence-intro{padding:18px 0}.evidence-intro .page-heading{display:block}.evidence-intro .page-heading h1{font-size:clamp(28px,9vw,43px)}.evidence-navigation{gap:22px;margin-bottom:14px}.evidence-runtime{padding:22px 20px;min-height:280px}.evidence-runtime .entry-panel>.status-badge{font-size:clamp(43px,12vw,67px)}.evidence-runtime .entry-actions{gap:8px}.evidence-runtime .entry-actions button,.evidence-runtime .entry-actions .button{min-height:44px}.evidence-material{padding:20px 15px}.evidence-material-heading{font-size:16px}.evidence-deployment-comparison{grid-template-columns:minmax(0,1fr)}.evidence-secondary{padding-top:25px}.evidence-section-title h2{font-size:20px}.evidence-configuration .desktop-configuration-main{padding:17px}.evidence-activity .desktop-operations,.evidence-activity .desktop-redeploy{padding:17px}.evidence-access .status-grid{gap:8px}}
 @media(max-width:360px){.evidence-runtime{padding-inline:16px}.evidence-runtime .entry-panel>.status-badge{font-size:43px}.evidence-runtime .entry-actions{flex-direction:column;width:100%}.evidence-runtime .entry-actions form,.evidence-runtime .entry-actions button{width:100%}}
-\`;
+`;

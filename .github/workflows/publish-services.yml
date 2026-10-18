@@ -37,6 +37,16 @@ jobs:
           corepack pnpm@11.18.0 install --frozen-lockfile
           corepack pnpm@11.18.0 check
           node --test tests/deployment/reproducibility.test.mjs
+      - name: Export SSR HTML for this PR
+        if: github.event_name == 'pull_request'
+        run: node scripts/export-commercial-ui-html.mjs
+      - name: Attach SSR HTML preview for review
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: praetorium-evidence-ledger-rendered
+          path: .praetorium-preview/*.html
+          retention-days: 7
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')

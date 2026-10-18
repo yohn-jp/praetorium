@@ -10,121 +10,10 @@ import type {
   PortalHandlerDependencies,
   PortalOperation,
   PortalRepositoryDashboard,
-  PortalRepositoryList,
   PortalService,
 } from "./types.js";
 
-const summary: PortalRepositoryDashboard["repository"] = {
-  repositoryId: "123456789",
-  fullName: "owner/project",
-  installation: "active",
-  permission: "maintain",
-  instance: { state: "ready", instanceId: "ins_01", retryable: false, reason: null },
-  currentImageDigest: "sha256:current-image",
-  desiredImageDigest: "sha256:current-image",
-  operation: null,
-};
-
-const operation: PortalOperation = {
-  operationId: "op_01",
-  kind: "build",
-  state: "failed",
-  progressPercent: 73,
-  message: "Build stopped before deployment.",
-  error: "producer rejected this module selection",
-  retryable: true,
-};
-
-const dashboard: PortalRepositoryDashboard = {
-  repository: summary,
-  generation: 4,
-  releasePolicy: { kind: "stable" },
-  current: {
-    releaseId: "rel_01",
-    releaseLabel: "Stable 1.2",
-    baseImageDigest: "sha256:base-image",
-    composedImageDigest: "sha256:current-image",
-    resourceProfileId: "balanced",
-    requestedModules: ["editor"],
-    includedModules: ["editor", "search"],
-    resources: {
-      cpuMilli: 1000,
-      memoryMiB: 2048,
-      ephemeralStorageMiB: 1024,
-    },
-  },
-  desired: {
-    releaseId: "rel_01",
-    releaseLabel: "Stable 1.2",
-    baseImageDigest: "sha256:base-image",
-    composedImageDigest: "sha256:current-image",
-    resourceProfileId: "balanced",
-    requestedModules: ["editor"],
-    includedModules: ["editor", "search"],
-    resources: {
-      cpuMilli: 1000,
-      memoryMiB: 2048,
-      ephemeralStorageMiB: 1024,
-    },
-  },
-  preview: {
-    state: "valid",
-    releasePolicy: "stable",
-    releaseId: "rel_01",
-    requestedModules: ["editor"],
-    resourceProfileId: "balanced",
-    includedModules: ["editor", "search"],
-    unsupportedReasons: [],
-    resources: {
-      cpuMilli: 1000,
-      memoryMiB: 2048,
-      ephemeralStorageMiB: 1024,
-    },
-  },
-  build: {
-    buildId: "build_01",
-    buildKey: "sha256:build-key",
-    status: "failed",
-    stage: "building",
-    progressPercent: 73,
-    errorCode: "PRODUCER_REJECTED",
-    updatedAt: 1_800_000_000_000,
-  },
-  approvedReleases: [
-    {
-      releaseId: "rel_01",
-      label: "Stable 1.2",
-      imageDigest: "sha256:base-image",
-    },
-  ],
-  modules: [
-    { moduleId: "editor", label: "Editor", version: "2.0.0", artifactDigest: "sha256:editor" },
-    { moduleId: "search", label: "Search", version: "1.4.0", artifactDigest: "sha256:search" },
-  ],
-  resourceProfiles: [
-    {
-      profileId: "balanced",
-      label: "Balanced",
-      resources: {
-        cpuMilli: 1000,
-        memoryMiB: 2048,
-        ephemeralStorageMiB: 1024,
-      },
-    },
-  ],
-  resourceLimits: {
-    cpuMilli: 4000,
-    memoryMiB: 8192,
-    ephemeralStorageMiB: 8192,
-  },
-  operations: [operation],
-  canConfigure: true,
-};
-
-const repositoryList: PortalRepositoryList = {
-  githubApp: { installationState: "active", message: "GitHub App installation is active." },
-  repositories: [summary],
-};
+import { summary, operation, dashboard, repositoryList } from "./portal.fixtures.js";
 
 function readOnlyDashboard(): PortalRepositoryDashboard {
   return {
@@ -225,6 +114,7 @@ describe("server-rendered management UI", () => {
     });
     const html = await response.text();
     const css = /<style>([\s\S]*?)<\/style>/.exec(html)?.[1];
+    expect(response.headers.get("Referrer-Policy")).toBe("same-origin");
     expect(css).toBeDefined();
     const hash = createHash("sha256").update(css!).digest("base64");
     expect(response.headers.get("Content-Security-Policy")).toContain(`style-src 'sha256-${hash}'`);
@@ -239,7 +129,7 @@ describe("server-rendered management UI", () => {
     expect(html).toContain('aria-describedby="configuration-module-ids-help"');
 
     const configurationSection =
-      /<section class="configuration-panel" aria-labelledby="configuration">([\s\S]*?)<\/section>/.exec(
+      /<section class="configuration-panel" aria-labelledby="configuration-heading">([\s\S]*?)<\/section>/.exec(
         html,
       )?.[1];
     expect(configurationSection).toBeDefined();
@@ -252,11 +142,16 @@ describe("server-rendered management UI", () => {
       "expectedGeneration",
       "releasePolicy",
       "releaseId",
-      "moduleIds",
       "resourceProfileId",
     ]) {
       expect(configurationSection!.match(new RegExp(`name="${field}"`, "g"))).toHaveLength(1);
     }
+
+    expect(configurationSection!.match(/name="moduleIds"/g)).toHaveLength(2);
+    expect(configurationSection).toContain(
+      'type="checkbox" name="moduleIds" value="editor" checked',
+    );
+    expect(configurationSection).toContain('type="checkbox" name="moduleIds" value="search">');
 
     const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
     expect(new Set(ids).size).toBe(ids.length);
@@ -293,7 +188,7 @@ describe("server-rendered management UI", () => {
     expect(html).toContain("save it to build and start the application");
     expect(html).not.toContain('name="action" value="enter"');
     expect(html).not.toContain("Wait for the application to become ready");
-    expect(html).toContain('id="configuration"');
+    expect(html).toContain('id="configuration-heading"');
     expect(html).toContain('name="action" value="configure"');
   });
 
@@ -561,7 +456,7 @@ describe("server-rendered management UI", () => {
     expect(html).toContain("Unsupported module configuration");
     expect(html).toContain("Required dependencies:</dt><dd>Editor (2.0.0)</dd>");
     expect(html).toContain("Incompatible with &lt;script&gt;release&lt;/script&gt;");
-    expect(html).toContain('<option value="search" selected>');
+    expect(html).toContain('type="checkbox" name="moduleIds" value="search" checked>');
     expect(html).toContain('<option value="pinned" selected>');
     expect(html).toContain('name="action" value="configure"');
     expect(html).toContain(
@@ -590,7 +485,7 @@ describe("server-rendered management UI", () => {
       `<option value="rel_01" selected>Stable 1.2 · sha256:${"c".repeat(12)}…</option>`,
     );
     expect(html).toContain(
-      `<option value="editor" selected>Editor (2.0.0 · sha256:${"c".repeat(12)}…)</option>`,
+      `type="checkbox" name="moduleIds" value="editor" checked><span>Editor <span class="field-help">2.0.0 · sha256:${"c".repeat(12)}…</span>`,
     );
     expect(html).not.toContain(longDigest);
   });
@@ -672,7 +567,9 @@ describe("server-rendered management UI", () => {
 
     expect(first).toContain("setTimeout");
     expect(last).toContain("Automatic refresh paused");
-    expect(last).not.toContain("<script");
+    expect(last).not.toContain("setTimeout");
+    expect(first).toContain("dataset.dirty");
+    expect(last).toContain("beforeunload");
     expect(last).toContain("Refresh status");
   });
 
@@ -785,4 +682,38 @@ describe("presentation mode boundary", () => {
       );
     }
   });
+});
+
+it("retains submitted configuration on authoritative stale-generation errors", async () => {
+  const execute = vi.fn(async () => ({
+    ok: false as const,
+    error: { code: "STALE_GENERATION" as const, message: "Refresh the generation before saving." },
+  }));
+  const handler = createPortalHandler(
+    sessionDependencies({
+      listRepositories: async () => ({ ok: true, value: repositoryList }),
+      getRepository: async () => ({ ok: true, value: { ...dashboard, generation: 5 } }),
+      execute,
+    }),
+  );
+  const response = await handler(
+    actionRequest({
+      csrfToken: "csrf-token-value",
+      action: "configure",
+      expectedGeneration: "4",
+      idempotencyKey: "stale-config-1234567890",
+      releasePolicy: "pinned",
+      releaseId: "rel_01",
+      moduleIds: "search",
+      resourceProfileId: "balanced",
+    }),
+  );
+  const html = await response.text();
+  expect(response.status).toBe(409);
+  expect(html).toContain("Refresh the generation before saving.");
+  expect(html).toContain('value="pinned" selected');
+  expect(html).toContain('name="moduleIds" value="search" checked');
+  expect(html).toContain('name="moduleIds" value="editor">');
+  expect(html).toContain('name="expectedGeneration" value="5"');
+  expect(execute).toHaveBeenCalledTimes(1);
 });

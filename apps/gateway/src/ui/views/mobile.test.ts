@@ -89,9 +89,9 @@ describe("mobile UI compositions", () => {
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
     for (const fragment of [
-      '<h3 id="mobile-current-heading">Current</h3>',
+      'aria-label="Current deployment"',
       "sha256:current",
-      '<h3 id="mobile-desired-heading">Desired</h3>',
+      'aria-label="Desired deployment"',
       "sha256:desired",
       "Follow stable releases",
       "Resource profile",

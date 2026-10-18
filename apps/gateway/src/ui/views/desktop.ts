@@ -6,7 +6,7 @@ import type { RepositoryDetailView, RepositoryListView } from "../presentation.j
  */
 export const DESKTOP_STYLES = `
 .page-shell:has(.desktop-composition) {
-  width: min(1280px, calc(100% - 4rem));
+  width: 100%;
   padding-block: 2rem 3rem;
 }
 .desktop-composition {
@@ -20,7 +20,9 @@ export const DESKTOP_STYLES = `
   gap: 1.5rem;
   margin-bottom: 1.25rem;
 }
-.desktop-page-heading > * { min-width: 0; }
+.desktop-page-heading > * { min-width: 0; width: 100%; }
+.desktop-connection > .status-panel { margin: 0; padding: 0; border: 0; }
+.desktop-row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .desktop-page-heading h1 {
   margin: 0;
   font-size: clamp(1.65rem, 3vw, 1.9rem);
@@ -167,6 +169,7 @@ export const DESKTOP_STYLES = `
   border-radius: 9px;
   background: var(--surface);
 }
+.desktop-deployment > .release-card { padding: 0; }
 .desktop-deployment > :first-child { margin-top: 0; }
 .desktop-deployment > :last-child { margin-bottom: 0; }
 .desktop-deployment > section {
@@ -305,7 +308,7 @@ function repositoryRow(row: RepositoryListView["rows"][number]): string {
       `<div class="desktop-row-identity">${row.identity}` +
         `<span class="desktop-row-installation">${row.installation}</span>` +
         `${row.reason ? `<span class="desktop-row-reason">${row.reason}</span>` : ""}` +
-        `${row.revisions ? `<span class="desktop-row-revisions">${row.revisions}</span>` : ""}` +
+        `${row.revisions ? `<details class="desktop-row-revisions"><summary>Image revisions</summary>${row.revisions}</details>` : ""}` +
         `</div>`,
       "desktop-row-repository",
     ) +

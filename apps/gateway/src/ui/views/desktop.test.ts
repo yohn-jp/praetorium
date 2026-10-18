@@ -36,7 +36,7 @@ describe("Desktop repository compositions", () => {
       `<span class="desktop-row-reason">Approval is required<br>before this repository can run.</span>`,
     );
     expect(html).toContain(
-      `<span class="desktop-row-revisions"><details><summary>Image revisions</summary><code>sha256:full-digest</code></details></span>`,
+      `<details class="desktop-row-revisions"><summary>Image revisions</summary><details><summary>Image revisions</summary><code>sha256:full-digest</code></details></details>`,
     );
     expect(html).toContain(
       `<td class="desktop-row-actions" data-column="Actions"><span class="desktop-cell-label">Actions</span><a href="/repositories/123?ui=desktop">Open details</a></td>`,

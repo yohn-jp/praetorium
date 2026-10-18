@@ -10,6 +10,7 @@ export const MOBILE_STYLES = `
 .mobile-repository { min-width: 0; width: 100%; max-width: 42rem; margin-inline: auto; }
 .mobile-repositories-heading { min-width: 0; margin-bottom: 1rem; }
 .mobile-repositories-connection { margin: 0 0 1rem; padding: .65rem .8rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); font-size: .875rem; }
+.mobile-repositories-connection > .status-panel { margin: 0; padding: 0; border: 0; }
 .mobile-repository-list { min-width: 0; margin: 0; padding: 0; list-style: none; }
 .mobile-repository-row { min-width: 0; padding: 1rem 0 1.25rem; border-bottom: 1px solid var(--line); }
 .mobile-repository-row:first-child { border-top: 1px solid var(--line); }
@@ -42,6 +43,7 @@ export const MOBILE_STYLES = `
 .mobile-deployment-summary, .mobile-policy-summary,
 .mobile-limits-summary, .mobile-preview-summary,
 .mobile-operations-summary, .mobile-redeploy-summary { min-width: 0; padding: 1rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.mobile-deployment-summary .release-card { padding: 0; }
 .mobile-deployment-summary h3, .mobile-policy-summary h3,
 .mobile-limits-summary h3, .mobile-preview-summary h3,
 .mobile-operations-summary h3, .mobile-redeploy-summary h3 { margin: 0 0 .5rem; font-size: 1rem; }
@@ -117,20 +119,21 @@ export function mobileRepository(view: RepositoryDetailView): string {
     `<section id="overview" class="mobile-overview" aria-labelledby="mobile-overview-heading">` +
     `<h2 id="mobile-overview-heading" class="mobile-section-heading">Overview</h2>` +
     `<div class="mobile-deployment-summaries">` +
-    `<section class="mobile-deployment-summary" aria-labelledby="mobile-current-heading">` +
-    `<h3 id="mobile-current-heading">Current</h3>${view.current}</section>` +
-    `<section class="mobile-deployment-summary" aria-labelledby="mobile-desired-heading">` +
-    `<h3 id="mobile-desired-heading">Desired</h3>${view.desired}</section></div></section>` +
+    `<section class="mobile-deployment-summary" aria-label="Current deployment">` +
+    `${view.current}</section>` +
+    `<section class="mobile-deployment-summary" aria-label="Desired deployment">` +
+    `${view.desired}</section></div></section>` +
     `<section id="configuration" class="mobile-configuration-section" aria-labelledby="mobile-configuration-heading">` +
     `<h2 id="mobile-configuration-heading" class="mobile-section-heading">Configuration</h2>` +
     `<div class="mobile-policy-summary"><h3>Release policy</h3>${view.policy}</div>` +
     `<div class="mobile-configuration-content">${view.configuration}</div>` +
-    `<div class="mobile-limits-summary"><h3>Limits</h3><div class="mobile-limits-content">${view.limits}</div></div>` +
-    `<div class="mobile-preview-summary"><h3>Preview</h3><div class="mobile-preview-content">${view.preview}</div></div></section>` +
+    `<div class="mobile-limits-summary"><div class="mobile-limits-content">${view.limits}</div></div>` +
+    `<div class="mobile-preview-summary"><div class="mobile-preview-content">${view.preview}</div></div></section>` +
     `<section id="activity" class="mobile-activity" aria-labelledby="mobile-activity-heading">` +
     `<h2 id="mobile-activity-heading" class="mobile-section-heading">Activity</h2>` +
-    `<div class="mobile-operations-summary"><h3>Operations</h3><div class="mobile-operations-content">${view.operations}</div></div>` +
-    `<div class="mobile-redeploy-summary"><h3>Redeploy</h3><div class="mobile-redeploy-content">${view.redeploy}</div></div></section>` +
+    `<div class="mobile-operations-summary"><div class="mobile-operations-content">${view.operations}</div></div>` +
+    optionalFragment(view.redeploy, "mobile-redeploy-summary") +
+    `</section>` +
     `</div>`
   );
 }

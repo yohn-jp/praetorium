@@ -1,4 +1,8 @@
-import { resolvePresentation, type PortalPresentation } from "./presentation.js";
+import {
+  resolvePresentation,
+  type ConfigurationSelection,
+  type PortalPresentation,
+} from "./presentation.js";
 import {
   renderHandoff,
   renderPortalError as renderError,
@@ -282,23 +286,15 @@ function dashboardResponse(
   session: { readonly csrfToken: string },
   options: {
     readonly presentation?: PortalPresentation;
+    readonly selection?: ConfigurationSelection;
     readonly preview?: PortalModulePreview;
     readonly notice?: PortalOperation;
     readonly errorMessage?: string;
     readonly pollCount?: number;
   } = {},
 ): Response {
-  const operationInProgress =
-    options.notice?.state === "queued" ||
-    options.notice?.state === "running" ||
-    (dashboard.build !== null &&
-      ["reserved", "pending", "claimed", "running", "verifying"].includes(
-        dashboard.build.status,
-      )) ||
-    dashboard.operations.some(
-      (operation) => operation.state === "queued" || operation.state === "running",
-    );
   return renderRepositoryDashboard(dashboard, {
+    ...(options.selection ? { selection: options.selection } : {}),
     ...(options.presentation ? { presentation: options.presentation } : {}),
     csrfToken: session.csrfToken,
     createIdempotencyKey: dependencies.createToken,
@@ -306,7 +302,7 @@ function dashboardResponse(
     ...(options.notice ? { notice: options.notice } : {}),
     ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
     ...(options.pollCount !== undefined ? { pollCount: options.pollCount } : {}),
-    ...(operationInProgress ? { scriptNonce: dependencies.createToken() } : {}),
+    scriptNonce: dependencies.createToken(),
   });
 }
 
@@ -426,7 +422,13 @@ export function createPortalHandler(
         action.command,
       );
     } catch {
-      return renderPortalError("The requested operation is temporarily unavailable.", 503);
+      result = {
+        ok: false,
+        error: {
+          code: "UNAVAILABLE",
+          message: "The requested operation is temporarily unavailable.",
+        },
+      };
     }
     if (!result.ok) {
       const dashboard = await loadDashboard(
@@ -438,6 +440,9 @@ export function createPortalHandler(
         return withStatus(
           makeDashboardResponse(dashboard.value, dependencies, identity.session, {
             errorMessage: result.error.message,
+            ...(action.command.kind === "preview" || action.command.kind === "configure"
+              ? { selection: action.command }
+              : {}),
           }),
           errorStatus(result.error.code),
         );
@@ -458,6 +463,7 @@ export function createPortalHandler(
         return renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
       return makeDashboardResponse(dashboard.value, dependencies, identity.session, {
         preview: preview.value.preview,
+        selection: action.command,
       });
     }
 

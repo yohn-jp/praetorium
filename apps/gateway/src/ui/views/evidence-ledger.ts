@@ -59,6 +59,7 @@ export function evidenceLedgerRepository(
  */
 export const EVIDENCE_LEDGER_STYLES = `
 body:has(.evidence-ledger){--ink:#17372f;--muted:#596f66;--line:#d6e1da;--surface:#fff;--surface-soft:#eef2ed;--brand:#235d4b;--brand-dark:#174937;--good:#146447;--good-soft:#e5f2e9;--warn:#885421;--bad:#a44337;background:#f3f5f0}
+body:has(.evidence-handoff),.page-shell:has(.evidence-handoff){min-height:100vh}
 body:has(.evidence-ledger) .topbar{background:#fdfefb;border-bottom:1px solid #dbe4dc}
 body:has(.evidence-ledger) .brand-mark{background:#143e31}
 body:has(.evidence-ledger) .page-shell{max-width:1500px;padding-inline:clamp(16px,4.5vw,76px)}

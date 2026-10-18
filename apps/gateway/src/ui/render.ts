@@ -384,18 +384,24 @@ export function renderHandoff(handoff: PortalHandoff, nonce: string): Response {
     return renderPortalError("Application entry could not be prepared.", 502);
   }
   const action = `${origin.origin}/_platform/handoff`;
-  const response = page(
+  return page(
     "Enter application",
-    `<h1>Continue to the application</h1>` +
+    `<section class="evidence-ledger evidence-handoff" aria-labelledby="handoff-title">` +
+      `<header class="evidence-intro"><div class="page-heading"><div>` +
+      `<h1 id="handoff-title">Opening application</h1>` +
+      `<p>Continuing to your repository workspace.</p></div></div></header>` +
       `<form id="handoff" method="post" action="${escapeHtml(action)}" enctype="application/x-www-form-urlencoded">` +
       `<input type="hidden" name="code" value="${escapeHtml(handoff.code)}">` +
       `<input type="hidden" name="returnPath" value="/">` +
-      `<button type="submit">Continue</button></form>` +
+      `<button type="submit">Continue</button></form></section>` +
       `<script nonce="${escapeHtml(nonce)}">document.getElementById('handoff')?.submit();</script>`,
-    { formAction: origin.origin, scriptNonce: nonce },
+    {
+      formAction: origin.origin,
+      scriptNonce: nonce,
+      // The document policy also survives an ingress response-header baseline.
+      // Cross-origin form POSTs must retain the exact Gateway Origin.
+      referrerPolicy: "strict-origin",
+      layout: "handoff",
+    },
   );
-  // A cross-origin form POST needs the Gateway Origin for handoff validation.
-  // no-referrer and same-origin make browsers send Origin: null here.
-  response.headers.set("Referrer-Policy", "strict-origin");
-  return response;
 }

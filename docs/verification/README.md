@@ -2,6 +2,8 @@
 
 各レポートは**対応するコミット・Artifact Digest・実行環境・操作の範囲だけ**を証明する。[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)の製品要件を、テストコードやレポート名で上書きしない。アーキテクチャの全体像は[システム地図](../architecture/SYSTEM.md)、実装と要件の差分は[設計監査](../architecture/REVIEW.md)。
 
+最新の公開稼働状況は [Hosted進捗記録](HOSTED-PROGRESS-20261018.md#latest-operational-result--public-editor-and-github-save-2026-10-18) を参照。実ログイン・編集画面・GitHub保存まで確認済み。保存待ち時間、再読み込み後の保持、G1–G9全体の受入は未完了。
+
 | 分類 | 代表ファイル | 読み方 |
 | --- | --- | --- |
 | **Ubuntuホスト** | [UBUNTU-2604-20261017.md](UBUNTU-2604-20261017.md) | Runtime/Buildゲスト、rootless mTLS BuildKit、汎用OCI、再起動。**HostedアプリのE2Eではない** |

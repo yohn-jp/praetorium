@@ -192,7 +192,7 @@ describe("server-rendered management UI", () => {
       "csrf-token-value",
     ).text();
 
-    expect(html).toContain('action="/repositories/123456789/actions"');
+    expect(html).toContain('action="/repositories/123456789/actions?ui=desktop"');
     expect(html).toContain('name="action" value="enter"');
     expect(html).toContain('name="csrfToken" value="csrf-token-value"');
     expect(html).toContain("Connect repository");
@@ -238,12 +238,23 @@ describe("server-rendered management UI", () => {
     expect(html).toContain('name="idempotencyKey" value="token_12345678901234567890"');
     expect(html).toContain('aria-describedby="configuration-module-ids-help"');
 
-    const configurationSection = /<section class="configuration-panel" aria-labelledby="configuration">([\s\S]*?)<\/section>/.exec(html)?.[1];
+    const configurationSection =
+      /<section class="configuration-panel" aria-labelledby="configuration">([\s\S]*?)<\/section>/.exec(
+        html,
+      )?.[1];
     expect(configurationSection).toBeDefined();
     expect(configurationSection!.match(/<form\b/g)).toHaveLength(1);
     expect(configurationSection).toContain('name="action" value="configure"');
     expect(configurationSection).toContain('name="action" value="preview"');
-    for (const field of ["csrfToken", "idempotencyKey", "expectedGeneration", "releasePolicy", "releaseId", "moduleIds", "resourceProfileId"]) {
+    for (const field of [
+      "csrfToken",
+      "idempotencyKey",
+      "expectedGeneration",
+      "releasePolicy",
+      "releaseId",
+      "moduleIds",
+      "resourceProfileId",
+    ]) {
       expect(configurationSection!.match(new RegExp(`name="${field}"`, "g"))).toHaveLength(1);
     }
 
@@ -553,7 +564,9 @@ describe("server-rendered management UI", () => {
     expect(html).toContain('<option value="search" selected>');
     expect(html).toContain('<option value="pinned" selected>');
     expect(html).toContain('name="action" value="configure"');
-    expect(html).toContain('class="button" type="submit" name="action" value="configure" disabled>Save configuration and build');
+    expect(html).toContain(
+      'class="button" type="submit" name="action" value="configure" disabled>Save configuration and build',
+    );
     expect(html).not.toContain("<script>release");
   });
 
@@ -563,7 +576,9 @@ describe("server-rendered management UI", () => {
       {
         ...dashboard,
         approvedReleases: [{ releaseId: "rel_01", label: "Stable 1.2", imageDigest: longDigest }],
-        modules: [{ moduleId: "editor", label: "Editor", version: "2.0.0", artifactDigest: longDigest }],
+        modules: [
+          { moduleId: "editor", label: "Editor", version: "2.0.0", artifactDigest: longDigest },
+        ],
       },
       {
         csrfToken: "csrf-token-value",
@@ -571,13 +586,18 @@ describe("server-rendered management UI", () => {
       },
     ).text();
 
-    expect(html).toContain(`<option value="rel_01" selected>Stable 1.2 · sha256:${"c".repeat(12)}…</option>`);
-    expect(html).toContain(`<option value="editor" selected>Editor (2.0.0 · sha256:${"c".repeat(12)}…)</option>`);
+    expect(html).toContain(
+      `<option value="rel_01" selected>Stable 1.2 · sha256:${"c".repeat(12)}…</option>`,
+    );
+    expect(html).toContain(
+      `<option value="editor" selected>Editor (2.0.0 · sha256:${"c".repeat(12)}…)</option>`,
+    );
     expect(html).not.toContain(longDigest);
   });
 
   it("routes preview and save buttons with the shared configuration selection", async () => {
-    const execute = vi.fn()
+    const execute = vi
+      .fn()
       .mockResolvedValueOnce({
         ok: true as const,
         value: { kind: "preview" as const, preview: dashboard.preview! },
@@ -614,7 +634,9 @@ describe("server-rendered management UI", () => {
     });
     expect(previewHtml).toContain("Supported module configuration");
 
-    const configureResponse = await handler(actionRequest({ ...sharedFields, action: "configure" }));
+    const configureResponse = await handler(
+      actionRequest({ ...sharedFields, action: "configure" }),
+    );
     expect(configureResponse.status).toBe(202);
     expect(execute).toHaveBeenNthCalledWith(2, { userId: "user_01" }, "123456789", {
       kind: "configure",
@@ -673,5 +695,94 @@ describe("server-rendered management UI", () => {
       "token_12345678901234567890",
     );
     expect(unsafe.status).toBe(502);
+  });
+});
+
+describe("presentation mode boundary", () => {
+  function service(): PortalService {
+    return {
+      listRepositories: async () => ({ ok: true, value: repositoryList }),
+      getRepository: async () => ({ ok: true, value: dashboard }),
+      execute: async () => ({ ok: true, value: { kind: "preview", preview: dashboard.preview! } }),
+    };
+  }
+
+  it("selects a direct mode, persists only its enum and preserves local action URLs", async () => {
+    const handler = createPortalHandler(sessionDependencies(service()));
+    const response = await handler(
+      new Request("https://gateway.example/repositories/123456789?ui=mobile"),
+    );
+    const html = await response.text();
+    expect(html).toContain('data-ui="mobile"');
+    expect(html).toContain("/repositories/123456789/actions?ui=mobile");
+    expect(response.headers.get("Set-Cookie")).toBe(
+      "praetorium_ui=mobile; Path=/; SameSite=Lax; Secure",
+    );
+    const preferred = await handler(
+      new Request("https://gateway.example/", { headers: { Cookie: "praetorium_ui=mobile" } }),
+    );
+    expect(await preferred.text()).toContain('data-ui="mobile"');
+  });
+
+  it.each(["ui=invalid", "ui=desktop&ui=mobile", "ui=%3Cscript%3E"])(
+    "falls back to preference for %s",
+    async (query) => {
+      const handler = createPortalHandler(sessionDependencies(service()));
+      const response = await handler(
+        new Request(`https://gateway.example/?${query}`, {
+          headers: { Cookie: "praetorium_ui=mobile" },
+        }),
+      );
+      expect(await response.text()).toContain('data-ui="mobile"');
+      expect(response.headers.get("Set-Cookie")).toBeNull();
+      const fallback = await handler(new Request(`https://gateway.example/?${query}`));
+      expect(await fallback.text()).toContain('data-ui="desktop"');
+    },
+  );
+
+  it("retains mode in preview and authoritative errors without modifying commands", async () => {
+    const execute = vi.fn(service().execute);
+    const handler = createPortalHandler(sessionDependencies({ ...service(), execute }));
+    const original = actionRequest({
+      csrfToken: "csrf-token-value",
+      action: "preview",
+      releasePolicy: "stable",
+      releaseId: "rel_01",
+      moduleIds: "editor",
+      resourceProfileId: "balanced",
+    });
+    const response = await handler(new Request(original.url + "?ui=mobile", original));
+    expect(await response.text()).toContain('data-ui="mobile"');
+    expect(execute.mock.calls[0]?.[2]).toEqual({
+      kind: "preview",
+      releasePolicy: "stable",
+      releaseId: "rel_01",
+      moduleIds: ["editor"],
+      resourceProfileId: "balanced",
+    });
+    const denied = createPortalHandler(sessionDependencies(service(), async () => false));
+    const error = await denied(
+      new Request(original.url + "?ui=mobile", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "action=enter",
+      }),
+    );
+    expect(error.status).toBe(403);
+    expect(await error.text()).toContain('data-ui="mobile"');
+  });
+
+  it("keeps the stylesheet hash correct in each composition", async () => {
+    const handler = createPortalHandler(sessionDependencies(service()));
+    for (const mode of ["desktop", "mobile"]) {
+      const response = await handler(new Request(`https://gateway.example/?ui=${mode}`));
+      const html = await response.text();
+      const css = /<style>([\s\S]*?)<\/style>/.exec(html)?.[1];
+      expect(css).toBeDefined();
+      const hash = createHash("sha256").update(css!).digest("base64");
+      expect(response.headers.get("Content-Security-Policy")).toContain(
+        `style-src 'sha256-${hash}'`,
+      );
+    }
   });
 });

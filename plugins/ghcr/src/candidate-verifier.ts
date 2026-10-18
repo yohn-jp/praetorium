@@ -6,7 +6,6 @@ import {
   validateCompositionBindings,
   type BuildInput,
   type BuilderArtifactStatement,
-  type CompositionManifest,
 } from "@praetorium/contracts";
 import { parseBuilderArtifactStatement } from "./builder-signature.js";
 import { isSha256Digest, sha256Digest, type Sha256Digest } from "./digest.js";
@@ -14,38 +13,6 @@ import type { GhcrRegistryClient } from "./oci-registry-client.js";
 import type { OciPlatform, VerifiedOciImage } from "./oci-types.js";
 
 const MAX_COMPOSITION_MANIFEST_BYTES = 4 * 1024 * 1024;
-
-export interface CompositionArtifactInspection {
-  readonly imageDigest: Sha256Digest;
-  readonly compositionManifestDigest: Sha256Digest;
-  readonly serverEntry: string | null;
-  readonly browserEntry: string | null;
-  readonly serverModuleIds: readonly string[];
-  readonly browserModuleIds: readonly string[];
-  readonly nativeDependencies: CompositionManifest["nativeDependencies"];
-  readonly smoke: {
-    readonly id: string;
-    readonly healthPath: string;
-    readonly passed: boolean;
-  };
-}
-
-/**
- * Injected by the isolated build worker. It must inspect files/dependencies
- * from the immutable image digest and execute the producer-declared smoke;
- * the registry package intentionally does not ship a container runtime.
- */
-export interface CompositionArtifactInspector {
-  inspectAndSmoke(
-    input: {
-      readonly imageReference: string;
-      readonly image: VerifiedOciImage;
-      readonly compositionManifest: CompositionManifest;
-      readonly compositionManifestDigest: Sha256Digest;
-    },
-    signal: AbortSignal,
-  ): Promise<CompositionArtifactInspection>;
-}
 
 export interface UnsignedBuildCandidate {
   readonly expectedInput: BuildInput;
@@ -66,19 +33,17 @@ export interface ApprovedCandidateOutput {
 }
 
 export class CandidateVerificationError extends Error {
-  constructor(readonly reason: "invalid_candidate" | "registry" | "composition" | "closure" | "smoke" | "canceled", message: string) {
+  constructor(readonly reason: "invalid_candidate" | "registry" | "composition" | "canceled", message: string) {
     super(message);
     this.name = "CandidateVerificationError";
   }
 }
 
-/** Verifies untrusted build output before it can be operator-signed. */
+/** Binds trusted builder output to the immutable request and registry identity before signing. */
 export class GhcrCandidateVerifier {
   constructor(
     private readonly registry: GhcrRegistryClient,
-    private readonly inspector: CompositionArtifactInspector,
     private readonly clock: () => Date = () => new Date(),
-    private readonly inspectionTimeoutMs = 300_000,
   ) {}
 
   async verifyUnsignedCandidate(
@@ -174,48 +139,6 @@ export class GhcrCandidateVerifier {
       throw new CandidateVerificationError("composition", "verified composition cannot form a canonical artifact statement");
     }
 
-    const controller = new AbortController();
-    const abortFromCaller = () => controller.abort(signal.reason);
-    signal.addEventListener("abort", abortFromCaller, { once: true });
-    if (signal.aborted) controller.abort(signal.reason);
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        const error = new CandidateVerificationError("closure", "image composition inspection exceeded its configured deadline");
-        controller.abort(error);
-        reject(error);
-      }, this.inspectionTimeoutMs);
-      timeout.unref();
-    });
-    try {
-      const inspection = await Promise.race([
-        this.inspector.inspectAndSmoke({
-          imageReference: `${registryHost}/${repository}@${candidate.manifestDigest}`,
-          image,
-          compositionManifest,
-          compositionManifestDigest: candidate.compositionManifest.digest,
-        }, controller.signal),
-        timeoutPromise,
-      ]);
-      if (!inspectionMatches(inspection, image, candidate.manifestDigest, candidate.compositionManifest.digest, compositionManifest)) {
-        throw new CandidateVerificationError("closure", "inspected image closure or native dependencies do not match the composition");
-      }
-      if (
-        inspection.smoke.id !== compositionManifest.smoke.id ||
-        inspection.smoke.healthPath !== compositionManifest.smoke.healthPath ||
-        inspection.smoke.passed !== true
-      ) {
-        throw new CandidateVerificationError("smoke", "declared composition health smoke did not pass");
-      }
-    } catch (error) {
-      if (error instanceof CandidateVerificationError) throw error;
-      if (signal.aborted) throw new CandidateVerificationError("canceled", "candidate inspection was canceled");
-      throw new CandidateVerificationError("closure", "image closure inspection or smoke failed");
-    } finally {
-      if (timeout !== undefined) clearTimeout(timeout);
-      signal.removeEventListener("abort", abortFromCaller);
-    }
-
     return statement;
   }
 }
@@ -248,25 +171,3 @@ function validNow(clock: () => Date): string {
   return now.toISOString();
 }
 
-function inspectionMatches(
-  inspection: CompositionArtifactInspection,
-  image: VerifiedOciImage,
-  imageDigest: Sha256Digest,
-  compositionManifestDigest: Sha256Digest,
-  manifest: CompositionManifest,
-): boolean {
-  return (
-    inspection.imageDigest === imageDigest &&
-    inspection.compositionManifestDigest === compositionManifestDigest &&
-    inspection.serverEntry === manifest.server.entry &&
-    inspection.browserEntry === manifest.browser.entry &&
-    sameStrings(inspection.serverModuleIds, manifest.server.moduleIds) &&
-    sameStrings(inspection.browserModuleIds, manifest.browser.moduleIds) &&
-    JSON.stringify(inspection.nativeDependencies) === JSON.stringify(manifest.nativeDependencies) &&
-    image.manifestDigest === imageDigest
-  );
-}
-
-function sameStrings(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}

@@ -14,8 +14,8 @@ export class BuildAttestationError extends Error {
 }
 
 /**
- * Verifies registry bytes and composition evidence before using the operator's
- * builder key. The signer never receives a statement supplied by the worker.
+ * Binds registry identity and trusted producer composition metadata to the immutable
+ * BuildInput before operator signing. The signer never accepts a caller-supplied statement.
  */
 export class VerifiedBuildAttestor implements BuildAttestor {
   constructor(

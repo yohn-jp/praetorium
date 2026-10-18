@@ -62,7 +62,7 @@ flowchart TB
     BW <-->|"build claims, progress, admission"| CP
     BW -->|"mTLS buildctl"| BK
     BK -->|"immutable OCI output"| REG
-    BW <-->|"digest + artifact inspection"| REG
+    BW <-->|"digest + bounded composition metadata"| REG
     SC -->|"scoped Git operations via Gateway broker"| GW
     SC <-->|"confirmed repository content"| GH
 ```

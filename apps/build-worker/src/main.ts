@@ -6,9 +6,9 @@ import {
 import type { BuildCandidateVerifier, BuildQueuePort } from "@praetorium/application/builds";
 import { WorkAvailability } from "@praetorium/application";
 import { GhcrCandidateVerifier, GhcrRegistryClient, requireSha256Digest } from "@praetorium/ghcr";
-import type { CompositionArtifactInspector, RegistryCredential } from "@praetorium/ghcr";
+import type { RegistryCredential } from "@praetorium/ghcr";
 import {
-  BuildKitImageRootfsExporter,
+  BuildKitImageFileExporter,
   BuildKitProvider,
   readBuildKitRegistryCredential,
   validateBuildKitFiles,
@@ -24,14 +24,12 @@ import {
 } from "./work-notification-server.js";
 import {
   ScriptoriumBuildCandidateReceiptReader,
-  ScriptoriumCompositionArtifactInspector,
-  type BuildKitRootfsExporter,
+  type BuildKitFileExporter,
 } from "./composition-artifacts.js";
 
 export type BuildWorkerDependencies = {
   receiptReader?: BuildCandidateReceiptReader;
-  compositionInspector?: CompositionArtifactInspector;
-  rootfsExporter?: BuildKitRootfsExporter;
+  fileExporter?: BuildKitFileExporter;
   registryCredential?: RegistryCredential;
   queue?: BuildQueuePort;
   signer?: Awaited<ReturnType<typeof loadFileBuilderSigner>>;
@@ -107,13 +105,8 @@ export async function createBuildWorker(
     ...(registryCredential ? { pullCredential: registryCredential } : {}),
     ...(publishCredential ? { publishCredential } : {}),
   });
-  const rootfsExporter = dependencies.rootfsExporter ?? new BuildKitImageRootfsExporter(config.buildKit);
-  const verifier = new GhcrCandidateVerifier(
-    registry,
-    dependencies.compositionInspector ?? new ScriptoriumCompositionArtifactInspector(registry, config.buildKit, { rootfsExporter }),
-    undefined,
-    config.maxImageVerificationMs,
-  );
+  const fileExporter = dependencies.fileExporter ?? new BuildKitImageFileExporter(config.buildKit);
+  const verifier = new GhcrCandidateVerifier(registry);
   const candidateVerifier: BuildCandidateVerifier = {
     verify: async ({ buildKey, expected, candidate, signal }) => {
       const expectedImagePrefix = `${registryOrigin.host}/${outputRepository}@`;
@@ -156,7 +149,7 @@ export async function createBuildWorker(
     registry,
     config.buildKit,
     compositionRepository,
-    { rootfsExporter },
+    { fileExporter },
   );
   const provider = new BuildKitProvider(config.buildKit, { receiptReader });
   return new BuildWorkerService(queue, provider, attestor, {

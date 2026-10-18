@@ -181,7 +181,15 @@ const retryBinding = {
   resourceProfileId: "small",
 } as const;
 
-async function seedFailedPreRuntimeCanary(db: SQLiteD1, releaseId = "release-retry") {
+async function seedFailedPreRuntimeCanary(
+  db: SQLiteD1,
+  releaseId = "release-retry",
+  failure: Readonly<Record<string, unknown>> = {
+    code: "BUILD_FAILED",
+    message: "BuildKit solve failed",
+    retryable: false,
+  },
+) {
   const release = candidate(releaseId, "1.2.3", `sha256:${"d".repeat(64)}`);
   const releases = store(db);
   await releases.createCandidate(release);
@@ -204,11 +212,7 @@ async function seedFailedPreRuntimeCanary(db: SQLiteD1, releaseId = "release-ret
   const revisionId = "revision-retry";
   const attemptId = "attempt-retry-old";
   const requestHash = `sha256:${"e".repeat(64)}`;
-  const failureJson = JSON.stringify({
-    code: "BUILD_FAILED",
-    message: "BuildKit solve failed",
-    retryable: false,
-  });
+  const failureJson = JSON.stringify(failure);
   db.database
     .prepare(
       `INSERT INTO logical_instances (
@@ -529,6 +533,111 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
         .prepare("SELECT COUNT(*) AS count FROM build_attempts WHERE build_id = ?")
         .get(seed.buildId),
     ).toEqual({ count: 2 });
+  });
+
+  it("retries a rejected registry mismatch through the normal pre-runtime path and fences its report", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const seed = await seedFailedPreRuntimeCanary(db, "release-registry-mismatch", {
+      code: "ARTIFACT_REJECTED",
+      reason: "registry_mismatch",
+      retryable: false,
+    });
+    const releases = store(db);
+    const candidateBefore = db.database
+      .prepare("SELECT candidate_json FROM release_candidates WHERE release_id = ?")
+      .get(seed.release.id);
+    const status = await releases.getReleaseRetryStatus(seed.release.id);
+    expect(status?.build?.failure).toEqual({ code: "ARTIFACT_REJECTED", retryable: false });
+    expect(status?.build?.failure).not.toHaveProperty("reason");
+
+    const result = await releases.retryPreRuntimeCanaryBuild(retryCommand(seed.release.id));
+    if (result.kind !== "accepted") throw new Error(`expected an accepted retry: ${JSON.stringify(result)}`);
+    expect(result.duplicate).toBe(false);
+    expect(result.status.build).toMatchObject({ status: "pending", attemptCount: 1, failure: null });
+    expect(
+      db.database
+        .prepare("SELECT candidate_json FROM release_candidates WHERE release_id = ?")
+        .get(seed.release.id),
+    ).toEqual(candidateBefore);
+    expect(
+      db.database
+        .prepare("SELECT status, lease_epoch, active_attempt_id, failure_json FROM builds WHERE build_id = ?")
+        .get(seed.buildId),
+    ).toEqual({ status: "pending", lease_epoch: 2, active_attempt_id: null, failure_json: null });
+    expect(
+      db.database
+        .prepare("SELECT status, lease_epoch, failure_json FROM build_attempts WHERE attempt_id = ?")
+        .get(seed.attemptId),
+    ).toMatchObject({ status: "failed", lease_epoch: 1, failure_json: seed.failureJson });
+
+    const buildQueue = new D1BuildStore(db);
+    const staleReport = await buildQueue.recordReport({
+      request: {
+        buildId: seed.buildId,
+        attemptId: seed.attemptId,
+        leaseEpoch: 1,
+        leaseToken: "lease-token-old-attempt-00000000",
+        workerId: "worker-old",
+        sequence: 2,
+        buildKey: seed.buildKey,
+        result: { kind: "failed", code: "BUILD_FAILED", message: "late report", retryable: false },
+      },
+      serverNow: NOW + 40_000,
+      reportDigest: `sha256:${"7".repeat(64)}`,
+      artifact: null,
+    });
+    expect(staleReport).toEqual({ accepted: false, duplicate: false });
+
+    const claim = await buildQueue.claimNext({
+      workerId: "worker-retry",
+      attemptId: "attempt-retry-registry-mismatch",
+      leaseToken: "lease-token-new-attempt-0000000000",
+      now: NOW + 50_000,
+      leaseSeconds: 120,
+    });
+    expect(claim).toMatchObject({ buildId: seed.buildId, attempt: 2, leaseEpoch: 3 });
+    expect(
+      db.database
+        .prepare("SELECT status FROM build_attempts WHERE attempt_id = ?")
+        .get(seed.attemptId),
+    ).toEqual({ status: "failed" });
+  });
+
+  it.each([
+    { reason: "persisted_input_mismatch", retryable: false },
+    { reason: "composition_content_mismatch", retryable: false },
+    { reason: "registry_mismatch", retryable: true },
+  ])("does not retry ARTIFACT_REJECTED with $reason and retryable=$retryable", async ({ reason, retryable }) => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const seed = await seedFailedPreRuntimeCanary(db, `release-reject-${reason}-${retryable}`, {
+      code: "ARTIFACT_REJECTED",
+      reason,
+      retryable,
+    });
+    const before = {
+      build: db.database.prepare("SELECT * FROM builds WHERE build_id = ?").get(seed.buildId),
+      revision: db.database
+        .prepare("SELECT * FROM deployment_revisions WHERE revision_id = ?")
+        .get(seed.revisionId),
+      workflow: db.database
+        .prepare("SELECT * FROM release_candidate_workflows WHERE release_id = ?")
+        .get(seed.release.id),
+    };
+
+    await expect(
+      store(db).retryPreRuntimeCanaryBuild(retryCommand(seed.release.id)),
+    ).resolves.toEqual({ kind: "conflict", reason: "stale_or_ineligible" });
+    expect({
+      build: db.database.prepare("SELECT * FROM builds WHERE build_id = ?").get(seed.buildId),
+      revision: db.database
+        .prepare("SELECT * FROM deployment_revisions WHERE revision_id = ?")
+        .get(seed.revisionId),
+      workflow: db.database
+        .prepare("SELECT * FROM release_candidate_workflows WHERE release_id = ?")
+        .get(seed.release.id),
+    }).toEqual(before);
   });
 
   it("resolves retry receipts before reverification without mutating release state", async () => {

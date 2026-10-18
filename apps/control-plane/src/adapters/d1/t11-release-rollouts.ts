@@ -1844,7 +1844,8 @@ function safeBuildFailure(
     if (
       item.code !== "BUILD_FAILED" &&
       item.code !== "BUILD_TIMEOUT" &&
-      item.code !== "BUILD_CANCELED"
+      item.code !== "BUILD_CANCELED" &&
+      item.code !== "ARTIFACT_REJECTED"
     ) {
       return null;
     }
@@ -1903,7 +1904,11 @@ function isEligiblePreRuntimeCanaryRetry(
     row.revision_actor_id === "system:stable-release-canary" &&
     row.revision_generation === row.instance_generation &&
     row.build_status === "failed" &&
-    (buildFailure?.code === "BUILD_FAILED" || buildFailure?.code === "BUILD_TIMEOUT") &&
+    (buildFailure?.code === "BUILD_FAILED" ||
+      buildFailure?.code === "BUILD_TIMEOUT" ||
+      (buildFailure?.code === "ARTIFACT_REJECTED" &&
+        buildFailure.reason === "registry_mismatch" &&
+        buildFailure.retryable === false)) &&
     row.build_active_attempt_id !== null &&
     row.active_attempt_status === "failed" &&
     row.active_attempt_epoch === row.build_lease_epoch &&
@@ -1968,7 +1973,14 @@ function retryEligibilitySql(buildStatus: "failed", revisionStatus: "failed"): s
        AND p.response_id = d.revision_id AND b.build_id = builds.build_id
        AND b.build_key = w.canary_build_key AND b.status = '${buildStatus}'
        AND b.failure_json IS NOT NULL
-       AND json_extract(b.failure_json, '$.code') IN ('BUILD_FAILED', 'BUILD_TIMEOUT')
+       AND (
+         json_extract(b.failure_json, '$.code') IN ('BUILD_FAILED', 'BUILD_TIMEOUT')
+         OR (
+           json_extract(b.failure_json, '$.code') = 'ARTIFACT_REJECTED'
+           AND json_extract(b.failure_json, '$.reason') = 'registry_mismatch'
+           AND json_extract(b.failure_json, '$.retryable') = 0
+         )
+       )
        AND b.active_attempt_id IS NOT NULL AND a.status = 'failed'
        AND a.lease_epoch = b.lease_epoch AND b.attempt_count > 0
        AND b.cancel_requested = 0 AND b.artifact_digest IS NULL

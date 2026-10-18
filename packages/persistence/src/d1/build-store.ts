@@ -467,7 +467,7 @@ export class D1BuildStore implements BuildQueueStore {
           `INSERT INTO audit_events (
              event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
              action, outcome, request_id, metadata_json, occurred_at
-           ) SELECT ?, NULL, NULL, NULL, ?, 'build-worker', 'build.reported', ?, ?, ?, ?
+           ) SELECT ?, NULL, NULL, NULL, ?, 'build-worker', 'build.reported', ?, NULL, ?, ?
              WHERE EXISTS (SELECT 1 FROM builds WHERE build_id = ? AND report_sequence = ? AND last_report_digest = ?)`,
         )
         .bind(

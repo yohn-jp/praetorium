@@ -1947,40 +1947,45 @@ function retryEligibilitySql(buildStatus: "failed", revisionStatus: "failed"): s
     JOIN repository_bindings rb ON rb.repository_id = ? AND rb.instance_id = i.instance_id
     JOIN builds b ON b.build_key = w.canary_build_key AND b.build_id = d.build_id
     JOIN build_attempts a ON a.attempt_id = b.active_attempt_id AND a.build_id = b.build_id
-   WHERE c.release_id = ? AND c.candidate_json = ? AND c.status = 'candidate'
-     AND w.release_id = c.release_id AND w.revision = ? AND w.state = 'blocked'
-     AND w.failure_code = 'canary_build_failed' AND w.lease_owner IS NULL
-     AND w.lease_expires_at IS NULL AND w.canary_artifact_digest IS NULL
-     AND w.canary_runtime_id IS NULL AND w.canary_operation_id IS NULL
-     AND w.healthy_since IS NULL AND w.last_healthy_at IS NULL
-     AND w.last_health_evidence_json IS NULL AND w.cleanup_evidence_json IS NULL
-     AND w.follower_cursor IS NULL AND w.follower_planning_complete = 0
-     AND w.canary_cleanup_complete = 0 AND w.cleanup_disposition IS NULL
-     AND d.status = '${revisionStatus}' AND d.artifact_digest IS NULL
-     AND d.actor_id = 'system:stable-release-canary' AND d.instance_id = i.instance_id
-     AND d.repository_id = i.repository_id AND d.generation = i.generation
-     AND json_extract(d.selection_json, '$.releaseId') = c.release_id
-     AND json_extract(d.selection_json, '$.policy') = 'pinned'
-     AND json_extract(d.selection_json, '$.resourceProfileId') = ?
-     AND json_extract(d.selection_json, '$.requestedModules') = ?
-     AND p.response_id = d.revision_id AND b.build_id = builds.build_id
-     AND b.build_key = w.canary_build_key AND b.status = '${buildStatus}'
-     AND b.failure_json IS NOT NULL
-     AND json_extract(b.failure_json, '$.code') IN ('BUILD_FAILED', 'BUILD_TIMEOUT')
-     AND b.active_attempt_id IS NOT NULL AND a.status = 'failed'
-     AND a.lease_epoch = b.lease_epoch AND b.attempt_count > 0
-     AND b.cancel_requested = 0 AND b.artifact_digest IS NULL
-     AND b.candidate_ref IS NULL AND b.manifest_digest IS NULL
-     AND rb.binding_epoch = ? AND rb.authorization_revision = ? AND rb.suspended = 0
-     AND i.desired_revision_id = d.revision_id AND i.desired_state = 'stopped'
-     AND i.observed_state = 'absent' AND i.observed_generation IS NULL
-     AND i.observed_runtime_epoch IS NULL AND i.runtime_epoch = 0
-     AND i.reservation_state IN ('none', 'released') AND i.reservation_id IS NULL
-     AND i.desired_artifact_digest IS NULL
-     AND NOT EXISTS (SELECT 1 FROM operations op WHERE op.instance_id = i.instance_id)
-     AND NOT EXISTS (SELECT 1 FROM runtime_reservations rr WHERE rr.instance_id = i.instance_id)
-     AND NOT EXISTS (SELECT 1 FROM runtime_health_observations ho WHERE ho.instance_id = i.instance_id)
-     AND NOT EXISTS (SELECT 1 FROM artifacts ar WHERE ar.build_id = b.build_id)`;
+   WHERE (
+       c.release_id = ? AND c.candidate_json = ? AND c.status = 'candidate'
+       AND w.release_id = c.release_id AND w.revision = ? AND w.state = 'blocked'
+       AND w.failure_code = 'canary_build_failed' AND w.lease_owner IS NULL
+       AND w.lease_expires_at IS NULL AND w.canary_artifact_digest IS NULL
+       AND w.canary_runtime_id IS NULL AND w.canary_operation_id IS NULL
+       AND w.healthy_since IS NULL AND w.last_healthy_at IS NULL
+       AND w.last_health_evidence_json IS NULL AND w.cleanup_evidence_json IS NULL
+       AND w.follower_cursor IS NULL AND w.follower_planning_complete = 0
+       AND w.canary_cleanup_complete = 0 AND w.cleanup_disposition IS NULL
+     ) AND (
+       d.status = '${revisionStatus}' AND d.artifact_digest IS NULL
+       AND d.actor_id = 'system:stable-release-canary' AND d.instance_id = i.instance_id
+       AND d.repository_id = i.repository_id AND d.generation = i.generation
+       AND json_extract(d.selection_json, '$.releaseId') = c.release_id
+       AND json_extract(d.selection_json, '$.policy') = 'pinned'
+       AND json_extract(d.selection_json, '$.resourceProfileId') = ?
+       AND json_extract(d.selection_json, '$.requestedModules') = ?
+       AND p.response_id = d.revision_id AND b.build_id = builds.build_id
+       AND b.build_key = w.canary_build_key AND b.status = '${buildStatus}'
+       AND b.failure_json IS NOT NULL
+       AND json_extract(b.failure_json, '$.code') IN ('BUILD_FAILED', 'BUILD_TIMEOUT')
+       AND b.active_attempt_id IS NOT NULL AND a.status = 'failed'
+       AND a.lease_epoch = b.lease_epoch AND b.attempt_count > 0
+       AND b.cancel_requested = 0 AND b.artifact_digest IS NULL
+       AND b.candidate_ref IS NULL AND b.manifest_digest IS NULL
+     ) AND (
+       rb.binding_epoch = ? AND rb.authorization_revision = ? AND rb.suspended = 0
+       AND i.desired_revision_id = d.revision_id AND i.desired_state = 'stopped'
+       AND i.observed_state = 'absent' AND i.observed_generation IS NULL
+       AND i.observed_runtime_epoch IS NULL AND i.runtime_epoch = 0
+       AND i.reservation_state IN ('none', 'released') AND i.reservation_id IS NULL
+       AND i.desired_artifact_digest IS NULL
+     ) AND (
+       NOT EXISTS (SELECT 1 FROM operations op WHERE op.instance_id = i.instance_id)
+       AND NOT EXISTS (SELECT 1 FROM runtime_reservations rr WHERE rr.instance_id = i.instance_id)
+       AND NOT EXISTS (SELECT 1 FROM runtime_health_observations ho WHERE ho.instance_id = i.instance_id)
+       AND NOT EXISTS (SELECT 1 FROM artifacts ar WHERE ar.build_id = b.build_id)
+     )`;
 }
 
 function retryEligibilityValues(input: {

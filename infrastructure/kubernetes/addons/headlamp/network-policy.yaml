@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: praetorium-headlamp-deny-ingress
+  namespace: praetorium-admin
+  labels:
+    app.kubernetes.io/part-of: praetorium
+    app.kubernetes.io/component: administration
+spec:
+  # Admin access begins with operator loopback kubectl port-forward, not ingress.
+  podSelector: {}
+  policyTypes:
+    - Ingress

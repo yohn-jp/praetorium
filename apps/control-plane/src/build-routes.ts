@@ -26,6 +26,8 @@ export type BuildRoutesOptions = {
   readonly serviceToken: string;
   readonly workerId?: string;
   readonly notifyWorkAvailable?: WorkNotificationDispatcher;
+  /** Advances only a matching canary workflow after its successful build report commits. */
+  readonly afterAcceptedSuccess?: (buildId: string) => Promise<unknown> | unknown;
   /** BuildQueueService replaces this transport value with its Control Plane clock. */
   readonly now?: () => number;
 };
@@ -93,6 +95,7 @@ export function createBuildRoutes(options: BuildRoutesOptions) {
       try {
         if (input.result.kind === "succeeded") {
           scheduleWorkNotification(c.executionCtx, options.notifyWorkAvailable, "operation");
+          scheduleAcceptedSuccess(c.executionCtx, options.afterAcceptedSuccess, buildId);
         } else if (input.result.kind === "failed" && input.result.retryable) {
           scheduleWorkNotification(c.executionCtx, options.notifyWorkAvailable, "build");
         }
@@ -114,6 +117,26 @@ export function createBuildRoutes(options: BuildRoutesOptions) {
     return c.json({ error: { code: "BUILD_SERVICE_UNAVAILABLE" } }, 503);
   });
   return app;
+}
+
+function scheduleAcceptedSuccess(
+  context: { waitUntil(promise: Promise<unknown>): void },
+  callback: BuildRoutesOptions["afterAcceptedSuccess"],
+  buildId: string,
+): void {
+  if (!callback) return;
+  try {
+    context.waitUntil(
+      Promise.resolve()
+        .then(() => callback(buildId))
+        .then(
+          () => undefined,
+          () => undefined,
+        ),
+    );
+  } catch {
+    // Build report admission is durable; scheduled release work recovers missed hints.
+  }
 }
 
 function pathBuildId(value: string): string {

@@ -175,6 +175,7 @@ function composeServices(env: ControlPlaneEnv) {
             queue: buildServices.builds,
             serviceToken: env.BUILD_WORKER_AUTH_TOKEN,
             workerId: required(env.BUILD_WORKER_ID),
+            ...(releases ? { afterAcceptedSuccess: releases.afterAcceptedCanaryBuild } : {}),
           },
         }
       : {}),

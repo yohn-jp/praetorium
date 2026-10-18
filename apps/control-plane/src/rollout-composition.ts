@@ -198,6 +198,23 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     getCanaryHealthSchedule: (input: Parameters<typeof releases.getCanaryHealthSchedule>[0]) =>
       releases.getCanaryHealthSchedule(input),
     progressCanaryHealth,
+    afterAcceptedCanaryBuild: async (buildId: string) => {
+      const releaseId = await releases.wakeSuccessfulCanaryBuild({
+        buildId,
+        binding: deps.canaryBinding,
+        now: deps.clock.nowMs(),
+      });
+      if (!releaseId) return;
+      const completionWorkerId = `${deps.workerId}:build-completion:${crypto.randomUUID()}`;
+      const completionPromotions = { ...promotions, workerId: completionWorkerId };
+      for (let pass = 0; pass < 2; pass += 1) {
+        const result = await advanceStablePromotions(completionPromotions, {
+          limit: 1,
+          releaseId,
+        });
+        if (result.claimed === 0) return;
+      }
+    },
     operatorReleaseAdmission,
   };
 }

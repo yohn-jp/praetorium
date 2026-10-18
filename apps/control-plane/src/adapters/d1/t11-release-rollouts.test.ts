@@ -327,6 +327,42 @@ async function seedFailedPreRuntimeCanary(
   return { release, buildId, buildKey: retryBuildKey, revisionId, attemptId, failureJson };
 }
 
+async function admitCanaryBuild(
+  db: SQLiteD1,
+  seed: Awaited<ReturnType<typeof seedFailedPreRuntimeCanary>>,
+  nextAttemptAt: number,
+): Promise<void> {
+  const artifactDigest = `sha256:${"c".repeat(64)}`;
+  db.database.prepare(
+    `INSERT INTO artifacts (
+       artifact_digest, build_key, build_id, attempt_id, manifest_digest,
+       platform_manifest_digest, composition_manifest_digest, producer_revision,
+       requested_modules_json, resolved_modules_json, contract_versions_json,
+       sbom_ref, provenance_ref, verification_json, statement_json, signature_json,
+       verifier_id, status, created_at, admitted_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '["forms"]', '[]', '{}', NULL, NULL,
+               '{}', '{}', '{}', 'test-verifier', 'admitted', ?, ?)`
+  ).run(
+    artifactDigest, seed.buildKey, seed.buildId, seed.attemptId, DIGEST, DIGEST, DIGEST,
+    PRODUCER, NOW, NOW,
+  );
+  db.database.prepare(
+    `UPDATE builds SET status = 'succeeded', active_attempt_id = NULL,
+         artifact_digest = ?, manifest_digest = ?, updated_at = ? WHERE build_id = ?`
+  ).run(artifactDigest, DIGEST, NOW + 30_000, seed.buildId);
+  db.database.prepare(
+    "UPDATE build_attempts SET status = 'succeeded', finished_at = ? WHERE attempt_id = ?"
+  ).run(NOW + 30_000, seed.attemptId);
+  db.database.prepare(
+    "UPDATE deployment_revisions SET status = 'admitted', artifact_digest = ? WHERE revision_id = ?"
+  ).run(artifactDigest, seed.revisionId);
+  db.database.prepare(
+    `UPDATE release_candidate_workflows
+        SET state = 'canary_building', revision = 5, failure_code = NULL,
+            next_attempt_at = ?, updated_at = ? WHERE release_id = ?`
+  ).run(nextAttemptAt, NOW + 20_000, seed.release.id);
+}
+
 function retryCommand(
   releaseId = "release-retry",
   overrides: Partial<ReleaseRetryCommand> = {},
@@ -424,6 +460,75 @@ function follower(instanceId: string, clusterId = "cluster-1"): StableFollower {
 }
 
 describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
+  it("wakes only the configured admitted canary whose build just succeeded", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const seed = await seedFailedPreRuntimeCanary(db, "release-build-wake");
+    await admitCanaryBuild(db, seed, NOW + 5 * 60_000);
+    db.database.prepare(
+      "UPDATE release_candidate_workflows SET lease_owner = 'expired', lease_epoch = 3, lease_expires_at = ? WHERE release_id = ?"
+    ).run(NOW + 25_000, seed.release.id);
+
+    const releases = store(db);
+    await expect(
+      releases.wakeSuccessfulCanaryBuild({
+        buildId: seed.buildId,
+        binding: retryBinding,
+        now: NOW + 30_000,
+      }),
+    ).resolves.toBe(seed.release.id);
+    expect(db.database.prepare(
+      "SELECT state, revision, next_attempt_at, lease_epoch, lease_owner FROM release_candidate_workflows WHERE release_id = ?"
+    ).get(seed.release.id)).toEqual({
+      state: "canary_building",
+      revision: 6,
+      next_attempt_at: NOW + 30_000,
+      lease_epoch: 4,
+      lease_owner: null,
+    });
+    const claim = await releases.claimCandidateWork({
+      owner: "release-build-wake-worker",
+      now: NOW + 30_001,
+      leaseMs: 60_000,
+      limit: 1,
+      releaseId: seed.release.id,
+    });
+    expect(claim).toHaveLength(1);
+    expect(claim[0]?.workflow).toMatchObject({
+      state: "canary_building",
+      nextAttemptAt: NOW + 30_000,
+      leaseEpoch: 5,
+    });
+  });
+
+  it("does not wake while a promotion lease is still active or for a different canary binding", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const seed = await seedFailedPreRuntimeCanary(db, "release-build-wake-guard");
+    await admitCanaryBuild(db, seed, NOW + 5 * 60_000);
+    db.database.prepare(
+      "UPDATE release_candidate_workflows SET lease_owner = 'active', lease_expires_at = ? WHERE release_id = ?"
+    ).run(NOW + 60_000, seed.release.id);
+    const releases = store(db);
+    const input = { buildId: seed.buildId, binding: retryBinding, now: NOW + 30_000 };
+
+    await expect(releases.wakeSuccessfulCanaryBuild(input)).resolves.toBeNull();
+    await expect(
+      releases.wakeSuccessfulCanaryBuild({
+        ...input,
+        binding: { ...retryBinding, repositoryId: retryBinding.repositoryId + 1 },
+      }),
+    ).resolves.toBeNull();
+    expect(db.database.prepare(
+      "SELECT revision, next_attempt_at, lease_epoch, lease_owner FROM release_candidate_workflows WHERE release_id = ?"
+    ).get(seed.release.id)).toEqual({
+      revision: 5,
+      next_attempt_at: NOW + 5 * 60_000,
+      lease_epoch: 0,
+      lease_owner: "active",
+    });
+  });
+
   it("retries only the exact pre-runtime canary build and fences its failed attempt", async () => {
     const db = new SQLiteD1();
     installSchema(db);

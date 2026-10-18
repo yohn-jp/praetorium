@@ -10,6 +10,7 @@ import {
   type ReleaseCandidate,
   type ReleasePromotionRepository,
   type StableReleaseChannel,
+  type DisposableCanaryBinding,
 } from "@praetorium/application/releases";
 import {
   stableRolloutStageIdempotencyKey,
@@ -439,6 +440,88 @@ export class D1T11ReleaseRolloutStore
     return this.db.prepare(
       "INSERT INTO platform_transaction_sentinel(id) SELECT 1 WHERE changes() <> 1",
     );
+  }
+
+  /**
+   * Makes a delayed canary workflow due after its own admitted build finishes.
+   * The single conditional update matches the configured canary plan and only
+   * fences an expired workflow lease; an active promoter keeps ownership.
+   */
+  async wakeSuccessfulCanaryBuild(input: {
+    readonly buildId: string;
+    readonly binding: DisposableCanaryBinding;
+    readonly now: number;
+  }): Promise<string | null> {
+    if (!Number.isSafeInteger(input.now) || input.now < 0)
+      throw new TypeError("canary build wake time is invalid");
+    const requestedModulesJson = JSON.stringify([...input.binding.requestedModules].sort());
+    const rows = await this.db
+      .prepare(
+        `UPDATE release_candidate_workflows
+            SET next_attempt_at = ?, revision = revision + 1, updated_at = ?,
+                lease_owner = NULL,
+                lease_epoch = lease_epoch + CASE WHEN lease_owner IS NULL THEN 0 ELSE 1 END,
+                lease_expires_at = NULL
+          WHERE release_id = (
+            SELECT w.release_id
+              FROM release_candidate_workflows w
+              JOIN release_candidates c ON c.release_id = w.release_id
+              JOIN builds b ON b.build_key = w.canary_build_key
+              JOIN deployment_revisions d ON d.build_id = b.build_id AND d.build_key = b.build_key
+              JOIN artifacts a ON a.build_id = b.build_id AND a.build_key = b.build_key
+                               AND a.artifact_digest = d.artifact_digest AND a.status = 'admitted'
+              JOIN idempotency_records p
+                ON p.scope = 'repository:' || d.repository_id
+               AND p.idempotency_key = 'stable-canary-plan:' || c.release_id
+               AND p.response_kind = 'configuration-plan'
+               AND p.response_id = d.revision_id
+              JOIN logical_instances i ON i.instance_id = d.instance_id
+              JOIN repository_bindings rb ON rb.repository_id = d.repository_id
+                                          AND rb.instance_id = i.instance_id
+             WHERE b.build_id = ? AND b.status = 'succeeded'
+               AND b.active_attempt_id IS NULL
+               AND c.status = 'candidate'
+               AND w.state = 'canary_building' AND w.failure_code IS NULL
+               AND w.next_attempt_at > ?
+               AND ((w.lease_owner IS NULL AND w.lease_expires_at IS NULL)
+                    OR (w.lease_owner IS NOT NULL AND w.lease_expires_at <= ?))
+               AND w.canary_artifact_digest IS NULL
+               AND w.canary_runtime_id IS NULL AND w.canary_operation_id IS NULL
+               AND d.status = 'admitted' AND d.artifact_digest IS NOT NULL
+               AND d.actor_id = 'system:stable-release-canary'
+               AND d.repository_id = ? AND d.instance_id = ?
+               AND json_extract(d.selection_json, '$.releaseId') = c.release_id
+               AND json_extract(d.selection_json, '$.policy') = 'pinned'
+               AND json_extract(d.selection_json, '$.resourceProfileId') = ?
+               AND json_extract(d.selection_json, '$.requestedModules') = ?
+               AND rb.binding_epoch = ? AND rb.authorization_revision = ? AND rb.suspended = 0
+               AND i.repository_id = d.repository_id AND i.generation = d.generation
+               AND i.desired_revision_id = d.revision_id
+               AND i.desired_state = 'stopped' AND i.observed_state = 'absent'
+               AND i.observed_generation IS NULL AND i.observed_runtime_epoch IS NULL
+               AND i.runtime_epoch = 0 AND i.reservation_state IN ('none', 'released')
+               AND i.reservation_id IS NULL AND i.desired_artifact_digest IS NULL
+               AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id)
+               AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id)
+             ORDER BY w.next_attempt_at, w.release_id LIMIT 1
+          )
+          RETURNING release_id`,
+      )
+      .bind(
+        input.now,
+        input.now,
+        input.buildId,
+        input.now,
+        input.now,
+        input.binding.repositoryId,
+        input.binding.instanceId,
+        input.binding.resourceProfileId,
+        requestedModulesJson,
+        input.binding.bindingEpoch,
+        input.binding.authorizationRevision,
+      )
+      .all<{ readonly release_id: string }>();
+    return rows.results[0]?.release_id ?? null;
   }
 
   /** Returns only bounded status fields suitable for an authenticated operator client. */
@@ -875,7 +958,9 @@ export class D1T11ReleaseRolloutStore
     ) {
       return { kind: "consumed" };
     }
-    if (row.lease_owner !== null && row.lease_expires_at !== null && row.lease_expires_at > input.now) {
+    if (
+      row.lease_owner !== null && row.lease_expires_at !== null && row.lease_expires_at > input.now
+    ) {
       return {
         kind: "leased",
         releaseId: row.release_id,

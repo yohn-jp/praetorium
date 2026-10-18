@@ -160,10 +160,12 @@ describe("Control Plane build routes", () => {
     const notifyWorkAvailable = vi.fn(async (kind: "build" | "operation") => {
       notifications.push(kind);
     });
+    const afterAcceptedSuccess = vi.fn(async (buildId: string) => buildId);
     const routes = createBuildRoutes({
       queue: buildQueue,
       serviceToken: TOKEN,
       notifyWorkAvailable,
+      afterAcceptedSuccess,
     });
     const pending: Promise<unknown>[] = [];
     const context = {
@@ -211,9 +213,10 @@ describe("Control Plane build routes", () => {
     );
 
     expect(accepted.status).toBe(200);
-    expect(pending).toHaveLength(1);
+    expect(pending).toHaveLength(2);
     await Promise.all(pending);
     expect(notifications).toEqual(["operation"]);
+    expect(afterAcceptedSuccess).toHaveBeenCalledExactlyOnceWith("build-1");
 
     vi.mocked(buildQueue.report).mockResolvedValueOnce({ accepted: false, duplicate: false });
     const rejected = await routes.fetch(
@@ -225,8 +228,9 @@ describe("Control Plane build routes", () => {
       context,
     );
     expect(rejected.status).toBe(200);
-    expect(pending).toHaveLength(1);
+    expect(pending).toHaveLength(2);
     expect(notifyWorkAvailable).toHaveBeenCalledOnce();
+    expect(afterAcceptedSuccess).toHaveBeenCalledOnce();
   });
 
   it("keeps unmatched paths out of the build API and rejects non-POST worker calls", async () => {

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "praetorium-scriptorium-producer-verification/v1",
+  "producerRevision": "008d5c429ec279a424cafd5b8c4cbee70a613b8e",
+  "sourceOrigin": "https://github.com/yohn-jp/scriptorium",
+  "dockerfileSha256": "005b540188d5337e103bb4e5aba17c0ae4be3439c17d02b170a6b3d9a28ce350",
+  "sourceDigest": "sha256:cf72b950c008c284f77d524f27eb3c2e4114ee0115fedb1cb53aba971e32d188",
+  "recipeDigest": "sha256:d90d640bd9e0d232817d95e41e46787f5c2b8ff0918c2559217655e32a2e678a",
+  "lockDigest": "sha256:873a93f452833cf963978904c1a3fdabb9dca1c85b2d27c592156bbd03e7ea9e",
+  "cosignIdentity": "https://github.com/yohn-jp/praetorium/.github/workflows/scriptorium-producer-verification.yml@refs/heads/main",
+  "cosignIssuer": "https://token.actions.githubusercontent.com",
+  "recipientCertificateFingerprintSha256": "4f117e60f1ff8af66e5eb9619dcf7142782162507ec558201b77d4ac62c2ad9b",
+  "imageRepository": "127.0.0.1:5000/scriptorium/producer",
+  "images": {
+    "runtime-base": {"digest": "sha256:1a64480298fd9cb74f93a0087612b394fffee565684fe22bcc56392a9a6ae120", "reference": "127.0.0.1:5000/scriptorium/producer@sha256:1a64480298fd9cb74f93a0087612b394fffee565684fe22bcc56392a9a6ae120", "archive": "runtime-base.oci.tar", "archiveSizeBytes": 117258752},
+    "build-kit": {"digest": "sha256:23ad0648ecba6337cda2d939540017aecaff3581680251769ce651c5d50dde73", "reference": "127.0.0.1:5000/scriptorium/producer@sha256:23ad0648ecba6337cda2d939540017aecaff3581680251769ce651c5d50dde73", "archive": "build-kit.oci.tar", "archiveSizeBytes": 372456960},
+    "composition-core": {"digest": "sha256:abcd0342ca7d880b5f440367d1490fb1b2a9d8ceee50c331c1b8ddf54de22275", "reference": "127.0.0.1:5000/scriptorium/producer@sha256:abcd0342ca7d880b5f440367d1490fb1b2a9d8ceee50c331c1b8ddf54de22275", "archive": "composition-core.oci.tar", "archiveSizeBytes": 120157184},
+    "composition-story": {"digest": "sha256:5b0b696836a892be67005f64cfe0ec0727ded9abebfc5eaefa52eae429022465", "reference": "127.0.0.1:5000/scriptorium/producer@sha256:5b0b696836a892be67005f64cfe0ec0727ded9abebfc5eaefa52eae429022465", "archive": "composition-story.oci.tar", "archiveSizeBytes": 121818624}
+  },
+  "catalogSha256": "10c1b0732b083bc7839bf6e845f85bf26f325e53c4c991142a93fa25b20bcdc5",
+  "runtimeMetadataSha256": "a14a651934ad1a7219f26a205e30e79440c7fe66ba1b8dab940c715150c84978",
+  "statementSha256": "df6a2a54edb4d5163302e6371decc2c6d3a7b89499632beedd64d68b6cf90d42",
+  "encryptedEvidence": {
+    "fileName": "producer-evidence.cms",
+    "sha256": "942826edb0a16f3965c9839a7b11365dfa44603e9e72d4e7204c0fc968a3db3d",
+    "sizeBytes": 732414335,
+    "maxSizeBytes": 4294967296
+  },
+  "registryPublication": "loopback disposable registry only",
+  "artifactPublication": "ciphertext-only one-day GitHub Actions artifact"
+}

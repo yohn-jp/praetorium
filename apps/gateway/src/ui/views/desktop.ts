@@ -295,33 +295,6 @@ export const DESKTOP_STYLES = `
 }
 `;
 
-function labelledCell(label: string, content: string, className: string): string {
-  return (
-    `<td class="${className}" data-column="${label}">` +
-    `<span class="desktop-cell-label">${label}</span>${content}</td>`
-  );
-}
-
-function repositoryRow(row: RepositoryListView["rows"][number]): string {
-  return (
-    `<tr class="desktop-repository-row">` +
-    labelledCell(
-      "Repository",
-      `<div class="desktop-row-identity">${row.identity}` +
-        `<span class="desktop-row-installation">${row.installation}</span>` +
-        `${row.reason ? `<span class="desktop-row-reason">${row.reason}</span>` : ""}` +
-        `${row.revisions ? `<details class="desktop-row-revisions"><summary>Image revisions</summary>${row.revisions}</details>` : ""}` +
-        `</div>`,
-      "desktop-row-repository",
-    ) +
-    labelledCell("Runtime", row.runtime, "desktop-row-runtime") +
-    labelledCell("Access", row.access, "desktop-row-access") +
-    labelledCell("Latest operation", row.operation, "desktop-row-operation") +
-    labelledCell("Actions", row.actions, "desktop-row-actions") +
-    `</tr>`
-  );
-}
-
 export function desktopRepositories(view: RepositoryListView): string {
   return evidenceLedgerRepositories(view, "desktop");
 }

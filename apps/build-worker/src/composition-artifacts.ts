@@ -1,5 +1,4 @@
 import { lstat, readFile } from "node:fs/promises";
-
 import {
   BuildInputSchema,
   CompositionManifestSchema,
@@ -14,7 +13,6 @@ import type { BuildCandidateReceiptReader, BuildKitProviderConfig } from "@praet
 import { sha256Digest, type Sha256Digest, type GhcrRegistryClient } from "@praetorium/ghcr";
 
 const COMPOSITION_PATH = "/usr/share/scriptorium/composition-manifest.json";
-const MAX_COMPOSITION_BYTES = 4 * 1024 * 1024;
 export type BuildKitFileExporter = Pick<BuildKitImageFileExporter, "exportFile">;
 export type CompositionRegistry = Pick<GhcrRegistryClient, "registryHost" | "publishBlob">;
 
@@ -78,17 +76,12 @@ export class ScriptoriumBuildCandidateReceiptReader implements BuildCandidateRec
       throw new BuildKitAttemptError("BUILD_FAILED", false);
     }
     if (input.signal?.aborted) throw new BuildKitAttemptError("BUILD_CANCELED", true);
-      const digest = await this.registry.publishBlob(
-        this.compositionRepository,
-        bytes,
-        input.signal,
-      );
-      if (digest !== (await sha256Digest(bytes)))
-        throw new BuildKitAttemptError("BUILD_FAILED", false);
-      return { compositionManifest: { repository: this.compositionRepository, digest } };
+    const digest = await this.registry.publishBlob(this.compositionRepository, bytes, input.signal);
+    if (digest !== (await sha256Digest(bytes)))
+      throw new BuildKitAttemptError("BUILD_FAILED", false);
+    return { compositionManifest: { repository: this.compositionRepository, digest } };
   }
 }
-
 
 async function readBuildMetadataDigest(filename: string): Promise<Sha256Digest> {
   const info = await lstat(filename);

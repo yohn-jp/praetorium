@@ -4,6 +4,8 @@ import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { readInventory } from "../infrastructure/scripts/inventory.mjs";
+import { workNotificationsEnabled } from "../infrastructure/scripts/work-notifications.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = {};
@@ -22,6 +24,11 @@ for (const field of ["--inventory", "--secret-files", "--kubeconfig", "--confirm
   if (!options[field]) throw new Error("missing " + field);
 }
 options.mode ??= "--check";
+const inventoryResult = readInventory(options["--inventory"]);
+if (inventoryResult.errors.length || inventoryResult.blockers.length) {
+  throw new Error("deployment inventory is incomplete");
+}
+const notificationsEnabled = workNotificationsEnabled(inventoryResult.inventory);
 if (options["--cloudflare-token-file"]) {
   const filename = options["--cloudflare-token-file"];
   if (!path.isAbsolute(filename)) throw new Error("Cloudflare token file must be an absolute path");
@@ -64,9 +71,18 @@ if (options.mode === "--check") {
   console.log("Both deployments passed preflight. Nothing changed.");
   process.exit(0);
 }
-console.log("Applying Cloudflare migrations and Workers...");
-execute("deploy-cloudflare.mjs", [...cloudflare, "--apply"]);
-console.log("Installing and reconciling declared K3s services...");
+console.log("Installing and reconciling declared K3s services and notification receivers...");
 execute("deploy-k3s.mjs", [...k3s, "--apply"]);
+if (notificationsEnabled) {
+  console.log("Verifying both work notification HTTPS receivers before configuring Worker delivery...");
+  execute("verify-work-notifications.mjs", [
+    "--inventory",
+    options["--inventory"],
+    "--secret-files",
+    options["--secret-files"],
+  ]);
+}
+console.log("Applying Cloudflare migrations and Workers after the K3s receivers are ready...");
+execute("deploy-cloudflare.mjs", [...cloudflare, "--apply"]);
 console.log("Praetorium Cloudflare and static K3s deployment complete.");
 console.log("Run the Hosted end-to-end acceptance separately; ingress transport and GitHub/Scriptorium are not certified by this step.");

@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: praetorium-provisioner-work-notification
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/part-of: praetorium
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: provisioner
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: praetorium-build-worker-work-notification
+  namespace: praetorium-build
+  labels:
+    app.kubernetes.io/part-of: praetorium
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: build-worker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8788

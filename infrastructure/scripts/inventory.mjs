@@ -23,6 +23,7 @@ const inventoryKeys = [
   "gateway",
   "buildkit",
   "buildWorker",
+  "workNotifications",
   "buildPolicy",
   "releasePolicy",
   "images",
@@ -44,16 +45,25 @@ const secretKeys = [
   "cloudflareDnsApiToken",
   "buildkitClient",
 ];
+const workNotificationSecretKeys = [
+  "provisionerWorkNotificationToken",
+  "buildWorkerWorkNotificationToken",
+];
 
-function exactKeys(value, expected, name, errors) {
+function exactKeys(value, expected, name, errors, optional = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     errors.push(`${name} must be an object`);
     return false;
   }
   const actual = Object.keys(value).sort();
   const wanted = [...expected].sort();
-  if (actual.join("\0") !== wanted.join("\0")) {
-    errors.push(`${name} must contain exactly: ${wanted.join(", ")}`);
+  const required = wanted.filter((key) => !optional.includes(key));
+  if (
+    actual.some((key) => !wanted.includes(key)) ||
+    required.some((key) => !actual.includes(key))
+  ) {
+    const details = optional.length ? `; optional: ${optional.join(", ")}` : "";
+    errors.push(`${name} must contain exactly: ${required.join(", ")}${details}`);
   }
   return true;
 }
@@ -128,7 +138,7 @@ export function validateInventory(value) {
     errors.push("inventory must be an object");
     value = {};
   }
-  exactKeys(value, inventoryKeys, "inventory", errors);
+  exactKeys(value, inventoryKeys, "inventory", errors, ["workNotifications"]);
   if (value.apiVersion !== "praetorium.io/deployment-inventory/v1") {
     errors.push("apiVersion must be praetorium.io/deployment-inventory/v1");
   }
@@ -446,6 +456,14 @@ export function validateInventory(value) {
     errors.push("buildWorker.buildctlPath must be an absolute path without parent traversal");
   }
 
+  const workNotificationsEnabled = value.workNotifications?.enabled === true;
+  if (Object.hasOwn(value, "workNotifications")) {
+    exactKeys(value.workNotifications, ["enabled"], "workNotifications", errors);
+    if (typeof value.workNotifications?.enabled !== "boolean") {
+      errors.push("workNotifications.enabled must be boolean");
+    }
+  }
+
   exactKeys(
     value.buildPolicy,
     [
@@ -755,9 +773,22 @@ export function validateInventory(value) {
     }
   }
 
-  exactKeys(value.secretRefs, secretKeys, "secretRefs", errors);
+  exactKeys(
+    value.secretRefs,
+    [...secretKeys, ...workNotificationSecretKeys],
+    "secretRefs",
+    errors,
+    workNotificationsEnabled ? [] : workNotificationSecretKeys,
+  );
   for (const name of secretKeys)
     validateSecretRef(value.secretRefs?.[name], `secretRefs.${name}`, errors);
+  for (const name of workNotificationSecretKeys) {
+    if (workNotificationsEnabled && !Object.hasOwn(value.secretRefs ?? {}, name)) {
+      blockers.push(`secretRefs.${name} is required when workNotifications.enabled is true`);
+    } else if (Object.hasOwn(value.secretRefs ?? {}, name)) {
+      validateSecretRef(value.secretRefs[name], `secretRefs.${name}`, errors);
+    }
+  }
   if (value.secretRefs?.applicationImagePull?.key !== ".dockerconfigjson") {
     errors.push(
       "secretRefs.applicationImagePull.key must be .dockerconfigjson for a dockerconfigjson pull secret",

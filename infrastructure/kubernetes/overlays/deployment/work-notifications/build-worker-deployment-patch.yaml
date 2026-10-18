@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: praetorium-build-worker
+  namespace: praetorium-build
+spec:
+  template:
+    spec:
+      containers:
+        - name: build-worker
+          ports:
+            - name: work-notification
+              containerPort: 8788
+              protocol: TCP
+          env:
+            - name: PRAETORIUM_BUILD_WORK_NOTIFICATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: "@@BUILD_WORK_NOTIFICATION_TOKEN_SECRET@@"
+                  key: "@@BUILD_WORK_NOTIFICATION_TOKEN_KEY@@"

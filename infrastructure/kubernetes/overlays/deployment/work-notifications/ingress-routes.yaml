@@ -1,0 +1,37 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: praetorium-provisioner-work-notification
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/part-of: praetorium
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: "Host(`@@PROVISIONER_WORK_NOTIFICATION_HOST@@`) && Path(`/internal/work-available`) && Method(`POST`)"
+      services:
+        - name: praetorium-provisioner
+          port: 8080
+  tls:
+    secretName: "@@TLS_SECRET_NAME@@"
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: praetorium-build-worker-work-notification
+  namespace: praetorium-build
+  labels:
+    app.kubernetes.io/part-of: praetorium
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: "Host(`@@BUILD_WORK_NOTIFICATION_HOST@@`) && Path(`/internal/work-available`) && Method(`POST`)"
+      services:
+        - name: praetorium-build-worker-notification
+          port: 8788
+  tls:
+    secretName: praetorium-build-worker-notification-tls

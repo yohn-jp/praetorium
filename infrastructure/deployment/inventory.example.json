@@ -40,6 +40,9 @@
     "compositionRepository": null,
     "buildctlPath": "/usr/local/bin/buildctl"
   },
+  "workNotifications": {
+    "enabled": true
+  },
   "buildPolicy": {
     "registryUrl": "https://ghcr.io",
     "maxImageLayerBytes": 17179869184,
@@ -113,6 +116,14 @@
     "cloudflareDnsApiToken": {
       "name": "praetorium-dns-api-token",
       "key": "api-token"
+    },
+    "provisionerWorkNotificationToken": {
+      "name": "praetorium-provisioner-work-notification-token",
+      "key": "token"
+    },
+    "buildWorkerWorkNotificationToken": {
+      "name": "praetorium-build-worker-work-notification-token",
+      "key": "token"
     },
     "buildkitClient": {
       "name": "praetorium-buildkit-client",

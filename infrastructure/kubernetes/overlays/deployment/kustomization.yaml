@@ -4,5 +4,7 @@ resources:
   - ../../base
   - provisioner-idle-journal.yaml
   - tls.yaml
+@@WORK_NOTIFICATION_RESOURCES@@
 patches:
   - path: provisioner-idle-journal-patch.yaml
+@@WORK_NOTIFICATION_PATCHES@@

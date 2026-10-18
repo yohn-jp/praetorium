@@ -1,4 +1,6 @@
 // Shared canonical Worker environment projection for local and K3s deployments.
+import { workNotificationEndpoints, workNotificationsEnabled } from "./work-notifications.mjs";
+
 export function buildPolicy(inventory) {
   const repository = inventory.buildkit.outputRepository;
   const builderKeys = inventory.buildPolicy.builderKeys;
@@ -80,6 +82,11 @@ export function renderWorkerTemplate(template, inventory, worker) {
     setStringVariable(variables, "BUILD_WORKER_ID", `${inventory.clusterId}-build-worker`);
     setStringVariable(variables, "PROVISIONER_WORKER_ID", `${inventory.clusterId}-provisioner`);
     setStringVariable(variables, "PROVISIONER_CLUSTER_ID", inventory.clusterId);
+    if (workNotificationsEnabled(inventory)) {
+      const endpoints = workNotificationEndpoints(inventory);
+      setStringVariable(variables, "PROVISIONER_WORK_NOTIFICATION_URL", endpoints.provisioner);
+      setStringVariable(variables, "BUILD_WORK_NOTIFICATION_URL", endpoints.build);
+    }
     const policy = buildPolicy(inventory);
     if (policy) variables.BUILD_POLICY_JSON = JSON.stringify(policy);
     const releases = releasePolicy(inventory);

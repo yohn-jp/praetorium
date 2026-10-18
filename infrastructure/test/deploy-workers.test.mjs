@@ -184,6 +184,37 @@ test("Worker plan reports exact secret surfaces and producer-blocked release gat
   assert.deepEqual(plan.templateProblems, []);
 });
 
+test("enabled work notifications add the derived endpoints and dedicated Worker secret bindings", () => {
+  const enabled = structuredClone(inventory);
+  enabled.workNotifications = { enabled: true };
+  enabled.secretRefs.provisionerWorkNotificationToken = {
+    name: "praetorium-provisioner-work-notification-token",
+    key: "token",
+  };
+  enabled.secretRefs.buildWorkerWorkNotificationToken = {
+    name: "praetorium-build-worker-work-notification-token",
+    key: "token",
+  };
+  const result = planForInventory(enabled);
+  assert.equal(result.status, 2);
+  const plan = JSON.parse(result.stdout);
+  assert.equal(plan.remoteCalls, false);
+  assert.deepEqual(plan.workNotifications, {
+    enabled: true,
+    endpoints: {
+      provisioner: "https://notify-provisioner.instances.praetorium.localhost/internal/work-available",
+      build: "https://notify-build.instances.praetorium.localhost/internal/work-available",
+    },
+    requiredSecrets: ["PROVISIONER_WORK_NOTIFICATION_TOKEN", "BUILD_WORK_NOTIFICATION_TOKEN"],
+    tokenValuesInspected: false,
+    delivery: "best-effort HTTPS POST; worker polling fallback remains bounded",
+  });
+  assert.ok(plan.workerVariables.controlPlane.includes("PROVISIONER_WORK_NOTIFICATION_URL"));
+  assert.ok(plan.workerVariables.controlPlane.includes("BUILD_WORK_NOTIFICATION_URL"));
+  assert.ok(plan.requiredWorkerSecrets.controlPlane.includes("PROVISIONER_WORK_NOTIFICATION_TOKEN"));
+  assert.ok(plan.requiredWorkerSecrets.controlPlane.includes("BUILD_WORK_NOTIFICATION_TOKEN"));
+});
+
 test("Worker preflight recognizes credential retirement wiring without inspecting secret values", () => {
   const result = spawnSync(
     process.execPath,

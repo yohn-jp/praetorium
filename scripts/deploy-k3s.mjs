@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { renderPlatformBundle } from "../infrastructure/scripts/render-platform.mjs";
 import { applyGuardedBundle } from "../infrastructure/scripts/guarded-apply.mjs";
+import {
+  validateWorkNotificationTokens,
+  workNotificationEndpoints,
+  workNotificationsEnabled,
+} from "../infrastructure/scripts/work-notifications.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -74,6 +79,12 @@ const secretConfigs = [
   ["praetorium-build", "applicationImagePull", "kubernetes.io/dockerconfigjson"],
   ["praetorium-observability", "applicationImagePull", "kubernetes.io/dockerconfigjson"],
   ["cert-manager", "cloudflareDnsApiToken", "Opaque"],
+  ...(workNotificationsEnabled(inventory)
+    ? [
+        ["praetorium-system", "provisionerWorkNotificationToken", "Opaque"],
+        ["praetorium-build", "buildWorkerWorkNotificationToken", "Opaque"],
+      ]
+    : []),
 ];
 const material = new Map();
 for (const role of refNames) {
@@ -96,6 +107,19 @@ for (const role of refNames) {
     data[ref[field]] = bytes.toString("base64");
   }
   material.set(role, data);
+}
+const notificationEndpoints = workNotificationEndpoints(inventory);
+if (notificationEndpoints) {
+  const secretBytes = (role) => {
+    const ref = inventory.secretRefs[role];
+    return Buffer.from(material.get(role)[ref.key], "base64");
+  };
+  validateWorkNotificationTokens({
+    provisioner: secretBytes("provisionerWorkNotificationToken"),
+    build: secretBytes("buildWorkerWorkNotificationToken"),
+    provisionerClaim: secretBytes("controlPlaneCredential"),
+    buildClaim: secretBytes("buildWorkerControlPlaneAuth"),
+  });
 }
 function run(command, args, { input, timeout = 180_000 } = {}) {
   const result = spawnSync(command, args, {
@@ -156,6 +180,16 @@ for (const name of ["praetorium-system", "praetorium-build", "praetorium-observa
 const summary = { cluster: inventory.ownership.clusterName, context: inventory.ownership.context,
   inventory: inventoryResult.absolutePath, mode: options.mode,
   namespaces: 5, referencedSecretRoles: refNames,
+  workNotifications: {
+    enabled: notificationEndpoints !== null,
+    endpoints: notificationEndpoints,
+    secretRoles: notificationEndpoints
+      ? ["provisionerWorkNotificationToken", "buildWorkerWorkNotificationToken"]
+      : [],
+    buildCertificate: notificationEndpoints
+      ? "praetorium-build/praetorium-build-worker-notification-origin"
+      : null,
+  },
   deployments: ["praetorium-instance-access", "praetorium-provisioner",
     "praetorium-build-worker", "praetorium-prometheus"] };
 console.log(JSON.stringify(summary, null, 2));
@@ -227,5 +261,10 @@ for (const [ns, name] of [
 }
 kubectl(["-n", "praetorium-system", "wait", "--for=condition=Ready",
   "certificate/praetorium-instance-origin", "--timeout=600s"], { timeout: 630_000 });
+if (notificationEndpoints) {
+  kubectl(["-n", "praetorium-build", "wait", "--for=condition=Ready",
+    "certificate/praetorium-build-worker-notification-origin", "--timeout=600s"],
+  { timeout: 630_000 });
+}
 console.log("K3s static application resources, controllers, certificate and four Deployments are ready.");
 console.log("This does not certify Hosted GitHub access, Scriptorium or external routing.");

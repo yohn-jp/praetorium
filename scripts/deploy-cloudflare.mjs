@@ -6,6 +6,10 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { renderWorkerTemplate } from "../infrastructure/scripts/worker-config.mjs";
+import {
+  validateWorkNotificationTokens,
+  workNotificationsEnabled,
+} from "../infrastructure/scripts/work-notifications.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -45,6 +49,20 @@ function privateBytes(role) {
   const bytes = readFileSync(filename);
   if (!bytes.length) throw new Error(role + " secret is empty");
   return bytes;
+}
+const notificationsEnabled = workNotificationsEnabled(inventory);
+const notificationTokenBytes = notificationsEnabled
+  ? {
+      provisioner: privateBytes("provisionerWorkNotificationToken"),
+      build: privateBytes("buildWorkerWorkNotificationToken"),
+    }
+  : null;
+if (notificationTokenBytes) {
+  validateWorkNotificationTokens({
+    ...notificationTokenBytes,
+    provisionerClaim: privateBytes("controlPlaneCredential"),
+    buildClaim: privateBytes("buildWorkerControlPlaneAuth"),
+  });
 }
 if (inventory.environment !== "deployment" || inventory.cloudflare.mode !== "remote") {
   throw new Error("remote Cloudflare deployment requires deployment/remote inventory");
@@ -115,6 +133,9 @@ try {
     throw new Error("Gateway public key registry must contain one active P-256 key");
   }
   console.log("Cloudflare resources, Worker Secrets and active public key registry: present.");
+  if (notificationsEnabled) {
+    console.log("Work notification token files are privately referenced and validated locally; remote notification Worker Secrets are not checked until deployment. DNS, Runtime ingress, and certificate readiness are not verified here.");
+  }
   if (mode === "--check") {
     console.log("No Cloudflare resource mutated.");
     process.exit(0);
@@ -130,6 +151,17 @@ try {
     [conf.control, "REGISTRY_PULL_CREDENTIAL", "buildWorkerRegistryPull"],
   ]) {
     wrangler(["secret", "put", key, "--config", worker], { input: privateBytes(role), capture: true });
+  }
+  if (notificationTokenBytes) {
+    for (const [key, role] of [
+      ["PROVISIONER_WORK_NOTIFICATION_TOKEN", "provisioner"],
+      ["BUILD_WORK_NOTIFICATION_TOKEN", "build"],
+    ]) {
+      wrangler(["secret", "put", key, "--config", conf.control], {
+        input: notificationTokenBytes[role],
+        capture: true,
+      });
+    }
   }
   if (privateManifest.values.releaseOperatorToken) {
     wrangler(["secret", "put", "RELEASE_OPERATOR_TOKEN", "--config", conf.control],

@@ -453,6 +453,16 @@
         }
       }
     },
+    "workNotifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
     "buildPolicy": {
       "type": "object",
       "additionalProperties": false,
@@ -778,6 +788,12 @@
               "minLength": 1
             }
           }
+        },
+        "provisionerWorkNotificationToken": {
+          "$ref": "#/$defs/secretRef"
+        },
+        "buildWorkerWorkNotificationToken": {
+          "$ref": "#/$defs/secretRef"
         }
       }
     },
@@ -786,6 +802,34 @@
       "minLength": 1
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "workNotifications": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["workNotifications"]
+      },
+      "then": {
+        "properties": {
+          "secretRefs": {
+            "required": [
+              "provisionerWorkNotificationToken",
+              "buildWorkerWorkNotificationToken"
+            ]
+          }
+        },
+        "required": ["secretRefs"]
+      }
+    }
+  ],
   "$defs": {
     "digestOrMissing": {
       "type": [

@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: praetorium-build-worker-notification-origin
+  namespace: praetorium-build
+  labels:
+    app.kubernetes.io/part-of: praetorium
+spec:
+  secretName: praetorium-build-worker-notification-tls
+  issuerRef:
+    name: praetorium-acme
+    kind: ClusterIssuer
+  dnsNames:
+    - "@@INSTANCE_HOSTNAME_SUFFIX@@"
+    - "*.@@INSTANCE_HOSTNAME_SUFFIX@@"

@@ -3,11 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { systemNetworkRenderValues } from "./system-network.mjs";
+import { workNotificationEndpoints, workNotificationsEnabled } from "./work-notifications.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function renderValues(inventory) {
   const secret = inventory.secretRefs;
+  const notificationEndpoints = workNotificationEndpoints(inventory);
+  const notificationsEnabled = workNotificationsEnabled(inventory);
   return {
     ...systemNetworkRenderValues(inventory),
     "@@CLUSTER_ID@@": inventory.clusterId,
@@ -62,6 +65,40 @@ function renderValues(inventory) {
     "@@SECRET_BUILDKIT_PRIVATE_KEY@@": secret.buildkitClient.privateKey,
     "@@SECRET_CLOUDFLARE_DNS_TOKEN@@": secret.cloudflareDnsApiToken.name,
     "@@SECRET_CLOUDFLARE_DNS_TOKEN_KEY@@": secret.cloudflareDnsApiToken.key,
+    "@@WORK_NOTIFICATION_RESOURCES@@": notificationsEnabled ? "  - work-notifications\n" : "",
+    "@@WORK_NOTIFICATION_PATCHES@@": notificationsEnabled
+      ? [
+          "  - path: work-notifications/provisioner-deployment-patch.yaml",
+          "  - path: work-notifications/build-worker-deployment-patch.yaml",
+          "    target:",
+          "      group: apps",
+          "      version: v1",
+          "      kind: Deployment",
+          "      name: praetorium-build-worker",
+          "      namespace: praetorium-build",
+          "  - path: work-notifications/build-worker-config-patch.yaml",
+          "    target:",
+          "      version: v1",
+          "      kind: ConfigMap",
+          "      name: praetorium-build-worker-config",
+          "      namespace: praetorium-build",
+          "",
+        ].join("\n")
+      : "",
+    "@@PROVISIONER_WORK_NOTIFICATION_HOST@@": notificationEndpoints
+      ? new URL(notificationEndpoints.provisioner).hostname
+      : "",
+    "@@BUILD_WORK_NOTIFICATION_HOST@@": notificationEndpoints
+      ? new URL(notificationEndpoints.build).hostname
+      : "",
+    "@@BUILD_WORK_NOTIFICATION_TOKEN_SECRET@@":
+      secret.buildWorkerWorkNotificationToken?.name ?? "",
+    "@@BUILD_WORK_NOTIFICATION_TOKEN_KEY@@":
+      secret.buildWorkerWorkNotificationToken?.key ?? "",
+    "@@PROVISIONER_WORK_NOTIFICATION_TOKEN_SECRET@@":
+      secret.provisionerWorkNotificationToken?.name ?? "",
+    "@@PROVISIONER_WORK_NOTIFICATION_TOKEN_KEY@@":
+      secret.provisionerWorkNotificationToken?.key ?? "",
     "@@ACME_CONTACT_EMAIL@@": inventory.acmeContactEmail,
   };
 }

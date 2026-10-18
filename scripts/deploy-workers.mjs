@@ -8,6 +8,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { buildPolicy, releasePolicy, renderWorkerTemplate } from "../infrastructure/scripts/worker-config.mjs";
+import { workNotificationEndpoints, workNotificationsEnabled } from "../infrastructure/scripts/work-notifications.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const templatesDir = path.join(repoRoot, "infrastructure/workers");
@@ -154,6 +155,8 @@ function inspectTemplates() {
     "CONTROL_PLANE_ORIGIN",
     "GATEWAY_ORIGIN",
     "INSTANCE_HOST_SUFFIX",
+    "PROVISIONER_WORK_NOTIFICATION_URL",
+    "BUILD_WORK_NOTIFICATION_URL",
     "RELEASE_POLICY_JSON",
     "RUNTIME_REGISTRY_HOST",
   ].sort();
@@ -266,6 +269,8 @@ try {
   ];
   const templateProblems = inspectTemplates();
   const generatedBuildPolicy = buildPolicy(inventory);
+  const notificationsEnabled = workNotificationsEnabled(inventory);
+  const notificationEndpoints = workNotificationEndpoints(inventory);
   const workerVariables = {
     gateway: [
       "GATEWAY_ORIGIN",
@@ -287,6 +292,9 @@ try {
       "INSTANCE_HOST_SUFFIX",
       "RELEASE_POLICY_JSON",
       "RUNTIME_REGISTRY_HOST",
+      ...(notificationsEnabled
+        ? ["PROVISIONER_WORK_NOTIFICATION_URL", "BUILD_WORK_NOTIFICATION_URL"]
+        : []),
     ],
   };
   const workerSecrets = {
@@ -294,6 +302,9 @@ try {
       "CONTROL_PLANE_GATEWAY_AUTH",
       "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
       "RUNTIME_IDENTITY_SIGNING_KEY",
+      ...(notificationsEnabled
+        ? ["PROVISIONER_WORK_NOTIFICATION_TOKEN", "BUILD_WORK_NOTIFICATION_TOKEN"]
+        : []),
     ],
     gateway: [
       "GITHUB_OAUTH_CLIENT_SECRET",
@@ -342,6 +353,17 @@ try {
           serviceBindings,
           workerVariables,
           requiredWorkerSecrets: workerSecrets,
+          workNotifications: {
+            enabled: notificationsEnabled,
+            endpoints: notificationEndpoints,
+            requiredSecrets: notificationsEnabled
+              ? ["PROVISIONER_WORK_NOTIFICATION_TOKEN", "BUILD_WORK_NOTIFICATION_TOKEN"]
+              : [],
+            tokenValuesInspected: false,
+            delivery: notificationsEnabled
+              ? "best-effort HTTPS POST; worker polling fallback remains bounded"
+              : "disabled by inventory; existing bounded polling fallback remains active",
+          },
           runtimeCredentialRetirement,
           optionalControlPlaneSecrets: [
             "REGISTRY_PULL_CREDENTIAL (separate JSON username/password credential for Control Plane OCI reads)",
@@ -353,6 +375,9 @@ try {
           optionalControlPlaneVariables: [
             "BUILD_POLICY_JSON (generated only when the complete build policy is supplied)",
             "RELEASE_POLICY_JSON (generated only when the complete operator-selected disposable canary policy is supplied)",
+            ...(notificationsEnabled
+              ? ["PROVISIONER_WORK_NOTIFICATION_URL and BUILD_WORK_NOTIFICATION_URL (derived from the configured instance hostname suffix)"]
+              : []),
           ],
           controlPlaneBuildPolicy: {
             configured: generatedBuildPolicy !== null,
@@ -440,6 +465,17 @@ try {
           serviceBindings,
           workerVariables,
           requiredWorkerSecrets: workerSecrets,
+          workNotifications: {
+            enabled: notificationsEnabled,
+            endpoints: notificationEndpoints,
+            requiredSecrets: notificationsEnabled
+              ? ["PROVISIONER_WORK_NOTIFICATION_TOKEN", "BUILD_WORK_NOTIFICATION_TOKEN"]
+              : [],
+            tokenValuesInspected: false,
+            delivery: notificationsEnabled
+              ? "best-effort HTTPS POST; worker polling fallback remains bounded"
+              : "disabled by inventory; existing bounded polling fallback remains active",
+          },
           runtimeCredentialRetirement,
           optionalControlPlaneSecrets: [
             "REGISTRY_PULL_CREDENTIAL",

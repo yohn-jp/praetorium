@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: praetorium-build-worker-config
+  namespace: praetorium-build
+data:
+  PRAETORIUM_BUILD_WORK_NOTIFICATION_ENABLED: "1"
+  PRAETORIUM_BUILD_WORK_NOTIFICATION_HOST: "0.0.0.0"
+  PRAETORIUM_BUILD_WORK_NOTIFICATION_PORT: "8788"

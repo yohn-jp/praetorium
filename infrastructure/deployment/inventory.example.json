@@ -25,7 +25,7 @@
   "gateway": {
     "allowedRepositoryOwner": "yohn-jp",
     "githubAppId": "5355765",
-    "githubOauthClientId": "Iv23IiUxWi9dmhwJYuA",
+    "githubOauthClientId": "Iv23liUxWil9dmhuYJuA",
     "tokenEncryptionKeyId": "initial"
   },
   "buildkit": {

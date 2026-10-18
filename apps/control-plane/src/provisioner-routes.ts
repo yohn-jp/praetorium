@@ -82,6 +82,7 @@ const Report = z.strictObject({
       ]),
       observedArtifactDigest: z.string().nullable(),
       observedRevisionId: Id.nullable(),
+      reportedAt: z.string().datetime().optional(),
     })
     .nullable(),
   terminal: z.enum(["succeeded", "failed", "blocked"]).optional(),

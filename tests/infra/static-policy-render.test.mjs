@@ -41,7 +41,7 @@ function renderInventory() {
   });
   Object.assign(value.buildWorker, {
     signingKeyId: "render-key",
-    compositionRepository: "praetorium-render/compositions",
+    compositionRepository: "ghcr.io/praetorium-render/compositions",
     buildctlPath: "/run/current-system/sw/bin/buildctl",
   });
   value.buildPolicy.targetPlatform = "linux/amd64";
@@ -98,6 +98,10 @@ test(
       );
       assert.equal(result.status, 0, result.stderr);
       assert.doesNotMatch(result.stdout, /@@[A-Z0-9_]+@@/);
+      assert.match(
+        result.stdout,
+        /PRAETORIUM_BUILD_COMPOSITION_REPOSITORY: ["']?praetorium-render\/compositions["']?\s*$/m,
+      );
       assert.equal((result.stdout.match(/^kind: ValidatingAdmissionPolicy$/gm) ?? []).length, 7);
       assert.equal(
         (result.stdout.match(/^kind: ValidatingAdmissionPolicyBinding$/gm) ?? []).length,

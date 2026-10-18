@@ -36,7 +36,10 @@ function renderValues(inventory) {
     "@@BUILD_WORKER_ID@@": `${inventory.clusterId}-build-worker`,
     "@@BUILD_WORKER_CONTROL_PLANE_URL@@": inventory.domains.controlPlaneUrl,
     "@@BUILD_WORKER_SIGNING_KEY_ID@@": inventory.buildWorker.signingKeyId,
-    "@@BUILD_WORKER_COMPOSITION_REPOSITORY@@": inventory.buildWorker.compositionRepository,
+    "@@BUILD_WORKER_COMPOSITION_REPOSITORY@@": inventory.buildWorker.compositionRepository?.replace(
+      /^ghcr\.io\//u,
+      "",
+    ),
     "@@BUILD_REGISTRY_URL@@": inventory.buildPolicy.registryUrl,
     "@@BUILD_MAX_IMAGE_LAYER_BYTES@@": String(inventory.buildPolicy.maxImageLayerBytes),
     "@@BUILD_MAX_IMAGE_VERIFICATION_MS@@": String(inventory.buildPolicy.maxImageVerificationMs),

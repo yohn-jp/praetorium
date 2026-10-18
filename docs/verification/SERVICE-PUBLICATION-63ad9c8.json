@@ -1,0 +1,26 @@
+{
+  "observedAtUtc": "2026-10-18T08:29:16.297254+00:00",
+  "sourceCommit": "63ad9c82bb4fe637f3acb9ca2c6cc4a7eadd4828",
+  "publicationRun": "https://github.com/yohn-jp/praetorium/actions/runs/39111222707",
+  "publicationConclusion": "success",
+  "verificationConclusion": "success",
+  "preparedBuildWorkerImage": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:926e0f99135b728c6285f269b604ca2c67020d5a9a080012bc7876e5c413ec70",
+  "runtimePreflight": "PASS",
+  "runtimeDeployment": "NOT_APPLIED_WHILE_ATTEMPT_3_RUNNING",
+  "liveBuildWorkerImage": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:305c263e7d38e68f5da4db8d30d70312d9e1e84e9acf44c003342b352af3f39f",
+  "canary": {
+    "releaseId": "rel_28a87a55-f1b3-4675-b57a-d9f3cca5cb6b",
+    "buildId": "build_2f92619e-66d7-4b20-ac89-f461418ddd06",
+    "attempt": 3,
+    "observedStatus": "running",
+    "progressStage": "publishing",
+    "progressPercent": 99,
+    "runtimeOperationId": null,
+    "localRootfsExportStartedAtUtc": "2026-10-18T08:16:05Z",
+    "rootCause": "NOT_DETERMINED",
+    "capacityPressureObserved": false
+  },
+  "hostedBrowserEditingGitSave": "NOT_CHECKED",
+  "directD1StateMutation": false,
+  "credentialRotation": false
+}

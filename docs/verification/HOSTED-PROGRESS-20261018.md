@@ -571,3 +571,32 @@ candidate to revision 7 and Build attempt 3. The Build Worker reached publishing
 BuildKit local rootfs export before startup inspection, not a proven successful
 artifact admission. Source/image publication continues independently; the
 active Build Worker will not be replaced during a live attempt.
+
+## Published correction; active export isolated (2026-10-18 08:33 UTC)
+
+Main `63ad9c82bb4fe637f3acb9ca2c6cc4a7eadd4828` passed the publication
+workflow's frozen installation and full repository verification, and all three
+service image publication jobs succeeded in [run 39111222707](https://github.com/yohn-jp/praetorium/actions/runs/39111222707).
+The prepared Build Worker pin is recorded in
+[SERVICE-PUBLICATION-63ad9c8.json](SERVICE-PUBLICATION-63ad9c8.json).
+Only the Build Worker image was changed in the private next-deployment Inventory;
+other service pins and all credentials were preserved. Canonical K3s `--check`
+passed for that Inventory without changing Kubernetes objects.
+
+The live Build Worker remains on `bef4eb7` while attempt 3 is active. At 08:29 UTC
+the normal Operator status API reported `canary_building`, workflow revision 9,
+Build `running`, publishing 99%, and no Canary Runtime operation. The active
+BuildKit local rootfs export started at 08:16:05 UTC. One bounded process/network
+inspection found no capacity pressure, no queued TCP data, and both endpoints
+waiting without substantive file transfer. The client reports BuildKit v0.30.0;
+the daemon reports v0.34.0. These observations do not establish a version bug or
+an exact root cause. No daemon was restarted, no live Worker was replaced, no
+credential was changed, and no failed D1 row was reset.
+
+The immediate remaining path is export completion or a concrete repair, delivery
+of the published Build Worker, normal Canary Runtime start, then actual browser
+editing/Git save/reload. This is not the entire G1–G9 remainder: composition/cache,
+permission changes, lifecycle/writer fencing, release/recovery, off-host metadata
+recovery and Cloudflare cost acceptance still require their missing real outcomes.
+Previously passed ingress, registry receipt and CI checks are reused rather than
+rerun to substitute for those outcomes.

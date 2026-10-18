@@ -476,28 +476,25 @@ async function formSelection(form) {
     releasePolicy: await form.locator('select[name="releasePolicy"]').inputValue(),
     releaseId: await form.locator('select[name="releaseId"]').inputValue(),
     moduleIds: await form
-      .locator('select[name="moduleIds"] option:checked')
-      .evaluateAll((options) => options.map((option) => option.value).sort()),
+      .locator('input[type="checkbox"][name="moduleIds"]:checked')
+      .evaluateAll((inputs) => inputs.map((input) => input.value).sort()),
     resourceProfileId: await form.locator('select[name="resourceProfileId"]').inputValue(),
   };
 }
 
 async function moduleDisplayNames(form) {
   const options = await form
-    .locator('select[name="moduleIds"] option')
-    .evaluateAll((items) =>
-      items.map((item) => {
-        const match = /^(.*) \((.+) · sha256:[0-9a-f]{64}\)$/u.exec(
-          (item.textContent ?? "").trim(),
-        );
-        return match ? { id: item.value, displayName: `${match[1]} (${match[2]})` } : null;
+    .locator('input[type="checkbox"][name="moduleIds"]')
+    .evaluateAll((inputs) =>
+      inputs.map((input) => {
+        const label = input.closest("label");
+        const display = label?.querySelector(":scope > span");
+        const version = display?.querySelector(".field-help")?.textContent?.split(" · ")[0]?.trim();
+        const name = display?.firstChild?.textContent?.trim();
+        return name && version ? { id: input.value, displayName: `${name} (${version})` } : null;
       }),
     );
-  if (options.some((option) => option === null)) return null;
-  const byId = new Map(options.map((option) => [option.id, option.displayName]));
-  const names = [...byId.values()];
-  if (names.length !== new Set(names).size) return null;
-  return byId;
+  return new Map(options.filter((option) => option !== null).map((option) => [option.id, option.displayName]));
 }
 
 function sameSelection(left, right) {
@@ -518,7 +515,7 @@ function sameStringSet(left, right) {
 }
 
 function extractDigest(text) {
-  return /Composed image:\s*(sha256:[0-9a-f]{64})/u.exec(text)?.[1] ?? null;
+  return /Composed image\s*:?\s*(sha256:[0-9a-f]{64})/u.exec(text)?.[1] ?? null;
 }
 
 async function dashboardSnapshot(page, config, gatewayOrigin, inventory) {
@@ -535,22 +532,40 @@ async function dashboardSnapshot(page, config, gatewayOrigin, inventory) {
   assert.equal(response?.status(), 200, "repository dashboard must load successfully");
   await page.getByRole("heading", { name: config.repository.fullName, exact: true }).waitFor();
   const text = await page.locator("main").innerText();
-  const state = /Instance:\s*(Ready|Starting|Stopped|Failed|Blocked|Status unavailable)/u.exec(
-    text,
-  )?.[1];
-  assert.ok(state, "dashboard must show the instance state");
+  const stateBadge = page
+    .getByRole("region", { name: "Application status", exact: true })
+    .locator(".status-badge");
+  assert.equal(await stateBadge.count(), 1, "dashboard must show one application-state badge");
+  const state = await stateBadge.innerText();
+  assert.match(state, /^(Ready|Starting|Stopped|Failed|Blocked|Status unavailable)$/u);
   const current = page
     .getByRole("heading", { name: "Current deployment", exact: true })
     .locator("xpath=..");
   const desired = page
     .getByRole("heading", { name: "Desired deployment", exact: true })
     .locator("xpath=..");
+  for (const deployment of [current, desired]) {
+    const identifiers = deployment.getByText("Exact artifact identifiers", { exact: true });
+    if (await identifiers.count()) await identifiers.click();
+  }
   const configureForm = page.locator("form").filter({
-    has: page.locator('input[name="action"][value="configure"]'),
+    has: page.locator('[name="action"][value="configure"]'),
   });
+  const buildHeading = page.getByRole("heading", { name: "Configuration build", exact: true });
+  const buildState = (await buildHeading.count())
+    ? await buildHeading.locator("xpath=..").locator(".status-badge").innerText()
+    : null;
+  const redeployCards = page.locator("article.operation-card").filter({
+    has: page.getByRole("heading", { name: /^redeploy$/iu }),
+  });
+  const redeployState = (await redeployCards.count())
+    ? await redeployCards.first().locator(".status-badge").innerText()
+    : null;
   return {
     text,
     state,
+    buildState,
+    redeployState,
     currentDigest: extractDigest(await current.innerText()),
     desiredDigest: extractDigest(await desired.innerText()),
     currentModules: parseModuleSelection(await current.innerText()),
@@ -603,7 +618,7 @@ async function waitForDeployment(page, config, derived, inventory, expectedModul
   while (Date.now() < deadlineMs) {
     const snapshot = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
     const alerts = await page.getByRole("alert").allTextContents();
-    if (alerts.length > 0 || /Build: (Failed|Canceled)/u.test(snapshot.text)) {
+    if (alerts.length > 0 || ["Failed", "Canceled"].includes(snapshot.buildState)) {
       assert.fail("configuration build failed; current deployment must remain available");
     }
     const selectedModuleNames =
@@ -889,38 +904,56 @@ test(
       );
 
       stage = "repository-selection";
-      const repositoryRow = page
-        .getByRole("heading", { name: config.repository.fullName, exact: true })
-        .locator("xpath=..");
-      const repositoryText = await repositoryRow.innerText();
-      assert.match(repositoryText, /GitHub App: Active/u);
-      assert.match(repositoryText, /Repository access: (Maintain|Admin) access/u);
-      const manageRepository = repositoryRow.getByRole("link", {
+      const repositoryLink = page.getByRole("link", { name: config.repository.fullName, exact: true });
+      assert.equal(
+        await repositoryLink.count(),
+        1,
+        "the live repository list must show the owned repository",
+      );
+      const manageRepository = page.getByRole("link", {
         name: "Manage repository",
         exact: true,
       });
       assert.equal(
-        await manageRepository.getAttribute("href"),
-        `/repositories/${config.repository.id}`,
+        await manageRepository.count(),
+        1,
+        "the owned repository must expose its management link",
       );
+      const manageUrl = new URL(
+        await manageRepository.getAttribute("href"),
+        derived.gatewayOrigin.origin,
+      );
+      assert.equal(manageUrl.pathname, `/repositories/${config.repository.id}`);
       ensureOwnerLifetime(inventory, 10);
       await manageRepository.click();
-      await page.waitForURL(`${derived.gatewayOrigin.origin}/repositories/${config.repository.id}`);
+      await page.waitForURL(
+        (url) =>
+          url.origin === derived.gatewayOrigin.origin &&
+          url.pathname === `/repositories/${config.repository.id}`,
+      );
 
       stage = "repository-and-stopped-dashboard";
       const dashboard = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
       if (dashboard.state !== "Stopped" || !dashboard.currentDigest || !dashboard.desiredDigest) {
         block("OWNED_ENVIRONMENT_UNAVAILABLE");
       }
+      const appStatus = page
+        .getByRole("heading", { name: "GitHub App", exact: true })
+        .locator("xpath=..")
+        .locator(".status-badge");
+      const accessStatus = page
+        .getByRole("heading", { name: "Your repository access", exact: true })
+        .locator("xpath=..")
+        .locator(".status-badge");
+      assert.equal(await appStatus.innerText(), "Active");
+      assert.match(await accessStatus.innerText(), /^(Maintain|Admin) access$/u);
       assert.match(
         dashboard.text,
         new RegExp(config.repository.fullName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")),
       );
-      assert.match(dashboard.text, /GitHub App: Active/u);
-      assert.match(dashboard.text, /Repository access: (Maintain|Admin) access/u);
 
       const configureForm = page.locator("form").filter({
-        has: page.locator('input[name="action"][value="configure"]'),
+        has: page.locator('[name="action"][value="configure"]'),
       });
       if (!(await configureForm.count())) block("OWNED_ENVIRONMENT_UNAVAILABLE");
       const initialSelection = await formSelection(configureForm);
@@ -1242,9 +1275,25 @@ test(
       await previewForm
         .locator('select[name="releaseId"]')
         .selectOption(config.selection.releaseId);
-      await previewForm
-        .locator('select[name="moduleIds"]')
-        .selectOption(config.selection.moduleIds);
+      const moduleInputs = previewForm.locator('input[type="checkbox"][name="moduleIds"]');
+      const selectedModules = new Set(config.selection.moduleIds);
+      const availableModules = new Set();
+      for (let index = 0; index < (await moduleInputs.count()); index += 1) {
+        const checkbox = moduleInputs.nth(index);
+        const moduleId = await checkbox.getAttribute("value");
+        assert.ok(moduleId, "module selection checkboxes must carry their module IDs");
+        availableModules.add(moduleId);
+        if (selectedModules.has(moduleId) && !(await checkbox.isChecked())) {
+          await checkbox.check();
+        } else if (!selectedModules.has(moduleId) && (await checkbox.isChecked())) {
+          await checkbox.uncheck();
+        }
+      }
+      assert.deepEqual(
+        [...availableModules].filter((moduleId) => selectedModules.has(moduleId)).sort(),
+        [...selectedModules].sort(),
+        "the configured module selection must be represented by the UI checkboxes",
+      );
       await previewForm
         .locator('select[name="resourceProfileId"]')
         .selectOption(config.selection.resourceProfileId);
@@ -1257,7 +1306,7 @@ test(
       const previewText = await previewStatus.innerText();
       assert.ok(previewText.includes("Requested modules:"));
       const previewedForm = page.locator("form").filter({
-        has: page.locator('input[name="action"][value="configure"]'),
+        has: page.locator('[name="action"][value="configure"]'),
       });
       assert.equal(await previewedForm.count(), 1);
       assert.ok(sameSelection(await formSelection(previewedForm), config.selection));
@@ -1273,7 +1322,9 @@ test(
           response.request().method() === "POST",
       );
       ensureOwnerLifetime(inventory, 10);
-      await page.getByRole("button", { name: "Save and build", exact: true }).click();
+      await page
+        .getByRole("button", { name: "Save configuration and build", exact: true })
+        .click();
       const saveResponse = await saveResponsePromise;
       assert.equal(saveResponse.status(), 202, "UI configuration must queue the build");
       const pendingBuild = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
@@ -1287,9 +1338,10 @@ test(
         "Ready",
         "the current runtime must remain ready during the build",
       );
-      assert.match(
-        pendingBuild.text,
-        /Build: (Reserved|Queued|Claimed|Building|Verifying artifact)/u,
+      assert.ok(
+        ["Reserved", "Queued", "Claimed", "Building", "Verifying artifact"].includes(
+          pendingBuild.buildState,
+        ),
         "the old runtime must be observed while the replacement build is active",
       );
       context.setDefaultNavigationTimeout(ensureOwnerLifetime(inventory, 10));
@@ -1321,9 +1373,10 @@ test(
         "Ready",
         "the current runtime must remain ready through the application GET",
       );
-      assert.match(
-        afterAppGet.text,
-        /Build: (Reserved|Queued|Claimed|Building|Verifying artifact)/u,
+      assert.ok(
+        ["Reserved", "Queued", "Claimed", "Building", "Verifying artifact"].includes(
+          afterAppGet.buildState,
+        ),
         "the stable application GET must be bracketed by observations of the active build",
       );
       const configured = await waitForDeployment(
@@ -1358,19 +1411,19 @@ test(
         .getByRole("button", { name: "Redeploy current configuration", exact: true })
         .click();
       const redeployResponse = await redeployResponsePromise;
-      assert.equal(redeployResponse.status(), 200, "same-image redeploy must be accepted");
+      assert.equal(redeployResponse.status(), 202, "same-image redeploy must be accepted");
       let redeployed;
       const redeployDeadline = Date.now() + config.timeouts.redeploySeconds * 1000;
       while (Date.now() < redeployDeadline) {
         redeployed = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
-        if (/redeploy: Complete/iu.test(redeployed.text) && redeployed.state === "Ready") break;
-        if (/redeploy: Failed|redeploy: Blocked/iu.test(redeployed.text)) {
+        if (redeployed.redeployState === "Complete" && redeployed.state === "Ready") break;
+        if (["Failed", "Blocked"].includes(redeployed.redeployState)) {
           assert.fail("same-image redeploy failed");
         }
         await delay(2_000);
       }
       assert.ok(
-        redeployed && /redeploy: Complete/iu.test(redeployed.text),
+        redeployed && redeployed.redeployState === "Complete",
         "redeploy operation must complete",
       );
       assert.equal(redeployed.state, "Ready");
@@ -1384,10 +1437,10 @@ test(
       context.setDefaultNavigationTimeout(
         ensureOwnerLifetime(inventory, config.timeouts.redeploySeconds),
       );
-      await page.getByRole("button", { name: "Enter application", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Open application", exact: true }).waitFor();
       ensureOwnerLifetime(inventory, config.timeouts.redeploySeconds);
       const handoffCountBeforeUiEntry = handoffPosts.length;
-      await page.getByRole("button", { name: "Enter application", exact: true }).click();
+      await page.getByRole("button", { name: "Open application", exact: true }).click();
       await waitForReadyApp(
         page,
         config,

@@ -7,8 +7,9 @@ is unchanged. Source checks do not certify Hosted acceptance.
 
 Repository identity is GitHub numeric ID `1422456736` (`yohn-jp/praetorium`).
 The campaign started from `e7926f472e12e5f0ec30db88e459328dd08ca58d`.
-The latest integrated and pushed source is `fcaaa2a51eb90c5b91c9d2ab47bebc780a0e7316`;
-the disposable producer verification workflow is a separate verification addition.
+The latest integrated and pushed product source is `3ab22dd`.
+The disposable producer and service-image workflows provide separate evidence;
+neither publishes production images.
 
 - Build and Provisioner use authenticated, coalesced local work notifications
   and five-minute recovery claims, replacing one- and two-second empty claims.
@@ -87,14 +88,17 @@ unsigned CI build report are preserved in [producer evidence](producer-008d5c4-3
 all public proof files were read back from immutable commit `a263f6a` with HTTP
 200, no redirects and identical bytes. The 732,414,335-byte ciphertext was
 downloaded and its SHA-256 verified before transfer to the owned Build VM.
-Registry import, Control Plane admission, cache reuse and Hosted acceptance
-remain separate checks. No public service image was published.
+All four image archives were authenticated-decrypted, checked against the build
+report and OCI manifest digests, imported with preserved digests into the owned
+test registry, and read back over verified TLS with matching digests. Control
+Plane admission, cache reuse and Hosted acceptance remain separate checks. No
+public service image was published.
 
 Expired owned disposable harness data was copied to `/data`, verified with
 checksum and metadata comparison, then removed from `/tmp`; compatibility
 symlinks retain old references. Evidence and worktrees were preserved. Only
 regenerable campaign caches were discarded. At the last check the root disk had
-20 GiB free and `/data` had 158 GiB free. Unrelated application/user data was not
+18 GiB free and `/data` had 147 GiB free. Unrelated application/user data was not
 removed; archived expired inventories are not current acceptance inputs.
 
 ## Independent readiness since the producer build
@@ -115,16 +119,39 @@ removed; archived expired inventories are not current acceptance inputs.
   pull and notification credentials. Frozen install and full check passed.
   The fixed runner accepts the existing explicit anonymous HTTPS loopback flag;
   its restrictions to loopback and disposable ownership remain in force.
-- Latest source CI [39085370845](https://github.com/yohn-jp/praetorium/actions/runs/39085370845)
-  passed on `fcaaa2a`; service publication was skipped.
+- Disposable service-image CI
+  [39085782483](https://github.com/yohn-jp/praetorium/actions/runs/39085782483)
+  passed on `98758e8`, producing Provisioner, Instance Access and Build Worker
+  OCI archives. Ciphertext and archive hashes, BuildKit metadata and OCI digests
+  were checked; all three were imported and read back from the owned TLS
+  registry with preserved digests. Later fixes require new candidate images;
+  these are neither final release candidates nor publicly published images.
+- Control Plane stateless health now avoids unrelated configuration and D1
+  initialization, with both unit and actual bundled Worker checks. Registry and
+  provenance clients bind the platform fetch receiver; the previous unbound
+  invocation failed in actual Workerd. The real producer bundle still fails
+  admission: Workerd throws for Sigstore's omitted-digest ECDSA verification,
+  whereas Node 24 verifies the same input. Explicit SHA-256 verifies that exact
+  Rekor signature in Workerd. A compatibility fix and full verification remain
+  in progress; no release or canary success was fabricated.
+- The real Core image declares user `node` (UID/GID 1000). Kubernetes rejected
+  the earlier nonnumeric identity with `runAsNonRoot`. The renderer now sets
+  UID/GID and volume group 1000. An owned live-policy Pod using the exact image
+  verified writable `/data` and `/tmp`; the application still requires a real
+  Control Plane assignment. Frozen install and full check passed on `3ab22dd`
+  (29 tasks). Earlier CI
+  [39086431028](https://github.com/yohn-jp/praetorium/actions/runs/39086431028)
+  passed on `fcff970`; service publication was skipped.
 - Production inventory preflight actually ran and stopped at validation. After
   deriving routine fields, outstanding validator inputs are Cloudflare account
-  identity, the verified existing production builder public key, four immutable
-  service/monitoring image references and ACME contact. Runtime public L4/DNS/TLS,
+  identity, the verified existing production builder public key, three final
+  immutable service image references and ACME contact. The already tracked
+  Prometheus digest was verified against Docker Hub, including its Linux/amd64
+  child manifest. Runtime public L4/DNS/TLS,
   management/secret references and authorized real browser principals remain
   separate external gates. Public Control Plane `/healthz` returns 503; remote
-  revision/configuration is unknown and the source deployment probe/health-route
-  mismatch is being corrected independently. No production apply ran.
+  revision/configuration is unknown. The source health-route correction is
+  integrated but has not been deployed. No production apply ran.
 
 ## Remaining acceptance
 

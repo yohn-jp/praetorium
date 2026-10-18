@@ -129,18 +129,25 @@ removed; archived expired inventories are not current acceptance inputs.
 - Control Plane stateless health now avoids unrelated configuration and D1
   initialization, with both unit and actual bundled Worker checks. Registry and
   provenance clients bind the platform fetch receiver; the previous unbound
-  invocation failed in actual Workerd. The real producer bundle still fails
+  invocation failed in actual Workerd. The real producer bundle initially failed
   admission: Workerd throws for Sigstore's omitted-digest ECDSA verification,
   whereas Node 24 verifies the same input. Explicit SHA-256 verifies that exact
   Rekor signature in Workerd. A narrow pinned upstream patch now preserves
   Node's implicit SHA-256 behavior for EC keys; explicit hashes and non-EC keys
-  remain unchanged. The real producer bundle was admitted as a candidate by
-  the owned Workerd instance with the compatibility change. GHCR tests pass
+  remain unchanged. Clean Wrangler output from exact source `3ec80b5`, without
+  a manual bundle patch, returned 201 for the real producer proof and 422
+  `RELEASE_CANDIDATE_DENIED` for its tampered Rekor SET, using separate fresh
+  D1/DO state to prevent duplicate acceptance from bypassing verification.
+  GHCR tests pass
   51/51, including real-bundle tamper rejection and Ed25519 preservation.
   Frozen install and full check pass on integrated `3ec80b5` (29 tasks).
   Fresh service-image verification
   [39087477892](https://github.com/yohn-jp/praetorium/actions/runs/39087477892)
-  has started on that cut; its result is pending. No canary success was fabricated.
+  passed on that cut. Its ciphertext was downloaded and its size and SHA-256
+  checked; registry import/readback is a separate step. Source CI also passed
+  on `3ec80b5` and documentation cut `6596ac6`. The latter's actual bundled
+  Workers/D1/DO runner passed; six other categories remain BLOCKED/NOT_CHECKED,
+  so the aggregate correctly exited 2. No canary success was fabricated.
 - The real Core image declares user `node` (UID/GID 1000). Kubernetes rejected
   the earlier nonnumeric identity with `runAsNonRoot`. The renderer now sets
   UID/GID and volume group 1000. An owned live-policy Pod using the exact image

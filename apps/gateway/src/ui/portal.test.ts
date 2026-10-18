@@ -8,6 +8,7 @@ import {
   renderRepositoryList,
 } from "./index.js";
 import { pollingScript } from "./views/operations.js";
+import { applySecurityHeaders } from "../middleware/security-headers.js";
 import type {
   PortalHandlerDependencies,
   PortalOperation,
@@ -603,12 +604,13 @@ describe("server-rendered management UI", () => {
   });
 
   it("keeps handoff codes in a no-store POST body and rejects untrusted destinations", async () => {
-    const response = renderHandoff(
+    const response = applySecurityHeaders(renderHandoff(
       { origin: "https://ins-01.instances.example", code: `raw&<"code`, returnPath: "/" },
       "token_12345678901234567890",
-    );
+    ), { isProductionLike: true });
     const html = await response.text();
     expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Referrer-Policy")).toBe("strict-origin");
     expect(response.headers.get("Content-Security-Policy")).toContain(
       "form-action https://ins-01.instances.example",
     );

@@ -12,7 +12,7 @@ export function applySecurityHeaders(
   const headers = new Headers(response.headers);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("X-Frame-Options", "DENY");
-  headers.set("Referrer-Policy", "no-referrer");
+  if (!headers.has("Referrer-Policy")) headers.set("Referrer-Policy", "no-referrer");
   if (!headers.has("Content-Security-Policy")) {
     headers.set(
       "Content-Security-Policy",

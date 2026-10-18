@@ -75,7 +75,7 @@ sequenceDiagram
     W->>D: claim with attempt/lease
     W->>B: approved Recipe via mTLS
     B->>R: push digest-addressed candidate
-    W->>R: verify manifest + module closure + smoke
+    W->>R: verify OCI identity + compact composition metadata
     W->>D: signed attestation / result
     D->>D: verify + admit / link revision
     Note over D,W: 既存稼働Runtimeは新Artifactのadmission前に停止しない
@@ -84,13 +84,13 @@ sequenceDiagram
 - `plugins/scriptorium`がProducer Catalogからモジュールの依存・互換性を解決。任意のユーザーDockerfileを許可しない。
 - `packages/application/src/configurations/service.ts`が`canonical BuildInput`を作る。`build_key = SHA256(canonical BuildInput)`はユーザー／リポジトリ情報を含まず、同じ承認済み構成で再利用可能。
 - `packages/application/src/builds`がD1 Build記録、claim/lease/進捗/取消を扱う。`apps/build-worker`はK3s Pod、`plugins/buildkit`はBuild VMのrootless daemonに対するClient。
-- `plugins/ghcr`でOCI Blob/Manifest/Digestを実際に検証し、Browser/Serverのclosureとプロデューサが要求するsmokeを確認する。`Artifact登録`と`RegistryにBlobがある`ことは別。
+- `plugins/ghcr`は承認済みBuild InputとOCI Manifest／Platform／Digest、構成メタデータ、Builder署名の対応を確認する。信頼済みProducerがビルド中に確認したBrowser／Server closureと依存パッケージは再走査しない。実行適合性はk3sのReadiness／Canaryで確認する。`Artifact登録`と`RegistryにManifestがある`ことは別。
 - Registryのpublish credential、アプリpull credential、GitHub App tokenは混ぜない。
 - BuildKitのローカルGC目標、D1のBuildキャッシュ台帳、GHCRの実Blobは別々のオブジェクト。D1のGC「削除候補計画」はRegistryの削除を実施していない。
 
 **現在の起動契機:** K3s Build Worker Podが`PRAETORIUM_BUILD_IDLE_DELAY_MS=1000`をデフォルトとして`/internal/builds/claim`へHTTP通信する。要求を発見するための仕組みであり、Buildを正当に実行する証拠ではない。実行時にのみLease更新（デフォルト15秒）が必要になる。
 
-**受入の物証:** 実Scriptoriumの異なる2構成のOCI生成、同一BuildKeyでの再利用、アセット／署名／Manifestの完全性、Build失敗時の既存サービス保持、秘密・ワークデータ混入なし。
+**受入の物証:** 承認済みScriptoriumの異なる2構成のOCI生成、未知モジュール／任意パッケージ・コマンド・Dockerfile指定の拒否、同一BuildKeyでの再利用、OCI Digest・Builder署名・Composition Manifestの対応、実Runtime Readiness／Canary、Build失敗時の既存サービス保持、秘密・作業データ混入なし。全rootfsの再取得は要求しない。
 
 ## 4. Runtime置換・再デプロイ・Writer保護
 

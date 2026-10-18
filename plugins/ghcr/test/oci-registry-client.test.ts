@@ -236,6 +236,92 @@ describe("GHCR OCI registry adapter", () => {
     });
   });
 
+  it.each([false, true])(
+    "verifies official GHCR CDN bytes without forwarding auth (tampered=%s)",
+    async (tampered) => {
+      const fixture = await imageFixture();
+      const alteredLayer = fixture.layerBytes.slice();
+      alteredLayer[0] = alteredLayer[0]! ^ 0xff;
+      const serve = imageFetch(fixture, tampered ? { alteredLayer } : {});
+      const cdnRequests: Array<{
+        authorization: string | null;
+        cookie: string | null;
+        redirect: RequestRedirect | undefined;
+        credentials: RequestCredentials | undefined;
+      }> = [];
+      const client = new GhcrRegistryClient({
+        ...imageLimits,
+        allowedRepositories: [repository],
+        pullCredential: { username: "reader", password: "read-secret" },
+        fetch: (async (input, init) => {
+          const url = new URL(String(input));
+          if (url.hostname === "ghcr.io" && url.pathname.includes("/blobs/")) {
+            expect(new Headers(init?.headers).get("authorization")).toBe(
+              "Bearer scoped-test-token",
+            );
+            return new Response(null, {
+              status: 307,
+              headers: {
+                location: `https://pkg-containers.githubusercontent.com${url.pathname}?signed=opaque`,
+              },
+            });
+          }
+          if (url.hostname === "pkg-containers.githubusercontent.com") {
+            const headers = new Headers(init?.headers);
+            cdnRequests.push({
+              authorization: headers.get("authorization"),
+              cookie: headers.get("cookie"),
+              redirect: init?.redirect,
+              credentials: init?.credentials,
+            });
+          }
+          return serve(input, init);
+        }) as typeof fetch,
+      });
+      const result = client.verifyImage(repository, fixture.rootDigest, {
+        os: "linux",
+        architecture: "amd64",
+      });
+      if (tampered) await expect(result).rejects.toMatchObject({ reason: "invalid_content" });
+      else expect((await result).manifestDigest).toBe(fixture.rootDigest);
+      expect(cdnRequests).toEqual([
+        { authorization: null, cookie: null, redirect: "manual", credentials: "omit" },
+        { authorization: null, cookie: null, redirect: "manual", credentials: "omit" },
+      ]);
+    },
+  );
+
+  it.each([
+    "https://attacker.example/blob",
+    "https://pkg-containers.githubusercontent.com.attacker.example/blob",
+    "http://pkg-containers.githubusercontent.com/blob",
+    "https://pkg-containers.githubusercontent.com:8443/blob",
+    "https://reader:password@pkg-containers.githubusercontent.com/blob",
+    "https://pkg-containers.githubusercontent.com/blob#fragment",
+    "/relative/blob",
+  ])("rejects an unapproved blob redirect without contacting it: %s", async (target) => {
+    const fixture = await imageFixture();
+    const serve = imageFetch(fixture);
+    const requests: string[] = [];
+    const client = new GhcrRegistryClient({
+      ...imageLimits,
+      allowedRepositories: [repository],
+      fetch: (async (input, init) => {
+        const url = new URL(String(input));
+        requests.push(url.hostname);
+        if (url.pathname.includes("/blobs/"))
+          return new Response(null, { status: 307, headers: { location: target } });
+        return serve(input, init);
+      }) as typeof fetch,
+    });
+    const error = await client
+      .verifyImage(repository, fixture.rootDigest, { os: "linux", architecture: "amd64" })
+      .catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ reason: "unavailable" });
+    expect(String(error)).not.toContain(target);
+    expect(requests.every((host) => host === "ghcr.io")).toBe(true);
+  });
+
   it("rejects child bytes that do not match the index descriptor digest", async () => {
     const fixture = await imageFixture();
     const alteredChild = encoder.encode(JSON.stringify({

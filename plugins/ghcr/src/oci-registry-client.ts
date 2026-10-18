@@ -625,22 +625,69 @@ export class GhcrRegistryClient {
     label: string,
     consume: (response: Response, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
-    return this.withAbortBudget(parentSignal, this.maxRegistryRequestMs, `registry ${label}`, async (signal) => {
-      let response: Response;
-      try {
-        response = await this.fetchImplementation(url, { ...init, signal });
-      } catch {
-        if (signal.aborted) throw new RegistryError("unavailable", `registry ${label} request was canceled`);
-        throw new RegistryError("unavailable", `registry ${label} request failed`);
-      }
-      if (signal.aborted) throw new RegistryError("unavailable", `registry ${label} request was canceled`);
-      try {
-        return await consume(response, signal);
-      } catch (error) {
-        if (!response.bodyUsed) void response.body?.cancel().catch(() => undefined);
-        throw error;
-      }
-    });
+    return this.withAbortBudget(
+      parentSignal,
+      this.maxRegistryRequestMs,
+      `registry ${label}`,
+      async (signal) => {
+        let response: Response | undefined;
+        try {
+          response = await this.fetchImplementation(url, { ...init, signal });
+          // GHCR serves immutable blob bytes from its signed CDN URLs. Never
+          // follow token/manifest/write redirects or send registry auth to a CDN.
+          if (
+            [302, 307, 308].includes(response.status) &&
+            this.baseUrl.origin === "https://ghcr.io" &&
+            url.origin === this.baseUrl.origin &&
+            (label === "blob" || label === "layer") &&
+            (init.method === undefined || init.method === "GET")
+          ) {
+            const location = response.headers.get("location");
+            let target: URL;
+            try {
+              target = new URL(location ?? "");
+            } catch {
+              throw new RegistryError("unavailable", "registry blob redirect is invalid");
+            }
+            if (
+              target.origin !== "https://pkg-containers.githubusercontent.com" ||
+              target.username !== "" ||
+              target.password !== "" ||
+              target.hash !== ""
+            ) {
+              throw new RegistryError("unavailable", "registry blob redirect is not permitted");
+            }
+            void response.body?.cancel().catch(() => undefined);
+            const originalHeaders = new Headers(init.headers);
+            const headers = new Headers();
+            for (const name of ["accept", "accept-encoding"]) {
+              const value = originalHeaders.get(name);
+              if (value !== null) headers.set(name, value);
+            }
+            response = await this.fetchImplementation(target, {
+              method: "GET",
+              headers,
+              redirect: "manual",
+              credentials: "omit",
+              signal,
+            });
+          }
+        } catch {
+          void response?.body?.cancel().catch(() => undefined);
+          if (signal.aborted)
+            throw new RegistryError("unavailable", `registry ${label} request was canceled`);
+          throw new RegistryError("unavailable", `registry ${label} request failed`);
+        }
+        if (signal.aborted)
+          throw new RegistryError("unavailable", `registry ${label} request was canceled`);
+        try {
+          return await consume(response, signal);
+        } catch (error) {
+          if (!response.bodyUsed) void response.body?.cancel().catch(() => undefined);
+          throw error;
+        }
+      },
+    );
   }
 
   private validateRepository(repository: string): string {

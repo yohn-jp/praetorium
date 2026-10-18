@@ -1,0 +1,92 @@
+{
+  "testedHead": "841823ebb4b86f0517d019e19c23b882a8b976fc",
+  "gatewaySourceTree": "1ea7a586dfd3249dd585f56b99e02f932f85f82d",
+  "commands": [
+    {
+      "command": "corepack pnpm@11.18.0 install --frozen-lockfile",
+      "head": "3652083d6e78de9a0ab762361bbadb06d0dfc948",
+      "exit": 0
+    },
+    {
+      "command": "corepack pnpm@11.18.0 check",
+      "head": "841823ebb4b86f0517d019e19c23b882a8b976fc",
+      "exit": 0
+    },
+    {
+      "command": "node --test tests/e2e/gateway-worker-security.partial.test.mjs",
+      "head": "3652083d6e78de9a0ab762361bbadb06d0dfc948",
+      "exit": 0
+    },
+    {
+      "command": "node tests/e2e/commercial-ui.test.mjs",
+      "head": "841823ebb4b86f0517d019e19c23b882a8b976fc",
+      "runtime": "Chromium 156.0.8078.4 / Playwright 1.64.1",
+      "exit": 0
+    },
+    {
+      "command": "node tests/e2e/commercial-ui.test.mjs",
+      "head": "841823ebb4b86f0517d019e19c23b882a8b976fc",
+      "runtime": "WebKit 26.6 / Playwright 1.63.0",
+      "exit": 0
+    }
+  ],
+  "limitations": [
+    "WebKit 27.2 strict CSP events: FAIL, not counted as passing",
+    "Live Hosted acceptance, physical devices, OS IME and screen readers: NOT_CHECKED"
+  ],
+  "sha256": {
+    "check.log": "00cf4cfcbff97dcc0fe3d45d510e4d71121eda817c97cca2087ea29f44d1b96f",
+    "chromium-desktop-blocked.png": "654a308541b128e9f16ff36b2276736932a0de443368545d01527c5e7d5ba4c2",
+    "chromium-desktop-configuration.png": "116e42b427a35a2d3ed5250a86cb397f7162c6772f923136a7cb1fb8ce893b6e",
+    "chromium-desktop-detail.png": "2e5d9e7dad04cae5d1c66d96277b0c58b48de700decf28527fe3c32d7a5bd986",
+    "chromium-desktop-empty.png": "339d6adf3df1f320e0f0efb32e0cb2e92fb08890596a5106e2b056aa711fa395",
+    "chromium-desktop-failure.png": "d29566651082dfca657228876d3dee7a1022d191285e10947458381b42acc13c",
+    "chromium-desktop-list.png": "c5c721b3e7737bbc8f168a834dcf6d4631f6701e2b67c10a859b92d7214031ae",
+    "chromium-desktop-long-320.png": "c65e319d193b4b79a3894ad2a49f076088529e37fec666a9e94e75edff5ee002",
+    "chromium-desktop-long-390.png": "7b4025435654f77462d804e20566eef1cd31edd3685ef9297980dd2bb1c199d2",
+    "chromium-desktop-long-768.png": "50c39c6201347547705dbdc97a8fca005ab62607676cec65fd9a3a1d5a150196",
+    "chromium-mobile-blocked.png": "37addd051b6a5740793eb429acdb5a2fbc21c757cf717e7423ca2c835cb97f8c",
+    "chromium-mobile-configuration.png": "146a8ef9b1d5c3c99dbf64fde66105219e3b31f8cc01815c3df6d130dbaed86b",
+    "chromium-mobile-detail.png": "e59ebfb212c7229434d44a34eb18506106fd1c078bdfce630229525786f850aa",
+    "chromium-mobile-empty.png": "41a3d75666e5592929b48d62a2812be96b109518c0bdba71fc99e8750fe7debe",
+    "chromium-mobile-failure.png": "ea8b9f924e0f8ae33bb3eaa6876bc80abc9958dac5f73ea326c5e37f669cdf0c",
+    "chromium-mobile-list.png": "9c7980c1f084e879a02bad4906edd293c200d61c4d7b4e813c2883912c0f5c22",
+    "chromium-mobile-long-320.png": "35f6da5879d4ae3e06b478532757bcf0ffaee36e6d54744cf67ce0eb90452fe8",
+    "chromium-mobile-long-390.png": "f0497499fa92b04c586b92679698e09467b38d1c50f67a3471c54f7a90a82a8a",
+    "chromium-mobile-long-768.png": "207f0c456c9e84eb9bc7461baf7368cddc6591aa022a92791305525db1d1772d",
+    "chromium.json": "ae9aad94838bd4dd0052079c3138512cb6f20fc113ea97de10d84f547c22724e",
+    "chromium.log": "324738c6cc23aac6504cdd998d6f82c2b51f7dc20a41a0e76a6f676b78246b83",
+    "gateway-security.log": "a96c9fa6ae4370a4221db54760de888525fc7d82749e1287903681847c8d5b02",
+    "install.log": "9e7be129337d6b6e433d41754786632536edb1dac76895aaa1265be68cea9fb8",
+    "webkit-27.2-failure.log": "136ff222be81cf86416852214fde2684c0dd1e4294376c4fe15bff4460ccc128",
+    "webkit-desktop-blocked.png": "5cab52cecf9ea6aba0856c8b7dbf03bc61e73917e9384274f5a95c5c97b7b4a7",
+    "webkit-desktop-configuration.png": "400448f600fc0a1757119312081bc5987005a25581059a5bb31b35c775df92ee",
+    "webkit-desktop-detail.png": "57ae86a500cf8f81fc79140deb7e1bc30a0b26ca9eec986b556c29f24d8ea6ed",
+    "webkit-desktop-empty.png": "57015ba15443a14b15724171fc68040265fece9240fe4a7f66b285579e80a620",
+    "webkit-desktop-failure.png": "e326217bdb46baf153963cf7cb52c87f7ec2bd7374eb1fa308004ebd718c6434",
+    "webkit-desktop-list.png": "bca5f62b0f0b496c892b151d24abb11fde8c2f95a3106e62b288ccf5bb5a25e1",
+    "webkit-desktop-long-320.png": "1d346a1e4780d211d0548ac27d9e3da668e8ed74954bb38d53ece3be6acd000c",
+    "webkit-desktop-long-390.png": "5cde6817ea372c039b41b9813b2eebed257e6279b04047cb298cad59d26d125b",
+    "webkit-desktop-long-768.png": "e14602e8c307c3ccb4add502629e4b9766016d4689166ad47320eb629292cb34",
+    "webkit-mobile-blocked.png": "3d78067cdac975b5c9433aab0e71f5b68e377f4be9a6ce55d45ec8016bd51ba6",
+    "webkit-mobile-configuration.png": "e10f91af0fdb6437d8cff288efd641b46ee562f3624dbee889d6d3ef48a53996",
+    "webkit-mobile-detail.png": "9115d12c192e5e88a29853c71de74df41161a49f99a40de94770774675bfb3f7",
+    "webkit-mobile-empty.png": "25b6fa7de1790d0932fbc71383917dbc3316f59504565f84600606c9293c05bc",
+    "webkit-mobile-failure.png": "d9b2724f8d9df42b42382b5b3c2d0e9afd15ccfc7df5d81f6678c5a951025629",
+    "webkit-mobile-list.png": "29ed5508627679af41de253477082721a704998b144adbc89fd1f3e7e25432a8",
+    "webkit-mobile-long-320.png": "fb62ec787ba344637a26db6d498859cbdeeea298d1b99d1efeb39c6563fe81c9",
+    "webkit-mobile-long-390.png": "869c439d23b40f3dbfdf7adebf8983e009595270e7a9604fcb23c3208b2f88dd",
+    "webkit-mobile-long-768.png": "04c8797d297053ffda1eb68a15cadba209bdea349017084e8a516a7ae58878e2",
+    "webkit.json": "cf78dd333be8e95074c72b143729be77d42f6cf82c028f31fcd323c54c642ed0",
+    "webkit.log": "44309b187ca15d8ee3ac2e67c56c7ad004fd12aa97e7ab64690a8dc894c8e717"
+  },
+  "originalLogSha256": {
+    "install.log": "9e7be129337d6b6e433d41754786632536edb1dac76895aaa1265be68cea9fb8",
+    "webkit-27.2-failure.log": "136ff222be81cf86416852214fde2684c0dd1e4294376c4fe15bff4460ccc128",
+    "gateway-security.log": "a96c9fa6ae4370a4221db54760de888525fc7d82749e1287903681847c8d5b02",
+    "check.log": "f8a9f31b97c85595eb411b1fdc05d8a01a629ec459feb41f3b1668ed8fc3a18e",
+    "chromium.log": "324738c6cc23aac6504cdd998d6f82c2b51f7dc20a41a0e76a6f676b78246b83",
+    "webkit.log": "44309b187ca15d8ee3ac2e67c56c7ad004fd12aa97e7ab64690a8dc894c8e717"
+  },
+  "textNormalization": "Text logs remove trailing line whitespace only. JSON reports use repository formatting. Original captured log byte hashes are retained separately."
+}

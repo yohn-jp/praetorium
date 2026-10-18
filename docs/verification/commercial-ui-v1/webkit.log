@@ -1,0 +1,4 @@
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+fixture HTTP 409 http://127.0.0.1:41447 /repositories/123456789/actions?ui=desktop
+fixture HTTP 409 http://127.0.0.1:41447 /repositories/123456789/actions?ui=mobile
+[{"browser":"webkit","version":"26.6","status":"PASS","screenshots":18,"contrast":{"BODY":15.099709035808974,"A":8.72237309272832,"status-badge status-good":6.260042023833232,"status-badge status-warn":5.874291457892959,"button button-secondary":16.185871657067192,"status-badge status-neutral":5.725479703876334,"field-help":5.990392692344101,"button":6.979411002240085,"status-badge status-bad":5.953357762856979},"assertions":"layouts, CSP enforcement, fields, dirty navigation, polling, preview/error/configure, stop/redeploy/retry/enter, mode/cookie/section/back-forward, keyboard, no-JS"}]

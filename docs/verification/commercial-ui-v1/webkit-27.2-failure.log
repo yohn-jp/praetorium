@@ -1,0 +1,26 @@
+Skipping host requirements validation logic because `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS` env variable is set.
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: renderer obeys actual HTTP CSP
++ actual - expected
+
++ [
++   'style-src-attr',
++   'style-src-attr',
++   'style-src-attr'
++ ]
+- []
+
+    at visit (file:///home/sophia/src/praetorium-commercial-ui-v1/tests/e2e/commercial-ui.test.mjs:277:16)
+    at async file:///home/sophia/src/praetorium-commercial-ui-v1/tests/e2e/commercial-ui.test.mjs:301:11 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: [ 'style-src-attr', 'style-src-attr', 'style-src-attr' ],
+  expected: [],
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.21.0

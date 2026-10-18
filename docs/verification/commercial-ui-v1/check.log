@@ -1,0 +1,659 @@
+$ pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run check:boundaries && pnpm run check:contracts-schema-drift
+$ turbo build
+turbo 2.5.0
+
+ WARNING  Issues occurred when constructing package graph. Turbo will function, but some features may not be available:
+   x Could not resolve workspaces.
+  |-> Unable to convert to yaml: patchedDependencies.@sigstore/core@4.0.1:
+  |   invalid type: string
+  |   "f22aa3d51f7842b00bef4f6ee8a98e2c1d32d387f22164d9a12f23635abfa3a5",
+  |   expected struct PatchFile at line 8 column 27
+  `-> patchedDependencies.@sigstore/core@4.0.1: invalid type: string
+      "f22aa3d51f7842b00bef4f6ee8a98e2c1d32d387f22164d9a12f23635abfa3a5",
+      expected struct PatchFile at line 8 column 27
+
+• Packages in scope: @praetorium/application, @praetorium/auth, @praetorium/build-worker, @praetorium/buildkit, @praetorium/config, @praetorium/contracts, @praetorium/control-plane, @praetorium/domain, @praetorium/gateway, @praetorium/ghcr, @praetorium/github, @praetorium/instance-access, @praetorium/kubernetes, @praetorium/legacy-recovery, @praetorium/observability, @praetorium/persistence, @praetorium/provisioner, @praetorium/scriptorium
+• Running build in 18 packages
+• Remote caching disabled
+@praetorium/domain:build: cache hit, replaying logs 4e273db9efb66623
+@praetorium/domain:build: $ tsc -p tsconfig.json
+@praetorium/observability:build: cache hit, replaying logs 37ddb6faea7688a4
+@praetorium/observability:build: $ tsc -p tsconfig.json
+@praetorium/legacy-recovery:build: cache hit, replaying logs f5fad05f1b54fee4
+@praetorium/legacy-recovery:build: $ tsc -p tsconfig.json
+@praetorium/config:build: cache hit, replaying logs 1af52c1d2e9ac91a
+@praetorium/config:build: $ tsc -p tsconfig.json
+@praetorium/contracts:build: cache hit, replaying logs ed4a99b312dd547d
+@praetorium/contracts:build: $ tsc -p tsconfig.json
+@praetorium/instance-access:build: cache hit, replaying logs 19704748f1394e0e
+@praetorium/instance-access:build: $ tsc -p tsconfig.json
+@praetorium/kubernetes:build: cache hit, replaying logs b2060e00621ed98e
+@praetorium/kubernetes:build: $ tsc -p tsconfig.json
+@praetorium/ghcr:build: cache hit, replaying logs f6439c06efabc9e2
+@praetorium/ghcr:build: $ tsc -p tsconfig.json
+@praetorium/scriptorium:build: cache hit, replaying logs d410edce935b242a
+@praetorium/scriptorium:build: $ tsc -p tsconfig.json
+@praetorium/auth:build: cache hit, replaying logs c17e192f992230f2
+@praetorium/auth:build: $ tsc -p tsconfig.json
+@praetorium/github:build: cache hit, replaying logs 325874c7e34297d3
+@praetorium/github:build: $ tsc -p tsconfig.json
+@praetorium/application:build: cache hit, replaying logs acc7a73c8c0908c4
+@praetorium/application:build: $ tsc -p tsconfig.json
+@praetorium/persistence:build: cache hit, replaying logs a41e3a8ff1532f98
+@praetorium/persistence:build: $ tsc -p tsconfig.json
+@praetorium/buildkit:build: cache hit, replaying logs c8c05f63e429db6a
+@praetorium/buildkit:build: $ tsc -p tsconfig.json
+@praetorium/gateway:build: cache hit, replaying logs f5f5aed4cabd63e0
+@praetorium/gateway:build: $ tsc -p tsconfig.json
+@praetorium/build-worker:build: cache hit, replaying logs deb681bbce628176
+@praetorium/build-worker:build: $ tsc -p tsconfig.json
+@praetorium/provisioner:build: cache hit, replaying logs 119e70ffe36c3761
+@praetorium/provisioner:build: $ tsc -p tsconfig.json
+@praetorium/control-plane:build: cache hit, replaying logs a83b5ee5f977aa6c
+@praetorium/control-plane:build: $ tsc -p tsconfig.json
+
+ Tasks:    18 successful, 18 total
+Cached:    18 cached, 18 total
+  Time:    291ms >>> FULL TURBO
+
+$ turbo lint
+turbo 2.5.0
+
+ WARNING  Issues occurred when constructing package graph. Turbo will function, but some features may not be available:
+   x Could not resolve workspaces.
+  |-> Unable to convert to yaml: patchedDependencies.@sigstore/core@4.0.1:
+  |   invalid type: string
+  |   "f22aa3d51f7842b00bef4f6ee8a98e2c1d32d387f22164d9a12f23635abfa3a5",
+  |   expected struct PatchFile at line 8 column 27
+  `-> patchedDependencies.@sigstore/core@4.0.1: invalid type: string
+      "f22aa3d51f7842b00bef4f6ee8a98e2c1d32d387f22164d9a12f23635abfa3a5",
+      expected struct PatchFile at line 8 column 27
+
+• Packages in scope: @praetorium/application, @praetorium/auth, @praetorium/build-worker, @praetorium/buildkit, @praetorium/config, @praetorium/contracts, @praetorium/control-plane, @praetorium/domain, @praetorium/gateway, @praetorium/ghcr, @praetorium/github, @praetorium/instance-access, @praetorium/kubernetes, @praetorium/legacy-recovery, @praetorium/observability, @praetorium/persistence, @praetorium/provisioner, @praetorium/scriptorium
+• Running lint in 18 packages
+• Remote caching disabled
+@praetorium/legacy-recovery:lint: cache hit, replaying logs 6cd6a1a33c98967e
+@praetorium/legacy-recovery:lint: $ eslint . --max-warnings 0
+@praetorium/domain:lint: cache hit, replaying logs 0b2799c3697cacd3
+@praetorium/domain:lint: $ eslint . --max-warnings 0
+@praetorium/contracts:lint: cache hit, replaying logs 595a584a0b3deb7c
+@praetorium/contracts:lint: $ eslint . --max-warnings 0
+@praetorium/config:lint: cache hit, replaying logs d322289bc20180cb
+@praetorium/config:lint: $ eslint . --max-warnings 0
+@praetorium/observability:lint: cache hit, replaying logs 1b78a5609faa0f48
+@praetorium/observability:lint: $ eslint . --max-warnings 0
+@praetorium/kubernetes:lint: cache hit, replaying logs 40f4ccf9f580bab2
+@praetorium/kubernetes:lint: $ eslint . --max-warnings 0
+@praetorium/instance-access:lint: cache hit, replaying logs c330b14e1457ce1f
+@praetorium/instance-access:lint: $ eslint . --max-warnings 0
+@praetorium/auth:lint: cache hit, replaying logs 36bf05a9d827cd9c
+@praetorium/auth:lint: $ eslint . --max-warnings 0
+@praetorium/scriptorium:lint: cache hit, replaying logs 08cb3d9bb94048c2
+@praetorium/scriptorium:lint: $ eslint . --max-warnings 0
+@praetorium/application:lint: cache hit, replaying logs 8cc60dd3791f4050
+@praetorium/application:lint: $ eslint . --max-warnings 0
+@praetorium/ghcr:lint: cache hit, replaying logs d9db23d0db04582e
+@praetorium/ghcr:lint: $ eslint . --max-warnings 0
+@praetorium/github:lint: cache hit, replaying logs 54cdb065a5902473
+@praetorium/github:lint: $ eslint . --max-warnings 0
+@praetorium/persistence:lint: cache hit, replaying logs 462dbed54bc2ecda
+@praetorium/persistence:lint: $ eslint . --max-warnings 0
+@praetorium/provisioner:lint: cache hit, replaying logs 924d0d61ba857f61
+@praetorium/provisioner:lint: $ eslint . --max-warnings 0
+@praetorium/buildkit:lint: cache hit, replaying logs 09822dc1716c37c1
+@praetorium/buildkit:lint: $ eslint . --max-warnings 0
+@praetorium/gateway:lint: cache hit, replaying logs 49601dc628f2e86b
+@praetorium/gateway:lint: $ eslint . --max-warnings 0
+@praetorium/control-plane:lint: cache hit, replaying logs efbd96b658422cb1
+@praetorium/control-plane:lint: $ eslint . --max-warnings 0
+@praetorium/build-worker:lint: cache hit, replaying logs 637f1d8a761b9889
+@praetorium/build-worker:lint: $ eslint . --max-warnings 0
+
+ Tasks:    18 successful, 18 total
+Cached:    18 cached, 18 total
+  Time:    178ms >>> FULL TURBO
+
+$ turbo typecheck
+turbo 2.5.0
+
+ WARNING  Issues occurred when constructing package graph. Turbo will function, but some features may not be available:
+   x Could not resolve workspaces.
+  |-> Unable to convert to yaml: patchedDependencies.@sigstore/core@4.0.1:
+  |   invalid type: string
+  |   "f22aa3d51f7842b00bef4f6ee8a98e2c1d32d387f22164d9a12f23635abfa3a5",
+  |   expected struct PatchFile at line 8 column 27
+  `-> patchedDependencies.@sigstore/core@4.0.1: invalid type: string
+      "f22aa3d51f7842b00bef4f6ee8a98e2c1d32d387f22164d9a12f23635abfa3a5",
+      expected struct PatchFile at line 8 column 27
+
+• Packages in scope: @praetorium/application, @praetorium/auth, @praetorium/build-worker, @praetorium/buildkit, @praetorium/config, @praetorium/contracts, @praetorium/control-plane, @praetorium/domain, @praetorium/gateway, @praetorium/ghcr, @praetorium/github, @praetorium/instance-access, @praetorium/kubernetes, @praetorium/legacy-recovery, @praetorium/observability, @praetorium/persistence, @praetorium/provisioner, @praetorium/scriptorium
+• Running typecheck in 18 packages
+• Remote caching disabled
+@praetorium/config:build: cache hit, replaying logs 1af52c1d2e9ac91a
+@praetorium/config:build: $ tsc -p tsconfig.json
+@praetorium/legacy-recovery:typecheck: cache hit, replaying logs c4a74c1bb59879a6
+@praetorium/legacy-recovery:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/domain:typecheck: cache hit, replaying logs c115f331997fd632
+@praetorium/domain:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/contracts:typecheck: cache hit, replaying logs a3b66e879bb145f7
+@praetorium/contracts:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/contracts:build: cache hit, replaying logs ed4a99b312dd547d
+@praetorium/contracts:build: $ tsc -p tsconfig.json
+@praetorium/domain:build: cache hit, replaying logs 4e273db9efb66623
+@praetorium/domain:build: $ tsc -p tsconfig.json
+@praetorium/observability:typecheck: cache hit, replaying logs 8db1ea13463e149e
+@praetorium/observability:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/config:typecheck: cache hit, replaying logs d282e082f2235ccf
+@praetorium/config:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/scriptorium:typecheck: cache hit, replaying logs 9e5f33c90c62b1d6
+@praetorium/scriptorium:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/scriptorium:build: cache hit, replaying logs d410edce935b242a
+@praetorium/scriptorium:build: $ tsc -p tsconfig.json
+@praetorium/ghcr:typecheck: cache hit, replaying logs 672715e8ebc4037d
+@praetorium/ghcr:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/kubernetes:build: cache hit, replaying logs b2060e00621ed98e
+@praetorium/kubernetes:build: $ tsc -p tsconfig.json
+@praetorium/ghcr:build: cache hit, replaying logs f6439c06efabc9e2
+@praetorium/ghcr:build: $ tsc -p tsconfig.json
+@praetorium/kubernetes:typecheck: cache hit, replaying logs c39709dc76ec8b82
+@praetorium/kubernetes:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/instance-access:typecheck: cache hit, replaying logs bf9ba856ad6ea1aa
+@praetorium/instance-access:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/application:typecheck: cache hit, replaying logs cdb92721fa0c1c59
+@praetorium/application:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/auth:typecheck: cache hit, replaying logs 87301353e9e0cc27
+@praetorium/auth:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/auth:build: cache hit, replaying logs c17e192f992230f2
+@praetorium/auth:build: $ tsc -p tsconfig.json
+@praetorium/github:typecheck: cache hit, replaying logs d32ef9ee926b1ea7
+@praetorium/github:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/github:build: cache hit, replaying logs 325874c7e34297d3
+@praetorium/github:build: $ tsc -p tsconfig.json
+@praetorium/gateway:typecheck: cache hit, replaying logs 931d390310550751
+@praetorium/gateway:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/application:build: cache hit, replaying logs acc7a73c8c0908c4
+@praetorium/application:build: $ tsc -p tsconfig.json
+@praetorium/buildkit:typecheck: cache hit, replaying logs ebe9718063dbcf35
+@praetorium/buildkit:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/buildkit:build: cache hit, replaying logs c8c05f63e429db6a
+@praetorium/buildkit:build: $ tsc -p tsconfig.json
+@praetorium/provisioner:typecheck: cache hit, replaying logs db9dcf4eef60cbc6
+@praetorium/provisioner:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/persistence:typecheck: cache hit, replaying logs 7ee9a5cdb7208850
+@praetorium/persistence:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/persistence:build: cache hit, replaying logs a41e3a8ff1532f98
+@praetorium/persistence:build: $ tsc -p tsconfig.json
+@praetorium/build-worker:typecheck: cache hit, replaying logs 8d220c842f6d5afd
+@praetorium/build-worker:typecheck: $ tsc -p tsconfig.json --noEmit
+@praetorium/control-plane:typecheck: cache hit, replaying logs 27d2bc3f5e6c3a23
+@praetorium/control-plane:typecheck: $ tsc -p tsconfig.json --noEmit
+
+ Tasks:    29 successful, 29 total
+Cached:    29 cached, 29 total
+  Time:    321ms >>> FULL TURBO
+
+$ turbo test
+turbo 2.5.0
+
+ WARNING  Issues occurred when constructing package graph. Turbo will function, but some features may not be available:
+   x Could not resolve workspaces.
+  |-> Unable to convert to yaml: patchedDependencies.@sigstore/core@4.0.1:
+  |   invalid type: string
+  |   "f22aa3d51f7842b00bef4f6ee8a98e2c1d32d387f22164d9a12f23635abfa3a5",
+  |   expected struct PatchFile at line 8 column 27
+  `-> patchedDependencies.@sigstore/core@4.0.1: invalid type: string
+      "f22aa3d51f7842b00bef4f6ee8a98e2c1d32d387f22164d9a12f23635abfa3a5",
+      expected struct PatchFile at line 8 column 27
+
+• Packages in scope: @praetorium/application, @praetorium/auth, @praetorium/build-worker, @praetorium/buildkit, @praetorium/config, @praetorium/contracts, @praetorium/control-plane, @praetorium/domain, @praetorium/gateway, @praetorium/ghcr, @praetorium/github, @praetorium/instance-access, @praetorium/kubernetes, @praetorium/legacy-recovery, @praetorium/observability, @praetorium/persistence, @praetorium/provisioner, @praetorium/scriptorium
+• Running test in 18 packages
+• Remote caching disabled
+@praetorium/domain:build: cache hit, replaying logs 4e273db9efb66623
+@praetorium/domain:build: $ tsc -p tsconfig.json
+@praetorium/observability:test: cache hit, replaying logs 78961b1bc0a5e61e
+@praetorium/observability:test: $ vitest run --passWithNoTests
+@praetorium/observability:test:
+@praetorium/observability:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/packages/observability
+@praetorium/observability:test:
+@praetorium/observability:test:  ✓ test/index.test.ts (1 test) 3ms
+@praetorium/observability:test:  ✓ test/control.test.ts (1 test) 33ms
+@praetorium/observability:test:
+@praetorium/observability:test:  Test Files  2 passed (2)
+@praetorium/observability:test:       Tests  2 passed (2)
+@praetorium/observability:test:    Start at  14:57:16
+@praetorium/observability:test:    Duration  5.12s (transform 887ms, setup 0ms, collect 1.32s, tests 36ms, environment 58ms, prepare 2.09s)
+@praetorium/observability:test:
+@praetorium/legacy-recovery:test: cache hit, replaying logs 1e03ebc18682dcc9
+@praetorium/legacy-recovery:test: $ node --experimental-strip-types --test test/*.test.mjs
+@praetorium/legacy-recovery:test: ✔ offline import plan splits per repository, deduplicates shared repository IDs, and records origin/provenance without grants (10.936155ms)
+@praetorium/legacy-recovery:test: ✔ one legacy instance with several repositories becomes separate target bindings (0.944952ms)
+@praetorium/legacy-recovery:test: ✔ missing producer export preserves the source origin and creates an unresolved provenance record (1.067892ms)
+@praetorium/legacy-recovery:test: ✔ offline import report blocks installation conflicts and unresolved local work (1.04449ms)
+@praetorium/legacy-recovery:test: ✔ import refuses credential-bearing fields and reports an unmapped target origin (1.46102ms)
+@praetorium/legacy-recovery:test: ✔ import-plan CLI reads explicit exports and emits a dry-run only (421.797006ms)
+@praetorium/legacy-recovery:test: ✔ metadata archive encrypts its contents, authenticates tampering, and checks payload files (8934.311043ms)
+@praetorium/legacy-recovery:test: ✔ metadata CLI backs up, verifies, and stages an isolated restore without importing SQL (11327.634459ms)
+@praetorium/legacy-recovery:test: ✔ off-host Restic destination validation binds owner-approved remote identity and rejects local targets (36.048818ms)
+@praetorium/legacy-recovery:test: ✔ remote D1 CLI path exports only the named remote database, keeps Restic secrets out of Wrangler, and verifies its archive (1124.928327ms)
+@praetorium/legacy-recovery:test: ✔ legacy D1 Restic restore remains checksum-verified, isolated, and inert (38.772911ms)
+@praetorium/legacy-recovery:test: ✔ legacy PVC Restic CLI requires a read-only /data mount and records the exact source identity (6.965445ms)
+@praetorium/legacy-recovery:test: ℹ tests 12
+@praetorium/legacy-recovery:test: ℹ suites 0
+@praetorium/legacy-recovery:test: ℹ pass 12
+@praetorium/legacy-recovery:test: ℹ fail 0
+@praetorium/legacy-recovery:test: ℹ cancelled 0
+@praetorium/legacy-recovery:test: ℹ skipped 0
+@praetorium/legacy-recovery:test: ℹ todo 0
+@praetorium/legacy-recovery:test: ℹ duration_ms 22237.414392
+@praetorium/contracts:test: cache hit, replaying logs fbe454407644339d
+@praetorium/contracts:test: $ vitest run --passWithNoTests
+@praetorium/contracts:test:
+@praetorium/contracts:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/packages/contracts
+@praetorium/contracts:test:
+@praetorium/contracts:test:  ✓ src/persistence-compatibility.test.ts (2 tests) 172ms
+@praetorium/contracts:test:  ✓ src/build.test.ts (4 tests) 855ms
+@praetorium/contracts:test:    ✓ immutable composition identity > normalizes module order and separates output affecting inputs  364ms
+@praetorium/contracts:test:  ✓ src/instance-access.test.ts (1 test) 18ms
+@praetorium/contracts:test:  ✓ src/build-report.test.ts (1 test) 483ms
+@praetorium/contracts:test:    ✓ rejects valid-shaped attestations attached to another build or candidate  430ms
+@praetorium/contracts:test:  ✓ src/runtime-canary-health.test.ts (1 test) 42ms
+@praetorium/contracts:test:  ✓ src/instance-hostname.test.ts (1 test) 16ms
+@praetorium/contracts:test:  ✓ src/composition.test.ts (1 test) 142ms
+@praetorium/contracts:test:
+@praetorium/contracts:test:  Test Files  7 passed (7)
+@praetorium/contracts:test:       Tests  11 passed (11)
+@praetorium/contracts:test:    Start at  14:57:15
+@praetorium/contracts:test:    Duration  5.84s (transform 4.41s, setup 0ms, collect 15.52s, tests 1.73s, environment 20ms, prepare 9.41s)
+@praetorium/contracts:test:
+@praetorium/config:build: cache hit, replaying logs 1af52c1d2e9ac91a
+@praetorium/config:build: $ tsc -p tsconfig.json
+@praetorium/domain:test: cache hit, replaying logs 25cb1898afad8641
+@praetorium/domain:test: $ vitest run --passWithNoTests
+@praetorium/domain:test:
+@praetorium/domain:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/packages/domain
+@praetorium/domain:test:
+@praetorium/domain:test:  ✓ src/index.test.ts (1 test) 5ms
+@praetorium/domain:test:
+@praetorium/domain:test:  Test Files  1 passed (1)
+@praetorium/domain:test:       Tests  1 passed (1)
+@praetorium/domain:test:    Start at  14:57:16
+@praetorium/domain:test:    Duration  5.50s (transform 453ms, setup 0ms, collect 502ms, tests 5ms, environment 0ms, prepare 1.28s)
+@praetorium/domain:test:
+@praetorium/config:test: cache hit, replaying logs ad6fac271cdb8063
+@praetorium/config:test: $ vitest run --passWithNoTests
+@praetorium/config:test:
+@praetorium/config:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/packages/config
+@praetorium/config:test:
+@praetorium/config:test:  ✓ src/index.test.ts (2 tests) 48ms
+@praetorium/config:test:
+@praetorium/config:test:  Test Files  1 passed (1)
+@praetorium/config:test:       Tests  2 passed (2)
+@praetorium/config:test:    Start at  14:57:15
+@praetorium/config:test:    Duration  5.13s (transform 1.29s, setup 0ms, collect 1.46s, tests 48ms, environment 0ms, prepare 1.93s)
+@praetorium/config:test:
+@praetorium/contracts:build: cache hit, replaying logs ed4a99b312dd547d
+@praetorium/contracts:build: $ tsc -p tsconfig.json
+@praetorium/auth:test: cache hit, replaying logs 225751153e80ea08
+@praetorium/auth:test: $ vitest run --passWithNoTests
+@praetorium/auth:test:
+@praetorium/auth:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/packages/auth
+@praetorium/auth:test:
+@praetorium/auth:test:  ✓ test/token-vault.test.ts (1 test) 72ms
+@praetorium/auth:test:  ✓ test/session-lifecycle.test.ts (4 tests) 89ms
+@praetorium/auth:test:  ✓ test/handoff-lifecycle.test.ts (4 tests) 65ms
+@praetorium/auth:test:  ✓ test/key-registry.test.ts (2 tests) 58ms
+@praetorium/auth:test:  ✓ test/mutation-receipt.test.ts (3 tests) 72ms
+@praetorium/auth:test:  ✓ test/token-exchange.test.ts (2 tests) 115ms
+@praetorium/auth:test:  ✓ test/runtime-control.test.ts (4 tests) 187ms
+@praetorium/auth:test:  ✓ test/handoff-exchange.test.ts (2 tests) 126ms
+@praetorium/auth:test:  ✓ test/runtime-identity.test.ts (3 tests) 153ms
+@praetorium/auth:test:  ✓ test/refresh-lifecycle.test.ts (2 tests) 106ms
+@praetorium/auth:test:  ✓ test/access-grant.test.ts (1 test) 93ms
+@praetorium/auth:test:
+@praetorium/auth:test:  Test Files  11 passed (11)
+@praetorium/auth:test:       Tests  28 passed (28)
+@praetorium/auth:test:    Start at  14:57:16
+@praetorium/auth:test:    Duration  7.78s (transform 5.92s, setup 0ms, collect 21.09s, tests 1.14s, environment 2ms, prepare 9.61s)
+@praetorium/auth:test:
+@praetorium/instance-access:test: cache hit, replaying logs 2ef7035fabad7746
+@praetorium/instance-access:test: $ vitest run --passWithNoTests
+@praetorium/instance-access:test:
+@praetorium/instance-access:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/apps/instance-access
+@praetorium/instance-access:test:
+@praetorium/instance-access:test:  ✓ src/handler.test.ts (9 tests) 90ms
+@praetorium/instance-access:test:
+@praetorium/instance-access:test:  Test Files  1 passed (1)
+@praetorium/instance-access:test:       Tests  9 passed (9)
+@praetorium/instance-access:test:    Start at  14:57:15
+@praetorium/instance-access:test:    Duration  6.79s (transform 2.31s, setup 0ms, collect 2.69s, tests 90ms, environment 0ms, prepare 1.95s)
+@praetorium/instance-access:test:
+@praetorium/application:test: cache hit, replaying logs 3874d5e666bfd49e
+@praetorium/application:test: $ vitest run --passWithNoTests
+@praetorium/application:test:
+@praetorium/application:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/packages/application
+@praetorium/application:test:
+@praetorium/application:test:  ✓ src/lifecycle/idle.test.ts (4 tests) 9ms
+@praetorium/application:test:  ✓ src/rollouts/service.test.ts (6 tests) 64ms
+@praetorium/application:test:  ✓ src/releases/verifier.test.ts (2 tests) 36ms
+@praetorium/application:test:  ✓ src/work-availability.test.ts (2 tests) 31ms
+@praetorium/application:test:  ✓ src/releases/canary-service.test.ts (5 tests) 115ms
+@praetorium/application:test:  ✓ src/builds/file-builder-signer.test.ts (2 tests) 127ms
+@praetorium/application:test:  ✓ src/builds/attestation.test.ts (3 tests) 170ms
+@praetorium/application:test:  ✓ src/builds/worker.test.ts (8 tests) 225ms
+@praetorium/application:test:  ✓ src/lifecycle/service.test.ts (33 tests) 399ms
+@praetorium/application:test:  ✓ src/configurations/service.test.ts (1 test) 82ms
+@praetorium/application:test:  ✓ src/releases/release.test.ts (9 tests) 171ms
+@praetorium/application:test:  ✓ test/artifacts-build-cache.test.ts (5 tests) 372ms
+@praetorium/application:test:
+@praetorium/application:test:  Test Files  12 passed (12)
+@praetorium/application:test:       Tests  80 passed (80)
+@praetorium/application:test:    Start at  14:57:16
+@praetorium/application:test:    Duration  8.50s (transform 9.33s, setup 0ms, collect 27.83s, tests 1.80s, environment 48ms, prepare 12.20s)
+@praetorium/application:test:
+@praetorium/ghcr:test: cache hit, replaying logs 8281a55100c8ea29
+@praetorium/ghcr:test: $ vitest run
+@praetorium/ghcr:test:
+@praetorium/ghcr:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/plugins/ghcr
+@praetorium/ghcr:test:
+@praetorium/ghcr:test:  ✓ test/sigstore-provenance.test.ts (11 tests) 478ms
+@praetorium/ghcr:test:  ✓ test/sigstore-crypto.test.ts (4 tests) 648ms
+@praetorium/ghcr:test:    ✓ Sigstore crypto compatibility > verifies the real producer bundle and rejects a tampered Rekor SET  505ms
+@praetorium/ghcr:test:  ✓ test/oci-registry-client.test.ts (32 tests) 991ms
+@praetorium/ghcr:test:  ✓ test/builder-signature.test.ts (3 tests) 73ms
+@praetorium/ghcr:test:  ✓ test/candidate-verifier.test.ts (11 tests) 382ms
+@praetorium/ghcr:test:
+@praetorium/ghcr:test:  Test Files  5 passed (5)
+@praetorium/ghcr:test:       Tests  61 passed (61)
+@praetorium/ghcr:test:    Start at  14:57:25
+@praetorium/ghcr:test:    Duration  4.94s (transform 3.21s, setup 0ms, collect 8.64s, tests 2.57s, environment 1ms, prepare 3.89s)
+@praetorium/ghcr:test:
+@praetorium/scriptorium:test: cache hit, replaying logs d1909730f6969f1a
+@praetorium/scriptorium:test: $ vitest run
+@praetorium/scriptorium:test:
+@praetorium/scriptorium:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/plugins/scriptorium
+@praetorium/scriptorium:test:
+@praetorium/scriptorium:test:  ✓ test/runtime.test.ts (4 tests) 31ms
+@praetorium/scriptorium:test:  ✓ test/composition.test.ts (9 tests) 93ms
+@praetorium/scriptorium:test:  ✓ test/producer.test.ts (6 tests) 81ms
+@praetorium/scriptorium:test:  ✓ test/catalog-resolver.test.ts (1 test) 26ms
+@praetorium/scriptorium:test:
+@praetorium/scriptorium:test:  Test Files  4 passed (4)
+@praetorium/scriptorium:test:       Tests  20 passed (20)
+@praetorium/scriptorium:test:    Start at  14:57:17
+@praetorium/scriptorium:test:    Duration  6.09s (transform 1.59s, setup 0ms, collect 5.81s, tests 231ms, environment 7ms, prepare 1.89s)
+@praetorium/scriptorium:test:
+@praetorium/kubernetes:test: cache hit, replaying logs 578ae34f07eaa55a
+@praetorium/kubernetes:test: $ vitest run
+@praetorium/kubernetes:test:
+@praetorium/kubernetes:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/plugins/kubernetes
+@praetorium/kubernetes:test:
+@praetorium/kubernetes:test:  ✓ test/kubernetes.test.ts (4 tests) 17ms
+@praetorium/kubernetes:test:  ✓ test/provider.test.ts (35 tests) 291ms
+@praetorium/kubernetes:test:
+@praetorium/kubernetes:test:  Test Files  2 passed (2)
+@praetorium/kubernetes:test:       Tests  39 passed (39)
+@praetorium/kubernetes:test:    Start at  14:57:16
+@praetorium/kubernetes:test:    Duration  7.10s (transform 1.91s, setup 0ms, collect 3.21s, tests 309ms, environment 0ms, prepare 2.34s)
+@praetorium/kubernetes:test:
+@praetorium/ghcr:build: cache hit, replaying logs f6439c06efabc9e2
+@praetorium/ghcr:build: $ tsc -p tsconfig.json
+@praetorium/scriptorium:build: cache hit, replaying logs d410edce935b242a
+@praetorium/scriptorium:build: $ tsc -p tsconfig.json
+@praetorium/kubernetes:build: cache hit, replaying logs b2060e00621ed98e
+@praetorium/kubernetes:build: $ tsc -p tsconfig.json
+@praetorium/auth:build: cache hit, replaying logs c17e192f992230f2
+@praetorium/auth:build: $ tsc -p tsconfig.json
+@praetorium/application:build: cache hit, replaying logs acc7a73c8c0908c4
+@praetorium/application:build: $ tsc -p tsconfig.json
+@praetorium/github:test: cache hit, replaying logs 5c950ba75a6774c1
+@praetorium/github:test: $ vitest run --passWithNoTests
+@praetorium/github:test:
+@praetorium/github:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/plugins/github
+@praetorium/github:test:
+@praetorium/github:test:  ✓ test/access.test.ts (5 tests) 22ms
+@praetorium/github:test:  ✓ test/credential-broker-lifecycle.test.ts (3 tests) 19ms
+@praetorium/github:test:  ✓ test/runtime-identity-authenticator.test.ts (2 tests) 61ms
+@praetorium/github:test:  ✓ test/installation-token.test.ts (6 tests) 222ms
+@praetorium/github:test:  ✓ test/broker-webhook.test.ts (7 tests) 118ms
+@praetorium/github:test:  ✓ test/oauth.test.ts (4 tests) 70ms
+@praetorium/github:test:
+@praetorium/github:test:  Test Files  6 passed (6)
+@praetorium/github:test:       Tests  27 passed (27)
+@praetorium/github:test:    Start at  14:57:25
+@praetorium/github:test:    Duration  6.71s (transform 4.24s, setup 0ms, collect 23.30s, tests 511ms, environment 10ms, prepare 2.65s)
+@praetorium/github:test:
+@praetorium/persistence:test: cache hit, replaying logs a684051442f4f840
+@praetorium/persistence:test: $ vitest run --passWithNoTests
+@praetorium/persistence:test:
+@praetorium/persistence:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/packages/persistence
+@praetorium/persistence:test:
+@praetorium/persistence:test:  ✓ test/d1-build-store.test.ts (1 test) 282ms
+@praetorium/persistence:test:  ✓ test/d1-configuration-stage.test.ts (3 tests) 1132ms
+@praetorium/persistence:test:    ✓ D1ConfigurationStore staged configuration > persists a reusable build snapshot without changing desired state or creating operations  545ms
+@praetorium/persistence:test:    ✓ D1ConfigurationStore staged configuration > activates only an admitted stage under the live rollout lease in one D1 batch  426ms
+@praetorium/persistence:test:  ✓ test/runtime-git-credentials-store.test.ts (7 tests) 1602ms
+@praetorium/persistence:test:    ✓ D1RuntimeGitCredentialStore > stores only the encrypted envelope and preserves immutable identity across idempotent registration  398ms
+@praetorium/persistence:test:  ✓ test/d1-artifact-cache-store.test.ts (5 tests) 1066ms
+@praetorium/persistence:test:    ✓ D1ArtifactCacheStore against the repository SQLite schema > round-trips admitted evidence and keeps cache hit times monotonic  400ms
+@praetorium/persistence:test:  ✓ test/d1-platform-store.test.ts (9 tests) 2662ms
+@praetorium/persistence:test:    ✓ D1PlatformStore with SQLite transactions > atomically resolves concurrent first access to one repository instance  444ms
+@praetorium/persistence:test:    ✓ D1PlatformStore with SQLite transactions > records pre-retirement progress and blocking without overwriting the old runtime observation  522ms
+@praetorium/persistence:test:    ✓ D1PlatformStore with SQLite transactions > fenced-blocks a claim when runtime context cannot be resolved without changing the old observation  662ms
+@praetorium/persistence:test:
+@praetorium/persistence:test:  Test Files  5 passed (5)
+@praetorium/persistence:test:       Tests  25 passed (25)
+@praetorium/persistence:test:    Start at  14:57:25
+@praetorium/persistence:test:    Duration  6.81s (transform 3.64s, setup 0ms, collect 12.34s, tests 6.74s, environment 23ms, prepare 2.09s)
+@praetorium/persistence:test:
+@praetorium/buildkit:test: cache hit, replaying logs f47ba6deb096a1bb
+@praetorium/buildkit:test: $ vitest run
+@praetorium/buildkit:test:
+@praetorium/buildkit:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/plugins/buildkit
+@praetorium/buildkit:test:
+@praetorium/buildkit:test:  ✓ test/image-rootfs.test.ts (1 test) 79ms
+@praetorium/buildkit:test:  ✓ test/config.test.ts (6 tests) 248ms
+@praetorium/buildkit:test:  ✓ test/provider.test.ts (5 tests) 202ms
+@praetorium/buildkit:test:  ✓ test/buildctl.test.ts (4 tests) 1807ms
+@praetorium/buildkit:test:    ✓ remote buildctl execution > parses bounded progress and keeps raw output and parent environment private  389ms
+@praetorium/buildkit:test:    ✓ remote buildctl execution > kills a solve that exceeds its deadline  1105ms
+@praetorium/buildkit:test:
+@praetorium/buildkit:test:  Test Files  4 passed (4)
+@praetorium/buildkit:test:       Tests  16 passed (16)
+@praetorium/buildkit:test:    Start at  14:57:25
+@praetorium/buildkit:test:    Duration  4.64s (transform 2.55s, setup 0ms, collect 4.63s, tests 2.34s, environment 1ms, prepare 2.00s)
+@praetorium/buildkit:test:
+@praetorium/github:build: cache hit, replaying logs 325874c7e34297d3
+@praetorium/buildkit:build: cache hit, replaying logs c8c05f63e429db6a
+@praetorium/buildkit:build: $ tsc -p tsconfig.json
+@praetorium/github:build: $ tsc -p tsconfig.json
+@praetorium/provisioner:test: cache hit, replaying logs e40c39b2ec3f4a1b
+@praetorium/provisioner:test: $ vitest run
+@praetorium/provisioner:test:
+@praetorium/provisioner:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/apps/provisioner
+@praetorium/provisioner:test:
+@praetorium/provisioner:test:  ✓ src/idle-deadline-journal.test.ts (7 tests) 606ms
+@praetorium/provisioner:test:  ✓ src/operation-client.test.ts (16 tests) 148ms
+@praetorium/provisioner:test: stderr | src/worker.test.ts > ProvisionerWorker observation reporting > blocks terminal success when the completed assignment differs from the operation target
+@praetorium/provisioner:test: {"level":"warn","event":"operation_success_observation_mismatch","operationId":"op_01","phase":"complete","at":"2026-10-18T05:57:32.175Z"}
+@praetorium/provisioner:test:
+@praetorium/provisioner:test: stderr | src/worker.test.ts > ProvisionerWorker observation reporting > backs claim failures off to the bounded recovery interval
+@praetorium/provisioner:test: {"level":"warn","event":"operation_claim_failed","code":"Error","at":"2026-10-18T05:57:32.244Z"}
+@praetorium/provisioner:test:
+@praetorium/provisioner:test: stderr | src/worker.test.ts > ProvisionerWorker observation reporting > backs claim failures off to the bounded recovery interval
+@praetorium/provisioner:test: {"level":"warn","event":"operation_claim_failed","code":"Error","at":"2026-10-18T05:57:37.244Z"}
+@praetorium/provisioner:test:
+@praetorium/provisioner:test: stderr | src/worker.test.ts > ProvisionerWorker observation reporting > backs claim failures off to the bounded recovery interval
+@praetorium/provisioner:test: {"level":"warn","event":"operation_claim_failed","code":"Error","at":"2026-10-18T05:57:46.244Z"}
+@praetorium/provisioner:test:
+@praetorium/provisioner:test: stderr | src/worker.test.ts > ProvisionerWorker observation reporting > backs claim failures off to the bounded recovery interval
+@praetorium/provisioner:test: {"level":"warn","event":"operation_claim_failed","code":"Error","at":"2026-10-18T05:58:02.444Z"}
+@praetorium/provisioner:test:
+@praetorium/provisioner:test: stderr | src/worker.test.ts > ProvisionerWorker observation reporting > backs claim failures off to the bounded recovery interval
+@praetorium/provisioner:test: {"level":"warn","event":"operation_claim_failed","code":"Error","at":"2026-10-18T05:58:31.604Z"}
+@praetorium/provisioner:test:
+@praetorium/provisioner:test: stderr | src/worker.test.ts > ProvisionerWorker observation reporting > backs claim failures off to the bounded recovery interval
+@praetorium/provisioner:test: {"level":"warn","event":"operation_claim_failed","code":"Error","at":"2026-10-18T05:59:24.092Z"}
+@praetorium/provisioner:test:
+@praetorium/provisioner:test: stderr | src/worker.test.ts > ProvisionerWorker observation reporting > backs claim failures off to the bounded recovery interval
+@praetorium/provisioner:test: {"level":"warn","event":"operation_claim_failed","code":"Error","at":"2026-10-18T06:00:58.571Z"}
+@praetorium/provisioner:test:
+@praetorium/provisioner:test:  ✓ src/worker.test.ts (5 tests) 124ms
+@praetorium/provisioner:test:  ✓ src/scriptorium-control-client.test.ts (5 tests) 128ms
+@praetorium/provisioner:test:  ✓ src/kubernetes-lifecycle-adapter.test.ts (2 tests) 72ms
+@praetorium/provisioner:test:  ✓ src/health.test.ts (4 tests) 377ms
+@praetorium/provisioner:test:  ✓ test/runtime-auth-probe.test.ts (2 tests) 53ms
+@praetorium/provisioner:test:  ✓ src/idle-controller.test.ts (45 tests) 1010ms
+@praetorium/provisioner:test:
+@praetorium/provisioner:test:  Test Files  8 passed (8)
+@praetorium/provisioner:test:       Tests  86 passed (86)
+@praetorium/provisioner:test:    Start at  14:57:26
+@praetorium/provisioner:test:    Duration  6.56s (transform 8.02s, setup 0ms, collect 28.49s, tests 2.52s, environment 11ms, prepare 2.13s)
+@praetorium/provisioner:test:
+@praetorium/build-worker:test: cache hit, replaying logs 430323e76a40d82f
+@praetorium/build-worker:test: $ vitest run
+@praetorium/build-worker:test:
+@praetorium/build-worker:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/apps/build-worker
+@praetorium/build-worker:test:
+@praetorium/build-worker:test:  ✓ test/config.test.ts (5 tests) 33ms
+@praetorium/build-worker:test:  ✓ test/registry-credential.test.ts (2 tests) 82ms
+@praetorium/build-worker:test:  ✓ test/pnpm-runtime-closure.test.ts (6 tests) 886ms
+@praetorium/build-worker:test:    ✓ runtime package closure verification > recomputes the selected dependency graph and binds packages to the source pnpm lock  334ms
+@praetorium/build-worker:test:  ✓ test/http-client.test.ts (4 tests) 130ms
+@praetorium/build-worker:test:  ✓ test/builder-signing-compat.test.ts (1 test) 121ms
+@praetorium/build-worker:test:  ✓ test/composition-persistence.test.ts (4 tests) 85ms
+@praetorium/build-worker:test:  ✓ test/work-notification-server.test.ts (3 tests) 203ms
+@praetorium/build-worker:test:  ✓ test/composition-artifacts.test.ts (1 test) 79ms
+@praetorium/build-worker:test:  ✓ test/browser-artifacts.test.ts (4 tests) 348ms
+@praetorium/build-worker:test:  ✓ test/main.test.ts (5 tests) 464ms
+@praetorium/build-worker:test:  ✓ test/prepare-runtime-secrets.test.ts (4 tests) 1267ms
+@praetorium/build-worker:test:    ✓ Build Worker projected runtime secrets > copies a pinned AtomicWriter generation into private files accepted by production readers  397ms
+@praetorium/build-worker:test:    ✓ Build Worker projected runtime secrets > rejects ambiguous existing targets without following or changing their referent  419ms
+@praetorium/build-worker:test:
+@praetorium/build-worker:test:  Test Files  11 passed (11)
+@praetorium/build-worker:test:       Tests  39 passed (39)
+@praetorium/build-worker:test:    Start at  14:57:28
+@praetorium/build-worker:test:    Duration  6.43s (transform 8.91s, setup 0ms, collect 31.86s, tests 3.70s, environment 27ms, prepare 6.53s)
+@praetorium/build-worker:test:
+@praetorium/persistence:build: cache hit, replaying logs a41e3a8ff1532f98
+@praetorium/persistence:build: $ tsc -p tsconfig.json
+@praetorium/gateway:test: cache hit, replaying logs f565d8fc0b757575
+@praetorium/gateway:test: $ vitest run --passWithNoTests
+@praetorium/gateway:test:
+@praetorium/gateway:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/apps/gateway
+@praetorium/gateway:test:
+@praetorium/gateway:test:  ✓ test/user-auth-state-durable-object.test.ts (6 tests) 15ms
+@praetorium/gateway:test:  ✓ test/ephemeral-code-durable-object.test.ts (6 tests) 24ms
+@praetorium/gateway:test:  ✓ test/middleware.test.ts (3 tests) 18ms
+@praetorium/gateway:test:  ✓ src/ui/portal.test.ts (25 tests) 75ms
+@praetorium/gateway:test:  ✓ src/ui/views/mobile.test.ts (4 tests) 11ms
+@praetorium/gateway:test:  ✓ src/ui/views/desktop.test.ts (4 tests) 11ms
+@praetorium/gateway:test:  ✓ test/key-registry-kv.test.ts (3 tests) 16ms
+@praetorium/gateway:test:  ✓ test/control-plane-client.test.ts (7 tests) 42ms
+@praetorium/gateway:test:  ✓ test/shard.test.ts (2 tests) 12ms
+@praetorium/gateway:test:  ✓ test/token-vault.test.ts (2 tests) 16ms
+@praetorium/gateway:test:  ✓ test/signing-key.test.ts (2 tests) 33ms
+@praetorium/gateway:test:  ✓ test/runtime-credential-registry.test.ts (13 tests) 210ms
+@praetorium/gateway:test:  ✓ src/github-webhook.test.ts (5 tests) 75ms
+@praetorium/gateway:test:  ✓ test/runtime-retirement-route.test.ts (3 tests) 45ms
+@praetorium/gateway:test:  ✓ src/services/portal-service.test.ts (14 tests) 71ms
+@praetorium/gateway:test:  ✓ test/context.test.ts (2 tests) 8ms
+@praetorium/gateway:test:  ✓ test/context-lazy-keys.test.ts (1 test) 39ms
+@praetorium/gateway:test: stdout | test/worker.test.ts > Gateway Worker static routes > serves liveness with no auth, Control Plane, or KV bindings
+@praetorium/gateway:test: {"level":"info","type":"request","requestId":"health-check","method":"GET","path":"/healthz","status":200,"durationMs":3}
+@praetorium/gateway:test:
+@praetorium/gateway:test: stdout | test/worker.test.ts > Gateway Worker static routes > serves JWKS from the current public registry without initializing Gateway secrets or DOs
+@praetorium/gateway:test: {"level":"info","type":"request","requestId":"1fc7e87f-fd19-4ed1-a52d-9cdc959aa14e","method":"GET","path":"/.well-known/jwks.json","status":200,"durationMs":1}
+@praetorium/gateway:test:
+@praetorium/gateway:test: stdout | test/worker.test.ts > Gateway Worker static routes > keeps liveness independent of registry outages and fails JWKS closed
+@praetorium/gateway:test: {"level":"info","type":"request","requestId":"74a0924d-958a-4949-bc88-750911ea756d","method":"GET","path":"/healthz","status":200,"durationMs":0}
+@praetorium/gateway:test:
+@praetorium/gateway:test: stdout | test/worker.test.ts > Gateway Worker static routes > keeps liveness independent of registry outages and fails JWKS closed
+@praetorium/gateway:test: {"level":"info","type":"request","requestId":"a1331d6f-803e-4545-8532-7f62e7b24e05","method":"GET","path":"/.well-known/jwks.json","status":500,"durationMs":1}
+@praetorium/gateway:test:
+@praetorium/gateway:test:  ✓ test/worker.test.ts (4 tests) 26ms
+@praetorium/gateway:test:  ✓ test/mutation-authorization.test.ts (19 tests) 245ms
+@praetorium/gateway:test:  ✓ test/index.test.ts (1 test) 15ms
+@praetorium/gateway:test:  ✓ test/runtime-git-broker.test.ts (6 tests) 817ms
+@praetorium/gateway:test:
+@praetorium/gateway:test:  Test Files  21 passed (21)
+@praetorium/gateway:test:       Tests  132 passed (132)
+@praetorium/gateway:test:    Start at  15:19:05
+@praetorium/gateway:test:    Duration  3.14s (transform 5.04s, setup 0ms, collect 22.02s, tests 1.82s, environment 6ms, prepare 3.28s)
+@praetorium/gateway:test:
+@praetorium/control-plane:test: cache hit, replaying logs d27743c3ba057323
+@praetorium/control-plane:test: $ vitest run --passWithNoTests
+@praetorium/control-plane:test:
+@praetorium/control-plane:test:  RUN  v3.2.4 /home/sophia/src/praetorium-commercial-ui-v1/apps/control-plane
+@praetorium/control-plane:test:
+@praetorium/control-plane:test:  ✓ src/build-routes.test.ts (5 tests) 191ms
+@praetorium/control-plane:test:  ✓ src/configuration-routes.test.ts (6 tests) 254ms
+@praetorium/control-plane:test:  ✓ src/release-canary-observations.test.ts (3 tests) 58ms
+@praetorium/control-plane:test:  ✓ src/runtime-git-credential-routes.test.ts (7 tests) 1252ms
+@praetorium/control-plane:test:    ✓ Control Plane runtime Git credential routes > fails closed when an inactive or unavailable binding cannot confirm the stored registration  372ms
+@praetorium/control-plane:test:  ✓ src/rollout-composition.test.ts (3 tests) 117ms
+@praetorium/control-plane:test:  ✓ src/control-credentials.test.ts (7 tests) 106ms
+@praetorium/control-plane:test:  ✓ src/cache-maintenance.test.ts (3 tests) 408ms
+@praetorium/control-plane:test:  ✓ src/release-producer-metadata.test.ts (4 tests) 33ms
+@praetorium/control-plane:test:  ✓ src/credential-retirement.test.ts (8 tests) 89ms
+@praetorium/control-plane:test:  ✓ test/runtime-auth-probe.integration.test.ts (5 tests) 313ms
+@praetorium/control-plane:test:  ✓ src/runtime-binding.test.ts (17 tests) 3614ms
+@praetorium/control-plane:test:    ✓ Control Plane runtime binding metadata > keeps the observed ready writer during a pending build and returns the active reservation identity  328ms
+@praetorium/control-plane:test:    ✓ Control Plane runtime binding metadata > keeps a stopping operation fenced when its lease expires or its terminal checkpoint omits the request  348ms
+@praetorium/control-plane:test:    ✓ Control Plane runtime binding metadata > rejects stale epochs, another repository, suspended bindings, and stale reservations  338ms
+@praetorium/control-plane:test:    ✓ Control Plane runtime binding metadata > does not infer writer absence from an expired operation lease or accept a mismatched target reservation  378ms
+@praetorium/control-plane:test:  ✓ src/releases/operator-admission.test.ts (4 tests) 165ms
+@praetorium/control-plane:test:  ✓ src/scheduled.test.ts (3 tests) 29ms
+@praetorium/control-plane:test: stdout | src/work-notifications.test.ts > work availability delivery > sends only a hint and forbids credential-bearing redirects
+@praetorium/control-plane:test: {"event":"work_notification","kind":"build","outcome":"notified"}
+@praetorium/control-plane:test:
+@praetorium/control-plane:test: stdout | src/work-notifications.test.ts > work availability delivery > does not follow a redirect and treats it as a dropped hint
+@praetorium/control-plane:test: {"event":"work_notification","kind":"build","outcome":"failed"}
+@praetorium/control-plane:test:
+@praetorium/control-plane:test: stdout | src/work-notifications.test.ts > work availability delivery > scopes operation metadata hints and rejects scoped build hints
+@praetorium/control-plane:test: {"event":"work_notification","kind":"operation","outcome":"notified"}
+@praetorium/control-plane:test:
+@praetorium/control-plane:test: stdout | src/work-notifications.test.ts > work availability delivery > scopes operation metadata hints and rejects scoped build hints
+@praetorium/control-plane:test: {"event":"work_notification","kind":"build","outcome":"failed"}
+@praetorium/control-plane:test:
+@praetorium/control-plane:test: stdout | src/work-notifications.test.ts > work availability delivery > keeps dropped notifications separate from durable execution and never retries
+@praetorium/control-plane:test: {"event":"work_notification","kind":"build","outcome":"failed"}
+@praetorium/control-plane:test:
+@praetorium/control-plane:test: stdout | src/work-notifications.test.ts > work availability delivery > keeps dropped notifications separate from durable execution and never retries
+@praetorium/control-plane:test: {"event":"work_notification","kind":"build","outcome":"disabled"}
+@praetorium/control-plane:test:
+@praetorium/control-plane:test: stdout | src/work-notifications.test.ts > work availability delivery > keeps dropped notifications separate from durable execution and never retries
+@praetorium/control-plane:test: {"event":"work_notification","kind":"build","outcome":"failed"}
+@praetorium/control-plane:test:
+@praetorium/control-plane:test: stdout | src/work-notifications.test.ts > work availability delivery > keeps dropped notifications separate from durable execution and never retries
+@praetorium/control-plane:test: {"event":"work_notification","kind":"build","outcome":"failed"}
+@praetorium/control-plane:test:
+@praetorium/control-plane:test:  ✓ src/work-notifications.test.ts (5 tests) 86ms
+@praetorium/control-plane:test:  ✓ src/adapters/d1/t11-release-rollouts.test.ts (8 tests) 1450ms
+@praetorium/control-plane:test:    ✓ D1T11ReleaseRolloutStore against SQLite execution > keeps the durable canary sample token through Cron and progresses health written during its lease  356ms
+@praetorium/control-plane:test:  ✓ src/operation-admin-routes.test.ts (5 tests) 1351ms
+@praetorium/control-plane:test:    ✓ Control Plane operation admin routes against migrated SQLite D1 > pages at most 50 instance audit events and returns only the action allowlist  353ms
+@praetorium/control-plane:test:    ✓ Control Plane operation admin routes against migrated SQLite D1 > uses an ordinary stop retry without advancing runtime epoch  314ms
+@praetorium/control-plane:test:  ✓ src/github-webhook-routes.test.ts (9 tests) 1897ms
+@praetorium/control-plane:test:    ✓ Control Plane GitHub webhook route against migrated SQLite D1 > passes a signed all-to-selected delivery through the actual Gateway and Control Plane factories  977ms
+@praetorium/control-plane:test:  ✓ src/idle-routes.test.ts (9 tests) 1685ms
+@praetorium/control-plane:test:    ✓ Control Plane provisioner idle routes > keeps the exact active release canary out of idle-stop while allowing ordinary and cleanup stops  439ms
+@praetorium/control-plane:test:  ✓ src/runtime-identity-routes.test.ts (8 tests) 1886ms
+@praetorium/control-plane:test:    ✓ runtime identity routes > exposes renewable binding metadata only for the configured Provisioner cluster  424ms
+@praetorium/control-plane:test:    ✓ runtime identity routes > denies requests after the D1 installation or active reservation changes  340ms
+@praetorium/control-plane:test:  ✓ src/worker-scheduled.test.ts (1 test) 6ms
+@praetorium/control-plane:test:  ✓ src/worker-healthz.test.ts (1 test) 6ms
+@praetorium/control-plane:test:
+@praetorium/control-plane:test:  Test Files  21 passed (21)
+@praetorium/control-plane:test:       Tests  121 passed (121)
+@praetorium/control-plane:test:    Start at  14:57:28
+@praetorium/control-plane:test:    Duration  8.34s (transform 21.31s, setup 0ms, collect 65.26s, tests 15.00s, environment 11ms, prepare 8.57s)
+@praetorium/control-plane:test:
+
+ Tasks:    29 successful, 29 total
+Cached:    29 cached, 29 total
+  Time:    415ms >>> FULL TURBO
+
+$ node scripts/check-boundaries.mjs
+Neutral package provider boundaries verified
+$ node packages/contracts/scripts/schemas.mjs
+Contract structural JSON schemas match canonical generation

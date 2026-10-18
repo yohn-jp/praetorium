@@ -233,6 +233,21 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
   }
   assert.ok(script, "Wrangler dry-run must produce the actual Control Plane Worker bundle");
 
+  const healthWorker = new Miniflare({
+    script,
+    modules: true,
+    compatibilityDate: compatibilityDateMatch[1],
+    compatibilityFlags,
+  });
+  try {
+    const health = await healthWorker.dispatchFetch("https://control-plane.test/healthz");
+    assert.equal(health.status, 200, "liveness must not require any environment binding");
+    assert.equal(health.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await health.json(), { status: "ok" });
+  } finally {
+    await healthWorker.dispose();
+  }
+
   const persistenceRoot = await mkdtemp(path.join(os.tmpdir(), "praetorium-t14-workers-d1-do-"));
   const identityKey = await webcrypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },

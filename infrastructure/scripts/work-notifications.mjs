@@ -96,61 +96,66 @@ function registryCredentialMaterials({ registryPull, registryPush, registryHost 
   ) {
     throw new Error("push registry credential is invalid");
   }
-  const entry = Object.entries(push.auths).find(
+  const entries = Object.entries(push.auths).filter(
     ([server]) => registryAuthHost(server) === registryHost,
-  )?.[1];
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+  );
+  if (entries.length === 0) {
     throw new Error("push registry credential is invalid");
   }
 
-  const username = typeof entry.username === "string" ? entry.username : "";
-  const password = typeof entry.password === "string" ? entry.password : "";
-  let resolvedUsername = username;
-  let resolvedPassword = password;
-  if ((!resolvedUsername || !resolvedPassword) && typeof entry.auth === "string") {
-    const encoded = entry.auth;
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
-      throw new Error("push registry credential is invalid");
-    }
-    const decodedBytes = Buffer.from(encoded, "base64");
-    if (decodedBytes.toString("base64") !== encoded) {
-      throw new Error("push registry credential is invalid");
-    }
-    let decoded;
-    try {
-      decoded = new TextDecoder("utf-8", { fatal: true }).decode(decodedBytes);
-    } catch {
-      throw new Error("push registry credential is invalid");
-    }
-    const separator = decoded.indexOf(":");
-    if (separator > 0) {
-      resolvedUsername = decoded.slice(0, separator);
-      resolvedPassword = decoded.slice(separator + 1);
-    }
-  }
-  if (
-    resolvedUsername.length < 1 ||
-    resolvedUsername.length > 256 ||
-    resolvedPassword.length < 1 ||
-    resolvedPassword.length > 4_096 ||
-    hasControlCharacters(resolvedUsername) ||
-    hasControlCharacters(resolvedPassword)
-  ) {
-    throw new Error("push registry credential is invalid");
-  }
-
-  const pushTokens = credentialTokens(resolvedUsername, resolvedPassword);
-  for (const field of ["auth", "identitytoken"]) {
-    if (typeof entry[field] === "string" && entry[field] !== "") {
-      pushTokens.push(Buffer.from(entry[field], "utf8"));
-    }
-  }
-  return [
+  const materials = [
     pullBytes,
     ...credentialTokens(pull.username, pull.password),
     pushBytes,
-    ...pushTokens,
   ];
+  for (const [, entry] of entries) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("push registry credential is invalid");
+    }
+    const username = typeof entry.username === "string" ? entry.username : "";
+    const password = typeof entry.password === "string" ? entry.password : "";
+    let resolvedUsername = username;
+    let resolvedPassword = password;
+    if ((!resolvedUsername || !resolvedPassword) && typeof entry.auth === "string") {
+      const encoded = entry.auth;
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded)) {
+        throw new Error("push registry credential is invalid");
+      }
+      const decodedBytes = Buffer.from(encoded, "base64");
+      if (decodedBytes.toString("base64") !== encoded) {
+        throw new Error("push registry credential is invalid");
+      }
+      let decoded;
+      try {
+        decoded = new TextDecoder("utf-8", { fatal: true }).decode(decodedBytes);
+      } catch {
+        throw new Error("push registry credential is invalid");
+      }
+      const separator = decoded.indexOf(":");
+      if (separator > 0) {
+        resolvedUsername = decoded.slice(0, separator);
+        resolvedPassword = decoded.slice(separator + 1);
+      }
+    }
+    if (
+      resolvedUsername.length < 1 ||
+      resolvedUsername.length > 256 ||
+      resolvedPassword.length < 1 ||
+      resolvedPassword.length > 4_096 ||
+      hasControlCharacters(resolvedUsername) ||
+      hasControlCharacters(resolvedPassword)
+    ) {
+      throw new Error("push registry credential is invalid");
+    }
+
+    materials.push(...credentialTokens(resolvedUsername, resolvedPassword));
+    for (const field of ["auth", "identitytoken"]) {
+      if (typeof entry[field] === "string" && entry[field] !== "") {
+        materials.push(Buffer.from(entry[field], "utf8"));
+      }
+    }
+  }
+  return materials;
 }
 
 export function validateWorkNotificationTokens({

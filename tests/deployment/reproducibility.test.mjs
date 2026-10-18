@@ -205,6 +205,17 @@ test("work notification tokens are printable and distinct from claim and registr
     auths: { "ghcr.io": { auth: pushAuth } },
   }));
   assertRegistryConflict(pushUsername, "build", { registryPush: authOnlyPush });
+  const duplicateCanonicalHost = Buffer.from(JSON.stringify({
+    auths: {
+      "ghcr.io": { auth: pushAuth },
+      "https://ghcr.io": {
+        auth: Buffer.from(`duplicate-user:${"duplicate-entry-password-".repeat(2)}`).toString("base64"),
+      },
+    },
+  }));
+  assertRegistryConflict("duplicate-entry-password-".repeat(2), "provisioner", {
+    registryPush: duplicateCanonicalHost,
+  });
   assert.throws(() => validateWorkNotificationTokens({
     ...base,
     provisioner: bytes("c".repeat(48)),

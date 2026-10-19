@@ -28,6 +28,8 @@ spec:
   issuerRef:
     name: praetorium-acme
     kind: ClusterIssuer
+  # cert-manager owns this wildcard certificate in K3s, not Caddy.
+  # The TLSStore/default serves it to dynamic tenant routes in other namespaces.
   dnsNames:
     - "@@INSTANCE_HOSTNAME_SUFFIX@@"
     - "*.@@INSTANCE_HOSTNAME_SUFFIX@@"

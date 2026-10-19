@@ -1,9 +1,9 @@
 # Praetorium — アプリケーション公開URL・Runtime識別子・画面遷移
 
-> **状態:** 2026-10-19 のオーナー決定を記録した**目標アーキテクチャ**（実装・DNS適用・本番検証は未実施）。  
+> **状態:** 2026-10-20 の最新オーナー決定で公開DNSとTLS終端を更新。URL・Runtime同一性は継続、**実K3sへの適用とHTTPS疎通は未検証**。  
 > **Authority:** [Issue #18](https://github.com/yohn-jp/praetorium/issues/18) およびオーナーの最新指示。従前の [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) の単一Writer・現在権限の再検証・保存/復旧要件は維持し、識別子の意味が衝突する部分だけ今回の決定を優先する。  
 > **調査基準:** `yohn-jp/praetorium@cc726923816e89dc106fae33a71c415b410cdd4b`。現状の責務は [SYSTEM.md](SYSTEM.md)、実コード経路は [EXECUTION.md](EXECUTION.md)。  
-> **この文書のスコープ:** URL・DNS・Origin・アプリ/Runtime同一性・状態遷移の契約。Better Authの採否、UIのデザイン改訂、インスタンスの実装変更、移行実行は含めない。
+> **この文書のスコープ:** URL・DNS・k3sでの証明書管理・Origin・アプリ/Runtime同一性・状態遷移の契約。Better Auth採否やUI改訂は別途決定する。
 
 ## 1. 製品境界と識別子
 
@@ -22,51 +22,50 @@
 
 **重要な現状差分:** 現行 `instance_id` は `ins_<ULID>` 形式の**論理的なリポジトリ単位のID**で、`runtime_epoch` によって実行世代を識別する。この正本をそのまま「物理コンテナの絶対ID」と読み替えてはいけない。目標では論理 `application_binding` と物理 `instance_id` を分割する。Kubernetes Pod UIDやコンテナランタイムの生IDと同一だと推定せず、一つのRuntime実体に拘束されるIDとして検証可能にする。
 
-## 2. 確定したURLとDNS
+## 2. 公開URL・静的ワイルドカードDNS・k3s TLS
 
-| 役割 | 目標のFQDN / URL | 更新されるタイミング |
+**2026-10-20の最新オーナー決定:** リポジトリ別のDNSレコードは作らない。DNSはすべてのScriptoriumアプリを共通Ingressへ向け、Praetorium/K3sが元のHTTP Hostから現在のRuntimeを選択する。K3sのcert-managerが証明書を発行・更新し、TraefikがTLS終端する。Caddyは後日オーナーが**TLSを終端せずTCP/SNIを透過転送する**。
+
+| 役割 | FQDN / URL | 更新の単位 |
 | --- | --- | --- |
 | Praetorium管理ポータル | `https://praetorium.yohn.jp` | 基本不変 |
 | Scriptorium公開アプリ | `https://[repository_id].scriptorium.yohn.jp` | リポジトリに対して不変 |
-| 汎用の公開アプリ規則 | `https://[repository_id].[app_identity].yohn.jp` | `app_identity` を登録した時点で固定 |
-| Runtime/コンテナ固有の名前 | `[id].instances.praetorium.yohn.jp` | Runtime生成ごとに新しい `id`。**`ins-` ホスト名接頭辞は付けない** |
-| 管理側のEntryルート | `https://praetorium.yohn.jp/entry/... ` | アプリ公開URLとは別の制御経路。現状 `/entry/:instanceId` のため移行が必要 |
+| 汎用の公開アプリ規則 | `https://[repository_id].[app_identity].yohn.jp` | アプリ種別ごと（現在はScriptoriumのみ） |
+| 物理Runtimeホスト識別 | `[id].instances.praetorium.yohn.jp` | Runtime世代ごと（**ins- DNS接頭辞なし**） |
 
-**CNAMEの規則（各アプリ/各リポジトリの実体ごとに登録）:**
+公開DNSはCloudflareの**単一のDNS-onlyワイルドカードレコード**:
 
 ```dns
-; app_identity = scriptorium, repository_id = 123456789, id = 01m56estantnhv8ba5j1pcnnqj
-123456789.scriptorium.yohn.jp. CNAME 01m56estantnhv8ba5j1pcnnqj.instances.praetorium.yohn.jp.
-
-; 物理ホスト側は既存の instances 名前空間と公開Ingressへ解決する。
-; 具体的なA/AAAA/CNAMEやDNS提供者設定はこのPRでは変更しない。
+*.scriptorium.yohn.jp. CNAME gateway.yohn.jp.
 ```
 
-- `[id]` はDNSホスト名に使う**小文字でDNS安全な識別ラベル**（例では26桁ULIDのラベル部分）。`ins-` は付けない。旧 `ins_<ULID>` のアプリ内部表現を残すかどうかは別の契約変更で扱う。
-- CNAMEの**owner**は `[repository_id].[app_identity].yohn.jp`、**target**はそのときの物理Runtimeを指す `[id].instances.praetorium.yohn.jp`。コンテナ置換ではtargetを更新する。ログイン/ブラウザごとのCNAMEを作らない。
-- `*.scriptorium.yohn.jp CNAME *.instances.praetorium.yohn.jp` のようなワイルドカードによるラベル置換は**しない**。リポジトリIDから物理IDを計算できないので、論理Bindingに基づき**個別のCNAME**が必要。
-- CNAMEの宛先はDNS上の別名であり、HTTPリダイレクトでもReverse Proxyでもない。DNS TTL、旧参照を保持するResolver、停止時の直リンクを考慮する。新しいRuntime未配置/停止中でも、公開ホストのDNS到達性とFallbackは維持し、アプリへの権限を推定しない。
-- 将来の別アプリは `[repository_id].ide.yohn.jp` など、**別の製品名前空間**を利用できる。名前空間を採用する前に `app_identity` をプラットフォーム登録値として一意に管理する。
-
-### DNSとHTTP経路は別
+- `gateway.yohn.jp` はオーナーが管理する共通公開IngressのDNS名であり、PraetoriumのGateway Workerではない。DNS先のIP変更にも追従する。
+- 個々の `[repository_id].scriptorium.yohn.jp` を `[id].instances.praetorium.yohn.jp` へCNAMEで直接結び付け**ない**。その旧方式は廃止した。リポジトリ作成・Runtime置換・停止でCloudflare DNS APIを呼ばない。
+- `*.scriptorium.yohn.jp` と `*.instances.praetorium.yohn.jp` は別の名前空間。内部の物理Runtime IDはDNSによるアプリの認可/到達先決定には使わない。
+- CNAMEはHTTP HostやTLS SNIを変更しない。公開ホスト `[repository_id].scriptorium.yohn.jp` を保持したままTraefikへ到達させる。
 
 ```mermaid
 flowchart TD
-    U["Browser: 123456789.scriptorium.yohn.jp"] --> D["DNS: per-app CNAME"]
-    D --> T["01m56...instances.praetorium.yohn.jp"]
-    T --> E["公開Caddy / TLS終端"]
-    E --> R{"Traefik: 元のHostで経路照合"}
-    R -->|現在のApp BindingとReadyなRoute| S["Scriptorium Pod"]
-    R -->|停止・未Ready・未割当| F["Instance Access fallback"]
-    F --> G["Praetorium Gateway: 認証・再解決"]
+    U["Browser: 1423923158.scriptorium.yohn.jp"] --> D["Cloudflare DNS: *.scriptorium.yohn.jp"]
+    D --> G["CNAME gateway.yohn.jp → 共通Ingress IP"]
+    G --> C["オーナー管理Caddy: SNI TCP passthrough (未設定)"]
+    C --> T["k3s Traefik: TLS終端・元のHostを照合"]
+    CM["k3s cert-manager: DNS-01 証明書"] --> TS["Traefik TLSStore/default"]
+    TS --> T
+    T -->|Host完全一致・Readyな動的Route| P["Scriptorium Pod"]
+    T -->|停止/未知Host・/_platform| IA["Instance Access fallback"]
+    IA --> CP["Gateway: 認証/Binding再解決"]
 ```
 
-ブラウザのTLS SNIとHTTP `Host` はCNAME先ではなく **`123456789.scriptorium.yohn.jp` のまま**である。IngressRouteで `[id].instances.praetorium.yohn.jp` だけを許可しても、公開アプリURLは開かない。
+### k3s内での証明書発行と選択
 
-- Caddyは **`*.scriptorium.yohn.jp`** に一致する有効な証明書とHostを処理する。既存の `*.instances.praetorium.yohn.jp` 証明書では代用できない。複数階層の `*.scriptorium.yohn.jp` はCloudflareの通常のUniversal SSL範囲外なので、既存公開TLS終端での明示的な発行/更新（必要ならDNS-01）を別途確認する。
-- Traefikは**元の公開Appホスト**を識別して、現在の `(app_identity, repository_id) → instance_id → Service` に紐づける必要がある。単なるCNAME書換では切り替わらない。静的 `/_platform/*` と停止時Fallbackの優先順位は維持する。
-- Instance Accessは従来の「`ins-` ホスト名からinstanceIdを復元する」方式だけでは足りない。公開Appホストから正規Bindingを解決し、Gatewayで現在のGitHubユーザー権限・Runtime Epochを再確認する。ホスト名やCNAMEを認可証明として信用しない。
-- `[id].instances.praetorium.yohn.jp` は物理配置に関するプラットフォームの名前であり、利用者向けの別セッションを発行する入口にはしない。直接呼ばれても公開App側のホスト限定Cookie・Grantを横流ししたり、Gateway認可を省略したりしない。
+- `infrastructure/kubernetes/overlays/deployment/tls.yaml` の `ClusterIssuer/praetorium-acme` がCloudflare DNS-01を利用。APIトークンは**cert-manager namespace**のSecretに置き、Gitへ格納しない。
+- `Certificate/praetorium-instance-origin` は `praetorium-system` に作成され、`*.scriptorium.yohn.jp` および既存の物理インスタンス用SANを含む。単一のSecret `@@TLS_SECRET_NAME@@`（デプロイInventory値）を更新する。
+- `infrastructure/kubernetes/base/tls-store.yaml` の**唯一の `TLSStore/default`** がその同Namespace Secretを参照する。TraefikのCRD providerは `defaultTLSResourcesNamespace=praetorium-system` に固定。別Namespaceの動的テナントIngressRouteは `tls: {}` のまま、このグローバルdefault storeの証明書を使う。
+- 固定のInstance Access fallbackは自身と同じNamespaceのSecretを参照する。独立の `*.scriptorium` 証明書をテナントごとに発行したり、他NamespaceのSecretを参照させたりしない。
+- **オーナー管理Caddyでは証明書を発行せずHTTP Reverse ProxyのTLS終端も行わない。** TCP/SNIパススルーにはCaddyの標準HTTPサイトブロックではなく、対応するLayer 4機能または同等のTCP Proxyが必要。未構成なら公開HTTPSは未完成であり、DNSとK3sのCertificate Readyだけではブラウザ接続を認証しない。
+
+このPRはDNS・Caddy・cert-manager Secret・稼働K3sを変更しない。Cloudflareで既に設定したワイルドカードCNAMEの状態は外部運用の正本であり、アーキテクチャ文書は適用済み環境の証明にはならない。
 
 ## 3. ブラウザの正常な画面遷移
 
@@ -78,7 +77,7 @@ sequenceDiagram
     participant G as Praetorium Gateway
     participant GH as GitHub authorization
     participant CP as Control Plane / D1
-    participant DNS as DNS / Caddy / Traefik
+    participant DNS as Wildcard DNS / TCP passthrough / k3s Traefik
     participant IA as Instance Access
     participant S as Scriptorium
     U->>G: Open app: (scriptorium, repository_id)
@@ -135,7 +134,7 @@ stateDiagram-v2
     Stopped --> Starting: 再起動要求
 ```
 
-`Ready` は**Runtimeの観測結果**であり、ブラウザの接続成功ではない。コンテナ置換は既存のquiesce/旧Writer不在/credential retirement/世代フェンスを満たす別実体の割当として扱う。置換時に公開App URLは不変、物理 `instance_id` は更新、DNS CNAMEとIngressRouteの切替はその後の別作業となる。Runtime EpochやLeaseの失効のみでは旧Writerを死んだと判定しない。
+`Ready` は**Runtimeの観測結果**であり、ブラウザの接続成功ではない。コンテナ置換は既存のquiesce/旧Writer不在/credential retirement/世代フェンスを満たす別実体の割当として扱う。置換時に公開App URLは不変、物理 `instance_id` は更新、静的ワイルドカードDNSは変えずにIngressRouteの切替を行う。Runtime EpochやLeaseの失効のみでは旧Writerを死んだと判定しない。
 
 ### 4.2 ブラウザの一時的な接続状態（永続D1正本を新設しない）
 
@@ -165,31 +164,31 @@ stateDiagram-v2
 
 1. **論理App Bindingは先に確定する。** 現在の `repository_id → logical instance_id` の保存契約を維持したまま物理IDへ読み替えたり、履歴データを消して移行したことにしない。
 2. **次のRuntimeを配置してもWriterを二重化しない。** 旧Writer排除・Quiesce・保存回復・Credential retirement・Epochの既存フェンスを維持する。
-3. **ルートとDNSを連携して切り替える。** 新しいService・IngressRouteの存在/疎通を確認し、旧DNS ResolverのTTLと切替競合を考慮した後で公開CNAMEの指先を更新する。CNAME更新だけを接続成功の証拠としない。失敗時は旧経路へ安全に戻すか、権限保護された停止状態にする。
-4. **停止中でも公開App URLを維持する。** 初回の未割当時にはGateway上の設定導線を提供。以前の物理IDを指すCNAMEを残す場合でも有効なfallbackだけを応答させ、解放済みRuntimeへアクセスさせない。
+3. **RuntimeのRouteをフェンス付きで切り替える。** 新しいService・IngressRouteの存在/疎通を確認し、公開アプリのHostに対する唯一のReady Routeを更新する。共通ワイルドカードDNSは変更しない。失敗時は旧経路へ安全に戻すか、権限保護された停止状態にする。
+4. **停止中でも公開App URLを維持する。** 初回の未割当時にはGateway上の設定導線を提供。ワイルドカードDNSにより常に共通Ingressへ解決し、停止/未知のHostは認証付きFallbackへ送り、解放済みRuntimeへアクセスさせない。
 5. **Appホストは認可を付与しない。** 公開名にGitHub numeric IDが含まれても、Gatewayセッション・現在のGitHub権限・Binding/Runtime/Grantを毎回適切な境界で検証する。CNAME target、Hostヘッダー、TLS証明書はユーザー権限の代替ではない。
 6. **パブリックOriginを保護する。** Scriptorium認証Cookieは `[repository_id].scriptorium.yohn.jp` のHost-only、`Secure`、`HttpOnly` 等の現行保護を引き継ぎ、別アプリや `[id].instances...` へ共有しない。公開アプリ名は一回限りのHandoffとGrantの検証対象と一致させる。
 
-## 6. 既存実装との差分と別PRの責務
+## 6. 実装所有者と切替条件
 
-| 対象 | 現行main（2026-10-19） | 目標。**本PRでは変更しない** |
+| 責務 | 所有者・実装箇所 | 現在の契約 |
 | --- | --- | --- |
-| 識別子 | `repository_id → ins_<ULID>` の論理インスタンス。Runtime Epochは別 | `(app_identity, repository_id) → application_binding → active instance_id`。物理IDは置換ごとに新規 |
-| Hostの導出 | [instance-hostname.ts](../../packages/contracts/src/instance-hostname.ts) が `ins-<ULID>.<suffix>` を生成・逆変換 | **`<id>.instances.praetorium.yohn.jp`**。公開App Hostは別の値から決める |
-| Entry / Handoff | [Gateway router](../../apps/gateway/src/router.ts) と [Portal Service](../../apps/gateway/src/services/portal-service.ts) が物理originを生成 | Gatewayは `app_identity + repository_id` から**公開App origin**を決定し、Handoff/Grantへ拘束 |
-| Fallback | [Instance Access](../../apps/instance-access/src/handler.ts) は `ins-` を含むHostからIDを復元 | 公開App Hostから最新Bindingを安全に解決し、停止中URLでも権限を再確認 |
-| 動的Route | [Kubernetes Renderer](../../plugins/kubernetes/src/kubernetes/renderer.ts) はインスタンスHost一致のIngressRouteを発行 | **公開App Host**に一致するRouteを、現在のRuntime Serviceへ管理された手順で接続 |
-| 実DNS/TLS | [2026-10-18公開Ingress物証](../verification/PUBLIC-INGRESS-CADDY-20261018.json) は `*.instances.praetorium.yohn.jp` と `ins-` 名を確認 | `[repository_id].scriptorium.yohn.jp` の個別CNAME、公開ホスト用TLS、Hostルーティングを別途配備・実証 |
-| 複数アプリ | 現状はScriptoriumの単一アプリ | App Identity名前空間を許容。ただし他アプリの実装・Catalog追加は本件のスコープ外 |
-
-既存の認証パッケージをBetter Authへ移行するかどうかは未決定であり、URL設計と混同しない。認証実装を変える場合でもGitHub Appユーザー許可、短命Grant、Handoff、保存済みセッションの扱いを維持する。
+| ログイン、GitHub権限確認、App Binding、Handoff | [Gateway router](../../apps/gateway/src/router.ts) / [Portal Service](../../apps/gateway/src/services/portal-service.ts) | 公開App originに拘束した短命Grantを発行 |
+| 論理Binding、Runtime epoch、Writer安全性 | Control Plane / D1 / Provisioner | 同じRepositoryの並行Writerを防止し、旧Writer不在を実証 |
+| 物理Runtime名 | [instance-hostname.ts](../../packages/contracts/src/instance-hostname.ts) | `[id].instances.praetorium.yohn.jp`。公開アプリDNSでは参照しない |
+| 公開DNS | Cloudflare、オーナー管理 | `*.scriptorium.yohn.jp CNAME gateway.yohn.jp` を1件。ProvisionerはDNSレコードを作成・更新しない |
+| 公開TLS | [cert-manager ClusterIssuer/Certificate](../../infrastructure/kubernetes/overlays/deployment/tls.yaml) | DNS-01によるK3s Secret発行・自動更新。Caddyでは発行しない |
+| 証明書選択 | [Traefik TLSStore/default](../../infrastructure/kubernetes/base/tls-store.yaml) | `praetorium-system` のSecretを全Namespaceのデフォルトに使用 |
+| 公開TCP中継 | オーナー管理Caddy（[運用境界](../../infrastructure/caddy/README.md)） | SNIを保持してTCPを透過転送。今回のPRでは適用しない |
+| 動的アプリ経路 | [Kubernetes Renderer](../../plugins/kubernetes/src/kubernetes/renderer.ts) | HTTP HostのRepository IDから、その時のReady Serviceへ |
+| 停止中・未配置・プラットフォーム経路 | [Instance Access](../../apps/instance-access/src/handler.ts) | 認証とBounded Wake/Error。POST本文は自動再送しない |
 
 ## 7. 受入境界と未検証事項
 
-**この文書で確定:** アプリ公開URL、物理Runtime URL（`ins-` なし）、公開App単位の個別CNAME、論理/物理ID分離、状態遷移、DNS/TLS/HTTP/認証の責務。
+**この文書で確定:** アプリ公開URL、物理Runtime URL（`ins-` なし）、**静的ワイルドカードCNAME**、k3s cert-manager/TLSStore、論理/物理ID分離、状態遷移、DNS/TLS/HTTP/認証の責務。
 
-**後続実装で必要な検証:** 既存Bindingと履歴の無破壊移行、GitHub認可/Session/Handoffの更新、DNS・Caddy証明書・IngressのHost一致、旧URL/旧Cookieの安全な移行と破棄、停止中ブックマークからのWake、ReadyだがRoute未確立時の503、公開CNAME切替時の書込一意性、PCとスマホの実ブラウザE2E。
+**後続の実環境検証:** 現行の論理/物理Bindingの一致、GitHub認可/Handoff、共通DNS解決、オーナー管理CaddyのTCP/SNIパススルー、k3s証明書の実SAN・更新、TraefikのHost一致、旧URL/旧Cookieの安全な扱い、停止中ブックマークとWake、ReadyだがRoute未確立時の503、Runtime置換時の単一Writer、PCとスマホの実ブラウザE2E。
 
-**未実施:** 本番DNS/Caddy/Traefik/Cloudflare/Worker/D1/K3sの変更、Better Authの採用、リポジトリのデータ移行、運用セキュリティ検証、スマホ接続障害の原因特定。本書のPRがCIで通っても本番疎通は保証されない。
+**未実施:** この修正の本番Caddy/Traefik/cert-manager適用とHTTPS実疎通、Better Authの採用、運用セキュリティ検証、スマホ接続障害の原因特定。本書のPRがCIで通っても本番疎通は保証されない。
 
 参考: [Cloudflare CNAMEとレコード種別](https://developers.cloudflare.com/dns/manage-dns-records/reference/dns-record-types/)、[Cloudflare Universal SSL制約](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/)、[CloudflareのワイルドカードDNS](https://developers.cloudflare.com/dns/manage-dns-records/reference/wildcard-dns-records/)。

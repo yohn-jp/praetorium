@@ -94,6 +94,7 @@ test("Traefik CRD provider watches generated instance routes and the system fall
     allowExternalNameServices: false,
     allowEmptyServices: false,
     namespaces: [],
+    defaultTLSResourcesNamespace: "praetorium-system",
   });
   assert.deepEqual(release.spec.values.rbac, { namespaced: false });
 
@@ -137,4 +138,48 @@ test("Traefik CRD provider watches generated instance routes and the system fall
     [[{ name: "instance-access", port: 8080 }], [{ name: "instance-access", port: 8080 }]],
   );
   assert.ok(fallback.spec.routes.every((route) => !Object.hasOwn(route, "middlewares")));
+});
+
+test("K3s cert-manager wildcard is served by the unique Traefik default TLSStore", () => {
+  const base = read("infrastructure/kubernetes/base/kustomization.yaml");
+  assert.match(base, /^  - tls-store\.yaml$/mu);
+  const store = documents("infrastructure/kubernetes/base/tls-store.yaml")[0];
+  assert.equal(store.kind, "TLSStore");
+  assert.equal(store.apiVersion, "traefik.io/v1alpha1");
+  assert.equal(store.metadata.name, "default");
+  assert.equal(store.metadata.namespace, "praetorium-system");
+  assert.deepEqual(store.spec, {
+    defaultCertificate: { secretName: "@@TLS_SECRET_NAME@@" },
+  });
+
+  for (const overlay of ["deployment", "disposable"]) {
+    const resources = documents(`infrastructure/kubernetes/overlays/${overlay}/tls.yaml`);
+    const certificate = resources.find((resource) => resource.kind === "Certificate");
+    assert.ok(certificate);
+    assert.equal(certificate.metadata.namespace, "praetorium-system");
+    assert.equal(certificate.spec.secretName, store.spec.defaultCertificate.secretName);
+    assert.ok(certificate.spec.dnsNames.includes("*.scriptorium.yohn.jp"));
+    assert.ok(certificate.spec.dnsNames.includes("*.@@INSTANCE_HOSTNAME_SUFFIX@@"));
+    const issuer = resources.find((resource) => resource.kind === "ClusterIssuer");
+    assert.ok(issuer);
+    assert.equal(certificate.spec.issuerRef.name, issuer.metadata.name);
+    if (overlay === "deployment") {
+      assert.deepEqual(issuer.spec.acme.solvers[0].selector.dnsZones, ["yohn.jp"]);
+      assert.equal(issuer.spec.acme.solvers[0].dns01.cloudflare.apiTokenSecretRef.name, "@@SECRET_CLOUDFLARE_DNS_TOKEN@@");
+    }
+  }
+  assert.deepEqual(runtimeRoute.spec.tls, {}, "tenant routes must use the cluster-wide default store");
+  const fallback = documents("infrastructure/kubernetes/base/stopped-instance-fallback.yaml")[0];
+  assert.equal(fallback.spec.tls.secretName, store.spec.defaultCertificate.secretName);
+});
+
+test("static application wildcard does not require a Provisioner DNS record publisher", () => {
+  const service = read("infrastructure/kubernetes/base/platform-services.yaml");
+  const main = read("apps/provisioner/src/main.ts");
+  const lifecycle = read("apps/provisioner/src/kubernetes-lifecycle-adapter.ts");
+  assert.doesNotMatch(service, /praetorium-application-dns|PROVISIONER_APPLICATION_DNS/u);
+  assert.doesNotMatch(main, /CloudflareApplicationDns|applicationDns:/u);
+  assert.doesNotMatch(lifecycle, /applicationDns\.publish|Application DNS publisher/u);
+  const decision = read("docs/architecture/APPLICATION-ORIGINS.md");
+  assert.match(decision, /\*\.scriptorium\.yohn\.jp\. CNAME gateway\.yohn\.jp\./u);
 });

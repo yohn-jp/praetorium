@@ -94,6 +94,29 @@ A complete execution reports explicit success at the *Cloudflare + static K3s de
 
 ### External connectivity is an explicit deployment prerequisite
 
+**2026-10-20 application-origin decision:** DNS has a static DNS-only
+`*.scriptorium.yohn.jp CNAME gateway.yohn.jp` wildcard. Per-repository
+CNAME writes are no longer part of Provisioner. cert-manager's
+`praetorium-system/praetorium-instance-origin` Certificate includes
+`*.scriptorium.yohn.jp` and the existing `*.instances...` SAN. The
+single Traefik `TLSStore/default` in `praetorium-system` selects its
+`@@TLS_SECRET_NAME@@` for dynamic tenant `tls: {}` routes across namespaces;
+the Helm provider restricts default TLS resources to that namespace.
+Do not supply the old `praetorium-application-dns` Provisioner Secret.
+
+The owner will configure the **public Caddy separately**. It must route TLS
+at layer 4 without terminating it, preserving the original browser SNI and
+HTTP Host until Traefik terminates TLS. The old Caddy HTTP `tls dns ...` /
+`reverse_proxy https://...` config is obsolete. Ordinary Caddy HTTP reverse
+proxy cannot fulfill the requirement, and Caddy TLS passthrough generally
+requires a layer4-capable build or another TCP proxy. Before claiming hosted
+acceptance, check: DNS-only wildcard resolution, `ClusterIssuer Ready`,
+`Certificate Ready`/SANs/Secret keypair in k3s, Traefik's one default TLSStore,
+browser `openssl s_client`/TLS chain via public SNI, exact Host routing to
+Scriptorium, and stopped fallback. Never disable TLS verification to compensate
+for a missing SNI route.
+
+
 This project does not provision a VPS/tunnel endpoint or Proxmox bridge. The instance hostname suffix in the sample is `instances.praetorium.yohn.jp`; its multi-label wildcard needs the matching TLS certificate in K3s **and** a reachable external edge. A Cloudflare Tunnel cannot use the K3s certificate to satisfy browser-facing Cloudflare Edge TLS. Select and configure the approved public tunnel/VPS termination mode before claiming end-to-end HTTPS and ChatGPT MCP ingress. The deployment script fails if the cert-manager Certificate cannot become Ready; it does not invent a route.
 
 Similarly, a Cloudflare Worker Custom Domain can provision its individual HTTPS certificate, but the Control Plane and Gateway origins must be independently routable before Gateway login succeeds. The Worker Custom Domains are registered by the inventory-derived Wrangler configuration; no dashboard step is part of the automated deployment.

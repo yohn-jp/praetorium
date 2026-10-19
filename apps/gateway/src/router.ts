@@ -45,7 +45,8 @@ import {
 } from "./constants.js";
 import type { GatewayContext } from "./context.js";
 import { createGitHubWebhookRoutes, createGitHubWebhookControlPlaneClient } from "./github-webhook.js";
-import { runtimeEpochForAccess } from "./active-runtime.js";
+import { hasReadyCurrentRuntime, runtimeEpochForAccess } from "./active-runtime.js";
+import { page } from "./ui/views/document.js";
 import { createPortalHandler } from "./ui/index.js";
 import type { PortalActor, PortalSession } from "./ui/index.js";
 import { createPortalService } from "./services/portal-service.js";
@@ -148,7 +149,7 @@ function loginRedirect(request: Request, context: GatewayContext): Response {
   const path = request.method === "GET" && !url.pathname.startsWith("/auth/")
     ? url.pathname
     : "/";
-  const start = new URL("/auth/github/start", context.config.origin);
+  const start = new URL("/auth/login", context.config.origin);
   start.searchParams.set("redirect_to", isSafeRelativeRedirect(path) ? path : "/");
   return new Response(null, {
     status: 302,
@@ -156,9 +157,7 @@ function loginRedirect(request: Request, context: GatewayContext): Response {
   });
 }
 
-async function readBoundedJson(request: Request): Promise<Record<string, unknown> | null> {
-  const mediaType = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (mediaType !== "application/json") return null;
+async function readBoundedText(request: Request): Promise<string | null> {
   const rawLength = request.headers.get("Content-Length");
   if (rawLength !== null && (!/^(0|[1-9][0-9]*)$/.test(rawLength) || Number(rawLength) > MAX_INTERNAL_BODY_BYTES)) return null;
   const reader = request.body?.getReader();
@@ -186,13 +185,50 @@ async function readBoundedJson(request: Request): Promise<Record<string, unknown
     offset += chunk.byteLength;
   }
   try {
-    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes));
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+async function readBoundedJson(request: Request): Promise<Record<string, unknown> | null> {
+  const mediaType = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== "application/json") return null;
+  const body = await readBoundedText(request);
+  if (body === null) return null;
+  try {
+    const value: unknown = JSON.parse(body);
     return typeof value === "object" && value !== null && !Array.isArray(value)
       ? value as Record<string, unknown>
       : null;
   } catch {
     return null;
   }
+}
+
+async function readLogoutForm(request: Request): Promise<FormData | null> {
+  const body = await readBoundedText(request);
+  if (body === null) return null;
+  try {
+    // URLSearchParams otherwise silently replaces malformed escapes/UTF-8.
+    decodeURIComponent(body.replace(/\+/g, " "));
+    const values = new URLSearchParams(body);
+    if ([...values.keys()].some((key) => key !== "csrfToken")) return null;
+    const form = new FormData();
+    for (const [key, value] of values) form.append(key, value);
+    return form;
+  } catch {
+    return null;
+  }
+}
+
+function loginPage(request: Request): Response {
+  const query = new URLSearchParams({ redirect_to: safeRedirectTarget(new URL(request.url)) });
+  return page("Sign in to Praetorium",
+    `<section><h1>Sign in to Praetorium</h1>` +
+    `<p>Your repository workspace requires a signed-in session.</p>` +
+    `<a class="button button-primary" href="${escapeHtml(`/auth/github/start?${query}`)}">Sign in with GitHub</a></section>`,
+    { layout: "handoff" });
 }
 
 function safeUserId(value: string): UserId | null {
@@ -362,11 +398,14 @@ async function handleSession(request: Request, context: GatewayContext, now: str
 
 async function handleLogout(request: Request, context: GatewayContext, now: string, allDevices = false): Promise<Response> {
   if (!exactOriginRequest(request, context)) return errorResponse(request, "UNAUTHORIZED", "request origin or CSRF token is invalid", context.requestId);
+  const isForm = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() === "application/x-www-form-urlencoded";
+  const form = isForm ? await readLogoutForm(request) : undefined;
+  if (form === null) return errorResponse(request, "INVALID_REQUEST", "logout form is invalid", context.requestId);
   const result = await requireSession(request, context, now);
   if (!result.ok) {
     if (allDevices) return result.response;
   } else {
-    if (!(await hasValidGatewayCsrf(request, context, result.session))) {
+    if (!(await hasValidGatewayCsrf(request, context, result.session, form))) {
       return errorResponse(request, "UNAUTHORIZED", "request origin or CSRF token is invalid", context.requestId);
     }
     try {
@@ -376,7 +415,10 @@ async function handleLogout(request: Request, context: GatewayContext, now: stri
       return unavailable(request, context);
     }
   }
-  const response = new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+  const response = new Response(null, {
+    status: isForm ? 303 : 204,
+    headers: { "Cache-Control": "no-store", ...(isForm ? { Location: "/auth/login" } : {}) },
+  });
   return setCookie(setCookie(response, buildExpiredSessionCookie({ name: SESSION_COOKIE_NAME })), expiredCsrfCookie());
 }
 
@@ -901,6 +943,18 @@ async function handleDirectEntry(request: Request, context: GatewayContext, rawI
       { status: 409, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } },
     );
   }
+  // This hint is not authorization: authenticate and recheck repository access
+  // above before exposing the contradiction between readiness and routing.
+  if (new URL(request.url).searchParams.get("fallback") === "1" && hasReadyCurrentRuntime(snapshot.instance)) {
+    const response = page("Application route unavailable",
+      `<section><h1>Application route unavailable</h1>` +
+      `<p>The instance is recorded as ready, but this request reached its fallback instead of Scriptorium. Automatic reopening has stopped.</p>` +
+      `<p><a href="${escapeHtml(`/entry/${encodeURIComponent(rawInstanceId)}`)}">Retry application entry</a></p>` +
+      `<p><a href="/repositories/${repositoryId}">Open repository dashboard</a></p></section>`,
+      { layout: "handoff" });
+    response.headers.set("Retry-After", String(INSTANCE_STARTING_RETRY_SECONDS));
+    return new Response(response.body, { status: 503, headers: response.headers });
+  }
   const actor = Object.assign({}, session.session.actor, { gatewaySessionDigest: session.session.resolved.digest });
   const result = await createPortalService(context).execute(actor, String(repositoryId), { kind: "enter" });
   if (!result.ok) {
@@ -998,6 +1052,7 @@ export function createGatewayRouter(context: GatewayContext): Hono {
     return json({ status: "ready" });
   });
   app.get("/.well-known/jwks.json", async () => publicJwks(await context.getKeyRegistry()));
+  app.get("/auth/login", (c) => loginPage(c.req.raw));
   app.get("/auth/github/start", (c) => handleGithubStart(c.req.raw, context, context.requestNow));
   app.get("/auth/github/callback", (c) => handleGithubCallback(c.req.raw, context, context.requestNow));
   app.get("/api/session", (c) => handleSession(c.req.raw, context, context.requestNow));

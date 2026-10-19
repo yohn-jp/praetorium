@@ -330,8 +330,10 @@ function redirect(location: string, status = 302): Response {
   });
 }
 
-function fallbackEntry(instance: Instance, config: InstanceAccessConfig): Response {
+function fallbackEntry(instance: Instance, config: InstanceAccessConfig, routeFallback = false): Response {
   const target = new URL(`/entry/${encodeURIComponent(instance.id)}`, config.gatewayOrigin);
+  // A route hint only; Gateway still authenticates and revalidates access.
+  if (routeFallback) target.searchParams.set("fallback", "1");
   return redirect(target.toString());
 }
 
@@ -463,7 +465,7 @@ export function createInstanceAccessHandler(
       ]);
     }
 
-    if (isHtmlNavigation(request)) return fallbackEntry(instance, config);
+    if (isHtmlNavigation(request)) return fallbackEntry(instance, config, true);
     if (request.method === "HEAD") return new Response(null, { status: 503, headers: { "Retry-After": String(RETRY_AFTER_SECONDS), "Cache-Control": "no-store" } });
     return problem(503, "INSTANCE_STARTING", true);
   });

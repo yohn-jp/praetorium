@@ -274,7 +274,7 @@ describe("Instance Access production handler", () => {
       },
     }));
     expect(navigation.status).toBe(302);
-    expect(navigation.headers.get("Location")).toBe(`https://gateway.service.test/entry/ins_${ULID.toUpperCase()}`);
+    expect(navigation.headers.get("Location")).toBe(`https://gateway.service.test/entry/ins_${ULID.toUpperCase()}?fallback=1`);
     const apiRequest = new Request(`${origin}/api/write`, {
       method: "POST",
       headers: { Host: host, Accept: "application/json" },

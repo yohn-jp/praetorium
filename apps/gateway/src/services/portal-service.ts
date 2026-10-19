@@ -1,6 +1,6 @@
 import { createHandoffCode } from "@praetorium/auth";
 import type { UserId } from "@praetorium/auth";
-import { instanceHostname } from "@praetorium/contracts";
+import { applicationHostname, physicalInstanceId } from "@praetorium/contracts";
 import type { InstanceDashboard } from "@praetorium/contracts";
 import type { AccessDecision } from "@praetorium/contracts";
 import type { AccessibleRepository } from "@praetorium/github";
@@ -356,6 +356,7 @@ async function enterRepository(
       );
     }
 
+    if (resolved.instance.observedState === "failed") return failure("CONFLICT", "The runtime failed. Open the repository dashboard and explicitly retry the failed operation.");
     let ready: RepositorySnapshot = resolved;
     if (!hasReadyCurrentRuntime(resolved.instance)) {
       // A runtime already requested to run may be in its waiting/polling state.
@@ -368,6 +369,7 @@ async function enterRepository(
         actorId: actor.userId,
         expectedGeneration: resolved.instance.generation,
         desiredState: "running",
+        ...(resolved.instance.legacyRuntimeEpoch != null && resolved.instance.runtimeEpoch === resolved.instance.legacyRuntimeEpoch ? { forceNewRuntime: true } : {}),
         idempotencyKey: `wake_${generateToken(128)}`,
         bindingEpoch: resolved.binding.bindingEpoch,
         authorizationRevision: fresh.authorizationRevision,
@@ -399,12 +401,12 @@ async function enterRepository(
       !readyAccess.permissions.includes("read")
     ) return { ok: false, error: accessError() };
 
-    const origin = `https://${instanceHostname(ready.instance.instanceId, context.config.instanceHostnameSuffix)}`;
+    const origin = `https://${applicationHostname(ready.binding.appIdentity ?? "scriptorium", repositoryId)}`;
     const created = await createHandoffCode(context.handoffStore, {
       userId: actor.userId as UserId,
       gatewaySessionDigest: sessionDigestOf(actor),
       repositoryId,
-      instanceId: ready.instance.instanceId,
+      instanceId: physicalInstanceId(ready.instance.instanceId, readyRuntimeEpoch, ready.instance.legacyRuntimeEpoch),
       runtimeEpoch: readyRuntimeEpoch,
       hostname: new URL(origin).hostname,
       origin,
@@ -546,7 +548,7 @@ export function createPortalService(context: GatewayContext): PortalService {
         if (command.expectedGeneration !== snapshot.instance.generation) {
           return failure("CONFLICT", "Repository state changed. Reload and try again.");
         }
-        if (!hasReadyCurrentRuntime(snapshot.instance)) {
+        if (snapshot.instance.observedState !== "ready" || snapshot.instance.currentArtifactDigest === null || snapshot.instance.observedRuntimeEpoch === null) {
           return failure("CONFLICT", "The current runtime is not ready to stop. Refresh status before trying again.");
         }
         try {

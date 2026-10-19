@@ -2,7 +2,7 @@ import type { InstanceSnapshot } from "@praetorium/contracts";
 
 type RuntimeObservation = Pick<
   InstanceSnapshot,
-  "runtimeEpoch" | "observedRuntimeEpoch" | "observedState" | "currentArtifactDigest"
+  "runtimeEpoch" | "observedRuntimeEpoch" | "observedState" | "currentArtifactDigest" | "legacyRuntimeEpoch"
 >;
 
 /**
@@ -20,7 +20,7 @@ export function runtimeEpochForAccess(instance: RuntimeObservation): number {
 }
 
 export function hasReadyCurrentRuntime(instance: RuntimeObservation): boolean {
-  return instance.observedState === "ready" &&
+  return instance.observedRuntimeEpoch !== instance.legacyRuntimeEpoch && instance.observedState === "ready" &&
     instance.currentArtifactDigest !== null &&
     instance.observedRuntimeEpoch !== null;
 }

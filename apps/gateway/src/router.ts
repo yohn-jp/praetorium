@@ -1,3 +1,4 @@
+import { applicationHostname, publicRuntimeIdentity, physicalInstanceId } from "@praetorium/contracts";
 import { createRuntimeAuthProbeRoutes } from "./runtime-auth-probes.js";
 import {
   buildExpiredSessionCookie,
@@ -32,8 +33,6 @@ import {
   RedeemHandoffRequestSchema,
   DigestSchema,
   RefreshAccessRequestSchema,
-  RevokeAccessRequestSchema,
-  instanceHostname,
 } from "@praetorium/contracts";
 import { newMcpCredentialId } from "@praetorium/domain";
 import { GITHUB_PUBLISH_RECEIPT_AUDIENCE } from "@praetorium/github";
@@ -455,7 +454,7 @@ async function handleCreateMcpCredential(request: Request, context: GatewayConte
       userId: session.session.actor.userId as UserId,
       sessionRevision: session.session.resolved.record.sessionRevision,
       repositoryId,
-      instanceId: repository.instance.instanceId,
+      instanceId: publicRuntimeIdentity(repository.instance),
       runtimeEpoch: runtimeEpochForAccess(repository.instance),
       name,
       permissions,
@@ -526,14 +525,14 @@ async function handleMutationAuthorization(
     if (!snapshot) return errorResponse(request, "NOT_FOUND", "repository instance not found", context.requestId);
     const runtimeEpoch = runtimeEpochForAccess(snapshot.instance);
     if (bearerMode) {
-      const host = instanceHostname(snapshot.instance.instanceId, context.config.instanceHostnameSuffix);
+      const host = applicationHostname("scriptorium", repositoryId);
       const audience = `https://${host}`;
       const keyRegistry = await context.getKeyRegistry();
       const verified = await verifyAccessToken({
         token: bearerMatch![1]!,
         expectedIssuer: context.config.origin,
         expectedAudience: audience,
-        expectedInstanceId: snapshot.instance.instanceId,
+        expectedInstanceId: publicRuntimeIdentity(snapshot.instance),
         expectedRepositoryId: repositoryId,
         expectedRuntimeEpoch: runtimeEpoch,
         requiredPermissions: ["write"],
@@ -592,7 +591,7 @@ async function handleMutationAuthorization(
       audience: GITHUB_PUBLISH_RECEIPT_AUDIENCE,
       subjectUserId: actorUserId,
       repositoryId,
-      instanceId: snapshot.instance.instanceId,
+      instanceId: physicalInstanceId(snapshot.instance.instanceId, runtimeEpoch, snapshot.instance.legacyRuntimeEpoch),
       runtimeEpoch,
       operationId: parsed.data.operationId,
       payloadDigest: parsed.data.payloadDigest,
@@ -696,8 +695,8 @@ async function handleTokenExchange(request: Request, context: GatewayContext, no
     return errorResponse(request, "INVALID_REQUEST", "token exchange request is invalid", context.requestId);
   }
   try {
-    const snapshot = await context.controlPlane.getByInstanceId(instanceId);
-    if (!snapshot || snapshot.binding.repositoryId !== repositoryId || runtimeEpochForAccess(snapshot.instance) !== runtimeEpoch) {
+    const snapshot = await context.controlPlane.getByRepositoryId(repositoryId);
+    if (!snapshot || publicRuntimeIdentity(snapshot.instance) !== instanceId || snapshot.binding.repositoryId !== repositoryId || runtimeEpochForAccess(snapshot.instance) !== runtimeEpoch) {
       return errorResponse(request, "UNAUTHENTICATED", "credential is invalid", context.requestId);
     }
     const exchanged = await exchangeMcpCredentialForAccessToken({
@@ -769,7 +768,7 @@ function serviceAuthenticated(request: Request, context: GatewayContext): boolea
   return value?.startsWith("Bearer ") === true && constantTimeEqual(value.slice(7), context.config.instanceAccessSecret);
 }
 
-async function instanceAccessBinding(request: Request, context: GatewayContext): Promise<{
+async function instanceAccessBinding(request: Request, context: GatewayContext, allowStopped = false): Promise<{
   readonly input: ReturnType<typeof RedeemHandoffRequestSchema.parse> | ReturnType<typeof RefreshAccessRequestSchema.parse>;
   readonly snapshot: NonNullable<Awaited<ReturnType<GatewayContext["controlPlane"]["getByInstanceId"]>>>;
   readonly origin: string;
@@ -781,25 +780,23 @@ async function instanceAccessBinding(request: Request, context: GatewayContext):
   const input = handoff.success ? handoff.data : refresh.success ? refresh.data : null;
   if (!input) return errorResponse(request, "INVALID_REQUEST", "instance access request is invalid", context.requestId);
   if (!serviceAuthenticated(request, context)) return errorResponse(request, "UNAUTHENTICATED", "instance access service authentication failed", context.requestId);
-  let expectedHost: string;
-  try {
-    expectedHost = instanceHostname(input.instanceId, context.config.instanceHostnameSuffix);
-  } catch {
-    return errorResponse(request, "INVALID_REQUEST", "instance access binding is invalid", context.requestId);
-  }
+  const expectedHost = applicationHostname(input.appIdentity, input.repositoryId);
   const expectedOrigin = `https://${expectedHost}`;
-  if (input.hostname !== expectedHost || input.origin !== expectedOrigin || new URL(input.origin).origin !== expectedOrigin) {
-    return errorResponse(request, "INVALID_REQUEST", "instance access binding is invalid", context.requestId);
+  if (input.hostname !== expectedHost || input.origin !== expectedOrigin) {
+    return errorResponse(request, "INVALID_REQUEST", "application access binding is invalid", context.requestId);
   }
   let snapshot;
   try {
-    snapshot = await context.controlPlane.getByInstanceId(input.instanceId);
+    snapshot = await context.controlPlane.getByRepositoryId(input.repositoryId);
   } catch {
     return unavailable(request, context);
   }
-  if (!snapshot || snapshot.binding.instanceId !== input.instanceId || snapshot.instance.instanceId !== input.instanceId) {
-    return errorResponse(request, "NOT_FOUND", "instance not found", context.requestId);
+  if (!snapshot || snapshot.binding.suspended || snapshot.binding.repositoryId !== input.repositoryId ||
+      snapshot.instance.repositoryId !== input.repositoryId ||
+      (snapshot.binding.appIdentity ?? "scriptorium") !== input.appIdentity) {
+    return errorResponse(request, "NOT_FOUND", "application not found", context.requestId);
   }
+  if (!allowStopped && !hasReadyCurrentRuntime(snapshot.instance)) return errorResponse(request, "UNAUTHENTICATED", "application runtime is not ready", context.requestId);
   return { input, snapshot, origin: expectedOrigin };
 }
 
@@ -819,7 +816,7 @@ async function handleInstanceAccessHandoff(request: Request, context: GatewayCon
     rawCode: bound.input.code,
     presentedHostname: bound.input.hostname,
     presentedRepositoryId: bound.snapshot.binding.repositoryId,
-    presentedInstanceId: bound.input.instanceId,
+    presentedInstanceId: publicRuntimeIdentity(bound.snapshot.instance),
     presentedRuntimeEpoch: runtimeEpochForAccess(bound.snapshot.instance),
     presentedOrigin: bound.origin,
     presentedReturnPath: bound.input.returnPath,
@@ -841,7 +838,7 @@ async function handleInstanceAccessHandoff(request: Request, context: GatewayCon
       pepper: context.config.credentialPepper,
     });
     return json({
-      contractVersion: "instance-access/v1",
+      contractVersion: "instance-access/v2",
       token: completed.value.token,
       expiresAt: completed.value.expiresAt,
       refreshCredential: refresh.plaintext,
@@ -867,61 +864,45 @@ async function handleInstanceAccessRefresh(request: Request, context: GatewayCon
   }, {
     plaintext: bound.input.refreshCredential,
     repositoryId: bound.snapshot.binding.repositoryId,
-    instanceId: bound.input.instanceId,
+    instanceId: publicRuntimeIdentity(bound.snapshot.instance),
     runtimeEpoch: runtimeEpochForAccess(bound.snapshot.instance),
     origin: bound.origin,
     now,
   });
   if (!refreshed.ok) return errorResponse(request, "UNAUTHENTICATED", "refresh credential is invalid or access has changed", context.requestId);
-  return json({ contractVersion: "instance-access/v1", ...refreshed.value });
+  return json({ contractVersion: "instance-access/v2", ...refreshed.value });
 }
 
 async function handleInstanceAccessRevoke(request: Request, context: GatewayContext, now: string): Promise<Response> {
-  const body = await readBoundedJson(request);
-  const input = body ? RevokeAccessRequestSchema.safeParse(body) : null;
-  if (!input?.success) return errorResponse(request, "INVALID_REQUEST", "revoke request is invalid", context.requestId);
-  if (!serviceAuthenticated(request, context)) return errorResponse(request, "UNAUTHENTICATED", "instance access service authentication failed", context.requestId);
-  let expectedHost: string;
-  try {
-    expectedHost = instanceHostname(input.data.instanceId, context.config.instanceHostnameSuffix);
-  } catch {
-    return errorResponse(request, "INVALID_REQUEST", "instance access binding is invalid", context.requestId);
-  }
-  const origin = `https://${expectedHost}`;
-  if (input.data.hostname !== expectedHost || input.data.origin !== origin) return errorResponse(request, "INVALID_REQUEST", "instance access binding is invalid", context.requestId);
-  let snapshot;
-  try {
-    snapshot = await context.controlPlane.getByInstanceId(input.data.instanceId);
-  } catch {
-    return unavailable(request, context);
-  }
-  if (!snapshot || snapshot.binding.instanceId !== input.data.instanceId || snapshot.instance.instanceId !== input.data.instanceId) {
-    return errorResponse(request, "NOT_FOUND", "instance not found", context.requestId);
-  }
+  const bound = await instanceAccessBinding(request, context, true);
+  if (bound instanceof Response) return bound;
+  if (!("refreshCredential" in bound.input)) return errorResponse(request, "INVALID_REQUEST", "revoke request is invalid", context.requestId);
+  const { snapshot, origin } = bound;
   const revoked = await revokeAccessRefreshCredential(context.accessRefreshCredentialStore, context.config.credentialPepper, {
-    plaintext: input.data.refreshCredential,
+    plaintext: bound.input.refreshCredential,
     repositoryId: snapshot.binding.repositoryId,
-    instanceId: input.data.instanceId,
+    instanceId: publicRuntimeIdentity(snapshot.instance),
     runtimeEpoch: runtimeEpochForAccess(snapshot.instance),
     origin,
     now,
   });
   if (!revoked.ok) return unavailable(request, context);
-  return json({ contractVersion: "instance-access/v1", revoked: true });
+  return json({ contractVersion: "instance-access/v2", revoked: true });
 }
 
-async function handleDirectEntry(request: Request, context: GatewayContext, rawInstanceId: string): Promise<Response> {
+async function handleDirectEntry(request: Request, context: GatewayContext, rawRepositoryId: string): Promise<Response> {
   if (
     request.method !== "GET" ||
     !request.headers.get("Accept")?.toLowerCase().includes("text/html") ||
     request.headers.get("Sec-Fetch-Mode") !== "navigate" ||
     request.headers.get("Sec-Fetch-Dest") !== "document"
   ) return errorResponse(request, "INVALID_REQUEST", "repository entry requires a top-level HTML navigation", context.requestId);
+  if (!/^[1-9][0-9]*$/.test(rawRepositoryId) || !Number.isSafeInteger(Number(rawRepositoryId))) return errorResponse(request, "NOT_FOUND", "application not found", context.requestId);
   const session = await requireSession(request, context);
   if (!session.ok) return loginRedirect(request, context);
   let snapshot;
   try {
-    snapshot = await context.controlPlane.getByInstanceId(rawInstanceId);
+    snapshot = await context.controlPlane.getByRepositoryId(Number(rawRepositoryId));
   } catch {
     return unavailable(request, context);
   }
@@ -939,7 +920,7 @@ async function handleDirectEntry(request: Request, context: GatewayContext, rawI
   if (!snapshot.instance.currentArtifactDigest && !snapshot.instance.desiredArtifactDigest) {
     const dashboard = new URL(`/repositories/${repositoryId}`, context.config.origin).toString();
     return new Response(
-      `<!doctype html><html lang="en"><meta charset="utf-8"><title>Configuration required</title><body><main><h1>Configuration required</h1><p>This repository instance has no approved artifact configured yet. Review its available setup before starting it.</p><p><a href="${escapeHtml(dashboard)}">Open repository dashboard</a></p></main></body></html>`,
+      `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Configuration required</title><body><main><h1>Configuration required</h1><p>This repository instance has no approved artifact configured yet. Review its available setup before starting it.</p><p><a href="${escapeHtml(dashboard)}">Open repository dashboard</a></p></main></body></html>`,
       { status: 409, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } },
     );
   }
@@ -949,7 +930,7 @@ async function handleDirectEntry(request: Request, context: GatewayContext, rawI
     const response = page("Application route unavailable",
       `<section><h1>Application route unavailable</h1>` +
       `<p>The instance is recorded as ready, but this request reached its fallback instead of Scriptorium. Automatic reopening has stopped.</p>` +
-      `<p><a href="${escapeHtml(`/entry/${encodeURIComponent(rawInstanceId)}`)}">Retry application entry</a></p>` +
+      `<p><a href="${escapeHtml(`/entry/scriptorium/${repositoryId}`)}">Retry application entry</a></p>` +
       `<p><a href="/repositories/${repositoryId}">Open repository dashboard</a></p></section>`,
       { layout: "handoff" });
     response.headers.set("Retry-After", String(INSTANCE_STARTING_RETRY_SECONDS));
@@ -978,7 +959,7 @@ async function handleDirectEntry(request: Request, context: GatewayContext, rawI
     ? `<p>Operation <code>${escapeHtml(operation.operationId)}</code> (${escapeHtml(operation.state)}).</p>`
     : "";
   return new Response(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8">${automaticRefresh}<title>Starting repository instance</title></head><body><main><h1>Repository instance is starting</h1><p>${operation ? escapeHtml(operation.message ?? operation.state) : "The runtime has no ready observation yet."}</p>${operationDetail}<p><a href="${escapeHtml(continueUrl.pathname)}">Check status</a></p></main></body></html>`,
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${automaticRefresh}<title>Starting repository instance</title></head><body><main><h1>Repository instance is starting</h1><p>${operation ? escapeHtml(operation.message ?? operation.state) : "The runtime has no ready observation yet."}</p>${operationDetail}<p><a href="${escapeHtml(continueUrl.pathname)}">Check status</a></p></main></body></html>`,
     { status: 202, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Retry-After": String(INSTANCE_STARTING_RETRY_SECONDS), "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } },
   );
 }
@@ -1072,7 +1053,7 @@ export function createGatewayRouter(context: GatewayContext): Hono {
   app.post("/api/repositories/:repositoryId/mutation-authorizations", (c) =>
     handleMutationAuthorization(c.req.raw, context, c.req.param("repositoryId"), context.requestNow));
 
-  app.get("/entry/:instanceId", (c) => handleDirectEntry(c.req.raw, context, c.req.param("instanceId")));
+  app.get("/entry/scriptorium/:repositoryId", (c) => handleDirectEntry(c.req.raw, context, c.req.param("repositoryId")));
   app.get("/", (c) => portal(c.req.raw));
   app.get("/repositories/:repositoryId", (c) => portal(c.req.raw));
   app.get("/repositories/:repositoryId/actions", (c) => {

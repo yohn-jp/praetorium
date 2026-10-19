@@ -1,3 +1,4 @@
+import { assignmentInstanceId } from "@praetorium/contracts";
 import { createHash } from "node:crypto";
 import { AccessGrantSchema, type AccessGrant } from "@praetorium/contracts";
 import type {
@@ -481,7 +482,7 @@ function validateGrantSet(input: GrantSetResponse, assignment: RuntimeAssignment
   if (
     validClaims.iss !== input.issuer ||
     validClaims.aud !== input.audience ||
-    validClaims.instanceId !== target.instanceId ||
+    validClaims.instanceId !== assignmentInstanceId(target) ||
     validClaims.repositoryId !== target.repositoryId ||
     validClaims.runtimeEpoch !== target.runtimeEpoch ||
     validClaims.authorizationRevision !== input.authorizationRevision ||
@@ -497,7 +498,7 @@ function validateGrantSet(input: GrantSetResponse, assignment: RuntimeAssignment
     wrongRepositoryClaims.iss !== validClaims.iss ||
     wrongRepositoryClaims.aud !== validClaims.aud ||
     wrongRepositoryClaims.repositoryId === target.repositoryId ||
-    wrongRepositoryClaims.instanceId !== target.instanceId ||
+    wrongRepositoryClaims.instanceId !== assignmentInstanceId(target) ||
     wrongRepositoryClaims.runtimeEpoch !== target.runtimeEpoch ||
     wrongRepositoryClaims.permissions.length !== 1 ||
     wrongRepositoryClaims.permissions[0] !== "read" ||
@@ -506,7 +507,7 @@ function validateGrantSet(input: GrantSetResponse, assignment: RuntimeAssignment
     wrongEpochClaims.iss !== validClaims.iss ||
     wrongEpochClaims.aud !== validClaims.aud ||
     wrongEpochClaims.repositoryId !== target.repositoryId ||
-    wrongEpochClaims.instanceId !== target.instanceId ||
+    wrongEpochClaims.instanceId !== assignmentInstanceId(target) ||
     wrongEpochClaims.runtimeEpoch === target.runtimeEpoch ||
     wrongEpochClaims.permissions.length !== 1 ||
     wrongEpochClaims.permissions[0] !== "read" ||

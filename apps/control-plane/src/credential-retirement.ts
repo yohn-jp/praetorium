@@ -49,10 +49,10 @@ export function createCredentialRetirementBarrier(config: {
       const row = await config.db
         .prepare(
           `SELECT COUNT(*) AS remaining FROM runtime_git_credentials
-         WHERE repository_id=? AND instance_id=? AND runtime_epoch=?
+         WHERE repository_id=? AND runtime_epoch=?
            AND status='revocation_pending' AND expires_at>?`,
         )
-        .bind(operation.repositoryId, operation.instanceId, runtimeEpoch, now())
+        .bind(operation.repositoryId, runtimeEpoch, now())
         .first<{ remaining: number }>();
       if (!row || !Number.isSafeInteger(row.remaining) || row.remaining < 0)
         throw new Error("Credential retirement state unavailable");

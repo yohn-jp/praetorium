@@ -1,5 +1,6 @@
 import { z } from "zod";
-const InstanceIdSchema = z.string().min(1).max(128);
+import { AppIdentitySchema, applicationHostname } from "./application-origin.js";
+import { RepositoryIdSchema } from "./access.js";
 const HostnameSchema = z.string().regex(/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/);
 const OriginSchema = z
   .string()
@@ -21,14 +22,15 @@ const ReturnPathSchema = z
   .max(2048)
   .regex(/^\/(?!\/)[^\r\n\\]*$/);
 const RequestShape = {
-  contractVersion: z.literal("instance-access/v1"),
+  contractVersion: z.literal("instance-access/v2"),
   audience: z.literal("instance-access"),
-  instanceId: InstanceIdSchema,
+  appIdentity: AppIdentitySchema,
+  repositoryId: RepositoryIdSchema,
   hostname: HostnameSchema,
   origin: OriginSchema,
 };
-const matchingHost = (input: { hostname: string; origin: string }) =>
-  new URL(input.origin).hostname === input.hostname;
+const matchingHost = (input: { hostname: string; origin: string; appIdentity: string; repositoryId: number }) =>
+  new URL(input.origin).hostname === input.hostname && input.hostname === applicationHostname(input.appIdentity, input.repositoryId);
 export const RedeemHandoffRequestSchema = z
   .strictObject({
     ...RequestShape,
@@ -41,7 +43,7 @@ export const RefreshAccessRequestSchema = z
   .refine(matchingHost, "Host and origin mismatch");
 export const RevokeAccessRequestSchema = RefreshAccessRequestSchema;
 const CredentialResponseShape = {
-  contractVersion: z.literal("instance-access/v1"),
+  contractVersion: z.literal("instance-access/v2"),
   token: z.string().min(1).max(16384),
   expiresAt: z.string().datetime(),
   refreshCredential: z.string().min(16).max(1024),
@@ -50,7 +52,7 @@ const CredentialResponseShape = {
 export const RedeemHandoffResponseSchema = z.strictObject(CredentialResponseShape);
 export const RefreshAccessResponseSchema = z.strictObject(CredentialResponseShape);
 export const RevokeAccessResponseSchema = z.strictObject({
-  contractVersion: z.literal("instance-access/v1"),
+  contractVersion: z.literal("instance-access/v2"),
   revoked: z.literal(true),
 });
 export type RedeemHandoffRequest = z.infer<typeof RedeemHandoffRequestSchema>;

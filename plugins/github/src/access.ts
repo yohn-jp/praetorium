@@ -73,9 +73,10 @@ function plusSeconds(date: Date, seconds: number): number {
 function trustedInstanceOrigin(
   config: GitHubAccessProviderConfig,
   instanceId: string,
+  repositoryId: number,
 ): string | null {
   try {
-    const origin = config.instanceOriginFor(instanceId);
+    const origin = config.instanceOriginFor(instanceId, repositoryId);
     const parsed = new URL(origin);
     if (
       parsed.protocol !== "https:" ||
@@ -317,7 +318,7 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
         !binding ||
         binding.status !== "active" ||
         binding.repositoryId !== repositoryId ||
-        binding.instanceId !== instanceId ||
+        (binding.instanceId !== instanceId && binding.physicalInstanceId !== instanceId) ||
         binding.runtimeEpoch !== runtimeEpoch
       )
         return { status: "denied" };
@@ -340,12 +341,12 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
       if (
         binding.installationId !== access.installationId ||
         !bindingMatchesRepository(binding, access.repository) ||
-        binding.instanceId !== instanceId ||
+        (binding.instanceId !== instanceId && binding.physicalInstanceId !== instanceId) ||
         binding.runtimeEpoch !== runtimeEpoch
       )
         return { status: "denied" };
 
-      const origin = trustedInstanceOrigin(config, binding.instanceId);
+      const origin = trustedInstanceOrigin(config, binding.instanceId, repositoryId);
       if (!origin) return { status: "denied" };
       const permissions = access.permissions;
       const lifetimeSeconds = permissions.some((permission) => permission !== "read") ? 30 : 300;
@@ -354,7 +355,7 @@ export function createGitHubAccessProvider(config: GitHubAccessProviderConfig) {
         status: "allowed",
         repositoryId,
         installationId: access.installationId,
-        instanceId: binding.instanceId,
+        instanceId,
         origin,
         runtimeEpoch: binding.runtimeEpoch,
         authorizationRevision: binding.authorizationRevision,

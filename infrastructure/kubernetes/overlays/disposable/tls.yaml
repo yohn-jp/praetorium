@@ -18,3 +18,4 @@ spec:
   dnsNames:
     - "@@INSTANCE_HOSTNAME_SUFFIX@@"
     - "*.@@INSTANCE_HOSTNAME_SUFFIX@@"
+    - "*.scriptorium.yohn.jp"

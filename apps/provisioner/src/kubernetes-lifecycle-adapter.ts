@@ -1,3 +1,5 @@
+import type { ApplicationDnsPublisher } from "./application-dns.js";
+import { assignmentInstanceId } from "@praetorium/contracts";
 import { createHash } from "node:crypto";
 import {
   createInClusterKubernetesRuntimeProvider,
@@ -64,6 +66,7 @@ export interface RuntimeContextFence {
 function parseIdentity(assignment: RuntimeAssignment): InstanceIdentity {
   return {
     instanceId: parseRuntimeInstanceId(assignment.instanceId),
+    physicalInstanceId: assignmentInstanceId(assignment),
     repositoryId: parseRuntimeRepositoryId(assignment.repositoryId),
     runtimeEpoch: assignment.runtimeEpoch,
     generation: assignment.generation,
@@ -225,6 +228,7 @@ export class KubernetesLifecycleRuntimeAdapter
       ) => ReturnType<ProvisionerOperationService["recordCapacitySnapshot"]>;
     },
     private readonly identityTransport?: RuntimeIdentityAssignmentTransport,
+    private readonly applicationDns?: ApplicationDnsPublisher,
   ) {
     this.now = options.now ?? Date.now;
     this.convergenceTimeoutMs = options.convergenceTimeoutMs ?? DEFAULT_CONVERGENCE_TIMEOUT_MS;
@@ -537,6 +541,19 @@ export class KubernetesLifecycleRuntimeAdapter
       signal ?? new AbortController().signal,
       beforeEffect,
     );
+    if (!this.applicationDns) {
+      await this.provider.deactivateEndpoint(identity, signal ?? new AbortController().signal, beforeEffect);
+      throw new Error("Application DNS publisher is unavailable");
+    }
+    try {
+      await this.applicationDns.publish(assignment, beforeEffect, signal);
+    } catch (error) {
+      // Keep CNAME records for stopped fallback. Withdraw the ready route when
+      // publication cannot be confirmed; never start a second writer to repair DNS.
+      await beforeEffect();
+      await this.provider.deactivateEndpoint(identity, signal ?? new AbortController().signal, beforeEffect);
+      throw error;
+    }
   }
 
   async deactivate(

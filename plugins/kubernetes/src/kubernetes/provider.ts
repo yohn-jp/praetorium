@@ -889,7 +889,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       deploymentName,
     );
     if (
-      assignment.instanceId !== identity.instanceId ||
+      assignment.instanceId !== (identity.physicalInstanceId ?? identity.instanceId) ||
       assignment.repositoryId !== identity.repositoryId ||
       assignment.runtimeEpoch !== identity.runtimeEpoch ||
       assignment.imageDigest !== deploymentMetadata.annotations["arcadia.io/release-digest"] ||

@@ -69,6 +69,7 @@ class SQLiteD1 implements D1Database {
       "../../../apps/control-plane/migrations/0001_repository_platform.sql",
       "../../../apps/control-plane/migrations/0002_stable_release_rollouts.sql",
       "../../../apps/control-plane/migrations/0003_staged_configurations.sql",
+      "../../../apps/control-plane/migrations/0006_application_origins.sql",
     ]) {
       this.database.exec(readFileSync(new URL(path, import.meta.url), "utf8"));
     }

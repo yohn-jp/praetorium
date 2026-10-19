@@ -646,7 +646,7 @@ describe("PortalService Control Plane projection", () => {
             repositoryId,
             installationId: repository.installationId,
             instanceId: checkedInstanceId,
-            origin: `https://ins-${instanceId.slice(4).toLowerCase()}.instances.example`,
+            origin: `https://${repositoryId}.scriptorium.yohn.jp`,
             runtimeEpoch: epoch,
             authorizationRevision: pendingSnapshot.binding.authorizationRevision,
             permissions: ["read", "write", "maintain"] as const,

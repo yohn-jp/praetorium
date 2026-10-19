@@ -90,6 +90,12 @@
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
+  "AppIdentitySchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "string",
+    "const": "scriptorium",
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
   "BuildCandidateSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -1600,6 +1606,10 @@
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
           },
+          "appIdentity": {
+            "type": "string",
+            "const": "scriptorium"
+          },
           "instanceId": {
             "type": "string",
             "minLength": 1
@@ -1739,6 +1749,18 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "legacyRuntimeEpoch": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "desiredRevisionId": {
             "anyOf": [
@@ -1943,6 +1965,10 @@
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991
               },
+              "appIdentity": {
+                "type": "string",
+                "const": "scriptorium"
+              },
               "instanceId": {
                 "type": "string",
                 "minLength": 1
@@ -2082,6 +2108,18 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
+              },
+              "legacyRuntimeEpoch": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "desiredRevisionId": {
                 "anyOf": [
@@ -3318,6 +3356,18 @@
         "minimum": 0,
         "maximum": 9007199254740991
       },
+      "legacyRuntimeEpoch": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "desiredRevisionId": {
         "anyOf": [
           {
@@ -4434,16 +4484,20 @@
     "properties": {
       "contractVersion": {
         "type": "string",
-        "const": "instance-access/v1"
+        "const": "instance-access/v2"
       },
       "audience": {
         "type": "string",
         "const": "instance-access"
       },
-      "instanceId": {
+      "appIdentity": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128
+        "const": "scriptorium"
+      },
+      "repositoryId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
       },
       "hostname": {
         "type": "string",
@@ -4467,7 +4521,8 @@
     "required": [
       "contractVersion",
       "audience",
-      "instanceId",
+      "appIdentity",
+      "repositoryId",
       "hostname",
       "origin",
       "code",
@@ -4482,7 +4537,7 @@
     "properties": {
       "contractVersion": {
         "type": "string",
-        "const": "instance-access/v1"
+        "const": "instance-access/v2"
       },
       "token": {
         "type": "string",
@@ -4521,16 +4576,20 @@
     "properties": {
       "contractVersion": {
         "type": "string",
-        "const": "instance-access/v1"
+        "const": "instance-access/v2"
       },
       "audience": {
         "type": "string",
         "const": "instance-access"
       },
-      "instanceId": {
+      "appIdentity": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128
+        "const": "scriptorium"
+      },
+      "repositoryId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
       },
       "hostname": {
         "type": "string",
@@ -4549,7 +4608,8 @@
     "required": [
       "contractVersion",
       "audience",
-      "instanceId",
+      "appIdentity",
+      "repositoryId",
       "hostname",
       "origin",
       "refreshCredential"
@@ -4563,7 +4623,7 @@
     "properties": {
       "contractVersion": {
         "type": "string",
-        "const": "instance-access/v1"
+        "const": "instance-access/v2"
       },
       "token": {
         "type": "string",
@@ -5208,6 +5268,10 @@
         "exclusiveMinimum": 0,
         "maximum": 9007199254740991
       },
+      "appIdentity": {
+        "type": "string",
+        "const": "scriptorium"
+      },
       "instanceId": {
         "type": "string",
         "minLength": 1
@@ -5270,6 +5334,10 @@
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
+          },
+          "appIdentity": {
+            "type": "string",
+            "const": "scriptorium"
           },
           "instanceId": {
             "type": "string",
@@ -5410,6 +5478,18 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "legacyRuntimeEpoch": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "desiredRevisionId": {
             "anyOf": [
@@ -5517,6 +5597,10 @@
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
           },
+          "appIdentity": {
+            "type": "string",
+            "const": "scriptorium"
+          },
           "instanceId": {
             "type": "string",
             "minLength": 1
@@ -5656,6 +5740,18 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "legacyRuntimeEpoch": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "desiredRevisionId": {
             "anyOf": [
@@ -5789,16 +5885,20 @@
     "properties": {
       "contractVersion": {
         "type": "string",
-        "const": "instance-access/v1"
+        "const": "instance-access/v2"
       },
       "audience": {
         "type": "string",
         "const": "instance-access"
       },
-      "instanceId": {
+      "appIdentity": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128
+        "const": "scriptorium"
+      },
+      "repositoryId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
       },
       "hostname": {
         "type": "string",
@@ -5817,7 +5917,8 @@
     "required": [
       "contractVersion",
       "audience",
-      "instanceId",
+      "appIdentity",
+      "repositoryId",
       "hostname",
       "origin",
       "refreshCredential"
@@ -5831,7 +5932,7 @@
     "properties": {
       "contractVersion": {
         "type": "string",
-        "const": "instance-access/v1"
+        "const": "instance-access/v2"
       },
       "revoked": {
         "type": "boolean",

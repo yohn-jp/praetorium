@@ -2,6 +2,7 @@ import { z } from "zod";
 import { RepositoryIdSchema } from "./access.js";
 export const RepositoryBindingSchema = z.strictObject({
   repositoryId: RepositoryIdSchema,
+  appIdentity: z.literal("scriptorium").optional(),
   instanceId: z.string().min(1),
   installationId: z.number().int().positive(),
   owner: z.string().min(1),
@@ -36,6 +37,7 @@ export const InstanceSnapshotSchema = LogicalInstanceSchema.extend({
   ]),
   observedRuntimeEpoch: z.number().int().nonnegative().nullable(),
   observedSequence: z.number().int().nonnegative(),
+  legacyRuntimeEpoch: z.number().int().positive().safe().nullable().optional(),
   desiredRevisionId: z.string().nullable(),
   observedRevisionId: z.string().nullable(),
   reservationState: z.enum(["none", "pending", "reserved", "allocated", "blocked", "released"]),

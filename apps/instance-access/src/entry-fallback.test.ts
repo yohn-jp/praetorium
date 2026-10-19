@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { createInstanceAccessHandler } from "./handler.js";
 
-const HOST = "ins-01arz3ndektsv4rrffq69g5fav.instances.service.test";
+const HOST = "482901.scriptorium.yohn.jp";
 const ORIGIN = `https://${HOST}`;
-const ENTRY = "https://gateway.service.test/entry/ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const ENTRY = "https://gateway.service.test/entry/scriptorium/482901";
 
 function setup() {
   const gateway = vi.fn(async () => { throw new Error("fallback must not call Gateway"); });

@@ -138,6 +138,8 @@ metadata:
 data:
   PROVISIONER_CONTROL_PLANE_URL: "@@CONTROL_PLANE_URL@@"
   PROVISIONER_NAMESPACE_PREFIX: praetorium-instances
+  PROVISIONER_INSTANCE_HOSTNAME_SUFFIX: "@@INSTANCE_HOSTNAME_SUFFIX@@"
+  PROVISIONER_APPLICATION_DNS_TOKEN_PATH: /var/run/secrets/application-dns/token
   PROVISIONER_CONTROL_NAMESPACE: praetorium-system
   PROVISIONER_CONTROL_SERVICE: provisioner
   PROVISIONER_CLUSTER_ID: "@@CLUSTER_ID@@"
@@ -195,12 +197,21 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          env:
+            - name: PROVISIONER_APPLICATION_DNS_ZONE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: praetorium-application-dns
+                  key: zone-id
           envFrom:
             - configMapRef:
                 name: praetorium-provisioner-config
           volumeMounts:
             - name: control-plane-credential
               mountPath: /var/run/secrets/control-plane
+              readOnly: true
+            - name: application-dns
+              mountPath: /var/run/secrets/application-dns
               readOnly: true
             - name: application-image-pull
               mountPath: /var/run/secrets/application-image-pull
@@ -253,6 +264,10 @@ spec:
             items:
               - key: "@@SECRET_PROVISIONER_CREDENTIAL_KEY@@"
                 path: credential
+        - name: application-dns
+          secret:
+            secretName: praetorium-application-dns
+            defaultMode: 0440
         - name: application-image-pull
           secret:
             secretName: "@@SECRET_APPLICATION_IMAGE_PULL@@"

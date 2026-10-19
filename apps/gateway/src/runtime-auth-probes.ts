@@ -1,6 +1,6 @@
 import { issueAccessGrant, constantTimeEqual, AccessGrantId } from "@praetorium/auth";
 import { newAccessGrantId } from "@praetorium/domain";
-import { instanceHostname } from "@praetorium/contracts";
+import { applicationHostname, physicalInstanceId } from "@praetorium/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { GatewayContext } from "./context.js";
@@ -123,7 +123,7 @@ export function createRuntimeAuthProbeRoutes(context: GatewayContext): Hono {
         return response(409, "CURRENT_BINDING_CHANGED");
       }
 
-      const hostname = instanceHostname(input.instanceId, context.config.instanceHostnameSuffix);
+      const hostname = applicationHostname("scriptorium", input.repositoryId);
       const origin = `https://${hostname}`;
       const ttlSeconds = Math.min(
         60,
@@ -135,7 +135,7 @@ export function createRuntimeAuthProbeRoutes(context: GatewayContext): Hono {
         issuer: context.config.origin,
         audience: origin,
         subjectUserId: input.actorId,
-        audienceInstanceId: input.instanceId,
+        audienceInstanceId: physicalInstanceId(input.instanceId, input.runtimeEpoch, after.instance.legacyRuntimeEpoch),
         runtimeEpoch: input.runtimeEpoch,
         // Repeated health checks only prove access to the assigned runtime.
         // They must never turn the operation actor into an authoring principal.

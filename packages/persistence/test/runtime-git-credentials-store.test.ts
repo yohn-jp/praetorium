@@ -23,6 +23,7 @@ class SQLiteD1 implements D1Database {
       "../../../apps/control-plane/migrations/0002_stable_release_rollouts.sql",
       "../../../apps/control-plane/migrations/0003_staged_configurations.sql",
       "../../../apps/control-plane/migrations/0004_runtime_git_credentials.sql",
+      "../../../apps/control-plane/migrations/0006_application_origins.sql",
     ])
       this.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
     seedBinding(this);
@@ -313,10 +314,10 @@ describe("D1RuntimeGitCredentialStore", () => {
     ).toMatchObject({ status: "active" });
   });
 
-  it("retires the proof-bound old epoch atomically at old-writer-absent", async () => {
+  it.each([false, true])("retires the proof-bound old epoch atomically (physical identity: %s)", async (physical) => {
     const db = new SQLiteD1();
     const credentialStore = new D1RuntimeGitCredentialStore(db);
-    const retired = registration(111);
+    const retired = registration(111, physical ? { instanceId: "run_repo-7001_4" } : {});
     const otherEpoch = registration(112, { runtimeEpoch: 5 });
     const otherInstance = registration(113, { instanceId: "ins_repo-7001-other" });
     const otherRepository = registration(114, {

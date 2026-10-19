@@ -15,6 +15,7 @@ export type ConfigurationSelection = {
 };
 
 export type ConfigurationInstance = {
+  readonly legacyRuntimeEpoch?: number | null;
   readonly instanceId: string;
   readonly repositoryId: number;
   readonly generation: number;

@@ -47,6 +47,7 @@ describe("recovered completion auth transport", () => {
         maximumResources: { cpuMilli: 1000, memoryMiB: 1024, ephemeralStorageMiB: 1024 },
       },
       authProbe: probe,
+      applicationDns: { publish: async () => undefined },
       assignmentTransport: { available: true, forClaim: () => ({}) } as unknown as RuntimeIdentityAssignmentTransport,
     });
     await executor.execute(claim, {

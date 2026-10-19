@@ -19,6 +19,7 @@ export type InstanceSnapshot = LogicalInstance & {
     | "unknown";
   readonly observedRuntimeEpoch: number | null;
   readonly observedSequence: number;
+  readonly legacyRuntimeEpoch?: number | null;
   readonly desiredRevisionId: string | null;
   readonly observedRevisionId: string | null;
   readonly reservationState: "none" | "pending" | "reserved" | "allocated" | "blocked" | "released";

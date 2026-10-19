@@ -97,6 +97,8 @@ export type RuntimeResourceProfileId = string;
 
 /** Repo and epoch identity are required at every provider boundary. */
 export interface InstanceIdentity {
+  /** Physical assignment; instanceId below is the legacy durable binding key. */
+  readonly physicalInstanceId?: string;
   readonly instanceId: RuntimeInstanceId;
   readonly repositoryId: RuntimeRepositoryId;
   readonly runtimeEpoch: number;

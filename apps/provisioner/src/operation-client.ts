@@ -1,3 +1,4 @@
+import { physicalInstanceId } from "@praetorium/contracts";
 import type { LifecyclePhase, LifecycleReadinessEvidence } from "@praetorium/application/lifecycle";
 import {
   RuntimeCanaryHealthDueRequestSchema,
@@ -126,6 +127,7 @@ export interface ClaimedProvisionerOperation {
 }
 
 export interface ProvisionerResolvedRuntime {
+  readonly legacyRuntimeEpoch?: number | null;
   readonly revisionId: string;
   readonly artifactRef: string;
   readonly platformManifestDigest: string;
@@ -265,6 +267,7 @@ export interface ControlCredentialResponse {
 }
 
 export interface RuntimeBindingMetadata {
+  readonly physicalInstanceId?: string;
   readonly repositoryId: number;
   readonly installationId: number;
   readonly instanceId: string;
@@ -608,6 +611,7 @@ function parsePolicy(input: unknown, message: string): ProvisionerAuthentication
 function parseRuntimeBinding(input: unknown): RuntimeBindingMetadata {
   const value = object(input, "runtime binding metadata invalid");
   const expected = [
+    ...(value.physicalInstanceId === undefined ? [] : ["physicalInstanceId"]),
     "active",
     "authority",
     "clusterId",
@@ -625,6 +629,7 @@ function parseRuntimeBinding(input: unknown): RuntimeBindingMetadata {
     repositoryId: positiveInteger(value.repositoryId, "runtime binding repository invalid"),
     installationId: positiveInteger(value.installationId, "runtime binding installation invalid"),
     instanceId: nonEmptyString(value.instanceId, "runtime binding instance invalid"),
+    ...(value.physicalInstanceId === undefined ? {} : { physicalInstanceId: nonEmptyString(value.physicalInstanceId, "physical runtime instance invalid") }),
     runtimeId: nonEmptyString(value.runtimeId, "runtime binding ID invalid"),
     runtimeEpoch: positiveInteger(value.runtimeEpoch, "runtime binding epoch invalid"),
     leaseId: nonEmptyString(value.leaseId, "runtime binding lease invalid"),
@@ -745,6 +750,7 @@ function parseResolvedRuntime(input: unknown): ProvisionerResolvedRuntime {
       ? undefined
       : parsePersistenceDeclaration(assignment.persistence);
   return {
+    ...(value.legacyRuntimeEpoch === undefined ? {} : { legacyRuntimeEpoch: value.legacyRuntimeEpoch === null ? null : positiveInteger(value.legacyRuntimeEpoch, "legacy epoch invalid") }),
     revisionId: nonEmptyString(value.revisionId, "runtime revision ID missing"),
     artifactRef,
     platformManifestDigest,
@@ -811,7 +817,7 @@ function parseIdleCandidate(input: unknown): ProvisionerIdleCandidate {
       ? null
       : nonEmptyString(value.healthOperationId, "idle candidate health operation ID invalid");
   if (
-    currentRuntime.assignment.instanceId !== instanceId ||
+    currentRuntime.assignment.instanceId !== physicalInstanceId(instanceId, currentRuntime.assignment.runtimeEpoch, currentRuntime.legacyRuntimeEpoch) ||
     currentRuntime.assignment.repositoryId !== repositoryId ||
     currentRuntime.assignment.runtimeEpoch !== runtimeEpoch
   ) {
@@ -1085,7 +1091,7 @@ function parseClaim(input: unknown): ClaimedProvisionerOperation | null {
   for (const resolved of [currentRuntime, targetRuntime]) {
     if (
       resolved !== null &&
-      (resolved.assignment.instanceId !== parsedOperation.instanceId ||
+      (resolved.assignment.instanceId !== physicalInstanceId(parsedOperation.instanceId, resolved.assignment.runtimeEpoch, resolved.legacyRuntimeEpoch) ||
         resolved.assignment.repositoryId !== parsedOperation.repositoryId)
     )
       throw new TypeError("resolved runtime belongs to another repository instance");

@@ -218,7 +218,7 @@ export function createRuntimeIdentityRoutes(deps: RuntimeIdentityRoutesDependenc
     const issued = await issueRuntimeIdentityCredential((await loadSigner()).signingKey, {
       issuer,
       runtimeId: binding.runtimeId,
-      instanceId: binding.instanceId,
+      instanceId: binding.physicalInstanceId ?? binding.instanceId,
       repositoryId: binding.repositoryId,
       installationId: binding.installationId,
       runtimeEpoch: binding.runtimeEpoch,

@@ -3,7 +3,8 @@ import {
   CompositionManifestSchema,
   RuntimeAssignmentSchema,
   RuntimeMetadataSchema,
-  instanceHostname,
+  applicationHostname,
+  physicalInstanceId,
   validateCompositionBindings,
   type PersistenceCompatibility,
 } from "@praetorium/contracts";
@@ -49,8 +50,12 @@ export function resolveAdmittedRuntime(
     binding.repositoryId !== instance.repositoryId
   )
     throw new Error("Repository binding is not active");
-  const hostname = instanceHostname(instance.instanceId, policy.instanceHostSuffix),
-    audience = `https://${hostname}`;
+  const legacyRuntimeEpoch = instance.legacyRuntimeEpoch ?? null;
+  const legacy = runtimeEpoch === legacyRuntimeEpoch;
+  const hostname = legacy
+    ? `ins-${instance.instanceId.slice(4).toLowerCase()}.${policy.instanceHostSuffix}`
+    : applicationHostname(binding.appIdentity ?? "scriptorium", binding.repositoryId);
+  const audience = `https://${hostname}`;
   const resolve = (revision: DeploymentRevisionSummary | null, runtimeEpoch: number | null) => {
     if (revision === null) return null;
     if (
@@ -79,7 +84,7 @@ export function resolveAdmittedRuntime(
       throw new Error("Resource profile is not resolved");
     const assignment = RuntimeAssignmentSchema.parse({
       contractVersion: "scriptorium-platform/v1",
-      instanceId: instance.instanceId,
+      instanceId: physicalInstanceId(instance.instanceId, runtimeEpoch, legacyRuntimeEpoch),
       repositoryId: binding.repositoryId,
       repositoryLocator: `https://github.com/${binding.owner}/${binding.name}`,
       defaultBranchPolicy: policy.defaultBranchPolicy,
@@ -102,6 +107,7 @@ export function resolveAdmittedRuntime(
       artifactRef: `${policy.registryHost}/${statement.artifact.repository}@${statement.artifact.digest}`,
       platformManifestDigest: statement.artifact.platformManifestDigest,
       resourceProfileId,
+      legacyRuntimeEpoch,
       hostname,
       resources: revision.resources,
       assignment,

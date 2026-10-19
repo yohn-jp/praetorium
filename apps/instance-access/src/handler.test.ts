@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createInstanceAccessHandler, type InstanceAccessEnvironment } from "./handler.js";
 
-const ULID = "01arz3ndektsv4rrffq69g5fav";
-const host = `ins-${ULID}.instances.service.test`;
+const host = "482901.scriptorium.yohn.jp";
 const origin = `https://${host}`;
 const now = Date.now();
 
@@ -17,7 +16,7 @@ function environment(fetch: (request: Request) => Promise<Response>): InstanceAc
 
 function grantResponse(): Response {
   return Response.json({
-    contractVersion: "instance-access/v1",
+    contractVersion: "instance-access/v2",
     token: "app-access-token-secret",
     expiresAt: new Date(now + 120_000).toISOString(),
     refreshCredential: "opaque-refresh-credential-secret",
@@ -61,9 +60,9 @@ describe("Instance Access production handler", () => {
     expect(internalRequest?.headers.get("Authorization")).toBe(`Bearer ${"s".repeat(48)}`);
     const gatewayBody = await internalRequest?.json();
     expect(gatewayBody).toMatchObject({
-      contractVersion: "instance-access/v1",
+      contractVersion: "instance-access/v2",
       audience: "instance-access",
-      instanceId: `ins_${ULID.toUpperCase()}`,
+      appIdentity: "scriptorium", repositoryId: 482901,
       hostname: host,
       origin,
       code: "once-only-handoff-code",
@@ -159,11 +158,11 @@ describe("Instance Access production handler", () => {
       const path = new URL(request.url).pathname;
       internalPaths.push(path);
       if (path.endsWith("/revoke")) {
-        return Response.json({ contractVersion: "instance-access/v1", revoked: true });
+        return Response.json({ contractVersion: "instance-access/v2", revoked: true });
       }
       if (path.endsWith("/refresh")) {
         return Response.json({
-          contractVersion: "instance-access/v1",
+          contractVersion: "instance-access/v2",
           token: "rotated-access-token-secret",
           expiresAt: new Date(now + 120_000).toISOString(),
           refreshCredential: "rotated-refresh-credential-secret",
@@ -274,7 +273,7 @@ describe("Instance Access production handler", () => {
       },
     }));
     expect(navigation.status).toBe(302);
-    expect(navigation.headers.get("Location")).toBe(`https://gateway.service.test/entry/ins_${ULID.toUpperCase()}?fallback=1`);
+    expect(navigation.headers.get("Location")).toBe(`https://gateway.service.test/entry/scriptorium/482901?fallback=1`);
     const apiRequest = new Request(`${origin}/api/write`, {
       method: "POST",
       headers: { Host: host, Accept: "application/json" },
@@ -316,7 +315,7 @@ describe("Instance Access production handler", () => {
     }));
     expect(navigation.status).toBe(302);
     expect(navigation.headers.get("Location")).toBe(
-      `https://gateway.service.test/entry/ins_${ULID.toUpperCase()}`,
+      `https://gateway.service.test/entry/scriptorium/482901`,
     );
     const cookies = navigation.headers.getSetCookie();
     expect(cookies).toHaveLength(3);

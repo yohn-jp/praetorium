@@ -24,6 +24,7 @@ const RUNTIME_BINDING_RESPONSE_BYTES = 4_096;
 const RUNTIME_IDENTITY_JWKS_RESPONSE_BYTES = 16_384;
 
 const RuntimeBindingMetadataSchema = z.strictObject({
+  physicalInstanceId: z.string().min(1).max(128).optional(),
   repositoryId: z.number().int().positive().safe(),
   installationId: z.number().int().positive().safe(),
   instanceId: z.string().min(1).max(128),
@@ -352,7 +353,8 @@ export function createRuntimeGitCredentialBroker(config: RuntimeGitCredentialBro
       return {
         repositoryId: binding.repositoryId,
         installationId: binding.installationId,
-        instanceId: binding.instanceId,
+        instanceId: binding.physicalInstanceId ?? binding.instanceId,
+        bindingId: binding.instanceId,
         runtimeEpoch: binding.runtimeEpoch,
         leaseId: binding.leaseId,
         active: binding.active,
@@ -371,10 +373,10 @@ export function createRuntimeGitCredentialBroker(config: RuntimeGitCredentialBro
         currentRuntime.repositoryId !== repositoryId ||
         repository.repositoryId !== repositoryId ||
         currentRuntime.installationId !== repository.installationId ||
-        currentRuntime.instanceId !== repository.instanceId
+        (currentRuntime.bindingId ?? currentRuntime.instanceId) !== repository.instanceId
       )
         return null;
-      return { ...repository, runtimeEpoch: currentRuntime.runtimeEpoch };
+      return { ...repository, instanceId: currentRuntime.instanceId, runtimeEpoch: currentRuntime.runtimeEpoch };
     },
   };
 

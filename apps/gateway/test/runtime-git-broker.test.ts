@@ -43,9 +43,11 @@ async function appPrivateKeyPem(): Promise<string> {
 async function setup(
   options: {
     accessProvider?: FreshRepositoryAccessChecker;
+    physicalRuntime?: boolean;
     githubFetchImpl?: typeof fetch;
   } = {},
 ) {
+  const physical = options.physicalRuntime ? `run_${INSTANCE_ID.slice(4)}_${RUNTIME_EPOCH}` : INSTANCE_ID;
   const runtimePair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
     true,
@@ -71,7 +73,7 @@ async function setup(
     {
       issuer: ISSUER,
       runtimeId: RUNTIME_ID,
-      instanceId: INSTANCE_ID,
+      instanceId: physical,
       repositoryId: REPOSITORY_ID,
       installationId: INSTALLATION_ID,
       runtimeEpoch: RUNTIME_EPOCH,
@@ -95,13 +97,14 @@ async function setup(
   const proof = {
     serviceToken: runtimeToken.token,
     runtimeId: RUNTIME_ID,
-    instanceId: INSTANCE_ID,
+    instanceId: physical,
     repositoryId: REPOSITORY_ID,
     installationId: INSTALLATION_ID,
     runtimeEpoch: RUNTIME_EPOCH,
     leaseId: LEASE_ID,
   };
   const runtimeBinding = {
+    ...(options.physicalRuntime ? { physicalInstanceId: physical } : {}),
     repositoryId: REPOSITORY_ID,
     installationId: INSTALLATION_ID,
     instanceId: INSTANCE_ID,
@@ -443,4 +446,12 @@ describe("runtime Git credential broker composition", () => {
     );
     expect(githubFetch).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it("uses the post-absence physical identity while repository authorization retains its durable logical key", async () => {
+  const h = await setup({ physicalRuntime: true });
+  const result = await h.broker.issue({ proof: h.proof, operation: "fetch" });
+  expect(h.proof.instanceId).toBe(`run_${INSTANCE_ID.slice(4)}_${RUNTIME_EPOCH}`);
+  expect(result.status).toBe("issued");
 });

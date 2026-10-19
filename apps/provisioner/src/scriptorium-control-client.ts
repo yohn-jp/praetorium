@@ -1,3 +1,4 @@
+import { assignmentInstanceId } from "@praetorium/contracts";
 import { PersistenceObservationSchema } from "@praetorium/contracts";
 import { createHash } from "node:crypto";
 import {
@@ -402,12 +403,12 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
   async status(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<ProducerStatus> {
     const status = parseStatus(await this.request(assignment, "status", "GET", undefined, signal));
     if (
-      status.instanceId !== assignment.instanceId ||
+      status.instanceId !== assignmentInstanceId(assignment) ||
       status.repositoryId !== assignment.repositoryId ||
       status.runtimeEpoch !== assignment.runtimeEpoch
     )
       throw new TypeError("producer status is bound to another runtime assignment");
-    return status;
+    return { ...status, instanceId: assignment.instanceId };
   }
 
   async quiesce(
@@ -422,7 +423,7 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
     const receipt = parseQuiesceReceipt(payload);
     if (
       receipt.operationId !== request.operationId ||
-      receipt.instanceId !== request.instanceId ||
+      receipt.instanceId !== assignmentInstanceId(assignment) ||
       receipt.runtimeEpoch !== request.runtimeEpoch
     )
       throw new TypeError("producer quiesce response is bound to another request");
@@ -433,7 +434,7 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
         Date.parse(receipt.observedAt) > receivedAt)
     )
       throw new TypeError("late quiesce response cannot prove safety");
-    return receipt;
+    return { ...receipt, instanceId: request.instanceId };
   }
 
   async resume(
@@ -530,7 +531,7 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
   ): Promise<unknown> {
     if (!this.credentials.available)
       throw new Error("runtime_scoped_service_credential_unavailable");
-    const exactBody = body === undefined ? "" : JSON.stringify(body);
+    const exactBody = body === undefined ? "" : JSON.stringify({ ...body, instanceId: assignmentInstanceId(assignment) });
     const payloadDigest = `sha256:${createHash("sha256").update(exactBody).digest("hex")}`;
     const credential = await this.credentials.issue(
       {

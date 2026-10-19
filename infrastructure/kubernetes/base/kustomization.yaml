@@ -6,4 +6,5 @@ resources:
   - build-services.yaml
   - metrics.yaml
   - stopped-instance-fallback.yaml
+  - tls-store.yaml
   - ../policies

@@ -1,0 +1,15 @@
+# This is the single cluster-wide default TLSStore. Its certificate is
+# issued/renewed by cert-manager in praetorium-system (deployment/tls.yaml).
+# Runtime IngressRoutes live in per-repository namespaces and use tls: {};
+# referencing a namespaced Secret from them would violate the ingress policy.
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: praetorium-system
+  labels:
+    app.kubernetes.io/part-of: praetorium
+    app.kubernetes.io/managed-by: flux
+spec:
+  defaultCertificate:
+    secretName: "@@TLS_SECRET_NAME@@"

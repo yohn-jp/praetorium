@@ -44,6 +44,7 @@ describe("Gateway signing authority initialization", () => {
       WAKE_RATE_LIMIT: { limit: async () => ({ success: true }) } as RateLimit,
       MUTATION_RECEIPT_RATE_LIMIT: { limit: async () => ({ success: true }) } as RateLimit,
       CONTROL_PLANE: { fetch: vi.fn(async () => new Response()) } as unknown as Fetcher,
+      GATEWAY_ENVIRONMENT: "test",
       GATEWAY_ORIGIN: "https://gateway.test",
       GATEWAY_SESSION_TTL_SECONDS: "3600",
       GATEWAY_HANDOFF_TTL_SECONDS: "60",

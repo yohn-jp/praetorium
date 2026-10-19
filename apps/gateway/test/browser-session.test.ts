@@ -31,7 +31,7 @@ async function setup() {
     githubAccess: { listRepositories },
   } as unknown as GatewayContext;
   const app = createGatewayRouter(context);
-  const session = () => app.fetch(new Request(`${ORIGIN}/auth/session`, { headers: { Cookie: cookie } }));
+  const session = () => app.fetch(new Request(`${ORIGIN}/api/session`, { headers: { Cookie: cookie } }));
   const logout = (body: URLSearchParams | string, headers: Record<string, string> = {}) => app.fetch(new Request(`${ORIGIN}/auth/logout`, {
     method: "POST",
     headers: { Cookie: cookie, Origin: ORIGIN, "Content-Type": "application/x-www-form-urlencoded", ...headers },
@@ -106,6 +106,13 @@ describe("browser session boundary", () => {
   it("bounds form decoding and retains the session on oversized input", async () => {
     const { csrf, logout, session } = await setup();
     const response = await logout(new URLSearchParams({ csrfToken: csrf, padding: "x".repeat(8192) }));
+    expect(response.status).toBe(400);
+    expect((await session()).status).toBe(200);
+  });
+
+  it("rejects malformed form encoding without revoking the session", async () => {
+    const { logout, session } = await setup();
+    const response = await logout("csrfToken=%FF%");
     expect(response.status).toBe(400);
     expect((await session()).status).toBe(200);
   });

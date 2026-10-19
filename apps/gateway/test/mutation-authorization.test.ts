@@ -72,6 +72,7 @@ async function setup(options: {
   alreadyStarting?: boolean;
   pendingConfiguration?: boolean;
   sourceLimiterAllowed?: boolean;
+  runtimeLimiterAllowed?: boolean;
   credentialBroker?: Exclude<Awaited<ReturnType<GatewayContext["getGitHubCredentialBroker"]>>, undefined>;
 } = {}) {
   const pair = await crypto.subtle.generateKey(
@@ -152,6 +153,7 @@ async function setup(options: {
   let desiredRequests = 0;
   const mutationRateLimitKeys: string[] = [];
   const sourceRateLimitKeys: string[] = [];
+  const runtimeRateLimitKeys: string[] = [];
   const wakeRateLimitKeys: string[] = [];
   const checkedRuntimeEpochs: number[] = [];
   let writeAllowed = options.write ?? true;
@@ -235,7 +237,7 @@ async function setup(options: {
         return options.sourceLimiterAllowed !== false;
       },
     },
-    runtimeCredentialRateLimiter: { consume: async () => true },
+    runtimeCredentialRateLimiter: { consume: async (key: string) => { runtimeRateLimitKeys.push(key); return options.runtimeLimiterAllowed !== false; } },
     loginRateLimiter: { consume: async () => true },
     wakeRateLimiter: { consume: async (key: string) => { wakeRateLimitKeys.push(key); return true; } },
     mutationReceiptRateLimiter: {
@@ -306,7 +308,8 @@ async function setup(options: {
     get repositoryReads() { return repositoryReads; },
     get instanceReads() { return instanceReads; },
     get desiredRequests() { return desiredRequests; },
-    get sourceRateLimitKeys() { return sourceRateLimitKeys; },
+    get sourceRateLimitKeys() { return sourceRateLimitKeys; }
+    get runtimeRateLimitKeys() { return runtimeRateLimitKeys; },
     get wakeRateLimitKeys() { return wakeRateLimitKeys; },
     get mutationRateLimitKeys() { return mutationRateLimitKeys; },
     get checkedRuntimeEpochs() { return checkedRuntimeEpochs; },
@@ -425,6 +428,28 @@ describe("Gateway mutation authorization endpoint", () => {
     }));
     expect(unknownOperation.status).toBe(400);
     expect(receivedOperation).toBe("fetch");
+  });
+
+  it("throttles rotating invalid service tokens with the same internal pre-auth bucket", async () => {
+    let called = 0;
+    const test = await setup({
+      runtimeLimiterAllowed: false,
+      credentialBroker: { async issue() { called++; return { status: "denied", reason: "runtime_identity_invalid" }; } },
+    });
+    for (const serviceToken of ["invalid-service-token-one", "invalid-service-token-two"]) {
+      const response = await test.router.fetch(new Request(`${ORIGIN}/internal/github/credential`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "fetch",
+          proof: { serviceToken, runtimeId: "runtime-1", instanceId: INSTANCE_ID,
+            repositoryId: REPOSITORY_ID, installationId: 83104, runtimeEpoch: 7, leaseId: "lease-1" },
+        }),
+      }));
+      expect(response.status).toBe(429);
+    }
+    expect(test.runtimeRateLimitKeys).toEqual(["service-binding:preauth", "service-binding:preauth"]);
+    expect(called).toBe(0);
   });
 
   it("logs only allowlisted runtime Git broker rejection reasons", async () => {

@@ -154,7 +154,12 @@ async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
   const handoffTtlSeconds = positiveInteger(env.GATEWAY_HANDOFF_TTL_SECONDS, "GATEWAY_HANDOFF_TTL_SECONDS", 1, 60);
   const accessGrantTtlSeconds = positiveInteger(env.GATEWAY_ACCESS_GRANT_TTL_SECONDS, "GATEWAY_ACCESS_GRANT_TTL_SECONDS", 1, 300);
   return {
-    environment: env.GATEWAY_ENVIRONMENT ?? "production",
+    environment: (() => {
+      const value = env.GATEWAY_ENVIRONMENT;
+      if (!value || !/^(production|preview|development|test)$/.test(value))
+        throw new TypeError("GATEWAY_ENVIRONMENT must explicitly identify the deployment environment");
+      return value;
+    })(),
     origin,
     sessionTtlSeconds,
     handoffTtlSeconds,

@@ -438,7 +438,7 @@ async function handleCreateMcpCredential(request: Request, context: GatewayConte
   }
   try {
     const repository = await context.controlPlane.getByRepositoryId(repositoryId);
-    if (!repository) return errorResponse(request, "NOT_FOUND", "credential not found", context.requestId);
+    if (!repository) return errorResponse(request, "NOT_FOUND", "repository instance not found", context.requestId);
     const decision = await context.githubAccess.checkBoundAccess(
       session.session.actor.userId,
       repositoryId,
@@ -458,7 +458,7 @@ async function handleCreateMcpCredential(request: Request, context: GatewayConte
       instanceId: repository.instance.instanceId,
       runtimeEpoch: runtimeEpochForAccess(repository.instance),
       name,
-      permissions: decision.permissions,
+      permissions,
       now,
       ttlSeconds: Math.min(90 * 24 * 60 * 60, Math.floor((Date.parse(session.session.resolved.record.expiresAt) - Date.parse(now)) / 1000)),
       pepper: context.config.credentialPepper,

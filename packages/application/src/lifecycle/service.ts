@@ -1027,6 +1027,13 @@ export class LifecycleService {
     const rollbackAssignment: RuntimeAssignment = {
       ...previous,
       runtimeEpoch: rollbackEpoch,
+      // Rollback restores artifact/data compatibility, while retaining the
+      // current public-origin policy (including an origin migration).
+      deployment: {
+        ...previous.deployment,
+        hostname: operation.target?.hostname ?? previous.deployment.hostname,
+        grantPolicy: operation.target?.grantPolicy ?? previous.deployment.grantPolicy,
+      },
     };
     const proof = operation.writerAbsenceProof;
     if (
@@ -1610,6 +1617,13 @@ export class LifecycleService {
     const rollbackAssignment: RuntimeAssignment = {
       ...previous,
       runtimeEpoch: rollbackEpoch,
+      // Rollback restores artifact/data compatibility, while retaining the
+      // current public-origin policy (including an origin migration).
+      deployment: {
+        ...previous.deployment,
+        hostname: operation.target?.hostname ?? previous.deployment.hostname,
+        grantPolicy: operation.target?.grantPolicy ?? previous.deployment.grantPolicy,
+      },
     };
     const existing = await this.dependencies.runtime.censusWriters(
       operation.instanceId,

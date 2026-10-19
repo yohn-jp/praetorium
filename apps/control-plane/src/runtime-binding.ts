@@ -1,6 +1,8 @@
+import { physicalInstanceId } from "@praetorium/contracts";
 import type { D1Database } from "@praetorium/persistence/d1";
 
 export interface RuntimeBindingMetadata {
+  readonly physicalInstanceId?: string;
   readonly repositoryId: number;
   readonly installationId: number;
   readonly instanceId: string;
@@ -24,6 +26,7 @@ interface RuntimeBindingRow {
   repository_id: number;
   installation_id: number;
   instance_id: string;
+  legacy_runtime_epoch?: number | null;
   runtime_id: string;
   runtime_epoch: number;
   lease_id: string;
@@ -148,6 +151,7 @@ function toMetadata(row: RuntimeBindingRow): RuntimeBindingMetadata {
     repositoryId: row.repository_id,
     installationId: row.installation_id,
     instanceId: row.instance_id,
+    physicalInstanceId: physicalInstanceId(row.instance_id, row.runtime_epoch, row.legacy_runtime_epoch),
     runtimeId: row.runtime_id,
     runtimeEpoch: row.runtime_epoch,
     leaseId: row.lease_id,
@@ -175,7 +179,7 @@ export function createRuntimeBindingMetadataReader(
           `WITH candidates AS (
              SELECT
                0 AS priority, 'post-absence-target' AS authority,
-               b.repository_id, b.installation_id, i.instance_id,
+               b.repository_id, b.installation_id, i.instance_id, i.legacy_runtime_epoch,
                r.reservation_id AS runtime_id, r.runtime_epoch,
                r.reservation_id AS lease_id, r.cluster_id,
                i.observed_state, i.observed_runtime_epoch,
@@ -217,7 +221,7 @@ export function createRuntimeBindingMetadataReader(
                  OR NOT EXISTS (
                    SELECT 1 FROM runtime_git_credentials pending_credential
                    WHERE pending_credential.repository_id = b.repository_id
-                     AND pending_credential.instance_id = i.instance_id
+                     AND (pending_credential.instance_id = i.instance_id OR pending_credential.instance_id = 'run_' || substr(i.instance_id, 5) || '_' || pending_credential.runtime_epoch)
                      AND pending_credential.runtime_epoch = json_extract(latest.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch')
                      AND pending_credential.status IN ('active', 'revocation_pending')
                      AND pending_credential.expires_at > ?
@@ -232,7 +236,7 @@ export function createRuntimeBindingMetadataReader(
              UNION ALL
              SELECT
                1 AS priority, 'observed-writer' AS authority,
-               b.repository_id, b.installation_id, i.instance_id,
+               b.repository_id, b.installation_id, i.instance_id, i.legacy_runtime_epoch,
                r.reservation_id AS runtime_id, r.runtime_epoch,
                r.reservation_id AS lease_id, r.cluster_id,
                i.observed_state, i.observed_runtime_epoch,

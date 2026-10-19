@@ -41,6 +41,7 @@ interface JoinedRow {
   observed_generation: number | null;
   observed_runtime_epoch: number | null;
   observed_sequence: number;
+  legacy_runtime_epoch?: number | null;
   observed_state: ConfigurationInstance["observedState"];
   desired_revision_id: string | null;
   observed_revision_id: string | null;
@@ -141,7 +142,7 @@ interface StageRow {
 const INSTANCE_COLUMNS = `
   b.repository_id, b.instance_id, b.binding_epoch, b.authorization_revision, b.suspended,
   i.generation, i.runtime_epoch, i.desired_state, i.policy,
-  i.observed_generation, i.observed_runtime_epoch, i.observed_sequence, i.observed_state,
+  i.observed_generation, i.observed_runtime_epoch, i.observed_sequence, i.observed_state, i.legacy_runtime_epoch,
   i.desired_revision_id, i.observed_revision_id, i.desired_artifact_digest, i.current_artifact_digest,
   i.reservation_state, i.reservation_id, i.created_at, i.updated_at`;
 
@@ -1200,6 +1201,7 @@ function toContext(row: JoinedRow): ConfigurationContext {
     observedGeneration: row.observed_generation,
     observedRuntimeEpoch: row.observed_runtime_epoch,
     observedSequence: row.observed_sequence,
+    legacyRuntimeEpoch: row.legacy_runtime_epoch ?? null,
     observedState: row.observed_state,
     desiredRevisionId: row.desired_revision_id,
     observedRevisionId: row.observed_revision_id,

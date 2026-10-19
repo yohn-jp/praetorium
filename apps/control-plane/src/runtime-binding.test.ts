@@ -90,6 +90,7 @@ function installSchema(db: SQLiteD1): void {
     "../migrations/0002_stable_release_rollouts.sql",
     "../migrations/0003_staged_configurations.sql",
     "../migrations/0004_runtime_git_credentials.sql",
+    "../migrations/0006_application_origins.sql",
   ])
     db.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
 }
@@ -113,7 +114,7 @@ function seedRuntimeGitCredential(
     )
     .run(
       "a".repeat(64),
-      options.instanceId ?? "ins_repo-7001",
+      options.instanceId ?? "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
       options.runtimeEpoch ?? 4,
       options.expiresAt ?? NOW + 60_000,
       options.status,
@@ -152,13 +153,13 @@ function seedInstance(
        ) VALUES (?, ?, 8, 5, 'running', 7, 4, 'ready', 'revision-4', 'revision-5',
          'sha256:current', 'sha256:target', 'reserved', ?, ?, ?)`,
     )
-    .run("ins_repo-7001", repositoryId, targetReservationId, NOW - 1000, NOW - 1000);
+    .run("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV", repositoryId, targetReservationId, NOW - 1000, NOW - 1000);
   db.database
     .prepare(
       `INSERT INTO repository_bindings (
          repository_id, instance_id, installation_id, owner, name,
          authorization_revision, binding_epoch, suspended, created_at, updated_at
-       ) VALUES (?, 'ins_repo-7001', ?, 'owner', 'repo', 3, 2, ?, ?, ?)`,
+       ) VALUES (?, 'ins_01ARZ3NDEKTSV4RRFFQ69G5FAV', ?, 'owner', 'repo', 3, 2, ?, ?, ?)`,
     )
     .run(repositoryId, installationId, options.suspended ?? 0, NOW - 1000, NOW - 1000);
   db.database
@@ -167,14 +168,14 @@ function seedInstance(
          reservation_id, instance_id, repository_id, runtime_epoch, generation,
          cluster_id, status, capacity_snapshot_epoch, cpu_milli, memory_mib,
          ephemeral_storage_mib, created_at, updated_at
-       ) VALUES ('res_current-4', 'ins_repo-7001', ?, 4, 7, 'cluster-1', ?, 1,
+       ) VALUES ('res_current-4', 'ins_01ARZ3NDEKTSV4RRFFQ69G5FAV', ?, 4, 7, 'cluster-1', ?, 1,
          100, 256, 128, ?, ?)`,
     )
     .run(repositoryId, options.currentReservationStatus ?? "reserved", NOW - 1000, NOW - 1000);
   if (targetReservationId === "") return;
 
   const proof = {
-    instanceId: "ins_repo-7001",
+    instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
     repositoryId,
     retiredRuntimeEpoch:
       options.proofRetiredRuntimeEpoch === undefined ? 4 : options.proofRetiredRuntimeEpoch,
@@ -186,13 +187,13 @@ function seedInstance(
   };
   const absenceCheckpoint = JSON.stringify({
     schemaVersion: 1,
-    lifecycle: { instanceId: "ins_repo-7001", repositoryId, writerAbsenceProof: proof },
+    lifecycle: { instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV", repositoryId, writerAbsenceProof: proof },
     writerAbsenceProof: proof,
   });
   const currentCheckpoint = JSON.stringify({
     schemaVersion: 1,
     lifecycle: {
-      instanceId: "ins_repo-7001",
+      instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
       repositoryId,
         phase: targetPhase,
       writerAbsenceProof: proof,
@@ -205,7 +206,7 @@ function seedInstance(
          reservation_id, instance_id, repository_id, runtime_epoch, generation,
          cluster_id, status, capacity_snapshot_epoch, cpu_milli, memory_mib,
          ephemeral_storage_mib, created_at, updated_at
-       ) VALUES (?, 'ins_repo-7001', ?, 5, 8, ?, ?, 1, 100, 256, 128, ?, ?)`,
+       ) VALUES (?, 'ins_01ARZ3NDEKTSV4RRFFQ69G5FAV', ?, 5, 8, ?, ?, 1, 100, 256, 128, ?, ?)`,
     )
     .run(
       targetReservationId,
@@ -224,7 +225,7 @@ function seedInstance(
          report_sequence, checkpoint_sequence, checkpoint_json, cluster_id, reservation_id,
          idempotency_scope, idempotency_key, request_hash, actor_id,
          authorization_revision, created_at, updated_at
-       ) VALUES ('op-target-5', 'ins_repo-7001', ?, 8, 5, 'redeploy', 'running',
+       ) VALUES ('op-target-5', 'ins_01ARZ3NDEKTSV4RRFFQ69G5FAV', ?, 8, 5, 'redeploy', 'running',
          ?, 1, 1, 'provisioner-1', 'lease-secret', ?, 1, ?, ?,
          'cluster-1', ?, 'repo:7001', 'request-5', 'request-hash', 'user-1', 3, ?, ?)`,
     )
@@ -283,7 +284,7 @@ function seedRetirement(
   if (options.newerDesiredGeneration) {
     db.database
       .prepare("UPDATE logical_instances SET generation = 9, runtime_epoch = 6 WHERE instance_id = ?")
-      .run("ins_repo-7001");
+      .run("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV");
   }
 
   const operationId = options.operationId ?? "op-retirement-5";
@@ -292,7 +293,7 @@ function seedRetirement(
   const latestCheckpoint = JSON.stringify({
     schemaVersion: 1,
     lifecycle: {
-      instanceId: "ins_repo-7001",
+      instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
       repositoryId: 7001,
       phase: latest.phase,
       quiesceRequest: latest.quiesceRequest,
@@ -307,7 +308,7 @@ function seedRetirement(
          report_sequence, checkpoint_sequence, checkpoint_json, cluster_id, reservation_id,
          idempotency_scope, idempotency_key, request_hash, actor_id,
          authorization_revision, created_at, updated_at
-       ) VALUES (?, 'ins_repo-7001', 7001, ?, ?, ?, ?, ?, 1, 1, 'provisioner-1',
+       ) VALUES (?, 'ins_01ARZ3NDEKTSV4RRFFQ69G5FAV', 7001, ?, ?, ?, ?, ?, 1, 1, 'provisioner-1',
          'retirement-lease', ?, 1, ?, ?, 'cluster-1', NULL, 'repo:7001',
          ?, 'retirement-hash', 'user-1', 3, ?, ?)`,
     )
@@ -340,7 +341,7 @@ function seedRetirement(
       JSON.stringify({
         schemaVersion: 1,
         lifecycle: {
-          instanceId: "ins_repo-7001",
+          instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
           repositoryId: 7001,
           phase: checkpoint.phase,
           quiesceRequest: checkpoint.quiesceRequest,
@@ -354,7 +355,7 @@ function seedRetirement(
 
 const QUIESCE_REQUEST = {
   operationId: "op-retirement-5",
-  instanceId: "ins_repo-7001",
+  instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
   runtimeEpoch: 4,
   reason: "redeploy",
   contractVersion: "scriptorium-platform/v1",
@@ -381,7 +382,8 @@ describe("Control Plane runtime binding metadata", () => {
     await expect(reader.getCurrent(7001)).resolves.toEqual({
       repositoryId: 7001,
       installationId: 9001,
-      instanceId: "ins_repo-7001",
+      instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      physicalInstanceId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_4",
       runtimeId: "res_current-4",
       runtimeEpoch: 4,
       leaseId: "res_current-4",
@@ -468,7 +470,8 @@ describe("Control Plane runtime binding metadata", () => {
     await expect(reader.getCurrent(7001)).resolves.toEqual({
       repositoryId: 7001,
       installationId: 9001,
-      instanceId: "ins_repo-7001",
+      instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      physicalInstanceId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_5",
       runtimeId: "res_target-5",
       runtimeEpoch: 5,
       leaseId: "res_target-5",
@@ -484,13 +487,14 @@ describe("Control Plane runtime binding metadata", () => {
       .prepare(
         "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
       )
-      .run("ins_repo-7001");
+      .run("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV");
     const reader = createRuntimeBindingMetadataReader({ db, now: () => NOW });
 
     await expect(reader.getCurrent(7001)).resolves.toEqual({
       repositoryId: 7001,
       installationId: 9001,
-      instanceId: "ins_repo-7001",
+      instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      physicalInstanceId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_5",
       runtimeId: "res_target-5",
       runtimeEpoch: 5,
       leaseId: "res_target-5",
@@ -508,7 +512,7 @@ describe("Control Plane runtime binding metadata", () => {
       .prepare(
         "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
       )
-      .run("ins_repo-7001");
+      .run("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV");
     await expect(
       createRuntimeBindingMetadataReader({ db: expired, now: () => NOW }).getCurrent(7001),
     ).resolves.toBeNull();
@@ -518,7 +522,7 @@ describe("Control Plane runtime binding metadata", () => {
       .prepare(
         "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
       )
-      .run("ins_repo-7001");
+      .run("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV");
     terminal.database
       .prepare("UPDATE operations SET status = 'succeeded' WHERE operation_id = 'op-target-5'")
       .run();
@@ -531,7 +535,7 @@ describe("Control Plane runtime binding metadata", () => {
       .prepare(
         "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
       )
-      .run("ins_repo-7001");
+      .run("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV");
     const latest = JSON.parse(
       mismatchedProof.database
         .prepare("SELECT checkpoint_json FROM operation_checkpoints WHERE operation_id = ? AND sequence = 2")
@@ -575,7 +579,7 @@ describe("Control Plane runtime binding metadata", () => {
   });
 
   it.each([
-    { name: "another epoch", runtimeEpoch: 3, instanceId: "ins_repo-7001" },
+    { name: "another epoch", runtimeEpoch: 3, instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
     { name: "another instance", runtimeEpoch: 4, instanceId: "ins_other" },
   ])("does not block on a credential from $name", async (credential) => {
     const db = createDatabase();
@@ -592,7 +596,7 @@ describe("Control Plane runtime binding metadata", () => {
       .prepare(
         "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
       )
-      .run("ins_repo-7001");
+      .run("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV");
     seedRuntimeGitCredential(db, { status: "active" });
 
     await expect(
@@ -654,4 +658,11 @@ describe("Control Plane runtime binding metadata", () => {
       createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001),
     ).resolves.toMatchObject({ installationId: 9002, runtimeEpoch: 4, leaseId: "res_current-4" });
   });
+});
+
+
+it.each(["active", "revocation_pending"] as const)("blocks target admission while a retired physical runtime credential is %s", async (status) => {
+  const db = createDatabase();
+  seedRuntimeGitCredential(db, { status, instanceId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_4" });
+  await expect(createRuntimeBindingMetadataReader({ db, now: () => NOW }).getCurrent(7001)).resolves.toBeNull();
 });

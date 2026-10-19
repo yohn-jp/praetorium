@@ -54,6 +54,7 @@ export interface RuntimePersistenceObservation {
 }
 
 export interface RuntimeDeployment {
+  readonly legacyRuntimeEpoch?: number | null;
   readonly revisionId: string;
   readonly repositoryId: number;
   readonly repositoryLocator: string;

@@ -519,7 +519,7 @@ describe("Control Plane provisioner idle routes", () => {
 
   it("generates the observation operation ID on the server and never accepts caller action fields", async () => {
     const h = createHarness();
-    await h.addReadyInstance("ins_observe", 101);
+    await h.addReadyInstance("ins_01ARZ3NDEKTSV4RRFFQ69G5FAV", 101);
     const signing = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
       "sign",
       "verify",
@@ -543,7 +543,7 @@ describe("Control Plane provisioner idle routes", () => {
       body: JSON.stringify({
         workerId: WORKER_ID,
         clusterId: CLUSTER_ID,
-        instanceId: "ins_observe",
+        instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         repositoryId: 101,
         expectedGeneration: 1,
         runtimeEpoch: 1,
@@ -568,7 +568,7 @@ describe("Control Plane provisioner idle routes", () => {
       await h.request("/internal/provisioner/observation-credential", {
         workerId: WORKER_ID,
         clusterId: CLUSTER_ID,
-        instanceId: "ins_observe",
+        instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
         repositoryId: 101,
         expectedGeneration: 1,
         runtimeEpoch: 1,

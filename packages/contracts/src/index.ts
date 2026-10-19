@@ -8,6 +8,7 @@ export * from "./instance-access.js";
 export * from "./artifact.js";
 export * from "./build-queue.js";
 export * from "./instance-hostname.js";
+export * from "./application-origin.js";
 export * from "./composition.js";
 export * from "./mutation-authorization.js";
 export * from "./runtime-control.js";

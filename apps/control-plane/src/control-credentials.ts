@@ -1,3 +1,4 @@
+import { physicalInstanceId } from "@praetorium/contracts";
 import { z } from "zod";
 import {
   base64UrlEncode,
@@ -204,7 +205,7 @@ export function createControlCredentialIssuer(
           issuer,
           audience: AUDIENCE,
           subject: "praetorium-control-plane",
-          instanceId: input.instanceId,
+          instanceId: physicalInstanceId(input.instanceId, input.runtimeEpoch, snapshot.instance.legacyRuntimeEpoch),
           repositoryId: input.repositoryId,
           runtimeEpoch: input.runtimeEpoch,
           operationId: input.operationId,
@@ -251,7 +252,7 @@ export function createControlCredentialIssuer(
           issuer,
           audience: AUDIENCE,
           subject: "praetorium-control-plane",
-          instanceId: input.instanceId,
+          instanceId: physicalInstanceId(input.instanceId, input.runtimeEpoch, snapshot.instance.legacyRuntimeEpoch),
           repositoryId: input.repositoryId,
           runtimeEpoch: input.runtimeEpoch,
           operationId: input.operationId,

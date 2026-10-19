@@ -51,6 +51,7 @@ export interface RepositoryBinding {
   readonly owner: string;
   readonly name: string;
   readonly instanceId: string;
+  readonly physicalInstanceId?: string;
   readonly runtimeEpoch: number;
   readonly authorizationRevision: number;
   readonly bindingEpoch: number;
@@ -88,7 +89,7 @@ export interface GitHubAccessProvider extends FreshRepositoryAccessChecker {
 }
 
 /** Trusted, stable-origin derivation for the current logical instance. */
-export type InstanceOriginResolver = (instanceId: string) => string;
+export type InstanceOriginResolver = (instanceId: string, repositoryId: number) => string;
 
 export type AccessErrorCode = "USER_AUTHORIZATION_MISSING" | "UPSTREAM_UNAVAILABLE";
 
@@ -101,6 +102,7 @@ export interface RuntimeIdentityProof {
   readonly serviceToken: string;
   readonly runtimeId: string;
   readonly instanceId: string;
+  readonly physicalInstanceId?: string;
   readonly repositoryId: number;
   readonly installationId: number;
   readonly runtimeEpoch: number;
@@ -110,6 +112,7 @@ export interface RuntimeIdentityProof {
 export interface RuntimeIdentity {
   readonly runtimeId: string;
   readonly instanceId: string;
+  readonly physicalInstanceId?: string;
   readonly repositoryId: number;
   readonly installationId: number;
   readonly runtimeEpoch: number;
@@ -121,9 +124,11 @@ export interface RuntimeIdentityAuthenticator {
 }
 
 export interface CurrentRuntimeBinding {
+  readonly bindingId?: string;
   readonly repositoryId: number;
   readonly installationId: number;
   readonly instanceId: string;
+  readonly physicalInstanceId?: string;
   readonly runtimeEpoch: number;
   readonly leaseId: string;
   readonly active: boolean;

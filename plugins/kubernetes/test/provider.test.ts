@@ -1589,3 +1589,24 @@ describe("Kubernetes runtime provider", () => {
     expect(api.writes).not.toContain("delete:Namespace");
   });
 });
+
+it("projects a physical producer identity while retaining the durable all-epoch writer census", async () => {
+  const api = new FakeKubernetesApi();
+  api.addNode();
+  const runtime = provider(api, targetReservations(), () => 500_000);
+  const base = hostedSpec();
+  const physical = "run_00000000000000000000000001_1";
+  const hosted = {
+    ...base, physicalInstanceId: physical, hostname: "731.scriptorium.yohn.jp",
+    scriptoriumAssignment: { ...base.scriptoriumAssignment!, instanceId: physical, grantPolicy: { ...base.scriptoriumAssignment!.grantPolicy, audience: "https://731.scriptorium.yohn.jp" } },
+  };
+  await runtime.ensureRunning(hosted, new AbortController().signal, () => undefined);
+  api.addWriterPod(hosted);
+  await expect(runtime.readRuntimeIdentityProjection(hosted)).resolves.toMatchObject({ assignment: { instanceId: physical, repositoryId: REPOSITORY_ID, runtimeEpoch: 1 } });
+  const observation = await runtime.inspect(hosted);
+  expect(observation.identity.instanceId).toBe(INSTANCE_ID);
+  expect(observation.writerCensus.queriedPodCount).toBe(1);
+  const deployment = record(api.objects.get(key("Deployment", NAMESPACE, DEPLOYMENT)));
+  const metadata = record(record(record(deployment.spec).template).metadata);
+  expect(record(metadata.annotations)["praetorium.io/physical-instance-id"]).toBe(physical);
+});

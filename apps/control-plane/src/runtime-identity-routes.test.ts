@@ -13,7 +13,7 @@ import { createRuntimeIdentityRoutes } from "./runtime-identity-routes.js";
 
 const NOW = Date.parse("2026-10-17T00:00:10.000Z");
 const REPOSITORY_ID = 7001;
-const INSTANCE_ID = "ins_repo-7001";
+const INSTANCE_ID = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const INSTALLATION_ID = 9001;
 const CLUSTER_ID = "cluster-1";
 const WORKER_ID = "provisioner-1";
@@ -100,6 +100,7 @@ function installSchema(db: SQLiteD1): void {
     "../migrations/0002_stable_release_rollouts.sql",
     "../migrations/0003_staged_configurations.sql",
     "../migrations/0004_runtime_git_credentials.sql",
+    "../migrations/0006_application_origins.sql",
   ])
     db.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
 }
@@ -324,6 +325,7 @@ describe("runtime identity routes", () => {
     const bindingResponse = await h.app.request("/internal/runtime-bindings/7001");
     expect(bindingResponse.status).toBe(200);
     expect(await bindingResponse.json()).toEqual({
+      physicalInstanceId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_4",
       repositoryId: REPOSITORY_ID,
       installationId: INSTALLATION_ID,
       instanceId: INSTANCE_ID,
@@ -377,7 +379,7 @@ describe("runtime identity routes", () => {
       aud: "praetorium-git-broker",
       sub: "res_current-4",
       runtimeId: "res_current-4",
-      instanceId: INSTANCE_ID,
+      instanceId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_4",
       repositoryId: REPOSITORY_ID,
       installationId: INSTALLATION_ID,
       runtimeEpoch: 4,

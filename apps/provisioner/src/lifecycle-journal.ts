@@ -71,6 +71,7 @@ function reason(
 function deploymentOf(runtime: ProvisionerResolvedRuntime): RuntimeDeployment {
   return {
     revisionId: runtime.revisionId,
+    ...(runtime.legacyRuntimeEpoch === undefined ? {} : { legacyRuntimeEpoch: runtime.legacyRuntimeEpoch }),
     repositoryId: runtime.assignment.repositoryId,
     repositoryLocator: runtime.assignment.repositoryLocator,
     defaultBranchPolicy: runtime.assignment.defaultBranchPolicy,

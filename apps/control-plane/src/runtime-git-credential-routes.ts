@@ -154,7 +154,7 @@ function matchesCurrentBinding(
     binding.active === true &&
     binding.repositoryId === registration.repositoryId &&
     binding.installationId === registration.installationId &&
-    binding.instanceId === registration.instanceId &&
+    (binding.physicalInstanceId ?? binding.instanceId) === registration.instanceId &&
     binding.runtimeId === registration.runtimeId &&
     binding.runtimeEpoch === registration.runtimeEpoch &&
     binding.leaseId === registration.leaseId

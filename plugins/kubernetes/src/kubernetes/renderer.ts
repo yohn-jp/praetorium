@@ -150,7 +150,7 @@ function runtimeProjection(
     failInvalid("hosted runtime assignment is invalid");
   }
   if (
-    assignment.instanceId !== spec.instanceId ||
+    assignment.instanceId !== (spec.physicalInstanceId ?? spec.instanceId) ||
     assignment.repositoryId !== spec.repositoryId ||
     assignment.runtimeEpoch !== spec.runtimeEpoch ||
     spec.release === null ||
@@ -451,7 +451,7 @@ function deployment(
       strategy: { type: "Recreate" },
       selector: { matchLabels: selector(spec.instanceId) },
       template: {
-        metadata: { labels: podLabels },
+        metadata: { labels: podLabels, ...(spec.physicalInstanceId === undefined ? {} : { annotations: { "praetorium.io/physical-instance-id": spec.physicalInstanceId } }) },
         spec: {
           serviceAccountName: `${name}-app`,
           ...(options.includeImagePullSecret === true

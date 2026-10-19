@@ -1,3 +1,4 @@
+import { assignmentInstanceId } from "@praetorium/contracts";
 import { RuntimeAssignmentSchema, type RuntimeAssignment as ScriptoriumRuntimeAssignment } from "@praetorium/contracts";
 import type { RuntimeAssignment } from "@praetorium/application/lifecycle";
 import type {
@@ -51,7 +52,7 @@ export class RuntimeIdentityAssignmentTransport {
   canonicalAssignment(assignment: RuntimeAssignment): ScriptoriumRuntimeAssignment {
     return RuntimeAssignmentSchema.parse({
       contractVersion: "scriptorium-platform/v1",
-      instanceId: assignment.instanceId,
+      instanceId: assignmentInstanceId(assignment),
       repositoryId: assignment.repositoryId,
       repositoryLocator: assignment.deployment.repositoryLocator,
       defaultBranchPolicy: assignment.deployment.defaultBranchPolicy,
@@ -150,6 +151,7 @@ function bindingMatches(
     binding.active === true &&
     binding.repositoryId === assignment.repositoryId &&
     binding.instanceId === assignment.instanceId &&
+    (binding.physicalInstanceId === undefined || binding.physicalInstanceId === assignmentInstanceId(assignment)) &&
     binding.runtimeEpoch === assignment.runtimeEpoch &&
     binding.clusterId === clusterId &&
     binding.runtimeId.length > 0 &&

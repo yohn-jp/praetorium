@@ -51,6 +51,7 @@ interface InstanceRow {
   observed_generation: number | null;
   observed_runtime_epoch: number | null;
   observed_sequence: number;
+  legacy_runtime_epoch?: number | null;
   observed_state: InstanceSnapshot["observedState"];
   desired_revision_id: string | null;
   observed_revision_id: string | null;
@@ -1261,7 +1262,7 @@ export class D1PlatformStore implements OperationStore {
          WHERE status = 'active' AND changes() = 1 AND EXISTS (
            SELECT 1 FROM operations o
            WHERE o.operation_id = ? AND o.checkpoint_sequence = ?
-             AND o.instance_id = runtime_git_credentials.instance_id
+             AND (o.instance_id = runtime_git_credentials.instance_id OR runtime_git_credentials.instance_id = 'run_' || substr(o.instance_id, 5) || '_' || runtime_git_credentials.runtime_epoch)
              AND o.repository_id = runtime_git_credentials.repository_id
              AND (
                (o.phase = 'quiescing-old'
@@ -1631,6 +1632,7 @@ function toBinding(row: BindingRow | BindingInstanceRow): RepositoryBinding {
   return {
     repositoryId: source.repository_id,
     instanceId: source.instance_id,
+    appIdentity: "scriptorium",
     installationId: row.installation_id,
     owner: row.owner,
     name: row.name,
@@ -1657,6 +1659,7 @@ function toInstance(row: InstanceRow): InstanceSnapshot {
     observedState: row.observed_state,
     observedRuntimeEpoch: row.observed_runtime_epoch,
     observedSequence: row.observed_sequence,
+    legacyRuntimeEpoch: row.legacy_runtime_epoch ?? null,
     desiredRevisionId: row.desired_revision_id,
     observedRevisionId: row.observed_revision_id,
     reservationState: row.reservation_state,

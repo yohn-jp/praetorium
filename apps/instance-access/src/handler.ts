@@ -6,7 +6,7 @@ import {
   RefreshAccessResponseSchema,
   RevokeAccessRequestSchema,
   RevokeAccessResponseSchema,
-  instanceIdFromHostname,
+  applicationFromHostname,
 } from "@praetorium/contracts";
 
 const ACCESS_COOKIE = "__Host-praetorium_access";
@@ -34,7 +34,7 @@ interface InstanceAccessConfig {
 }
 
 type Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-type Instance = { readonly id: string; readonly hostname: string; readonly origin: string };
+type Instance = { readonly appIdentity: "scriptorium"; readonly repositoryId: number; readonly hostname: string; readonly origin: string };
 
 function fail(message: string): never {
   throw new Error(`Instance Access configuration: ${message}`);
@@ -115,7 +115,7 @@ function problem(status: number, code: string, retryAfter = false): Response {
   );
 }
 
-function validInstanceFromHost(request: Request, config: InstanceAccessConfig): Instance | null {
+function validInstanceFromHost(request: Request): Instance | null {
   const rawHost = request.headers.get("Host");
   if (!rawHost || rawHost.includes("@") || rawHost.includes("/") || rawHost.includes("\\")) return null;
   let hostname: string;
@@ -128,13 +128,11 @@ function validInstanceFromHost(request: Request, config: InstanceAccessConfig): 
   } catch {
     return null;
   }
-  let instanceId: string;
   try {
-    instanceId = instanceIdFromHostname(hostname, config.hostnameSuffix);
+    return { ...applicationFromHostname(hostname), hostname, origin: `https://${hostname}` };
   } catch {
     return null;
   }
-  return { id: instanceId, hostname, origin: `https://${hostname}` };
 }
 
 interface ParsedCookies {
@@ -188,7 +186,7 @@ async function csrfValue(config: InstanceAccessConfig, instance: Instance): Prom
   const signature = await crypto.subtle.sign(
     "HMAC",
     key,
-    new TextEncoder().encode(`praetorium-instance-access-csrf:v1:${instance.id}:${instance.origin}`),
+    new TextEncoder().encode(`praetorium-instance-access-csrf:v1:${instance.appIdentity}:${instance.repositoryId}:${instance.origin}`),
   );
   return base64Url(new Uint8Array(signature));
 }
@@ -331,7 +329,7 @@ function redirect(location: string, status = 302): Response {
 }
 
 function fallbackEntry(instance: Instance, config: InstanceAccessConfig, routeFallback = false): Response {
-  const target = new URL(`/entry/${encodeURIComponent(instance.id)}`, config.gatewayOrigin);
+  const target = new URL(`/entry/${instance.appIdentity}/${instance.repositoryId}`, config.gatewayOrigin);
   // A route hint only; Gateway still authenticates and revalidates access.
   if (routeFallback) target.searchParams.set("fallback", "1");
   return redirect(target.toString());
@@ -366,7 +364,7 @@ export function createInstanceAccessHandler(
   app.all("*", async (c) => {
     const request = c.req.raw;
     const url = new URL(request.url);
-    const instance = validInstanceFromHost(request, config);
+    const instance = validInstanceFromHost(request);
     if (!instance) return problem(404, "INSTANCE_NOT_FOUND");
 
     if (request.method === "POST" && url.pathname === "/_platform/handoff") {
@@ -377,9 +375,10 @@ export function createInstanceAccessHandler(
       const form = await singleForm(request);
       if (!form) return problem(400, "HANDOFF_REQUEST_INVALID");
       const input = RedeemHandoffRequestSchema.safeParse({
-        contractVersion: "instance-access/v1",
+        contractVersion: "instance-access/v2",
         audience: "instance-access",
-        instanceId: instance.id,
+        appIdentity: instance.appIdentity,
+        repositoryId: instance.repositoryId,
         hostname: instance.hostname,
         origin: instance.origin,
         code: form.code,
@@ -407,9 +406,10 @@ export function createInstanceAccessHandler(
       const refreshCredential = readCookie(request, REFRESH_COOKIE);
       if (!refreshCredential) return problem(401, "SESSION_REQUIRED");
       const input = RefreshAccessRequestSchema.safeParse({
-        contractVersion: "instance-access/v1",
+        contractVersion: "instance-access/v2",
         audience: "instance-access",
-        instanceId: instance.id,
+        appIdentity: instance.appIdentity,
+        repositoryId: instance.repositoryId,
         hostname: instance.hostname,
         origin: instance.origin,
         refreshCredential,
@@ -434,9 +434,10 @@ export function createInstanceAccessHandler(
       const refreshCredential = readCookie(request, REFRESH_COOKIE);
       if (refreshCredential) {
         const input = RevokeAccessRequestSchema.safeParse({
-          contractVersion: "instance-access/v1",
+          contractVersion: "instance-access/v2",
           audience: "instance-access",
-          instanceId: instance.id,
+          appIdentity: instance.appIdentity,
+        repositoryId: instance.repositoryId,
           hostname: instance.hostname,
           origin: instance.origin,
           refreshCredential,
@@ -471,7 +472,18 @@ export function createInstanceAccessHandler(
   });
 
   app.onError(() => problem(500, "INSTANCE_ACCESS_UNAVAILABLE"));
-  return async (request) => await app.fetch(request);
+  return async (request) => {
+    const response = await app.fetch(request);
+    if (response.status < 400 || !request.headers.get("Accept")?.includes("text/html")) return response;
+    const appBinding = validInstanceFromHost(request);
+    if (!appBinding) return response;
+    const authError = response.status === 401 || response.status === 403;
+    const state = authError ? "AuthError" : "RouteError";
+    const retry = `${config.gatewayOrigin}/entry/scriptorium/${appBinding.repositoryId}`;
+    return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${state}</title></head><body><main><h1>${state}</h1><p>Application entry could not be completed. Automatic entry has stopped.</p><p><a href="${retry}">Retry application entry</a></p><p><a href="${config.gatewayOrigin}/repositories/${appBinding.repositoryId}">Open repository dashboard</a></p></main></body></html>`, {
+      status: response.status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" },
+    });
+  };
 }
 
 /** Backwards-compatible Node adapter entry point; validation remains fail-closed. */

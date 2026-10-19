@@ -1,3 +1,4 @@
+import { createInstanceAccessHandler } from "../../instance-access/src/handler.js";
 import {
   createMutationAuthorizationReceiptVerifier,
   createHandoffCode,
@@ -52,6 +53,7 @@ function repositorySnapshot(configured = false, ready = true) {
     observedState: (ready ? "ready" : "stopped") as "ready" | "stopped",
     observedRuntimeEpoch: ready ? 7 : null,
     observedSequence: 1,
+    legacyRuntimeEpoch: undefined as number | null | undefined,
     desiredRevisionId: null,
     observedRevisionId: null,
     reservationState: "reserved" as const,
@@ -68,6 +70,7 @@ async function setup(options: {
   provider?: GitHubOAuthProvider;
   onCredentialStore?: () => void;
   configured?: boolean;
+  physicalRuntime?: boolean;
   ready?: boolean;
   alreadyStarting?: boolean;
   pendingConfiguration?: boolean;
@@ -119,6 +122,7 @@ async function setup(options: {
         },
       }
     : baseSnapshot;
+  if (options.physicalRuntime) snapshot.instance.legacyRuntimeEpoch = null;
   if (options.alreadyStarting) snapshot.instance.desiredState = "running";
   const repository = {
     repositoryId: REPOSITORY_ID,
@@ -180,7 +184,7 @@ async function setup(options: {
         repositoryId,
         installationId: snapshot.binding.installationId,
         instanceId,
-        origin: `https://ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`,
+        origin: `https://${REPOSITORY_ID}.scriptorium.yohn.jp`,
         runtimeEpoch,
         authorizationRevision,
         permissions: ["read", "write"] as const,
@@ -288,7 +292,7 @@ async function setup(options: {
     issueAccessGrant: (permissions: readonly ("read" | "write" | "maintain" | "admin")[] = ["read", "write"], runtimeEpoch = 7) =>
       issueAccessToken(signingKey, {
         issuer: ORIGIN,
-        audience: `https://ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`,
+        audience: `https://${REPOSITORY_ID}.scriptorium.yohn.jp`,
         subjectUserId: USER_ID,
         instanceId: INSTANCE_ID,
         repositoryId: REPOSITORY_ID,
@@ -540,9 +544,9 @@ describe("Gateway mutation authorization endpoint", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        contractVersion: "instance-access/v1",
+        contractVersion: "instance-access/v2",
         audience: "instance-access",
-        instanceId: INSTANCE_ID,
+        appIdentity: "scriptorium", repositoryId: REPOSITORY_ID,
         hostname: "ins-01arz3ndektsv4rrffq69g5fav.attacker.test",
         origin: "https://ins-01arz3ndektsv4rrffq69g5fav.attacker.test",
         code: "single-use-handoff-code",
@@ -641,7 +645,7 @@ describe("Gateway mutation authorization endpoint", () => {
 
   it("redeems, rotates and revokes the stable-origin grant through service-authenticated routes", async () => {
     const test = await setup({ pendingConfiguration: true });
-    const host = `ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`;
+    const host = `${REPOSITORY_ID}.scriptorium.yohn.jp`;
     const origin = `https://${host}`;
     const created = await createHandoffCode(test.handoffStore, {
       userId: USER_ID,
@@ -663,9 +667,9 @@ describe("Gateway mutation authorization endpoint", () => {
       "Content-Type": "application/json",
     };
     const base = {
-      contractVersion: "instance-access/v1",
+      contractVersion: "instance-access/v2",
       audience: "instance-access",
-      instanceId: INSTANCE_ID,
+      appIdentity: "scriptorium", repositoryId: REPOSITORY_ID,
       hostname: host,
       origin,
     };
@@ -703,13 +707,13 @@ describe("Gateway mutation authorization endpoint", () => {
       body: JSON.stringify({ ...base, refreshCredential: rotated.refreshCredential }),
     }));
     expect(revoked.status).toBe(200);
-    expect(await revoked.json()).toEqual({ contractVersion: "instance-access/v1", revoked: true });
+    expect(await revoked.json()).toEqual({ contractVersion: "instance-access/v2", revoked: true });
     expect((await test.router.fetch(refresh(rotated.refreshCredential))).status).toBe(401);
   });
 
   it("stops refreshing the old runtime grant once observation leaves the current ready runtime", async () => {
     const test = await setup({ pendingConfiguration: true });
-    const host = `ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`;
+    const host = `${REPOSITORY_ID}.scriptorium.yohn.jp`;
     const origin = `https://${host}`;
     const created = await createHandoffCode(test.handoffStore, {
       userId: USER_ID,
@@ -731,9 +735,9 @@ describe("Gateway mutation authorization endpoint", () => {
       "Content-Type": "application/json",
     };
     const binding = {
-      contractVersion: "instance-access/v1",
+      contractVersion: "instance-access/v2",
       audience: "instance-access",
-      instanceId: INSTANCE_ID,
+      appIdentity: "scriptorium", repositoryId: REPOSITORY_ID,
       hostname: host,
       origin,
     };
@@ -793,7 +797,7 @@ describe("Gateway mutation authorization endpoint", () => {
 
   it("only opens a repository from a top-level document navigation", async () => {
     const test = await setup({ configured: true });
-    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY_ID}`, {
       headers: {
         Cookie: test.sessionCookie,
         Accept: "image/png",
@@ -809,7 +813,7 @@ describe("Gateway mutation authorization endpoint", () => {
 
   it("routes a direct bookmark to configuration guidance without waking an unconfigured instance", async () => {
     const test = await setup();
-    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY_ID}`, {
       headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
     }));
     expect(response.status).toBe(409);
@@ -820,7 +824,7 @@ describe("Gateway mutation authorization endpoint", () => {
 
   it("wakes a configured stopped instance once, shows wait state, and never redirects with a code", async () => {
     const test = await setup({ configured: true, ready: false });
-    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY_ID}`, {
       headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
     }));
     expect(response.status).toBe(202);
@@ -828,7 +832,7 @@ describe("Gateway mutation authorization endpoint", () => {
     const html = await response.text();
     expect(html).toContain("waiting for runtime reservation");
     expect(html).toContain("op_01ARZ3NDEKTSV4RRFFQ69G5FAV");
-    expect(html).toContain('http-equiv="refresh" content="5; url=/entry/ins_01ARZ3NDEKTSV4RRFFQ69G5FAV?poll=1"');
+    expect(html).toContain('http-equiv="refresh" content="5; url=/entry/scriptorium/482901?poll=1"');
     expect(response.headers.get("Location")).toBeNull();
     expect(test.desiredRequests).toBe(1);
     expect(test.wakeRateLimitKeys).toEqual([`${USER_ID}:${REPOSITORY_ID}`]);
@@ -836,7 +840,7 @@ describe("Gateway mutation authorization endpoint", () => {
 
   it("does not charge repeated waiting for an already-requested runtime as a new wake", async () => {
     const test = await setup({ configured: true, ready: false, alreadyStarting: true });
-    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}?poll=1`, {
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY_ID}?poll=1`, {
       headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
     }));
     expect(response.status).toBe(202);
@@ -846,7 +850,7 @@ describe("Gateway mutation authorization endpoint", () => {
 
   it("stops direct-entry automatic polling after five refreshes", async () => {
     const test = await setup({ configured: true, ready: false });
-    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}?poll=5`, {
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY_ID}?poll=5`, {
       headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
     }));
 
@@ -857,10 +861,10 @@ describe("Gateway mutation authorization endpoint", () => {
 
   it("hands a ready configured repository to its exact stable HTTPS host by body-only POST", async () => {
     const test = await setup({ configured: true });
-    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY_ID}`, {
       headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
     }));
-    const host = `https://ins-${INSTANCE_ID.slice(4).toLowerCase()}.instances.service.test`;
+    const host = `https://${REPOSITORY_ID}.scriptorium.yohn.jp`;
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Content-Security-Policy")).toContain(`form-action ${host}`);
@@ -875,7 +879,7 @@ describe("Gateway mutation authorization endpoint", () => {
 
   it("keeps a ready current runtime on its observed epoch while a desired build is pending", async () => {
     const test = await setup({ configured: true, pendingConfiguration: true });
-    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}`, {
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY_ID}`, {
       headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
     }));
 
@@ -961,5 +965,46 @@ describe("Gateway mutation authorization endpoint", () => {
     expect((await success.text())).not.toContain("transient-github-access-token");
     expect(exchanges).toBe(1);
     expect(storedCredentials).toBe(1);
+  });
+});
+
+describe("public application origin integration", () => {
+  it.each(["desktop", "mobile"])("enters with a physical grant on %s and rejects Handoff replay", async (browser) => {
+    const test = await setup({ configured: true, physicalRuntime: true });
+    const publicHost = `${REPOSITORY_ID}.scriptorium.yohn.jp`;
+    const publicOrigin = `https://${publicHost}`;
+    const entry = await test.router.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY_ID}`, {
+      headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "User-Agent": browser === "mobile" ? "Mobile Safari" : "Desktop Chromium" },
+    }));
+    expect(entry.status).toBe(200);
+    const html = await entry.text();
+    expect(html).toContain(`action="${publicOrigin}/_platform/handoff"`);
+    expect(html).not.toContain("instances.service.test");
+    const code = /name="code" value="([^"]+)"/.exec(html)?.[1];
+    expect(code).toBeTruthy();
+    const access = createInstanceAccessHandler({
+      INSTANCE_ACCESS_INSTANCE_HOSTNAME_SUFFIX: "instances.service.test",
+      INSTANCE_ACCESS_SERVICE_AUTH_TOKEN: test.instanceAccessSecret,
+      GATEWAY_ORIGIN: ORIGIN,
+      GATEWAY: { fetch: (request) => test.router.fetch(request) },
+    }, fetch, () => Date.parse(NOW));
+    const handoff = () => new Request(`${publicOrigin}/_platform/handoff`, {
+      method: "POST", headers: { Host: publicHost, Origin: ORIGIN, Accept: "text/html", "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ code: code!, returnPath: "/" }),
+    });
+    const accepted = await access(handoff());
+    expect(accepted.status).toBe(303);
+    const cookies = accepted.headers.getSetCookie();
+    expect(cookies).toHaveLength(3);
+    expect(cookies.every((cookie) => !cookie.includes("Domain="))).toBe(true);
+    const token = decodeURIComponent(cookies.find((cookie) => cookie.startsWith("__Host-praetorium_access="))!.split(";", 1)[0]!.split("=")[1]!);
+    const claims = JSON.parse(atob(token.split(".")[1]!.replaceAll("-", "+").replaceAll("_", "/")));
+    expect(claims).toMatchObject({ aud: publicOrigin, instanceId: "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_7", repositoryId: REPOSITORY_ID, runtimeEpoch: 7 });
+    const replay = await access(handoff());
+    expect(replay.status).toBe(401);
+    expect(await replay.text()).toContain("AuthError");
+    expect(replay.headers.getSetCookie()).toEqual([]);
+    // Authenticated entry is not Connected: a real public Scriptorium response
+    // and actual desktop/mobile browsers remain separate acceptance gates.
   });
 });

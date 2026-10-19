@@ -10,7 +10,7 @@ vi.mock("../src/services/portal-service.js", () => ({ createPortalService: vi.fn
 const NOW = "2026-10-19T04:00:00.000Z";
 const ORIGIN = "https://gateway.service.test";
 const INSTANCE = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
-const HOST = "ins-01arz3ndektsv4rrffq69g5fav.instances.service.test";
+const HOST = "482901.scriptorium.yohn.jp";
 const REPOSITORY = 482901;
 
 async function setup(ready = true) {
@@ -37,14 +37,14 @@ async function setup(ready = true) {
   const context = {
     config: { environment: "test", origin: ORIGIN, sessionPepper, sessionTtlSeconds: 3600 },
     env: {}, requestId: "entry-fallback-test", requestNow: NOW, sessionStore,
-    controlPlane: { getByInstanceId: async () => snapshot },
+    controlPlane: { getByRepositoryId: async () => snapshot },
     githubAccess: { checkBoundAccess: async () => ({
       status: "allowed", repositoryId: REPOSITORY, instanceId: INSTANCE, runtimeEpoch: 7,
       installationId: 83104, authorizationRevision: 9, permissions: ["read"], expiresAt: Date.parse(NOW) + 25000,
     }) },
   } as unknown as GatewayContext;
   const app = createGatewayRouter(context);
-  const request = (query = "?fallback=1", authenticated = true) => app.fetch(new Request(`${ORIGIN}/entry/${INSTANCE}${query}`, {
+  const request = (query = "?fallback=1", authenticated = true) => app.fetch(new Request(`${ORIGIN}/entry/scriptorium/${REPOSITORY}${query}`, {
     headers: { Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document",
       ...(authenticated ? { Cookie: `__Host-praetorium_session=${created.value.rawSessionId}` } : {}) },
   }));
@@ -59,7 +59,7 @@ describe("instance fallback entry", () => {
     const html = await response.text();
     expect(html).toContain("Application route unavailable");
     expect(html).toContain(`/repositories/${REPOSITORY}`);
-    expect(html).toContain(`/entry/${INSTANCE}`);
+    expect(html).toContain(`/entry/scriptorium/${REPOSITORY}`);
     expect(html).not.toMatch(/http-equiv=["']refresh|\.submit\(/i);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(execute).not.toHaveBeenCalled();

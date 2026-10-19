@@ -22,7 +22,7 @@ import {
   type GitHubUserTokenSource,
   type RepositoryBinding as GitHubRepositoryBinding,
 } from "@praetorium/github";
-import { instanceHostname } from "@praetorium/contracts";
+import { instanceHostname, applicationHostname, physicalInstanceId } from "@praetorium/contracts";
 import type { GatewayEnv } from "./env.js";
 import { runtimeEpochForAccess } from "./active-runtime.js";
 import {
@@ -184,6 +184,7 @@ function snapshotBinding(snapshot: Awaited<ReturnType<ControlPlaneClient["getByR
     owner: snapshot.binding.owner,
     name: snapshot.binding.name,
     instanceId: snapshot.binding.instanceId,
+    ...(runtimeEpochForAccess(snapshot.instance) > 0 ? { physicalInstanceId: physicalInstanceId(snapshot.instance.instanceId, runtimeEpochForAccess(snapshot.instance), snapshot.instance.legacyRuntimeEpoch) } : {}),
     runtimeEpoch: runtimeEpochForAccess(snapshot.instance),
     authorizationRevision: snapshot.binding.authorizationRevision,
     bindingEpoch: snapshot.binding.bindingEpoch,
@@ -221,7 +222,7 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
     userTokens: githubUserTokens,
     repositoryBindings,
     servicePolicy,
-    instanceOriginFor: (instanceId) => `https://${instanceHostname(instanceId, config.instanceHostnameSuffix)}`,
+    instanceOriginFor: (_instanceId, repositoryId) => `https://${applicationHostname("scriptorium", repositoryId)}`,
   });
   const signingValue = requireSecret(env.GATEWAY_SIGNING_KEY, "GATEWAY_SIGNING_KEY");
   const signingConfig: unknown = JSON.parse(signingValue);

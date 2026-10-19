@@ -2,11 +2,11 @@ import { expect, it } from "vitest";
 import { RedeemHandoffRequestSchema } from "./instance-access.js";
 it("derives exact host binding without client-selected epochs", () => {
   const input = {
-    contractVersion: "instance-access/v1",
+    contractVersion: "instance-access/v2",
     audience: "instance-access",
-    instanceId: "i",
-    hostname: "i.test",
-    origin: "https://i.test",
+    appIdentity: "scriptorium", repositoryId: 482901,
+    hostname: "482901.scriptorium.yohn.jp",
+    origin: "https://482901.scriptorium.yohn.jp",
     code: "x".repeat(32),
     returnPath: "/edit",
   };

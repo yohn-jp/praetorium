@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { verifyAccessGrant, type SigningKey } from "@praetorium/auth";
-import { instanceHostname } from "@praetorium/contracts";
+import { applicationHostname } from "@praetorium/contracts";
 import type { OperationRecord, RepositorySnapshot } from "@praetorium/application/instances";
 import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
 import type { RuntimeBindingMetadata } from "../src/runtime-binding.js";
@@ -28,7 +28,7 @@ const COMPOSITION_DIGEST = `sha256:${"3".repeat(64)}`;
 const GATEWAY_ORIGIN = "https://gateway.praetorium.test";
 const CONTROL_PLANE_ORIGIN = "https://control.praetorium.test";
 const INSTANCE_SUFFIX = "hosted.praetorium.test";
-const INSTANCE_ORIGIN = `https://${instanceHostname(INSTANCE_ID, INSTANCE_SUFFIX)}`;
+const INSTANCE_ORIGIN = `https://${applicationHostname("scriptorium", REPOSITORY_ID)}`;
 const GATEWAY_SECRET = "control-plane-gateway-auth-secret".padEnd(40, "x");
 
 interface ProbeStatement extends D1PreparedStatement {

@@ -1,4 +1,4 @@
-import { BuilderArtifactStatementSchema, instanceHostname } from "@praetorium/contracts";
+import { BuilderArtifactStatementSchema, applicationHostname } from "@praetorium/contracts";
 import type { OperationService } from "@praetorium/application/operations";
 import type { OperationRecord, RepositorySnapshot } from "@praetorium/application/instances";
 import type { InstanceService } from "@praetorium/application/instances";
@@ -282,7 +282,7 @@ function assignmentPoliciesMatch(
   },
 ): boolean {
   try {
-    const audience = `https://${instanceHostname(assignment.instanceId, expected.instanceHostSuffix)}`;
+    const audience = `https://${applicationHostname("scriptorium", assignment.repositoryId)}`;
     return assignment.grantPolicy.issuer === expected.gatewayOrigin &&
       assignment.grantPolicy.jwksUrl === `${expected.gatewayOrigin}/.well-known/jwks.json` &&
       assignment.grantPolicy.audience === audience &&

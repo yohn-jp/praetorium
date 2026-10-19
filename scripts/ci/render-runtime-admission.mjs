@@ -11,7 +11,7 @@ const COMPOSITION = `sha256:${"c".repeat(64)}`;
 const request = { cpuMilli: 500, memoryMiB: 512, ephemeralStorageMiB: 1024 };
 const control = "https://control.praetorium.example.test";
 const gateway = "https://gateway.praetorium.example.test";
-const hostname = "runtime-ci.praetorium.example.test";
+const hostname = "731.scriptorium.yohn.jp";
 const policy = {
   grantPolicy: {
     issuer: gateway,

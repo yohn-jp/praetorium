@@ -10,13 +10,13 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: HostRegexp(`^.+\.@@INSTANCE_HOSTNAME_SUFFIX@@$`) && PathPrefix(`/_platform`)
+    - match: HostRegexp(`^[1-9][0-9]*\.scriptorium\.yohn\.jp$`) && PathPrefix(`/_platform`)
       kind: Rule
       priority: 1000
       services:
         - name: instance-access
           port: 8080
-    - match: HostRegexp(`^.+\.@@INSTANCE_HOSTNAME_SUFFIX@@$`)
+    - match: HostRegexp(`^[1-9][0-9]*\.scriptorium\.yohn\.jp$`)
       kind: Rule
       priority: 1
       services:

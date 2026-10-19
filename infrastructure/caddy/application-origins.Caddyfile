@@ -1,0 +1,16 @@
+# Operator-reviewed addition to the existing public Caddy configuration.
+# Requires the caddy-dns/cloudflare module and separately authorized DNS/TLS
+# credentials. This file is not applied by repository scripts or CI.
+*.scriptorium.yohn.jp {
+	tls {
+		dns cloudflare {$PRAETORIUM_CADDY_DNS_TOKEN}
+	}
+	reverse_proxy https://{$PRAETORIUM_TRAEFIK_ENDPOINT} {
+		header_up Host {host}
+		transport http {
+			# The existing Traefik certificate includes this exact SAN.
+			# Browser SNI is still <repository_id>.scriptorium.yohn.jp.
+			tls_server_name instances.praetorium.yohn.jp
+		}
+	}
+}

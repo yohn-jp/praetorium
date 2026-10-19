@@ -55,7 +55,7 @@ spec:
         !has(object.spec.routes[0].observability) &&
         !has(object.spec.routes[0].syntax) &&
         object.spec.routes[0].kind == "Rule" &&
-        object.spec.routes[0].match == "Host(`ins-" + object.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + ".@@INSTANCE_HOSTNAME_SUFFIX@@`)" &&
+        object.spec.routes[0].match == "Host(`" + object.metadata.labels["praetorium.io/repository-id"] + ".scriptorium.yohn.jp`)" &&
         object.spec.routes[0].priority == 10 &&
         object.spec.routes[0].services.size() == 1 &&
         has(object.spec.routes[0].services[0].name) &&

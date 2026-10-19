@@ -16,7 +16,7 @@ spec:
               key: "@@SECRET_CLOUDFLARE_DNS_TOKEN_KEY@@"
         selector:
           dnsZones:
-            - "@@INSTANCE_HOSTNAME_SUFFIX@@"
+            - "yohn.jp"
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -31,3 +31,4 @@ spec:
   dnsNames:
     - "@@INSTANCE_HOSTNAME_SUFFIX@@"
     - "*.@@INSTANCE_HOSTNAME_SUFFIX@@"
+    - "*.scriptorium.yohn.jp"

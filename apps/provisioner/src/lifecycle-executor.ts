@@ -1,3 +1,4 @@
+import type { ApplicationDnsPublisher } from "./application-dns.js";
 import {
   LifecycleService,
   type BuildResolution,
@@ -66,6 +67,7 @@ export function deploymentFromResolvedRuntime(
 ): RuntimeDeployment {
   return {
     revisionId: runtime.revisionId,
+    ...(runtime.legacyRuntimeEpoch === undefined ? {} : { legacyRuntimeEpoch: runtime.legacyRuntimeEpoch }),
     repositoryId: runtime.assignment.repositoryId,
     repositoryLocator: runtime.assignment.repositoryLocator,
     defaultBranchPolicy: runtime.assignment.defaultBranchPolicy,
@@ -99,6 +101,7 @@ export function deploymentFromResolvedRuntime(
 }
 
 export interface LifecycleProvisionerExecutorOptions {
+  readonly applicationDns?: ApplicationDnsPublisher;
   readonly operations: ProvisionerOperationService;
   readonly workerId: string;
   readonly runtime: InClusterRuntimeOptions;
@@ -118,13 +121,14 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
   }
 
   get canExecute(): boolean {
-    return this.options.authProbe.available && this.options.assignmentTransport.available;
+    return this.options.applicationDns !== undefined && this.options.authProbe.available && this.options.assignmentTransport.available;
   }
 
   async execute(
     claim: ClaimedProvisionerOperation,
     context: Parameters<ProvisionerOperationExecutor["execute"]>[1],
   ): Promise<LifecycleResult> {
+    if (!this.options.applicationDns) return blocked("application_dns_unavailable", "Application DNS publisher must be configured before lifecycle effects");
     const operation = claim.operation;
     if (operation.clusterId === null)
       return blocked("operation_cluster_missing", "claimed operation has no cluster binding");
@@ -139,7 +143,7 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
         this.options.operations.currentReservations({ clusterId, signal: context.signal }),
       recordCapacitySnapshot: (input) =>
         this.options.operations.recordCapacitySnapshot({ ...input, signal: context.signal }),
-    }, this.options.assignmentTransport.forClaim(claim));
+    }, this.options.assignmentTransport.forClaim(claim), this.options.applicationDns);
     const currentAssignment =
       claim.runtimeContext.current === null
         ? null

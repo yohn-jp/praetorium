@@ -18,6 +18,7 @@ const requiredMigrations = [
   "0003_staged_configurations.sql",
   "0004_runtime_git_credentials.sql",
   "0005_runtime_health_observations.sql",
+  "0006_application_origins.sql",
 ];
 
 function usage() {
@@ -434,7 +435,7 @@ try {
           migrations: requiredMigrations,
           discoveredMigrations: paths.migrationFiles,
           actions: [
-            "apply only the four Control Plane local D1 migrations",
+            "apply only the declared Control Plane local D1 migrations",
             "keep all local D1 state under the disposable inventory directory",
           ],
           remoteCalls: false,

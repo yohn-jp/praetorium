@@ -1,3 +1,4 @@
+import { CloudflareApplicationDns } from "./application-dns.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { isAbsolute } from "node:path";
 import { WorkAvailability } from "@praetorium/application";
@@ -167,6 +168,11 @@ async function main(): Promise<void> {
     runtime,
     authProbe,
     assignmentTransport,
+    applicationDns: new CloudflareApplicationDns({
+      zoneId: required(process.env, "PROVISIONER_APPLICATION_DNS_ZONE_ID"),
+      token: await readProvisionerCredential(required(process.env, "PROVISIONER_APPLICATION_DNS_TOKEN_PATH")),
+      instanceHostnameSuffix: required(process.env, "PROVISIONER_INSTANCE_HOSTNAME_SUFFIX"),
+    }),
   });
   const shutdown = new AbortController();
   let live = true;

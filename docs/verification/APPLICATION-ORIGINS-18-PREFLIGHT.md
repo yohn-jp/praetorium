@@ -1,6 +1,12 @@
 # Application origins implementation preflight — Issue #18 / PR #19
 
-Status: **BLOCKED before implementation**, 2026-10-19. This is a dependency
+**Resolved by the subsequent owner instruction:** old URLs/bookmarks may be
+invalidated, old-origin IndexedDB need not be migrated and may be discarded,
+and application cookies may require reauthentication. The recovery dependency
+below is historical, not an active blocker. Implementation and current gates
+are recorded in [APPLICATION-ORIGINS-18-IMPLEMENTATION.md](APPLICATION-ORIGINS-18-IMPLEMENTATION.md).
+
+Historical status at commit `038e0fd`: **BLOCKED before implementation**, 2026-10-19. This is a dependency
 report, not implementation or deployment evidence. The approved architecture in
 [APPLICATION-ORIGINS.md](../architecture/APPLICATION-ORIGINS.md) remains the target.
 

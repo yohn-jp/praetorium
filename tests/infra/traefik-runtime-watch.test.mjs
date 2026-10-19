@@ -54,7 +54,7 @@ const runtimeSpec = {
     id: "core",
     request: { cpuMilli: 250, memoryMiB: 384, ephemeralStorageMiB: 256 },
   },
-  hostname: `ins-${instanceId.slice(4).toLowerCase()}.instances.example.test`,
+  hostname: `${repositoryId}.scriptorium.yohn.jp`,
   runtimeConfig: {},
   application: {
     httpPort: 3847,
@@ -105,7 +105,7 @@ test("Traefik CRD provider watches generated instance routes and the system fall
   assert.deepEqual(runtimeRoute.spec.routes, [
     {
       kind: "Rule",
-      match: "Host(`ins-" + instanceId.slice(4).toLowerCase() + ".instances.example.test`)",
+      match: "Host(`" + repositoryId + ".scriptorium.yohn.jp`)",
       priority: 10,
       services: [{ name: runtimeRoute.metadata.name, port: 3847 }],
     },

@@ -55,7 +55,7 @@ const spec = {
     id: "core",
     request: { cpuMilli: 250, memoryMiB: 384, ephemeralStorageMiB: 256 },
   },
-  hostname: `ins-${instanceId.slice(4).toLowerCase()}.${hostSuffix}`,
+  hostname: `${repositoryId}.scriptorium.yohn.jp`,
   runtimeConfig: {},
   application: {
     httpPort: listenerPort,
@@ -497,7 +497,7 @@ test("target admission covers the actual renderer's tenant policy and endpoint s
   assert.deepEqual(Object.keys(ingressRoute.spec.routes[0].services[0]).sort(), ["name", "port"]);
   assert.equal(
     ingressRoute.spec.routes[0].match,
-    "Host(`ins-" + instanceId.slice(4).toLowerCase() + "." + hostSuffix + "`)",
+    "Host(`" + repositoryId + ".scriptorium.yohn.jp`)",
   );
 });
 
@@ -534,7 +534,7 @@ test("CEL review scenarios include actual positive objects and admission-shape r
       "the historical Arcadia source selector must not bypass target checks",
     );
   }
-  assert.ok(routeManifest.includes("@@INSTANCE_HOSTNAME_SUFFIX@@"));
+  assert.ok(routeManifest.includes(".scriptorium.yohn.jp"));
 
   const scenarioPath = process.env.PRAETORIUM_CEL_SCENARIOS;
   if (scenarioPath) {

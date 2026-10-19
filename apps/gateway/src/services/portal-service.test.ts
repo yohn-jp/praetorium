@@ -672,6 +672,7 @@ describe("PortalService Control Plane projection", () => {
     expect(result).toMatchObject({ ok: true, value: { kind: "handoff" } });
     if (!result.ok || result.value.kind !== "handoff") throw new Error("expected an old-runtime handoff");
     expect(requestDesiredState).not.toHaveBeenCalled();
+    expect(context.wakeRateLimiter.consume).not.toHaveBeenCalled();
     expect(epochChecks).toEqual([4, 4]);
     const digest = await keyedDigest(handoffPepper, result.value.handoff.code);
     const record = await handoffStore.consume(digest);

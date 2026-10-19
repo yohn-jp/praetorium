@@ -17,6 +17,7 @@
 | 目的 | 読む資料 | 解釈上の注意 |
 | --- | --- | --- |
 | 初期受入要件 | [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) | 最優先。CI禁止の旧記述は最新のユーザー指示で上書き済み |
+| レート制限移行の設計目標 | [Cloudflareネイティブ濫用抑制・KV撤去計画](architecture/RATE-LIMITING.md) | **PR #14でWorker側を実装中・未デプロイ**。WAFは別途手動設定、制約・段階移行を明記 |
 | 旧アーキテクチャ草案 | [PLATFORM.md](architecture/PLATFORM.md) | 移行時の実装想定。新しいトポロジーの正本ではない |
 | Producer ABI | [SCRIPTORIUM-CONTRACT.md](architecture/SCRIPTORIUM-CONTRACT.md) | Versioned contract・歴史的な実装差分を含む。現行稼働を単独で証明しない |
 | プラットフォーム運用管理 | [管理者アーキテクチャ](architecture/ADMINISTRATION.md) | 独立した運用入口とHeadlampの任意導入。既存のテナントControl Planeの受入条件ではない |

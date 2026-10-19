@@ -230,6 +230,12 @@ function exactOriginRequest(request: Request, context: GatewayContext): boolean 
   return request.headers.get("Origin") === context.config.origin && request.headers.get("Sec-Fetch-Site") !== "cross-site";
 }
 
+/** CF-Connecting-IP is supplied by the public Cloudflare edge; do not share an "unknown" quota. */
+function connectingIp(request: Request): string | null {
+  const value = request.headers.get("CF-Connecting-IP");
+  return value && value.length <= 64 && !/[,\s]/u.test(value) ? value : null;
+}
+
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
     const codePoint = character.codePointAt(0)!;
@@ -240,8 +246,14 @@ function hasControlCharacters(value: string): boolean {
 
 async function handleGithubStart(request: Request, context: GatewayContext, now: string): Promise<Response> {
   const url = new URL(request.url);
-  const allowed = await context.loginRateLimiter.consume(request.headers.get("CF-Connecting-IP") ?? "unknown", now);
-  if (!allowed) return errorResponse(request, "RATE_LIMITED", "too many login attempts", context.requestId);
+  const source = connectingIp(request);
+  if (!source) return unavailable(request, context);
+  try {
+    if (!(await context.loginRateLimiter.consume(source, now)))
+      return errorResponse(request, "RATE_LIMITED", "too many login attempts", context.requestId);
+  } catch {
+    return unavailable(request, context);
+  }
   const browserNonce = generateToken(256);
   try {
     const login = await startGithubLogin(context.githubProvider, context.loginAttemptStore, {
@@ -622,6 +634,16 @@ async function handleTokenExchange(request: Request, context: GatewayContext, no
   if (!authorization.startsWith("Bearer ") || hasCookieName(request, SESSION_COOKIE_NAME)) {
     return errorResponse(request, "UNAUTHENTICATED", "a single MCP bearer credential is required", context.requestId);
   }
+  const source = connectingIp(request);
+  if (!source) return unavailable(request, context);
+  try {
+    // Count before any Control Plane lookup or credential verification: changing
+    // an invalid bearer value must not create an unlimited number of buckets.
+    if (!(await context.tokenExchangeSourceRateLimiter.consume(source, now)))
+      return errorResponse(request, "RATE_LIMITED", "credential is invalid or access has changed", context.requestId);
+  } catch {
+    return unavailable(request, context);
+  }
   const body = await readBoundedJson(request);
   if (!body) return errorResponse(request, "INVALID_REQUEST", "token exchange request is invalid", context.requestId);
   const repositoryId = numericRepositoryId(body["repositoryId"]);
@@ -636,7 +658,6 @@ async function handleTokenExchange(request: Request, context: GatewayContext, no
     if (!snapshot || snapshot.binding.repositoryId !== repositoryId || runtimeEpochForAccess(snapshot.instance) !== runtimeEpoch) {
       return errorResponse(request, "UNAUTHENTICATED", "credential is invalid", context.requestId);
     }
-    const rateKey = await keyedDigest(context.config.credentialPepper, `exchange:${authorization.slice("Bearer ".length)}`);
     const exchanged = await exchangeMcpCredentialForAccessToken({
       credentialStore: context.mcpCredentialStore,
       credentialPepper: context.config.credentialPepper,
@@ -653,7 +674,6 @@ async function handleTokenExchange(request: Request, context: GatewayContext, no
       requestedRuntimeEpoch: runtimeEpoch as number,
       requestedPermissions: permissions,
       now,
-      rateLimitKey: rateKey,
     });
     if (!exchanged.ok) return errorResponse(request, exchanged.error.code === "RATE_LIMITED" ? "RATE_LIMITED" : "UNAUTHENTICATED", "credential is invalid or access has changed", context.requestId);
     return json(exchanged.value);
@@ -675,9 +695,16 @@ async function handleRuntimeGitCredential(request: Request, context: GatewayCont
     return unavailable(request, context);
   }
   if (!githubCredentialBroker) return unavailable(request, context);
-  const remote = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const remote = connectingIp(request);
   try {
-    const rateKey = await keyedDigest(context.config.credentialPepper, `runtime-git-credential:${remote}`);
+    // Service Binding calls may have no edge IP. Use the presented service
+    // token digest for those calls; the broker still validates the proof
+    // before issuing any credential. Never use a global "unknown" bucket.
+    if (!remote && !(await context.runtimeCredentialRateLimiter.consume("service-binding:preauth", context.requestNow))) {
+      return errorResponse(request, "RATE_LIMITED", "runtime credential issuance is rate limited", context.requestId);
+    }
+    const rateKey = await keyedDigest(context.config.credentialPepper,
+      remote ? `runtime-git-credential:edge:${remote}` : `runtime-git-credential:service:${parsed.data.proof.serviceToken}`);
     if (!(await context.runtimeCredentialRateLimiter.consume(rateKey, context.requestNow))) {
       return errorResponse(request, "RATE_LIMITED", "runtime credential issuance is rate limited", context.requestId);
     }

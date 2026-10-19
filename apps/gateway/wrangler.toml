@@ -23,6 +23,51 @@ binding = "GATEWAY_KV"
 id = "770c4ac60df74b019409c1203f35687d"
 preview_id = "770c4ac60df74b019409c1203f35687d"
 
+# Account-wide unique IDs. Verify namespace ownership before any Cloudflare
+# deployment; previews must use a distinct GATEWAY_ENVIRONMENT key prefix.
+# Each binding is a location-local, best-effort counter; none writes to KV.
+[[ratelimits]]
+name = "LOGIN_RATE_LIMIT"
+namespace_id = "761101"
+[ratelimits.simple]
+limit = 10
+period = 60
+
+[[ratelimits]]
+name = "MCP_SOURCE_RATE_LIMIT"
+namespace_id = "761102"
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "MCP_CREDENTIAL_RATE_LIMIT"
+namespace_id = "761103"
+[ratelimits.simple]
+limit = 20
+period = 60
+
+[[ratelimits]]
+name = "RUNTIME_GIT_RATE_LIMIT"
+namespace_id = "761104"
+[ratelimits.simple]
+limit = 120
+period = 60
+
+[[ratelimits]]
+name = "WAKE_RATE_LIMIT"
+namespace_id = "761105"
+[ratelimits.simple]
+limit = 10
+period = 60
+
+[[ratelimits]]
+name = "MUTATION_RECEIPT_RATE_LIMIT"
+namespace_id = "761106"
+[ratelimits.simple]
+limit = 10
+period = 60
+
 [[services]]
 binding = "CONTROL_PLANE"
 service = "praetorium-control-plane"
@@ -36,6 +81,7 @@ pattern = "praetorium.yohn.jp"
 custom_domain = true
 
 [vars]
+GATEWAY_ENVIRONMENT = "production"
 GATEWAY_ORIGIN = "https://praetorium.yohn.jp"
 CONTROL_PLANE_ORIGIN = "https://control.praetorium.yohn.jp"
 GATEWAY_SESSION_TTL_SECONDS = "28800"

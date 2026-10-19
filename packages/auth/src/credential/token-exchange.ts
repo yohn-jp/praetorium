@@ -36,7 +36,6 @@ export interface TokenExchangeInput {
   readonly requestedRuntimeEpoch: number;
   readonly requestedPermissions: readonly RepositoryPermission[];
   readonly now: string;
-  readonly rateLimitKey: string;
 }
 
 export interface TokenExchangeResult {
@@ -49,11 +48,6 @@ export async function exchangeMcpCredentialForAccessToken(
   deps: TokenExchangeDependencies,
   input: TokenExchangeInput,
 ): Promise<Result<TokenExchangeResult, TokenExchangeError>> {
-  const rateLimitAllowed = await deps.rateLimiter.consume(input.rateLimitKey, input.now);
-  if (!rateLimitAllowed) {
-    return err({ code: "RATE_LIMITED", message: "too many token exchange attempts" });
-  }
-
   const verified = await verifyMcpCredential(
     deps.credentialStore,
     deps.credentialPepper,
@@ -61,6 +55,13 @@ export async function exchangeMcpCredentialForAccessToken(
     input.now,
   );
   if (!verified.ok) return err({ code: "INVALID_CREDENTIAL", message: "credential is invalid" });
+
+  // The source limiter has already handled invalid bearer enumeration at the
+  // Gateway edge; this separate quota must be charged to a verified credential.
+  const rateLimitAllowed = await deps.rateLimiter.consume(verified.value.digest, input.now);
+  if (!rateLimitAllowed) {
+    return err({ code: "RATE_LIMITED", message: "too many token exchange attempts" });
+  }
 
   const record = verified.value.record;
   if (

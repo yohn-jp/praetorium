@@ -36,7 +36,7 @@ import {
 } from "./adapters/durable-objects/user-auth-state-client.js";
 import { createKvDigestUserIndex } from "./adapters/digest-user-index.js";
 import { createControlPlaneClient, type ControlPlaneClient } from "./adapters/control-plane-client.js";
-import { createKvRateLimiter } from "./adapters/rate-limiter-kv.js";
+import { createWorkersRateLimiter } from "./adapters/rate-limiter-workers.js";
 import { loadKeyRegistry } from "./adapters/key-registry-kv.js";
 import { assertActiveSigningKeyRegistered, resolveActiveSigningKey } from "./adapters/signing-key.js";
 import { resolveTokenVault } from "./adapters/token-vault.js";
@@ -76,6 +76,7 @@ export interface GatewayContext {
   readonly handoffStore: HandoffCodeStore;
   readonly accessRefreshCredentialStore: AccessRefreshCredentialStore;
   readonly tokenExchangeRateLimiter: RateLimiter;
+  readonly tokenExchangeSourceRateLimiter: RateLimiter;
   readonly runtimeCredentialRateLimiter: RateLimiter;
   readonly loginRateLimiter: RateLimiter;
   readonly wakeRateLimiter: RateLimiter;
@@ -134,6 +135,9 @@ function object(value: unknown): value is Record<string, unknown> {
 
 async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
   const origin = parseOrigin(env.GATEWAY_ORIGIN);
+  const environment = env.GATEWAY_ENVIRONMENT;
+  if (!environment || !/^(production|preview|development|test)$/.test(environment))
+    throw new TypeError("GATEWAY_ENVIRONMENT must explicitly identify the deployment environment");
   const allowedRepositoryOwner = parseOwner(env.GATEWAY_ALLOWED_REPOSITORY_OWNER);
   const githubAppId = positiveInteger(env.GITHUB_APP_ID, "GITHUB_APP_ID", 1, Number.MAX_SAFE_INTEGER);
   const oauthClientId = env.GITHUB_OAUTH_CLIENT_ID;
@@ -153,7 +157,7 @@ async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
   const handoffTtlSeconds = positiveInteger(env.GATEWAY_HANDOFF_TTL_SECONDS, "GATEWAY_HANDOFF_TTL_SECONDS", 1, 60);
   const accessGrantTtlSeconds = positiveInteger(env.GATEWAY_ACCESS_GRANT_TTL_SECONDS, "GATEWAY_ACCESS_GRANT_TTL_SECONDS", 1, 300);
   return {
-    environment: env.GATEWAY_ENVIRONMENT ?? "production",
+    environment,
     origin,
     sessionTtlSeconds,
     handoffTtlSeconds,
@@ -188,8 +192,10 @@ function snapshotBinding(snapshot: Awaited<ReturnType<ControlPlaneClient["getByR
 }
 
 export async function createGatewayContext(env: GatewayEnv, requestId: string, now: string): Promise<GatewayContext> {
-  if (!env.USER_AUTH_STATE || !env.EPHEMERAL_CODES || !env.GATEWAY_KV || !env.CONTROL_PLANE) {
-    throw new TypeError("Gateway Durable Object, KV and Control Plane service bindings are required");
+  if (!env.USER_AUTH_STATE || !env.EPHEMERAL_CODES || !env.GATEWAY_KV || !env.CONTROL_PLANE ||
+    !env.LOGIN_RATE_LIMIT || !env.MCP_SOURCE_RATE_LIMIT || !env.MCP_CREDENTIAL_RATE_LIMIT ||
+    !env.RUNTIME_GIT_RATE_LIMIT || !env.WAKE_RATE_LIMIT || !env.MUTATION_RECEIPT_RATE_LIMIT) {
+    throw new TypeError("Gateway Durable Object, KV, Control Plane and Rate Limiting bindings are required");
   }
   const config = await configFrom(env);
   const controlPlane = createControlPlaneClient(env.CONTROL_PLANE, config.controlPlaneSecret);
@@ -286,11 +292,12 @@ export async function createGatewayContext(env: GatewayEnv, requestId: string, n
     mcpCredentialStore: createDurableObjectMcpCredentialStore(env.USER_AUTH_STATE, credentialIndex),
     handoffStore: createDurableObjectHandoffCodeStore(env.EPHEMERAL_CODES),
     accessRefreshCredentialStore: createDurableObjectAccessRefreshCredentialStore(env.EPHEMERAL_CODES),
-    tokenExchangeRateLimiter: createKvRateLimiter(env.GATEWAY_KV, "token-exchange", { limit: 20, windowSeconds: 60 }),
-    runtimeCredentialRateLimiter: createKvRateLimiter(env.GATEWAY_KV, "runtime-git-credential", { limit: 120, windowSeconds: 60 }),
-    loginRateLimiter: createKvRateLimiter(env.GATEWAY_KV, "login", { limit: 10, windowSeconds: 60 }),
-    wakeRateLimiter: createKvRateLimiter(env.GATEWAY_KV, "wake", { limit: 10, windowSeconds: 60 }),
-    mutationReceiptRateLimiter: createKvRateLimiter(env.GATEWAY_KV, "mutation-receipt", { limit: 10, windowSeconds: 60 }),
+    tokenExchangeRateLimiter: createWorkersRateLimiter(env.MCP_CREDENTIAL_RATE_LIMIT, config.environment),
+    tokenExchangeSourceRateLimiter: createWorkersRateLimiter(env.MCP_SOURCE_RATE_LIMIT, config.environment),
+    runtimeCredentialRateLimiter: createWorkersRateLimiter(env.RUNTIME_GIT_RATE_LIMIT, config.environment),
+    loginRateLimiter: createWorkersRateLimiter(env.LOGIN_RATE_LIMIT, config.environment),
+    wakeRateLimiter: createWorkersRateLimiter(env.WAKE_RATE_LIMIT, config.environment),
+    mutationReceiptRateLimiter: createWorkersRateLimiter(env.MUTATION_RECEIPT_RATE_LIMIT, config.environment),
     githubProvider: oauth,
     githubAccess,
     getKeyRegistry,

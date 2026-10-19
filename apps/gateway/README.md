@@ -10,9 +10,15 @@ Gateway never proxies application request bodies.
 The Worker uses Hono and requires its Durable Object, KV and Control Plane
 service bindings plus all deployment secrets before routing a request. Its
 Durable Objects hold sessions, GitHub token bundles, MCP credentials, OAuth
-attempts and one use handoff/refresh records. KV contains the digest lookup
-indexes, rate limits and public signing key registry. No in-memory authority
-or default identity provider is used.
+attempts and one use handoff/refresh records. KV retains only the digest lookup
+indexes and public signing key registry. HTTP abuse suppression uses six
+[Cloudflare Workers Rate Limiting API](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+bindings: Login (10/min), MCP pre-auth source (60/min), verified MCP credential
+(20/min), Runtime Git (120/min), Wake (10/min on actual start), and publisher
+receipt (10/min). They are location-local best-effort limits, **not** global
+billing, capacity or concurrency fences. The existing Control Plane/D1
+CAS/idempotency and Kubernetes admission remain authoritative. No in-memory
+authority or default identity provider is used.
 
 ## Public routes
 
@@ -59,7 +65,7 @@ parsed with the frozen `@praetorium/contracts` schemas.
 Use owned HTTPS origins and a real GitHub App before deploying. Copy
 `.env.example` into your local secret manager or `.dev.vars`, replace every
 example value, and configure the declared `USER_AUTH_STATE`, `EPHEMERAL_CODES`,
-`GATEWAY_KV`, and `CONTROL_PLANE` bindings in `wrangler.toml`. The sample
+`GATEWAY_KV`, `CONTROL_PLANE` and six `ratelimits` bindings in `wrangler.toml`. The sample
 configuration deliberately cannot start: missing/example origins, secrets,
 keys, IDs, or bindings fail closed.
 
@@ -100,3 +106,16 @@ revalidation, direct entry, and one use handoff behavior. They use test
 adapters and do not certify a real GitHub App, deployed Cloudflare bindings,
 producer image or browser ingress. Those remain deployment and T14 acceptance
 gates.
+
+Production deployment preflight must confirm the six account-wide rate-limit
+namespace IDs are unused. Production declares `GATEWAY_ENVIRONMENT=production`;
+preview deployments must explicitly override it to `preview` using their own
+Wrangler deployment configuration and origin. An omitted environment is rejected. The public login and MCP token routes require a
+Cloudflare-supplied `CF-Connecting-IP` header for pre-auth throttling; without
+that trusted edge identity, the request fails closed with 503. Internal runtime
+Git calls without an edge IP first consume an explicit shared
+`service-binding:preauth` limit to bound rotating invalid service tokens, and
+then a keyed digest of the presented runtime service credential. This may
+throttle unrelated internal callers; issuance still depends on broker proof
+validation. WAF rules
+are separately operated and are not configured by this application.

@@ -69,7 +69,10 @@ async function setup(options: {
   onCredentialStore?: () => void;
   configured?: boolean;
   ready?: boolean;
+  alreadyStarting?: boolean;
   pendingConfiguration?: boolean;
+  sourceLimiterAllowed?: boolean;
+  runtimeLimiterAllowed?: boolean;
   credentialBroker?: Exclude<Awaited<ReturnType<GatewayContext["getGitHubCredentialBroker"]>>, undefined>;
 } = {}) {
   const pair = await crypto.subtle.generateKey(
@@ -116,6 +119,7 @@ async function setup(options: {
         },
       }
     : baseSnapshot;
+  if (options.alreadyStarting) snapshot.instance.desiredState = "running";
   const repository = {
     repositoryId: REPOSITORY_ID,
     installationId: snapshot.binding.installationId,
@@ -145,8 +149,12 @@ async function setup(options: {
     : { ...snapshot, operation: null, replayed: false };
   let accessChecks = 0;
   let repositoryReads = 0;
+  let instanceReads = 0;
   let desiredRequests = 0;
   const mutationRateLimitKeys: string[] = [];
+  const sourceRateLimitKeys: string[] = [];
+  const runtimeRateLimitKeys: string[] = [];
+  const wakeRateLimitKeys: string[] = [];
   const checkedRuntimeEpochs: number[] = [];
   let writeAllowed = options.write ?? true;
   let authorizationRevision = options.revision ?? snapshot.binding.authorizationRevision;
@@ -186,7 +194,7 @@ async function setup(options: {
       repositoryReads += 1;
       return repositoryId === REPOSITORY_ID ? snapshot : null;
     },
-    async getByInstanceId() { return snapshot; },
+    async getByInstanceId() { instanceReads += 1; return snapshot; },
     async resolveRepository() { return { ...snapshot, created: false }; },
     async requestDesiredState() {
       desiredRequests += 1;
@@ -223,9 +231,15 @@ async function setup(options: {
     handoffStore,
     accessRefreshCredentialStore,
     tokenExchangeRateLimiter: { consume: async () => true },
-    runtimeCredentialRateLimiter: { consume: async () => true },
+    tokenExchangeSourceRateLimiter: {
+      consume: async (key: string) => {
+        sourceRateLimitKeys.push(key);
+        return options.sourceLimiterAllowed !== false;
+      },
+    },
+    runtimeCredentialRateLimiter: { consume: async (key: string) => { runtimeRateLimitKeys.push(key); return options.runtimeLimiterAllowed !== false; } },
     loginRateLimiter: { consume: async () => true },
-    wakeRateLimiter: { consume: async () => true },
+    wakeRateLimiter: { consume: async (key: string) => { wakeRateLimitKeys.push(key); return true; } },
     mutationReceiptRateLimiter: {
       consume: async (key: string) => {
         mutationRateLimitKeys.push(key);
@@ -292,7 +306,11 @@ async function setup(options: {
     publicKey: pair.publicKey,
     get accessChecks() { return accessChecks; },
     get repositoryReads() { return repositoryReads; },
+    get instanceReads() { return instanceReads; },
     get desiredRequests() { return desiredRequests; },
+    get sourceRateLimitKeys() { return sourceRateLimitKeys; },
+    get runtimeRateLimitKeys() { return runtimeRateLimitKeys; },
+    get wakeRateLimitKeys() { return wakeRateLimitKeys; },
     get mutationRateLimitKeys() { return mutationRateLimitKeys; },
     get checkedRuntimeEpochs() { return checkedRuntimeEpochs; },
     set writeAllowed(value: boolean) { writeAllowed = value; },
@@ -306,6 +324,37 @@ async function setup(options: {
 }
 
 describe("Gateway mutation authorization endpoint", () => {
+  it("blocks rotating invalid MCP bearer attempts by source before touching Control Plane", async () => {
+    const test = await setup({ sourceLimiterAllowed: false });
+    for (const bearer of ["invalid-first", "invalid-second"]) {
+      const response = await test.router.fetch(new Request(`${ORIGIN}/api/token`, {
+        method: "POST",
+        headers: {
+          "CF-Connecting-IP": "203.0.113.42",
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ repositoryId: REPOSITORY_ID, instanceId: INSTANCE_ID, runtimeEpoch: 7, permissions: ["read"] }),
+      }));
+      expect(response.status).toBe(429);
+      expect(await response.json()).toMatchObject({ error: { code: "RATE_LIMITED" } });
+    }
+    expect(test.sourceRateLimitKeys).toEqual(["203.0.113.42", "203.0.113.42"]);
+    expect(test.instanceReads).toBe(0);
+  });
+
+  it("fails closed instead of pooling an absent source into an unknown MCP bucket", async () => {
+    const test = await setup();
+    const response = await test.router.fetch(new Request(`${ORIGIN}/api/token`, {
+      method: "POST",
+      headers: { Authorization: "Bearer invalid", "Content-Type": "application/json" },
+      body: JSON.stringify({ repositoryId: REPOSITORY_ID, instanceId: INSTANCE_ID, runtimeEpoch: 7, permissions: ["read"] }),
+    }));
+    expect(response.status).toBe(503);
+    expect(test.sourceRateLimitKeys).toEqual([]);
+    expect(test.instanceReads).toBe(0);
+  });
+
   it("redirects legacy GET action URLs to the dashboard without portal activity", async () => {
     const test = await setup();
     const response = await test.router.fetch(new Request(
@@ -379,6 +428,28 @@ describe("Gateway mutation authorization endpoint", () => {
     }));
     expect(unknownOperation.status).toBe(400);
     expect(receivedOperation).toBe("fetch");
+  });
+
+  it("throttles rotating invalid service tokens with the same internal pre-auth bucket", async () => {
+    let called = 0;
+    const test = await setup({
+      runtimeLimiterAllowed: false,
+      credentialBroker: { async issue() { called++; return { status: "denied", reason: "runtime_identity_invalid" }; } },
+    });
+    for (const serviceToken of ["invalid-service-token-one", "invalid-service-token-two"]) {
+      const response = await test.router.fetch(new Request(`${ORIGIN}/internal/github/credential`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "fetch",
+          proof: { serviceToken, runtimeId: "runtime-1", instanceId: INSTANCE_ID,
+            repositoryId: REPOSITORY_ID, installationId: 83104, runtimeEpoch: 7, leaseId: "lease-1" },
+        }),
+      }));
+      expect(response.status).toBe(429);
+    }
+    expect(test.runtimeRateLimitKeys).toEqual(["service-binding:preauth", "service-binding:preauth"]);
+    expect(called).toBe(0);
   });
 
   it("logs only allowlisted runtime Git broker rejection reasons", async () => {
@@ -760,6 +831,17 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(html).toContain('http-equiv="refresh" content="5; url=/entry/ins_01ARZ3NDEKTSV4RRFFQ69G5FAV?poll=1"');
     expect(response.headers.get("Location")).toBeNull();
     expect(test.desiredRequests).toBe(1);
+    expect(test.wakeRateLimitKeys).toEqual([`${USER_ID}:${REPOSITORY_ID}`]);
+  });
+
+  it("does not charge repeated waiting for an already-requested runtime as a new wake", async () => {
+    const test = await setup({ configured: true, ready: false, alreadyStarting: true });
+    const response = await test.router.fetch(new Request(`${ORIGIN}/entry/${INSTANCE_ID}?poll=1`, {
+      headers: { Cookie: test.sessionCookie, Accept: "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
+    }));
+    expect(response.status).toBe(202);
+    expect(test.desiredRequests).toBe(1);
+    expect(test.wakeRateLimitKeys).toEqual([]);
   });
 
   it("stops direct-entry automatic polling after five refreshes", async () => {
@@ -788,6 +870,7 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(html).toContain('name="code" value="');
     expect(html).not.toContain("Location:");
     expect(test.desiredRequests).toBe(0);
+    expect(test.wakeRateLimitKeys).toEqual([]);
   });
 
   it("keeps a ready current runtime on its observed epoch while a desired build is pending", async () => {
@@ -800,6 +883,7 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(await response.text()).toContain('name="code" value="');
     expect(test.desiredRequests).toBe(0);
     expect(test.checkedRuntimeEpochs).toEqual([7, 7, 7]);
+    expect(test.wakeRateLimitKeys).toEqual([]);
   });
 
   it("binds the OAuth callback to a short-lived host-only browser nonce and clears it on every outcome", async () => {
@@ -818,7 +902,7 @@ describe("Gateway mutation authorization endpoint", () => {
       },
     };
     const test = await setup({ provider, onCredentialStore: () => { storedCredentials += 1; } });
-    const start = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start?redirect_to=%2Frepositories%2F${REPOSITORY_ID}`));
+    const start = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start?redirect_to=%2Frepositories%2F${REPOSITORY_ID}`, { headers: { "CF-Connecting-IP": "203.0.113.42" } }));
     expect(start.status).toBe(302);
     expect(start.headers.get("Location")).toContain("https://github.com/login/oauth/authorize?");
     const nonceCookie = start.headers.get("Set-Cookie") ?? "";
@@ -842,7 +926,7 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(exchanges).toBe(0);
     expect(storedCredentials).toBe(0);
 
-    const duplicateStart = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start`));
+    const duplicateStart = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start`, { headers: { "CF-Connecting-IP": "203.0.113.42" } }));
     const duplicateCookie = duplicateStart.headers.get("Set-Cookie") ?? "";
     const duplicateNonce = /__Host-praetorium_login_nonce=([^;]+)/u.exec(duplicateCookie)?.[1];
     const duplicateState = new URL(duplicateStart.headers.get("Location")!).searchParams.get("state");
@@ -854,7 +938,7 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(exchanges).toBe(0);
     expect(storedCredentials).toBe(0);
 
-    const successStart = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start?redirect_to=%2Frepositories%2F${REPOSITORY_ID}`));
+    const successStart = await test.router.fetch(new Request(`${ORIGIN}/auth/github/start?redirect_to=%2Frepositories%2F${REPOSITORY_ID}`, { headers: { "CF-Connecting-IP": "203.0.113.42" } }));
     const successCookie = successStart.headers.get("Set-Cookie") ?? "";
     const successNonce = /__Host-praetorium_login_nonce=([^;]+)/u.exec(successCookie)?.[1];
     const successState = new URL(successStart.headers.get("Location")!).searchParams.get("state");

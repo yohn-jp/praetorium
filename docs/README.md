@@ -18,6 +18,7 @@
 | --- | --- | --- |
 | アプリURL・DNS・画面状態遷移 | [Application Origins](architecture/APPLICATION-ORIGINS.md) | **2026-10-19オーナー決定に基づく目標設計**。現行の`ins-` URLや実際のDNS/TLS/Ingressは未移行 |
 | 内部通信・周期・最適化候補 | [Internal Traffic Inventory](architecture/INTERNAL-TRAFFIC.md) | 現行コードのタイマー/通知/HTTPの根拠と、固定費・状態比例・ユーザー比例の区別。実測コストは別途計測 |
+| 責務から見直す通信アーキテクチャ | [Traffic Responsibility Review](architecture/TRAFFIC-RESPONSIBILITIES.md) | Gateway／Control Plane／Build Worker／Provisioner／Runtimeの正本・起動契機・削減候補・決定保留を最初から整理 |
 | 初期受入要件 | [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) | 最優先。CI禁止の旧記述は最新のユーザー指示で上書き済み |
 | レート制限移行の設計目標 | [Cloudflareネイティブ濫用抑制・KV撤去計画](architecture/RATE-LIMITING.md) | **PR #14でWorker側を実装中・未デプロイ**。WAFは別途手動設定、制約・段階移行を明記 |
 | 旧アーキテクチャ草案 | [PLATFORM.md](architecture/PLATFORM.md) | 移行時の実装想定。新しいトポロジーの正本ではない |

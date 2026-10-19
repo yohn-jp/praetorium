@@ -308,7 +308,7 @@ async function setup(options: {
     get repositoryReads() { return repositoryReads; },
     get instanceReads() { return instanceReads; },
     get desiredRequests() { return desiredRequests; },
-    get sourceRateLimitKeys() { return sourceRateLimitKeys; }
+    get sourceRateLimitKeys() { return sourceRateLimitKeys; },
     get runtimeRateLimitKeys() { return runtimeRateLimitKeys; },
     get wakeRateLimitKeys() { return wakeRateLimitKeys; },
     get mutationRateLimitKeys() { return mutationRateLimitKeys; },

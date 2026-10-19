@@ -69,7 +69,7 @@ Instance Access / 内部Caller ──▶ Gateway (WAFを経由する保証なし
 | --- | --- | --- | --- |
 | Login `GET /auth/github/start` | **Workers native 10/60秒**を当面維持。WAFは公開入口の追加防御として、有効なHost/Path範囲が設定可能なら導入 | 認証前なのでCloudflare管理の接続元IP（共有NATの誤検知を評価）。`unknown` を全利用者の単一bucketにしない。OAuth開始前にconsume | OAuth state/nonce、既存のLoginAttempt DO |
 | MCP `POST /api/token` | **native 20/60秒／検証済みcredential**を維持。**認証前の接続元bucket 60/60秒**を暫定追加（要実負荷で調整、厳密契約ではない） | まず入力形式検査→信頼できる接続元で粗制限→Control Plane等の高コスト照会→既存のcredential検証。成功した検証済みcredentialのdigestで20/60秒（Bearer生値をログ／keyへ直載せしない）。無効値を変えても粗制限から逃れない | 無効・失効・他Repoへのアクセス拒否、scopeと署名検証、失敗の一様性 |
-| Runtime Git `POST /internal/github/credential` | **native 120/60秒**、内部経路へのWAF依存なし | Edgeの接続元IPがあればその鍵付きdigest、Service Binding等でIPがなければ提示されたruntime service tokenの鍵付きdigestを暫定使用。**後者はbroker認証前に作るbest-effort bucketで、偽トークンの大量変更まで防御できると主張しない**。検証済みruntime identityへの移行は別の根拠・API境界が必要 | 現行のbrokerによるservice proof、repository/epoch/lease照合、GitHub発行権限 |
+| Runtime Git `POST /internal/github/credential` | **native 120/60秒**、内部経路へのWAF依存なし | Edgeの接続元IPがあればその鍵付きdigest、Service Binding等でIPがなければ提示されたruntime service tokenの鍵付きdigestを暫定使用。後者の前段で明示的な共有 `service-binding:preauth` 制限を適用する。偽トークンを変更しても同じpre-auth枠を消費するが、正規の内部caller間で相互干渉し得る。検証済みruntime identityへの移行は別の根拠・API境界が必要 | 現行のbrokerによるservice proof、repository/epoch/lease照合、GitHub発行権限 |
 | Wake / Entry | **native 10/60秒／userId:repositoryId**。ReadyなEntryは消費しない | 既存ユーザーセッションとGitHub Repoアクセス確認後、**実際にstart/resumeが必要なときだけ**consume | D1の`requestDesiredState`、CAS／冪等キー／capacity／単一Writer、Kubernetes Admission |
 | Mutation Receipt | **native 10/60秒／userId:repositoryId** | 検証済みsessionまたはHosted grantの主体を使用。無効grantの入力文字列で他ユーザーのquotaを消費させない | 現行GitHub権限再確認、署名、binding/epoch/revision、operation id／payload digest |
 
@@ -77,7 +77,7 @@ Instance Access / 内部Caller ──▶ Gateway (WAFを経由する保証なし
 
 **MCP順序に関する実装上の注意:** 現在の`handleTokenExchange`は`controlPlane.getByInstanceId`、`getSigningKey`を先に実行し、auth packageの`consume`はその後である。移行では認証前の粗制限を**それらの照会より前**へ移す。credential存在の有無を推定可能にする差分エラーを増やさない。valid-credential quotaは検証後のみ消費する。無効credentialの総当たりをper-credential bucket単独で守ろうとしてはならない。
 
-**Runtime Gitに関する外部条件:** 現状`CF-Connecting-IP ?? "unknown"`が何を表すかは、Pod／Instance Accessからの実際の到達経路（直接Cloudflare HTTPか、Service Binding等）で変わる。WAFが全ての呼び出しに効くとは仮定しない。信頼できる接続元も検証済みRuntime IDも得られない場合は、恣意的な固定bucketにフォールバックせず**適用をブロックして経路・既存認証を確認**する。
+**Runtime Gitに関する外部条件:** 現状`CF-Connecting-IP ?? "unknown"`が何を表すかは、Pod／Instance Accessからの実際の到達経路（直接Cloudflare HTTPか、Service Binding等）で変わる。WAFが全ての呼び出しに効くとは仮定しない。信頼できる接続元も検証済みRuntime IDも得られない場合は、内部呼び出し専用の明示的な共有pre-auth枠で要求数を制限する。これはCaller識別ではなく負荷緩和であり、実際の経路と既存Broker認証の確認はデプロイ前の必須条件である。
 
 ## 6. 設定・アダプターの最小構成（将来の実装PR用）
 

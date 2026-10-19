@@ -785,7 +785,7 @@ describe("Gateway mutation authorization endpoint", () => {
     const location = new URL(response.headers.get("Location")!);
     expect(response.status).toBe(302);
     expect(location.origin).toBe(ORIGIN);
-    expect(location.pathname).toBe("/auth/github/start");
+    expect(location.pathname).toBe("/auth/login");
     expect(location.searchParams.get("redirect_to")).toBe(`/repositories/${REPOSITORY_ID}`);
     expect(response.headers.get("Location")).not.toContain("secret-value");
     expect(response.headers.get("Location")).not.toContain("private-state");

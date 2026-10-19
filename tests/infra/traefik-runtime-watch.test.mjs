@@ -172,3 +172,14 @@ test("K3s cert-manager wildcard is served by the unique Traefik default TLSStore
   const fallback = documents("infrastructure/kubernetes/base/stopped-instance-fallback.yaml")[0];
   assert.equal(fallback.spec.tls.secretName, store.spec.defaultCertificate.secretName);
 });
+
+test("static application wildcard does not require a Provisioner DNS record publisher", () => {
+  const service = read("infrastructure/kubernetes/base/platform-services.yaml");
+  const main = read("apps/provisioner/src/main.ts");
+  const lifecycle = read("apps/provisioner/src/kubernetes-lifecycle-adapter.ts");
+  assert.doesNotMatch(service, /praetorium-application-dns|PROVISIONER_APPLICATION_DNS/u);
+  assert.doesNotMatch(main, /CloudflareApplicationDns|applicationDns:/u);
+  assert.doesNotMatch(lifecycle, /applicationDns\.publish|Application DNS publisher/u);
+  const decision = read("docs/architecture/APPLICATION-ORIGINS.md");
+  assert.match(decision, /\*\.scriptorium\.yohn\.jp\. CNAME gateway\.yohn\.jp\./u);
+});

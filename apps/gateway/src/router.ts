@@ -700,6 +700,9 @@ async function handleRuntimeGitCredential(request: Request, context: GatewayCont
     // Service Binding calls may have no edge IP. Use the presented service
     // token digest for those calls; the broker still validates the proof
     // before issuing any credential. Never use a global "unknown" bucket.
+    if (!remote && !(await context.runtimeCredentialRateLimiter.consume("service-binding:preauth", context.requestNow))) {
+      return errorResponse(request, "RATE_LIMITED", "runtime credential issuance is rate limited", context.requestId);
+    }
     const rateKey = await keyedDigest(context.config.credentialPepper,
       remote ? `runtime-git-credential:edge:${remote}` : `runtime-git-credential:service:${parsed.data.proof.serviceToken}`);
     if (!(await context.runtimeCredentialRateLimiter.consume(rateKey, context.requestNow))) {

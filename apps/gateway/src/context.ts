@@ -135,6 +135,9 @@ function object(value: unknown): value is Record<string, unknown> {
 
 async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
   const origin = parseOrigin(env.GATEWAY_ORIGIN);
+  const environment = env.GATEWAY_ENVIRONMENT;
+  if (!environment || !/^(production|preview|development|test)$/.test(environment))
+    throw new TypeError("GATEWAY_ENVIRONMENT must explicitly identify the deployment environment");
   const allowedRepositoryOwner = parseOwner(env.GATEWAY_ALLOWED_REPOSITORY_OWNER);
   const githubAppId = positiveInteger(env.GITHUB_APP_ID, "GITHUB_APP_ID", 1, Number.MAX_SAFE_INTEGER);
   const oauthClientId = env.GITHUB_OAUTH_CLIENT_ID;
@@ -154,12 +157,7 @@ async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
   const handoffTtlSeconds = positiveInteger(env.GATEWAY_HANDOFF_TTL_SECONDS, "GATEWAY_HANDOFF_TTL_SECONDS", 1, 60);
   const accessGrantTtlSeconds = positiveInteger(env.GATEWAY_ACCESS_GRANT_TTL_SECONDS, "GATEWAY_ACCESS_GRANT_TTL_SECONDS", 1, 300);
   return {
-    environment: (() => {
-      const value = env.GATEWAY_ENVIRONMENT;
-      if (!value || !/^(production|preview|development|test)$/.test(value))
-        throw new TypeError("GATEWAY_ENVIRONMENT must explicitly identify the deployment environment");
-      return value;
-    })(),
+    environment,
     origin,
     sessionTtlSeconds,
     handoffTtlSeconds,

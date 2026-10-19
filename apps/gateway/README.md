@@ -108,11 +108,14 @@ producer image or browser ingress. Those remain deployment and T14 acceptance
 gates.
 
 Production deployment preflight must confirm the six account-wide rate-limit
-namespace IDs are unused and set distinct `GATEWAY_ENVIRONMENT` values for
-preview/production. The public login and MCP token routes require a
+namespace IDs are unused. Production declares `GATEWAY_ENVIRONMENT=production`;
+preview deployments must explicitly override it to `preview` using their own
+Wrangler deployment configuration and origin. An omitted environment is rejected. The public login and MCP token routes require a
 Cloudflare-supplied `CF-Connecting-IP` header for pre-auth throttling; without
 that trusted edge identity, the request fails closed with 503. Internal runtime
-Git calls without an edge IP use an HMAC of the presented runtime service
-credential as a provisional best-effort key, never a shared `unknown`
-bucket; issuance still depends on the broker's proof validation. WAF rules
+Git calls without an edge IP first consume an explicit shared
+`service-binding:preauth` limit to bound rotating invalid service tokens, and
+then a keyed digest of the presented runtime service credential. This may
+throttle unrelated internal callers; issuance still depends on broker proof
+validation. WAF rules
 are separately operated and are not configured by this application.

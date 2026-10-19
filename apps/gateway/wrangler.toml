@@ -81,6 +81,7 @@ pattern = "praetorium.yohn.jp"
 custom_domain = true
 
 [vars]
+GATEWAY_ENVIRONMENT = "production"
 GATEWAY_ORIGIN = "https://praetorium.yohn.jp"
 CONTROL_PLANE_ORIGIN = "https://control.praetorium.yohn.jp"
 GATEWAY_SESSION_TTL_SECONDS = "28800"

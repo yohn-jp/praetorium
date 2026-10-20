@@ -2,6 +2,54 @@
 - name: Configure Management host prerequisites and independent services
   hosts: management
   become: true
+  pre_tasks:
+    - name: Enable Ubuntu Universe to discover the pinned Podman package version
+      ansible.builtin.apt_repository:
+        repo: "deb {{ coordination_ubuntu_archive_mirror }} {{ ansible_distribution_release }} universe"
+        filename: praetorium-universe
+        state: present
+        update_cache: true
+      tags:
+        - coordination-package-sources
+
+    - name: Install the official Cloudflare Tunnel package signing key for discovery
+      ansible.builtin.get_url:
+        url: https://pkg.cloudflare.com/cloudflare-main.gpg
+        dest: /usr/share/keyrings/cloudflare-main.gpg
+        owner: root
+        group: root
+        mode: "0644"
+        validate_certs: true
+      when: coordination_tunnel_enabled | default(false) | bool
+      tags:
+        - coordination-package-sources
+
+    - name: Configure the official Cloudflare Tunnel package source for discovery
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main"
+        filename: cloudflared
+        state: present
+        update_cache: true
+      when: coordination_tunnel_enabled | default(false) | bool
+      tags:
+        - coordination-package-sources
+
+    - name: Show available Coordination package candidates
+      ansible.builtin.command:
+        argv:
+          - apt-cache
+          - policy
+          - podman
+          - cloudflared
+          - dbus-user-session
+          - uidmap
+          - slirp4netns
+          - fuse-overlayfs
+      changed_when: false
+      check_mode: false
+      when: "'coordination-package-discovery' in ansible_run_tags"
+      tags:
+        - coordination-package-discovery
   roles:
     - common
     - coordination

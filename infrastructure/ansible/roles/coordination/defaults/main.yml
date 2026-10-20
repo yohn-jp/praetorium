@@ -7,9 +7,11 @@ coordination_service_group: praetorium-coordination
 coordination_service_home: /var/lib/praetorium/coordination
 coordination_subid_start: 1000000
 coordination_subid_size: 65536
+coordination_ubuntu_archive_mirror: https://archive.ubuntu.com/ubuntu
 coordination_podman_package_version: ""
 coordination_cloudflared_package_version: ""
 coordination_cloudflare_key_url: https://pkg.cloudflare.com/cloudflare-main.gpg
+coordination_cloudflare_package_repository: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main"
 coordination_image: ""
 coordination_container_uid: 1000
 coordination_container_gid: 1000

@@ -1,17 +1,17 @@
 ---
-- name: Validate immutable image, package pins, private target URLs, and secret references
+- name: Validate immutable image, package pins, HTTPS endpoints, and secret references
   ansible.builtin.assert:
     that:
       - coordination_image is match('^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[a-f0-9]{64}$')
       - coordination_podman_package_version | length > 0
       - coordination_provisioner_notification_url is match('^https://[^/@:]+(?::[0-9]+)?/internal/work-available$')
       - coordination_build_notification_url is match('^https://[^/@:]+(?::[0-9]+)?/internal/work-available$')
-      - coordination_provisioner_notification_url == 'https://notify-provisioner.instances.praetorium.yohn.jp/internal/work-available'
-      - coordination_build_notification_url == 'https://notify-build.instances.praetorium.yohn.jp/internal/work-available'
       - coordination_provisioner_token_src | length > 0
       - coordination_build_token_src | length > 0
-      - coordination_downstream_hosts | map(attribute='name') | list | sort == ['notify-build.instances.praetorium.yohn.jp', 'notify-provisioner.instances.praetorium.yohn.jp']
-      - coordination_downstream_hosts | selectattr('address', 'equalto', '10.7.0.31') | list | length == 2
+      - coordination_downstream_hosts is sequence
+      - coordination_downstream_hosts | length == 2
+      - coordination_downstream_hosts | selectattr('name', 'defined') | list | length == 2
+      - coordination_downstream_hosts | selectattr('address', 'defined') | list | length == 2
       - coordination_service_uid | int > 999
       - coordination_container_uid | int == 1000
       - coordination_container_gid | int == 1000
@@ -19,6 +19,14 @@
       - coordination_cpu_limit is match('^[0-9]+(\.[0-9]+)?$')
       - coordination_pids_limit | int > 0
     fail_msg: "Coordination requires an immutable image digest, pinned packages, private HTTPS targets, and protected local credential paths."
+
+- name: Require AddHost entries to match the configured notification URL hosts
+  ansible.builtin.assert:
+    that:
+      - (coordination_downstream_hosts | map(attribute='name') | list | sort) ==
+        ([coordination_provisioner_notification_url.split('/')[2].split(':')[0], coordination_build_notification_url.split('/')[2].split(':')[0]] | sort)
+      - coordination_downstream_hosts | selectattr('address', 'match', '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)') | list | length == 2
+    fail_msg: "AddHost names must match the two configured HTTPS destinations and resolve to inventory-supplied private addresses."
 
 - name: Validate tunnel identity and token source when the private connector is enabled
   ansible.builtin.assert:
@@ -42,6 +50,15 @@
       - coordination_cgroup_v2.stat.isreg
     fail_msg: "The Coordination Plane requires cgroup v2 for its resource limits."
 
+- name: Enable Ubuntu Universe for the pinned Podman package
+  ansible.builtin.apt_repository:
+    repo: "deb {{ coordination_ubuntu_archive_mirror }} {{ ansible_distribution_release }} universe"
+    filename: praetorium-universe
+    state: present
+    update_cache: true
+  tags:
+    - coordination-package-sources
+
 - name: Install the pinned Podman and rootless-user prerequisites
   ansible.builtin.apt:
     name:
@@ -54,6 +71,7 @@
     update_cache: true
     cache_valid_time: 3600
     install_recommends: true
+  register: coordination_podman_package_install
 
 - name: Read the installed Podman version
   ansible.builtin.command:
@@ -116,6 +134,14 @@
     owner: "{{ coordination_service_user }}"
     group: "{{ coordination_service_group }}"
     mode: "0700"
+
+- name: Ensure the Praetorium marker directory exists
+  ansible.builtin.file:
+    path: /etc/praetorium
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
 
 - name: Read subordinate UID and GID maps
   ansible.builtin.slurp:
@@ -290,14 +316,18 @@
     mode: "0644"
     validate_certs: true
   when: coordination_tunnel_enabled | bool
+  tags:
+    - coordination-package-sources
 
 - name: Configure the official stable Cloudflare Tunnel package repository
   ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main"
+    repo: "{{ coordination_cloudflare_package_repository }}"
     filename: cloudflared
     state: present
     update_cache: true
   when: coordination_tunnel_enabled | bool
+  tags:
+    - coordination-package-sources
 
 - name: Install the pinned cloudflared package
   ansible.builtin.apt:
@@ -305,6 +335,7 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+  register: coordination_cloudflared_package_install
   when: coordination_tunnel_enabled | bool
 
 - name: Ensure cloudflared matches the pinned package version
@@ -399,6 +430,23 @@
     timeout: 30
   when: not ansible_check_mode
 
+- name: Read current Coordination user service state before unit installation
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - is-active
+      - praetorium-coordination.service
+  register: coordination_user_service_state_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  become_user: "{{ coordination_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ coordination_service_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ coordination_service_uid }}/bus"
+  when: not ansible_check_mode
+
 - name: Create the rootless Quadlet user directory
   ansible.builtin.file:
     path: "{{ coordination_user_unit_dir }}/{{ coordination_service_uid }}"
@@ -421,6 +469,19 @@
     that:
       - not coordination_quadlet_ownership.results[1].stat.exists or coordination_quadlet_ownership.results[0].stat.exists
     fail_msg: "An existing Coordination Quadlet has no Praetorium ownership marker; inspect it before adoption."
+
+- name: Read the existing Coordination Quadlet ownership marker
+  ansible.builtin.slurp:
+    src: "{{ coordination_quadlet_marker_path }}"
+  register: coordination_quadlet_marker_contents
+  when: coordination_quadlet_ownership.results[0].stat.exists
+
+- name: Verify the existing Coordination ownership marker path
+  ansible.builtin.assert:
+    that:
+      - (coordination_quadlet_marker_contents.content | b64decode | from_json).unitPath == coordination_user_unit_dir + '/' + (coordination_service_uid | string) + '/praetorium-coordination.container'
+    fail_msg: "The existing Coordination ownership marker identifies a different unit path."
+  when: coordination_quadlet_ownership.results[0].stat.exists
 
 - name: Check whether the exact Coordination image digest is already in rootless storage
   ansible.builtin.command:
@@ -463,6 +524,7 @@
     group: root
     mode: "0644"
     force: "{{ coordination_quadlet_ownership.results[0].stat.exists }}"
+  register: coordination_quadlet_write
 
 - name: Record ownership of the Coordination Quadlet
   ansible.builtin.copy:
@@ -471,7 +533,7 @@
     owner: root
     group: root
     mode: "0600"
-    force: false
+    force: true
 
 - name: Inspect Tunnel system unit ownership marker and existing unit
   ansible.builtin.stat:
@@ -483,12 +545,43 @@
   register: coordination_tunnel_unit_ownership
   when: coordination_tunnel_enabled | bool
 
+- name: Read Cloudflare Tunnel service state before unit installation
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - "{{ coordination_cloudflared_unit }}"
+  register: coordination_tunnel_state_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: coordination_tunnel_enabled | bool
+
 - name: Refuse to replace an unowned Cloudflare Tunnel system unit
   ansible.builtin.assert:
     that:
       - not coordination_tunnel_unit_ownership.results[1].stat.exists or coordination_tunnel_unit_ownership.results[0].stat.exists
     fail_msg: "An existing Cloudflare Tunnel system unit has no Praetorium ownership marker; inspect it before adoption."
   when: coordination_tunnel_enabled | bool
+
+- name: Read the existing Cloudflare Tunnel ownership marker
+  ansible.builtin.slurp:
+    src: "{{ coordination_tunnel_unit_marker_path }}"
+  register: coordination_tunnel_marker_contents
+  when:
+    - coordination_tunnel_enabled | bool
+    - coordination_tunnel_unit_ownership.results[0].stat.exists
+
+- name: Verify the existing Cloudflare Tunnel identity marker
+  ansible.builtin.assert:
+    that:
+      - (coordination_tunnel_marker_contents.content | b64decode | from_json).unitPath == '/etc/systemd/system/' + coordination_cloudflared_unit
+      - (coordination_tunnel_marker_contents.content | b64decode | from_json).tunnelId == coordination_tunnel_id
+      - (coordination_tunnel_marker_contents.content | b64decode | from_json).vpcServiceId == coordination_vpc_service_id
+    fail_msg: "The installed Cloudflare Tunnel unit is marked for a different Tunnel/VPC identity."
+  when:
+    - coordination_tunnel_enabled | bool
+    - coordination_tunnel_unit_ownership.results[0].stat.exists
 
 - name: Install the isolated remote-managed Tunnel systemd unit
   ansible.builtin.template:
@@ -498,6 +591,7 @@
     group: root
     mode: "0644"
     force: "{{ coordination_tunnel_unit_ownership.results[0].stat.exists }}"
+  register: coordination_tunnel_unit_write
   when: coordination_tunnel_enabled | bool
 
 - name: Record ownership of the Cloudflare Tunnel system unit
@@ -507,28 +601,51 @@
     owner: root
     group: root
     mode: "0600"
-    force: false
+    force: "{{ coordination_tunnel_unit_ownership.results[0].stat.exists }}"
   when: coordination_tunnel_enabled | bool
 
-- name: Reload and start the rootless Coordination service
+- name: Reload and start or restart the rootless Coordination service as needed
   ansible.builtin.systemd_service:
     name: praetorium-coordination.service
     scope: user
     daemon_reload: true
-    enabled: true
-    state: started
+    state: "{{ 'restarted' if ((coordination_quadlet_write.changed | default(false) or coordination_podman_package_install.changed | default(false)) and (coordination_user_service_state_before.stdout | default('') == 'active')) else 'started' }}"
   become_user: "{{ coordination_service_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ coordination_service_uid }}"
     DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ coordination_service_uid }}/bus"
   when: not ansible_check_mode
 
-- name: Start the isolated Cloudflare Tunnel connector
+- name: Verify Coordination is included in the rootless default target
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - list-dependencies
+      - --plain
+      - --no-pager
+      - default.target
+  register: coordination_default_target_dependencies
+  changed_when: false
+  become_user: "{{ coordination_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ coordination_service_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ coordination_service_uid }}/bus"
+  when: not ansible_check_mode
+
+- name: Require Coordination in the rootless default target
+  ansible.builtin.assert:
+    that:
+      - coordination_default_target_dependencies.stdout is search('praetorium-coordination.service')
+    fail_msg: "The generated Coordination service is not part of the lingering user's default systemd target."
+  when: not ansible_check_mode
+
+- name: Start or restart the isolated Cloudflare Tunnel connector as needed
   ansible.builtin.systemd_service:
     name: "{{ coordination_cloudflared_unit }}"
     daemon_reload: true
     enabled: true
-    state: started
+    state: "{{ 'restarted' if ((coordination_tunnel_unit_write.changed | default(false) or coordination_cloudflared_package_install.changed | default(false)) and (coordination_tunnel_state_before.stdout | default('') == 'active')) else 'started' }}"
   when:
     - coordination_tunnel_enabled | bool
     - not ansible_check_mode

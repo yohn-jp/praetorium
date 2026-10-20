@@ -13,4 +13,11 @@ ansible-playbook -i /path/to/operator/inventory.yml playbooks/host-bootstrap.yml
 ansible-playbook -i /path/to/operator/inventory.yml playbooks/host-bootstrap.yml --check --diff
 ```
 
+On a fresh Management host, discover the current package candidates before filling the exact version pins. The source task enables Ubuntu Universe and, when the tunnel is opted in, configures Cloudflare's official signed package source. Then the read-only discovery task prints the package policy without installing packages:
+
+```sh
+ansible-playbook -i /path/to/operator/inventory.yml playbooks/host-bootstrap.yml --tags coordination-package-sources
+ansible-playbook -i /path/to/operator/inventory.yml playbooks/host-bootstrap.yml --tags coordination-package-discovery
+```
+
 The example inventory is intentionally non-deployable. Syntax checks and check mode do not validate the hosted Coordination path, tunnel connectivity, or notification delivery.

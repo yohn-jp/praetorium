@@ -13,13 +13,13 @@ coordination_tunnel_enabled: false
 coordination_image: "ghcr.io/example/praetorium/coordination@sha256:REPLACE_WITH_64_HEX_DIGEST"
 coordination_podman_package_version: ""
 coordination_cloudflared_package_version: ""
-coordination_provisioner_notification_url: "https://notify-provisioner.instances.praetorium.yohn.jp/internal/work-available"
-coordination_build_notification_url: "https://notify-build.instances.praetorium.yohn.jp/internal/work-available"
+coordination_provisioner_notification_url: "https://notify-provisioner.example.invalid/internal/work-available"
+coordination_build_notification_url: "https://notify-build.example.invalid/internal/work-available"
 coordination_downstream_hosts:
-  - name: notify-provisioner.instances.praetorium.yohn.jp
-    address: 10.7.0.31
-  - name: notify-build.instances.praetorium.yohn.jp
-    address: 10.7.0.31
+  - name: notify-provisioner.example.invalid
+    address: 192.0.2.31
+  - name: notify-build.example.invalid
+    address: 192.0.2.31
 coordination_provisioner_token_src: ""
 coordination_build_token_src: ""
 coordination_tunnel_token_src: ""

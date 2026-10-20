@@ -127,3 +127,26 @@ The window crosses the Provisioner rollout, and user activity is unknown. It
 therefore does **not** certify an idle baseline or reduced unnecessary traffic.
 Broad route buckets do not establish individual causes; CPU/D1/DO consumption
 and receiver-side request counts were not checked.
+
+## Retirement repair: staged rollout requirement
+
+The first repair (`4e26fc1`) makes each bounded retirement batch resumable:
+Gateway returns batch progress, Control Plane rechecks the authoritative D1
+pending count, and the Provisioner repeats the identical checkpoint under its
+live lease. Exact checkpoint replay retains the existing sequence and rejects
+changed lease/payload/phase. The in-lease journal no longer reloads an older
+checkpoint from the immutable claim. Frozen install and the full check passed.
+This source change has not yet been deployed.
+
+Independent review found a cross-version constraint: the old Provisioner
+accepts any 2xx checkpoint response and would ignore the new pending field.
+Therefore deploy the new Provisioner first using `Recreate`, verify it is the
+only controller, then deploy Gateway, then Control Plane. The old Control Plane
+continues returning a fail-closed error until that last step. Rollback must
+restore Control Plane before restoring the old Provisioner. A passing unit
+suite alone does not establish safe mixed-version rollout.
+
+One manual, coalescible hint through Management's loopback Coordination endpoint
+returned HTTP 202; that relay response requires a downstream Provisioner 2xx.
+This verifies this one manual transport path. It does not certify natural
+Control Plane/VPC notification delivery or operation completion.

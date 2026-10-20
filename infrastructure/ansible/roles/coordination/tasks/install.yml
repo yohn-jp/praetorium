@@ -686,3 +686,31 @@
   delay: 3
   until: coordination_ready.status == 200
   when: not ansible_check_mode
+
+- name: Run the configured Podman healthcheck for Coordination
+  ansible.builtin.command:
+    chdir: "{{ coordination_service_home }}"
+    argv:
+      - runuser
+      - --user
+      - "{{ coordination_service_user }}"
+      - --
+      - podman
+      - healthcheck
+      - run
+      - praetorium-coordination
+  register: coordination_podman_healthcheck
+  changed_when: false
+  failed_when: false
+  no_log: true
+  retries: 5
+  delay: 3
+  until: coordination_podman_healthcheck.rc == 0
+  when: not ansible_check_mode
+
+- name: Require the Podman healthcheck to report Coordination healthy
+  ansible.builtin.assert:
+    that:
+      - coordination_podman_healthcheck.rc == 0
+    fail_msg: "The Coordination endpoint answered, but its configured Podman healthcheck did not pass."
+  when: not ansible_check_mode

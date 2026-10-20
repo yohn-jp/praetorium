@@ -1,6 +1,6 @@
 {
   "schema": "praetorium.three-vm-fresh-deployment-evidence/v1",
-  "observedAtUtc": "2026-10-20T14:27:04Z",
+  "observedAtUtc": "2026-10-20T14:36:21Z",
   "deployment": {
     "sourceCommit": "b073dfb07cb8abe620d4966dc6905a2918482c27",
     "strategy": "owner-authorized destructive fresh bootstrap",
@@ -142,8 +142,8 @@
   },
   "managementRebootBaseline": {
     "observedAtUtc": "2026-10-20T14:27:04Z",
-    "rebootTestStatus": "NOT_RUN",
-    "coordinationIndependenceStatus": "NOT_CHECKED",
+    "rebootTestStatus": "PASS",
+    "coordinationIndependenceStatus": "PASS_BOUNDED_1S_K3S_STOP",
     "managementHost": {
       "bootTimeUtc": "2026-10-20T10:44:25Z",
       "bootId": "2f76f8c8-be4e-4784-a3b4-96c8367a31ad",
@@ -195,9 +195,103 @@
         "GET /healthz": 200,
         "GET /readyz": 200
       },
-      "k3sStoppedIndependence": "NOT_CHECKED",
-      "postRebootHealth": "NOT_RUN"
+      "k3sStoppedIndependence": "PASS_BOUNDED_1S_K3S_STOP",
+      "postRebootHealth": "PASS",
+      "postRebootMainPid": 1695,
+      "postRebootExecMainStartTimestampUtc": "2026-10-20T14:35:46Z"
     }
   },
-  "evidenceMethod": "Read-only SSH service checks and sanitized K3s node-list query on Management; no Secret values or private-key material were emitted."
+  "managementK3sStopTest": {
+    "result": "PASS",
+    "stopRequestedAtUtc": "2026-10-20T14:34:47Z",
+    "confirmedInactiveAtUtc": "2026-10-20T14:34:48Z",
+    "inactiveDurationSeconds": 1,
+    "k3sService": {
+      "activeState": "inactive",
+      "subState": "dead",
+      "enabled": true
+    },
+    "coordinationWhileK3sInactive": {
+      "unitActive": true,
+      "unitSubState": "running",
+      "mainPidUnchanged": 22845,
+      "GET /healthz": 200,
+      "GET /readyz": 200
+    },
+    "tunnelServiceWhileK3sInactive": {
+      "activeState": "active",
+      "subState": "running",
+      "mainPid": 16657
+    },
+    "runtimePublicEndpoint": {
+      "url": "https://1423923158.scriptorium.yohn.jp/",
+      "httpStatus": 200,
+      "tlsVerifyResult": 0,
+      "remoteIp": "222.224.247.206"
+    },
+    "k3sRestart": {
+      "requestedAtUtc": "2026-10-20T14:35:08Z",
+      "bothNodesReadyAtUtc": "2026-10-20T14:35:18Z",
+      "bothNodesReady": true,
+      "runtimeTenantPodUid": "5e78235c-e177-4c26-9e91-6995aebaca72",
+      "tenantPodCount": 1,
+      "tenantPodRestarts": 0,
+      "runtimePublicHttpStatus": 200,
+      "runtimePublicTlsVerifyResult": 0
+    }
+  },
+  "managementVmRebootTest": {
+    "result": "PASS",
+    "oldBootId": "2f76f8c8-be4e-4784-a3b4-96c8367a31ad",
+    "newBootTimeUtc": "2026-10-20T14:35:39Z",
+    "newBootId": "a5771c08-d5c8-4856-b834-4ae16e43b4a9",
+    "sshAndServicesObservedAtUtc": "2026-10-20T14:36:21Z",
+    "k3sService": {
+      "activeState": "active",
+      "subState": "running",
+      "enabled": true
+    },
+    "coordination": {
+      "activeState": "active",
+      "subState": "running",
+      "mainPid": 1695,
+      "GET /healthz": 200,
+      "GET /readyz": 200
+    },
+    "tunnelService": {
+      "activeState": "active",
+      "subState": "running",
+      "enabled": true,
+      "mainPid": 1461
+    },
+    "nodes": {
+      "allReady": true,
+      "managementUidUnchanged": true,
+      "runtimeUidUnchanged": true,
+      "managementUid": "0cb90590-c42c-4417-b6d0-c8b0ca75fcaf",
+      "runtimeUid": "0ceea32e-61eb-4f4d-87b1-65eb2e40cb06",
+      "clusterIdLabel": "clu_01M552J5HCXXJAPCCPN480JSJN",
+      "kubeletVersion": "v1.35.9+k3s1"
+    },
+    "certificateHashesUnchanged": {
+      "serverCaSha256": "82d28d5864eb2823e0af9855101f4925340687505b7248cd92958d2b5ae587b4",
+      "etcdServerCaSha256": "6f0fe12fb23b1a4bb41e6b5a9518e8d6207db2c392ad0a1dc5fd63e7ca4a1fec"
+    },
+    "runtimeTenant": {
+      "podCount": 1,
+      "podUidUnchanged": true,
+      "podUid": "5e78235c-e177-4c26-9e91-6995aebaca72",
+      "phase": "Running",
+      "ready": true,
+      "node": "runtime",
+      "restartCount": 0
+    },
+    "runtimePublicEndpoint": {
+      "url": "https://1423923158.scriptorium.yohn.jp/",
+      "httpStatus": 200,
+      "tlsVerifyResult": 0,
+      "remoteIp": "222.224.247.206"
+    }
+  },
+  "evidenceMethod": "Sanitized SSH/systemd/Kubernetes and strict-TLS HTTP observations, plus the explicitly authorized Management K3s stop/restart and Management VM reboot. No Secret values or private-key material were emitted."
 }

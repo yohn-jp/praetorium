@@ -133,6 +133,9 @@ function client(options: {
   fetch?: typeof globalThis.fetch;
   onCredential?: (value: RuntimeControlCredentialRequest) => void;
   unknownPersistenceRetries?: number;
+  unknownPersistenceDelayedRetries?: number;
+  unknownPersistenceRetryDelayMs?: number;
+  beforeStatusRetry?: () => Promise<void>;
 }) {
   const current = assignment();
   const control = new ScriptoriumControlHttpClient(
@@ -150,6 +153,15 @@ function client(options: {
       ...(options.unknownPersistenceRetries === undefined
         ? {}
         : { unknownPersistenceRetries: options.unknownPersistenceRetries }),
+      ...(options.unknownPersistenceDelayedRetries === undefined
+        ? {}
+        : { unknownPersistenceDelayedRetries: options.unknownPersistenceDelayedRetries }),
+      ...(options.unknownPersistenceRetryDelayMs === undefined
+        ? {}
+        : { unknownPersistenceRetryDelayMs: options.unknownPersistenceRetryDelayMs }),
+      ...(options.beforeStatusRetry === undefined
+        ? {}
+        : { beforeStatusRetry: options.beforeStatusRetry }),
     },
     {
       available: true,
@@ -215,13 +227,82 @@ describe("ScriptoriumControlHttpClient", () => {
     expect(fetches).toBe(3);
   });
 
+  it("waits for newly projected identity under an active lease before accepting remote evidence", async () => {
+    let fetches = 0;
+    let leaseChecks = 0;
+    const control = client({
+      now: () => Date.parse("2026-10-17T10:01:00.000Z"),
+      unknownPersistenceDelayedRetries: 3,
+      unknownPersistenceRetryDelayMs: 1,
+      beforeStatusRetry: async () => {
+        leaseChecks += 1;
+      },
+      fetch: async () => {
+        fetches += 1;
+        return Response.json(
+          fetches < 4 ? unknownPersistenceStatus() : verifiedPersistenceStatus(),
+        );
+      },
+    });
+
+    await expect(control.status(assignment())).resolves.toMatchObject({
+      persistence: { state: "verified", observedRemoteCommit: "a".repeat(40) },
+      lastConfirmedRemoteRevision: "a".repeat(40),
+    });
+    expect(fetches).toBe(4);
+    expect(leaseChecks).toBe(6);
+  });
+
+  it("retries a nonfresh unknown observation even when it retains an older confirmed revision", async () => {
+    let fetches = 0;
+    const control = client({
+      now: () => Date.parse("2026-10-17T10:01:00.000Z"),
+      unknownPersistenceDelayedRetries: 1,
+      unknownPersistenceRetryDelayMs: 1,
+      fetch: async () => {
+        fetches += 1;
+        if (fetches === 1) {
+          return Response.json({
+            ...(unknownPersistenceStatus() as object),
+            lastConfirmedRemoteRevision: "a".repeat(40),
+          });
+        }
+        return Response.json(verifiedPersistenceStatus());
+      },
+    });
+
+    await expect(control.status(assignment())).resolves.toMatchObject({
+      persistence: { state: "verified", observedRemoteCommit: "a".repeat(40) },
+    });
+    expect(fetches).toBe(2);
+  });
+
+  it("stops delayed projection retries when the operation lease check fails", async () => {
+    let fetches = 0;
+    const control = client({
+      unknownPersistenceRetries: 0,
+      unknownPersistenceDelayedRetries: 3,
+      unknownPersistenceRetryDelayMs: 1,
+      beforeStatusRetry: async () => {
+        throw new Error("operation lease lost");
+      },
+      fetch: async () => {
+        fetches += 1;
+        return Response.json(unknownPersistenceStatus());
+      },
+    });
+
+    await expect(control.status(assignment())).rejects.toThrow("operation lease lost");
+    expect(fetches).toBe(1);
+  });
+
   it("rejects a mismatched assignment response instead of retrying it", async () => {
     let fetches = 0;
     const control = client({
       unknownPersistenceRetries: 2,
       fetch: async () => {
         fetches += 1;
-        return Response.json({ ...unknownPersistenceStatus() as object, runtimeEpoch: 8 });
+        return Response.json({ ...(unknownPersistenceStatus() as object), runtimeEpoch: 8 });
       },
     });
 
@@ -364,5 +445,26 @@ describe("ScriptoriumControlHttpClient", () => {
     await expect(control.resume(request, async () => undefined)).rejects.toThrow(
       "runtime_resume_not_acknowledged",
     );
+  });
+
+  it("retains the producer's safe resume conflict code for fenced recovery", async () => {
+    const control = client({
+      fetch: async () =>
+        Response.json({ error: { code: "RESUME_BINDING_MISMATCH" } }, { status: 409 }),
+    });
+    const request = {
+      contractVersion: "scriptorium-platform/v1" as const,
+      operationId: "op_01",
+      instanceId,
+      runtimeEpoch: 9,
+      reason: "stop" as const,
+      deadline: "2026-10-17T10:05:00.000Z",
+    };
+
+    await expect(control.resume(request, async () => undefined)).rejects.toMatchObject({
+      name: "ScriptoriumControlHttpError",
+      code: "RESUME_BINDING_MISMATCH",
+      status: 409,
+    });
   });
 });

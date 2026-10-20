@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LifecycleService, type RuntimeAssignment } from "@praetorium/application/lifecycle";
+import {
+  parseRuntimeInstanceId,
+  runtimeNamespaceName,
+  runtimeResourceName,
+} from "@praetorium/kubernetes";
 import type * as Kubernetes from "@praetorium/kubernetes";
 import { LifecycleProvisionerExecutor } from "./lifecycle-executor.js";
 import {
@@ -19,7 +24,10 @@ vi.mock("@praetorium/kubernetes", async (importOriginal) => ({
   createInClusterKubernetesRuntimeProvider: () => ({}),
 }));
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("recovered completion auth transport", () => {
   async function resolver() {
@@ -374,5 +382,247 @@ describe("observed runtime identity renewal", () => {
     await executor.execute(retiring, { signal, assertLease, report: async () => undefined });
     expect(refresh).toHaveBeenCalledOnce();
     expect(events).toEqual(["lifecycle"]);
+  });
+
+  it("recovers a retained unknown preflight checkpoint through signed resume before refreshing identity", async () => {
+    const validInstanceId = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const base = currentClaim("unknown");
+    const resolvedCurrent = base.runtimeContext.current!;
+    const checkpointedRequest = {
+      contractVersion: "scriptorium-platform/v1",
+      operationId: base.operation.id,
+      instanceId: validInstanceId,
+      runtimeEpoch: 1,
+      reason: "redeploy",
+      deadline: "2026-10-20T00:00:00.000Z",
+    };
+    const claim = {
+      ...base,
+      operation: {
+        ...base.operation,
+        instanceId: validInstanceId,
+        phase: "unknown",
+        status: "running",
+        workerId: "worker-a",
+        leaseToken: "l".repeat(40),
+        leaseExpiresAt: Date.now() + 120_000,
+        checkpointSequence: 4,
+        checkpoint: {
+          schemaVersion: 1,
+          lifecycle: {
+            id: base.operation.id,
+            version: 4,
+            instanceId: validInstanceId,
+            repositoryId: 123456,
+            clusterId: "cluster-a",
+            generation: 4,
+            kind: "start",
+            reason: "user",
+            phase: "unknown",
+            runtimeEpoch: 3,
+            current: {
+              instanceId: validInstanceId,
+              repositoryId: 123456,
+              runtimeEpoch: resolvedCurrent.assignment.runtimeEpoch,
+              generation: 2,
+              clusterId: "cluster-a",
+              reservationId: "res-current",
+              deployment: {
+                revisionId: resolvedCurrent.revisionId,
+                imageDigest: resolvedCurrent.assignment.imageDigest,
+                compositionManifestDigest: resolvedCurrent.assignment.compositionManifestDigest,
+                artifactRef: resolvedCurrent.artifactRef,
+                platformManifestDigest: resolvedCurrent.platformManifestDigest,
+                enabledModuleIds: resolvedCurrent.assignment.enabledModuleIds,
+              },
+            },
+            target: null,
+            targetEpoch: 3,
+            targetReservationId: null,
+            rollbackEpoch: null,
+            quiesceRequest: checkpointedRequest,
+            quiesceReceipt: null,
+            writerAbsenceProof: null,
+            readinessEvidence: null,
+            rollbackCompatibilityEvidence: null,
+            rollbackCompatible: null,
+            buildId: null,
+            failureCode: "producer_remote_preflight_unverified",
+            failureReason: "remote confirmation unavailable",
+            lastAuthenticatedActivityAt: null,
+          },
+        },
+      },
+      snapshot: {
+        ...base.snapshot,
+        instance: { ...base.snapshot.instance, instanceId: validInstanceId },
+      },
+    } as unknown as ClaimedProvisionerOperation;
+    const current = assignmentOf(claim, claim.runtimeContext.current!, true);
+    const namespace = runtimeNamespaceName(
+      "praetorium-instances",
+      parseRuntimeInstanceId(validInstanceId),
+    );
+    const service = runtimeResourceName(parseRuntimeInstanceId(validInstanceId));
+    const events: string[] = [];
+    const phases: string[] = [];
+    const quiesceDeadlines: string[] = [];
+    let clock = Date.now();
+    let resumeCount = 0;
+    const operations = {
+      issueControlCredential: async () => ({
+        token: "scoped-runtime-control-token",
+        expiresAt: new Date(clock + 60_000).toISOString(),
+      }),
+      checkpoint: async (input: {
+        phase: string;
+        expectedCheckpointSequence: number;
+        checkpoint: unknown;
+      }) => {
+        phases.push(input.phase);
+        events.push(`checkpoint:${input.phase}`);
+        if (input.phase === "quiescing-old") {
+          const lifecycle = (
+            input.checkpoint as { lifecycle?: { quiesceRequest?: { deadline?: unknown } } }
+          ).lifecycle;
+          const deadline = lifecycle?.quiesceRequest?.deadline;
+          if (typeof deadline === "string") quiesceDeadlines.push(deadline);
+          if (quiesceDeadlines.length === 1) clock += 31_000;
+        }
+        return {
+          operation: {
+            ...claim.operation,
+            phase: input.phase,
+            checkpointSequence: input.expectedCheckpointSequence + 1,
+            checkpoint: input.checkpoint,
+          },
+        };
+      },
+    } as unknown as ProvisionerOperationService;
+    vi.spyOn(KubernetesLifecycleRuntimeAdapter.prototype, "controlEndpoint").mockResolvedValue(
+      `http://${service}.${namespace}.svc.cluster.local:3000/`,
+    );
+    const census = vi
+      .spyOn(KubernetesLifecycleRuntimeAdapter.prototype, "censusWriters")
+      .mockResolvedValueOnce({
+        complete: true,
+        providerObservationId: "provider-empty-census",
+        observedAt: new Date(clock - 1).toISOString(),
+        matchedWriterCount: 0,
+        writers: [],
+      })
+      .mockResolvedValueOnce({
+        complete: true,
+        providerObservationId: "provider-target-census",
+        observedAt: new Date(clock - 1).toISOString(),
+        matchedWriterCount: 1,
+        writers: [{ runtimeEpoch: 3, phase: "running", identities: ["pod-target"] }],
+      })
+      .mockResolvedValueOnce({
+        complete: true,
+        providerObservationId: "provider-census-1",
+        observedAt: new Date(clock - 1).toISOString(),
+        matchedWriterCount: 1,
+        writers: [{ runtimeEpoch: 1, phase: "running", identities: ["pod-current"] }],
+      });
+    const refresh = vi
+      .spyOn(KubernetesLifecycleRuntimeAdapter.prototype, "refreshRuntimeIdentity")
+      .mockImplementation(async () => {
+        events.push("identity-refresh");
+        return true;
+      });
+    vi.spyOn(LifecycleService.prototype, "execute").mockImplementation(async () => {
+      events.push("lifecycle");
+      return { status: "unknown", code: "test", reason: "test" };
+    });
+    const fetchControl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname.endsWith("/resume")) {
+        resumeCount += 1;
+        events.push(`resume:${resumeCount}`);
+        return resumeCount === 1
+          ? Response.json({ error: { code: "RESUME_BINDING_MISMATCH" } }, { status: 409 })
+          : new Response(null, { status: 204 });
+      }
+      if (url.pathname.endsWith("/quiesce")) {
+        events.push("quiesce");
+        return Response.json({
+          contractVersion: "scriptorium-platform/v1",
+          operationId: base.operation.id,
+          instanceId: validInstanceId,
+          runtimeEpoch: 1,
+          quiesceRevision: "recovery-q-1",
+          disposition: "unknown",
+          activeMutations: 0,
+          activeJobs: 0,
+          restartableJobs: 0,
+          pendingCheckpoints: 1,
+          uncertainPublication: true,
+          lastConfirmedRemoteRevision: null,
+          reasonCodes: ["REMOTE_CONFIRMATION_UNAVAILABLE"],
+          observedAt: new Date().toISOString(),
+        });
+      }
+      throw new Error("unexpected runtime control endpoint");
+    });
+    vi.stubGlobal("fetch", fetchControl);
+    const assertLease = vi.fn(async () => undefined);
+    const probe = {
+      available: true,
+      withEndpointResolver: () => probe,
+      forLease: () => probe,
+    } as unknown as RuntimeAuthAcceptanceProbe;
+    const executor = new LifecycleProvisionerExecutor({
+      operations,
+      workerId: "worker-a",
+      now: () => clock,
+      runtime: {
+        namespacePrefix: "praetorium-instances",
+        clusterId: "cluster-a",
+        ingressNamespace: "traefik",
+        instanceAccessNamespace: "praetorium-system",
+        instanceAccessService: "instance-access",
+        controlNamespace: "praetorium-system",
+        controlService: "provisioner",
+        maxCapacityAgeMs: 60_000,
+        maximumResources: { cpuMilli: 1000, memoryMiB: 1024, ephemeralStorageMiB: 1024 },
+      },
+      authProbe: probe,
+      assignmentTransport: {
+        available: true,
+        forClaim: () => ({}),
+      } as unknown as RuntimeIdentityAssignmentTransport,
+    });
+
+    const context = {
+      signal: new AbortController().signal,
+      assertLease,
+      report: async (phase: string) => {
+        events.push(`report:${phase}`);
+      },
+    };
+
+    await expect(executor.execute(claim, context)).rejects.toThrow(
+      "persisted quiesce recovery requires the exact sole running writer",
+    );
+    await expect(executor.execute(claim, context)).rejects.toThrow(
+      "persisted quiesce recovery requires the exact sole running writer",
+    );
+    expect(fetchControl).not.toHaveBeenCalled();
+    expect(phases).toEqual([]);
+    expect(census).toHaveBeenCalledTimes(2);
+
+    await executor.execute(claim, context);
+
+    expect(current).toMatchObject({ instanceId: validInstanceId, runtimeEpoch: 1 });
+    expect(phases).toEqual(["quiescing-old", "quiescing-old", "old-quiesced", "accepted"]);
+    expect(quiesceDeadlines).toHaveLength(2);
+    expect(Date.parse(quiesceDeadlines[0] ?? "")).toBeLessThanOrEqual(clock);
+    expect(Date.parse(quiesceDeadlines[1] ?? "")).toBeGreaterThan(clock);
+    expect(resumeCount).toBe(2);
+    expect(refresh).toHaveBeenCalledWith(current, assertLease, expect.any(AbortSignal));
+    expect(events.indexOf("resume:2")).toBeLessThan(events.indexOf("checkpoint:accepted"));
+    expect(events.indexOf("checkpoint:accepted")).toBeLessThan(events.indexOf("identity-refresh"));
+    expect(events.indexOf("identity-refresh")).toBeLessThan(events.indexOf("lifecycle"));
   });
 });

@@ -60,7 +60,7 @@ function validRemoteRevision(value: string | null): boolean {
   return value === null || /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value);
 }
 
-function hasFreshRemoteObservation(
+export function hasFreshRemoteObservation(
   assignment: RuntimeAssignment,
   status: ProducerStatus,
   now: number,

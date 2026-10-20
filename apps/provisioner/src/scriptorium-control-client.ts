@@ -6,14 +6,15 @@ import {
   runtimeNamespaceName,
   runtimeResourceName,
 } from "@praetorium/kubernetes";
-import type {
-  LifecycleAuthProbeProvider,
-  LifecycleProducerProvider,
-  ProducerStatus,
-  RuntimePersistenceObservation,
-  QuiesceReceipt,
-  QuiesceRequest,
-  RuntimeAssignment,
+import {
+  hasFreshRemoteObservation,
+  type LifecycleAuthProbeProvider,
+  type LifecycleProducerProvider,
+  type ProducerStatus,
+  type RuntimePersistenceObservation,
+  type QuiesceReceipt,
+  type QuiesceRequest,
+  type RuntimeAssignment,
 } from "@praetorium/application/lifecycle";
 import type {
   ClaimedProvisionerOperation,
@@ -150,12 +151,28 @@ export interface ScriptoriumControlClientOptions {
    * Defaults to one request; lifecycle callers may opt into a short bounded
    * retry window so adjacent requests can join the same remote observation. */
   readonly unknownPersistenceRetries?: number;
+  /** Additional bounded reads after a newly renewed mounted credential is projected. */
+  readonly unknownPersistenceDelayedRetries?: number;
+  readonly unknownPersistenceRetryDelayMs?: number;
+  readonly beforeStatusRetry?: () => Promise<void>;
 }
 
 function object(value: unknown, message: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new TypeError(message);
   return value as Record<string, unknown>;
+}
+
+function safeControlErrorCode(input: unknown): string | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+  const envelope = input as Record<string, unknown>;
+  const nested =
+    typeof envelope.error === "object" && envelope.error !== null && !Array.isArray(envelope.error)
+      ? (envelope.error as Record<string, unknown>)
+      : envelope;
+  return typeof nested.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(nested.code)
+    ? nested.code
+    : null;
 }
 
 function text(value: unknown, message: string, max = 1024): string {
@@ -369,6 +386,25 @@ function parseQuiesceReceipt(input: unknown): QuiesceReceipt {
   };
 }
 
+async function waitForStatusRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (delayMs <= 0) return;
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  await new Promise<void>((resolve, reject) => {
+    const finish = () => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, delayMs);
+    const abort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+}
+
 export class ScriptoriumControlHttpError extends Error {
   constructor(
     readonly code: string,
@@ -388,6 +424,8 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
   private readonly now: () => number;
   private readonly timeoutMs: number;
   private readonly unknownPersistenceRetries: number;
+  private readonly unknownPersistenceDelayedRetries: number;
+  private readonly unknownPersistenceRetryDelayMs: number;
 
   constructor(
     private readonly options: ScriptoriumControlClientOptions,
@@ -397,6 +435,8 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
     this.now = options.now ?? Date.now;
     this.timeoutMs = options.timeoutMs ?? CONTROL_TIMEOUT_MS;
     this.unknownPersistenceRetries = options.unknownPersistenceRetries ?? 0;
+    this.unknownPersistenceDelayedRetries = options.unknownPersistenceDelayedRetries ?? 0;
+    this.unknownPersistenceRetryDelayMs = options.unknownPersistenceRetryDelayMs ?? 0;
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 60_000) {
       throw new RangeError("runtime control request timeout is invalid");
     }
@@ -407,6 +447,16 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
     ) {
       throw new RangeError("unknown persistence status retry count is invalid");
     }
+    if (
+      !Number.isSafeInteger(this.unknownPersistenceDelayedRetries) ||
+      this.unknownPersistenceDelayedRetries < 0 ||
+      this.unknownPersistenceDelayedRetries > 15 ||
+      !Number.isSafeInteger(this.unknownPersistenceRetryDelayMs) ||
+      this.unknownPersistenceRetryDelayMs < 0 ||
+      this.unknownPersistenceRetryDelayMs > 10_000 ||
+      (this.unknownPersistenceDelayedRetries > 0 && this.unknownPersistenceRetryDelayMs === 0)
+    )
+      throw new RangeError("delayed unknown persistence status retry window is invalid");
   }
 
   get available(): boolean {
@@ -414,8 +464,12 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
   }
 
   async status(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<ProducerStatus> {
-    for (let attempt = 0; ; attempt += 1) {
-      const status = parseStatus(await this.request(assignment, "status", "GET", undefined, signal));
+    let immediateRetries = 0;
+    let delayedRetries = 0;
+    for (;;) {
+      const status = parseStatus(
+        await this.request(assignment, "status", "GET", undefined, signal),
+      );
       if (
         status.instanceId !== assignmentInstanceId(assignment) ||
         status.repositoryId !== assignment.repositoryId ||
@@ -425,16 +479,21 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
 
       const isInFlightCensusPlaceholder =
         status.persistence?.state === "unknown" && status.lastConfirmedRemoteRevision === null;
-      if (
-        !isInFlightCensusPlaceholder ||
-        attempt >= this.unknownPersistenceRetries ||
-        signal?.aborted === true
-      ) {
+      const hasFreshRemoteEvidence = hasFreshRemoteObservation(assignment, status, this.now());
+      if (hasFreshRemoteEvidence || signal?.aborted === true)
         return { ...status, instanceId: assignment.instanceId };
+      if (isInFlightCensusPlaceholder && immediateRetries < this.unknownPersistenceRetries) {
+        immediateRetries += 1;
+        // An immediate, freshly credentialed read can join the producer's
+        // shared in-flight census before it is cleared.
+        continue;
       }
-      // The producer's short status timeout can return an unknown placeholder
-      // while its shared census continues. An immediate, freshly credentialed
-      // read can join that census; delay would start a new one after it clears.
+      if (delayedRetries >= this.unknownPersistenceDelayedRetries)
+        return { ...status, instanceId: assignment.instanceId };
+      await this.options.beforeStatusRetry?.();
+      await waitForStatusRetry(this.unknownPersistenceRetryDelayMs, signal);
+      await this.options.beforeStatusRetry?.();
+      delayedRetries += 1;
     }
   }
 
@@ -558,7 +617,10 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
   ): Promise<unknown> {
     if (!this.credentials.available)
       throw new Error("runtime_scoped_service_credential_unavailable");
-    const exactBody = body === undefined ? "" : JSON.stringify({ ...body, instanceId: assignmentInstanceId(assignment) });
+    const exactBody =
+      body === undefined
+        ? ""
+        : JSON.stringify({ ...body, instanceId: assignmentInstanceId(assignment) });
     const payloadDigest = `sha256:${createHash("sha256").update(exactBody).digest("hex")}`;
     const credential = await this.credentials.issue(
       {
@@ -595,15 +657,25 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
     }
     if (allowNoContent) {
       if (response.status !== 204) {
-        await response.body?.cancel();
-        throw new ScriptoriumControlHttpError("runtime_resume_not_acknowledged", response.status);
+        let code = "runtime_resume_not_acknowledged";
+        try {
+          code =
+            safeControlErrorCode(await readBoundedJson(response, MAX_CONTROL_RESPONSE_BYTES)) ??
+            code;
+        } catch {
+          await response.body?.cancel().catch(() => undefined);
+        }
+        throw new ScriptoriumControlHttpError(code, response.status);
       }
       await response.body?.cancel();
       return null;
     }
     const payload = await readBoundedJson(response, MAX_CONTROL_RESPONSE_BYTES);
     if (!response.ok)
-      throw new ScriptoriumControlHttpError("runtime_control_rejected", response.status);
+      throw new ScriptoriumControlHttpError(
+        safeControlErrorCode(payload) ?? "runtime_control_rejected",
+        response.status,
+      );
     return payload;
   }
 }
@@ -679,7 +751,5 @@ async function readBoundedJson(response: Response, maxBytes: number): Promise<un
   } catch {
     throw new ScriptoriumControlHttpError("runtime_control_invalid_json", response.status);
   }
-  if (!response.ok)
-    throw new ScriptoriumControlHttpError("runtime_control_rejected", response.status);
   return result;
 }

@@ -16,6 +16,10 @@ that Host, and unauthenticated browser navigation redirects to Gateway's
 login page. A successful handoff, Ready application route, authenticated
 browser session, and GitHub write remain unverified.
 
+The latest status is appended in **Current access update (11:55 UTC)** below.
+It supersedes earlier statements about the still-pending Gateway/Control Plane
+migration gate; the observations above remain historical evidence.
+
 ## Public TLS and routing
 
 `getent ahostsv4 1423923158.scriptorium.yohn.jp gateway.yohn.jp` returned
@@ -138,12 +142,11 @@ returned HTTP 302 to `/auth/login`; `/auth/login` returned HTTP 200
 header was present. Redirects were not followed to GitHub, and no browser
 session or user credentials were used.
 
-The integration owner reports that Gateway and Control Plane remain on the
-legacy schema and an active operation blocks migration `0006`. The current
-IA Host validation and unauthenticated login path are now live, but successful
-handoff and the Ready application route are not expected until that migration
-gate is cleared. No claim is made about app readiness or stopped-instance
-wake/reconnect from these requests.
+At 11:11 UTC, the integration owner reported that Gateway and Control Plane
+were still on the legacy schema and an active operation blocked migration
+`0006`. That was the reported state at that time and is superseded by the later
+deployment noted below. At 11:11, no claim was made about app readiness or
+stopped-instance wake/reconnect.
 
 The `instances.praetorium.yohn.jp` suffix identifies physical Runtime hosts
 (`id.instances.praetorium.yohn.jp`). It is intentionally distinct from the
@@ -173,11 +176,13 @@ firewall mutation is indicated.
 ## Remaining acceptance gates
 
 Public HTTPS certificate verification, Instance Access public-Host
-recognition, and the unauthenticated Gateway login redirect are now
-**PASSING** for the tested repository Host. Authenticated handoff and Ready
-application routing remain **BLOCKED** pending the Gateway/Control Plane
-schema migration and an application route on the stable repository Host.
-The Certificate API status after issuance has not been read back.
+recognition, and the unauthenticated Gateway login page are **PASSING** for the
+tested repository Host. The 11:11 statement that authenticated handoff and
+Ready routing awaited Gateway/Control Plane migration `0006` has been
+superseded by the later deployment in the update below. Authenticated handoff,
+Ready application routing, and the Certificate API status after issuance
+remain **NOT_CHECKED**; the current application still reports
+`INSTANCE_STARTING` on its API-style root request.
 
 Issue #24 browser acceptance also requires an explicitly owned disposable
 GitHub repository and current producer support. The current
@@ -203,3 +208,56 @@ Existing Gateway and Instance Access unit tests exercise source-level handoff,
 cookie, grant, stale-grant re-entry, and mutation-authorization behavior.
 They do not prove the deployed route, public TLS, producer compatibility, or
 browser acceptance. No tests were run for this evidence-only change.
+
+## Current access update (11:55 UTC)
+
+Read-only public requests at 11:51–11:53 UTC used normal TLS verification and
+no cookies, credentials, OAuth callback, form POST, or application mutation.
+The integration owner reports that Control Plane origin migration and the
+Gateway binding repair were deployed; the current Gateway version identifier
+reported by the owner is
+`ee5b55dc-9a5d-4d1f-809d-dd644f1e2272`. The public login page and redirect
+behavior were independently checked as follows:
+
+| Browser-style request | Result |
+| --- | --- |
+| `GET https://1423923158.scriptorium.yohn.jp/` with `Accept: text/html` and navigation fetch headers | `302` to `https://praetorium.yohn.jp/entry/scriptorium/1423923158?fallback=1` |
+| `GET https://praetorium.yohn.jp/entry/scriptorium/1423923158?fallback=1` with navigation headers | `302` to `https://praetorium.yohn.jp/auth/login?redirect_to=%2Fentry%2Fscriptorium%2F1423923158` |
+| `GET https://praetorium.yohn.jp/repositories/1423923158` with navigation headers | `302` to `https://praetorium.yohn.jp/auth/login?redirect_to=%2Frepositories%2F1423923158` |
+| `GET https://praetorium.yohn.jp/auth/login?redirect_to=%2Frepositories%2F1423923158` | `200 text/html`; rendered title and heading `Sign in to Praetorium`, supporting text `Your repository workspace requires a signed-in session.`, and link label `Sign in with GitHub` |
+| API-style `GET https://1423923158.scriptorium.yohn.jp/` without navigation headers | `503` `INSTANCE_STARTING` |
+
+No GitHub OAuth route was followed, and no authenticated browser session was
+available. The visible login page is verified from its live HTML. The
+repository dashboard itself was not rendered in an authenticated session.
+Source labels in the current Praetorium Gateway code are `Refresh status`,
+`Check application` while the instance is starting, and `Retry application
+start` when the instance is failed or blocked and retryable. An operation card
+can show `Retry operation` only when the operation is retryable and the
+viewer can configure the repository. These are source-confirmed labels, not
+proof that those controls are currently visible. The operation ID is not
+exposed by the unauthenticated public routes and has not been independently
+observed here. Do not retry an operation unless the lifecycle owner specifies
+the exact operation and confirms the retry is required.
+
+The integration owner separately reports that producer status now reads
+ready with no active work, no checkpoints, and no uncertain publication, but
+remote confirmation is null and persistence is unknown. The owner also reports
+a protected unpushed commit. This producer status does not prove a Ready public
+editor route: the API-style public root request remains `503 INSTANCE_STARTING`.
+A successful authenticated handoff, Ready editor route, and GitHub write have
+not been verified. The previous `0006` migration blocker is no longer the
+reported access blocker.
+
+### ブラウザー確認手順
+
+1. `https://praetorium.yohn.jp/repositories/1423923158` を開きます。ログイン前なら `Sign in to Praetorium` と「Your repository workspace requires a signed-in session.」が表示され、「Sign in with GitHub」を押すと GitHub 認証へ進みます。認証後は repository `1423923158` のページへ戻る想定です。
+2. 認証後の画面に出る状態とURLを確認して記録します。現在は公開アプリのルートが `INSTANCE_STARTING` を返し、未pushの作業も保護対象です。編集や再試行はせず、表示状態を共有して止めてください。
+3. 編集確認は、root がアプリの Ready と対象リポジトリの安全を確認してから行います。編集画面で小さな識別可能な変更を入力し、`Draft` と「下書きはこのブラウザーに保護されています。」を確認します。`Checkpoint` を押して完了を待ち、続けて `Save to GitHub` を押します。`Saved to GitHub` が表示され、`未公開` 件数が 0 になった後にだけ再読み込みし、同じ変更が残ることを確認します。競合、未公開作業、復元確認が表示されたら操作を続けず、画面の状態を共有してください。
+
+The editor labels above are confirmed in Scriptorium source revision
+`008d5c429ec279a424cafd5b8c4cbee70a613b8e`; the live editor was not
+reachable during this observation because the public route still returns
+`INSTANCE_STARTING`. The browser edit/save/reload sequence is therefore a
+prepared future check, not an acceptance result. No tests were run for this
+documentation-only update.

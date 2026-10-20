@@ -4,6 +4,7 @@ import {
   type LifecycleResult,
 } from "@praetorium/application/lifecycle";
 import { WorkAvailability } from "@praetorium/application";
+import { physicalInstanceId } from "@praetorium/contracts";
 import {
   OperationServiceHttpError,
   type ClaimedProvisionerOperation,
@@ -103,10 +104,54 @@ function observationFor(
   sequence: number,
   now: number,
   result?: LifecycleResult,
+  phase?: LifecyclePhase,
+  details?: Readonly<Record<string, string>>,
 ): ProvisionerObservation | null {
-  if (result?.status !== "complete") return null;
   const operation = claim.operation;
   const reportedAt = new Date(now).toISOString();
+  if (result?.status !== "complete") {
+    const target = claim.runtimeContext.target;
+    const imageDigest = target?.assignment.imageDigest;
+    if (
+      phase !== "route-activated" ||
+      operation.kind === "stop" ||
+      target === null ||
+      target === undefined ||
+      details === undefined ||
+      operation.deploymentRevisionId !== target.revisionId ||
+      claim.snapshot.instance.generation !== operation.generation ||
+      target.assignment.instanceId !==
+        physicalInstanceId(
+          operation.instanceId,
+          operation.runtimeEpoch,
+          target.legacyRuntimeEpoch,
+        ) ||
+      target.assignment.repositoryId !== operation.repositoryId ||
+      target.assignment.runtimeEpoch !== operation.runtimeEpoch ||
+      typeof imageDigest !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/u.test(imageDigest) ||
+      !target.artifactRef.endsWith(`@${imageDigest}`) ||
+      details.instanceId !== operation.instanceId ||
+      details.repositoryId !== String(operation.repositoryId) ||
+      details.generation !== String(operation.generation) ||
+      details.clusterId !== operation.clusterId ||
+      details.runtimeEpoch !== String(operation.runtimeEpoch) ||
+      details.revisionId !== target.revisionId ||
+      details.imageDigest !== imageDigest
+    )
+      return null;
+    return {
+      instanceId: operation.instanceId,
+      repositoryId: operation.repositoryId,
+      generation: operation.generation,
+      runtimeEpoch: operation.runtimeEpoch,
+      sequence,
+      observedState: "ready",
+      observedArtifactDigest: imageDigest,
+      observedRevisionId: target.revisionId,
+      reportedAt,
+    };
+  }
   if (result.observed === null) {
     if (operation.kind !== "stop") return null;
     return {
@@ -210,10 +255,9 @@ class SequencedLease {
     result?: LifecycleResult,
     terminal?: ProvisionerTerminal,
   ): Promise<ProvisionerTerminal | undefined> {
-    void details;
     await this.confirmOwned();
     return this.withSequence(async (sequence) => {
-      const observation = observationFor(claim, sequence, this.now(), result);
+      const observation = observationFor(claim, sequence, this.now(), result, phase, details);
       let effectiveTerminal = terminal;
       if (terminal === "succeeded" && observation === null) {
         effectiveTerminal = "blocked";

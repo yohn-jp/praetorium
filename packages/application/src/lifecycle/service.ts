@@ -587,7 +587,31 @@ export class LifecycleService {
       );
       if (updated === null) throw new StaleLifecycleOperationError();
       operation = updated;
-      await context.report?.(updated.phase);
+      const readinessAssignment = updated.readinessEvidence?.assignment;
+      const reportDetails =
+        updated.phase === "route-activated" &&
+        updated.rollbackEpoch === null &&
+        updated.target !== null &&
+        updated.targetEpoch !== null &&
+        readinessAssignment !== undefined &&
+        readinessAssignment.instanceId === updated.instanceId &&
+        readinessAssignment.repositoryId === updated.repositoryId &&
+        readinessAssignment.generation === updated.generation &&
+        readinessAssignment.clusterId === updated.clusterId &&
+        readinessAssignment.runtimeEpoch === updated.targetEpoch &&
+        readinessAssignment.deployment.revisionId === updated.target.revisionId &&
+        readinessAssignment.deployment.imageDigest === updated.target.imageDigest
+          ? {
+              instanceId: readinessAssignment.instanceId,
+              repositoryId: String(readinessAssignment.repositoryId),
+              generation: String(readinessAssignment.generation),
+              clusterId: readinessAssignment.clusterId,
+              runtimeEpoch: String(readinessAssignment.runtimeEpoch),
+              revisionId: readinessAssignment.deployment.revisionId,
+              imageDigest: readinessAssignment.deployment.imageDigest,
+            }
+          : undefined;
+      await context.report?.(updated.phase, reportDetails);
     };
 
     const setOutcome = async (

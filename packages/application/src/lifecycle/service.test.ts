@@ -778,8 +778,17 @@ describe("LifecycleService", () => {
 
   it("redeploys an unchanged digest under a new epoch and activates only with live evidence", async () => {
     const h = harness({ operation: operation({ kind: "redeploy", runtimeEpoch: 5 }) });
+    const reports: Array<{
+      readonly phase: string;
+      readonly details?: Readonly<Record<string, string>>;
+    }> = [];
 
-    const result = await h.service.execute("op-01", h.context);
+    const result = await h.service.execute("op-01", {
+      ...h.context,
+      async report(phase, details) {
+        reports.push({ phase, ...(details === undefined ? {} : { details }) });
+      },
+    });
 
     expect(result.status).toBe("complete");
     if (result.status !== "complete") throw new Error("expected completion");
@@ -790,6 +799,16 @@ describe("LifecycleService", () => {
     expect(h.counters.activations[0]?.evidence.actualImageDigest).toBe(platformDigest);
     expect(h.counters.activations[0]?.evidence.providerObservationId).toBe("runtime-observation-5");
     expect(h.counters.activations[0]?.evidence.validGrantProbeId).toBe("grant-auth-5");
+    const activated = h.counters.activations[0]!.assignment;
+    expect(reports.find(({ phase }) => phase === "route-activated")?.details).toEqual({
+      instanceId: activated.instanceId,
+      repositoryId: String(activated.repositoryId),
+      generation: String(activated.generation),
+      clusterId: activated.clusterId,
+      runtimeEpoch: String(activated.runtimeEpoch),
+      revisionId: activated.deployment.revisionId,
+      imageDigest: activated.deployment.imageDigest,
+    });
     expect(h.timeline.indexOf("status:4")).toBeLessThan(h.timeline.indexOf("fence:4"));
   });
 
@@ -1116,6 +1135,10 @@ describe("LifecycleService", () => {
 
   it("uses the same quiesce and writer fences for a compatible rollback", async () => {
     let ticks = 0;
+    const reports: Array<{
+      readonly phase: string;
+      readonly details?: Readonly<Record<string, string>>;
+    }> = [];
     const h = harness({
       operation: operation({
         kind: "update",
@@ -1157,7 +1180,12 @@ describe("LifecycleService", () => {
       },
     });
 
-    const result = await h.service.execute("op-01", h.context);
+    const result = await h.service.execute("op-01", {
+      ...h.context,
+      async report(phase, details) {
+        reports.push({ phase, ...(details === undefined ? {} : { details }) });
+      },
+    });
 
     expect(result.status).toBe("failed");
     expect(h.journal.value.phase).toBe("failed");
@@ -1166,6 +1194,7 @@ describe("LifecycleService", () => {
     expect(h.counters.activations).toHaveLength(1);
     expect(h.counters.activations[0]?.assignment.deployment.revisionId).toBe("rev-a");
     expect(h.counters.activations[0]?.assignment.runtimeEpoch).toBe(6);
+    expect(reports.find(({ phase }) => phase === "route-activated")?.details).toBeUndefined();
     expect(h.counters.quiesces).toEqual([
       { operationId: "op-01", runtimeEpoch: 4 },
       { operationId: "op-01:rollback", runtimeEpoch: 5 },

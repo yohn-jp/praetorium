@@ -64,6 +64,7 @@
     name:
       - "podman={{ coordination_podman_package_version }}"
       - dbus-user-session
+      - acl
       - uidmap
       - slirp4netns
       - fuse-overlayfs

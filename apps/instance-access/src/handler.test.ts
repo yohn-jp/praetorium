@@ -192,6 +192,46 @@ describe("Instance Access production handler", () => {
     expect(request.bodyUsed).toBe(false);
   });
 
+  it("triggers generic bearer-authenticated service wake without reading or replaying the MCP body", async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const handler = createInstanceAccessHandler(environment(async (request) => {
+      calls.push({ path: new URL(request.url).pathname, body: await request.json() as Record<string, unknown> });
+      return Response.json({ status: "starting" }, { status: 202 });
+    }));
+    const token = `${"a".repeat(43)}.${"b".repeat(43)}.${"c".repeat(43)}`;
+    const request = new Request(`${origin}/api/projects/project-one/modules/mcp/streamable`, {
+      method: "POST",
+      headers: { Host: host, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: '{"jsonrpc":"2.0","method":"tools/list","id":1}',
+    });
+    const response = await handler(request);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBe("5");
+    expect(calls).toEqual([{
+      path: "/internal/instance-access/wake",
+      body: { appIdentity: "scriptorium", repositoryId: 482901, origin, accessGrant: token },
+    }]);
+    expect(request.bodyUsed).toBe(false);
+    expect(response.headers.getSetCookie()).toHaveLength(0);
+  });
+
+  it("fails closed for rejected or ambiguous bearer wake credentials", async () => {
+    let calls = 0;
+    const handler = createInstanceAccessHandler(environment(async () => {
+      calls += 1;
+      return Response.json({ error: { code: "UNAUTHENTICATED" } }, { status: 401 });
+    }));
+    const token = `${"a".repeat(43)}.${"b".repeat(43)}.${"c".repeat(43)}`;
+    const request = (authorization: string, extra: Record<string, string> = {}) =>
+      handler(new Request(`${origin}/api/mcp`, {
+        headers: { Host: host, Authorization: authorization, ...extra },
+      }));
+    expect((await request(`Bearer ${token}`)).status).toBe(401);
+    expect((await request("Bearer invalid")).status).toBe(401);
+    expect((await request(`Bearer ${token}`, { Cookie: "session=browser" })).status).toBe(401);
+    expect(calls).toBe(1);
+  });
+
   it("requires the configured exact Gateway origin and one field value", async () => {
     let gatewayCalls = 0;
     const handler = createInstanceAccessHandler(environment(async () => {

@@ -401,10 +401,10 @@ export function createInstanceAccessHandler(
     }
 
     if (request.method === "POST" && url.pathname === "/_platform/refresh") {
-      const csrf = await csrfValue(config, instance);
-      if (!validCsrf(request, instance, csrf)) return problem(403, "CSRF_INVALID");
       const refreshCredential = readCookie(request, REFRESH_COOKIE);
       if (!refreshCredential) return problem(401, "SESSION_REQUIRED");
+      const csrf = await csrfValue(config, instance);
+      if (!validCsrf(request, instance, csrf)) return problem(403, "CSRF_INVALID");
       const input = RefreshAccessRequestSchema.safeParse({
         contractVersion: "instance-access/v2",
         audience: "instance-access",

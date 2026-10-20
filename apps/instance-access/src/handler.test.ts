@@ -190,6 +190,14 @@ describe("Instance Access production handler", () => {
     expect(csrf).not.toBe("");
     expect(initialRefresh).not.toBe("");
 
+    const unauthenticatedRefresh = await handler(new Request(`${origin}/_platform/refresh`, {
+      method: "POST",
+      headers: { Host: host, Origin: origin },
+    }));
+    expect(unauthenticatedRefresh.status).toBe(401);
+    expect(await unauthenticatedRefresh.json()).toEqual({ error: { code: "SESSION_REQUIRED" } });
+    expect(internalPaths).toEqual(["/internal/instance-access/handoff"]);
+
     const duplicateCsrf = await handler(new Request(`${origin}/_platform/refresh`, {
       method: "POST",
       headers: {

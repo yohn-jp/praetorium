@@ -212,7 +212,7 @@
     fresh_k3s_api_host: "{{ praetorium_fresh_management_api_host }}"
     fresh_k3s_agent_data_dir: /var/lib/praetorium/k3s-agent
     fresh_k3s_agent_config: /etc/praetorium/k3s/agent.yaml
-    fresh_k3s_agent_token: /var/lib/praetorium/credentials/k3s-agent.token
+    fresh_k3s_agent_token_path: /var/lib/praetorium/credentials/k3s-agent.token
     fresh_k3s_agent_unit: /etc/systemd/system/k3s-agent.service
   tasks:
     - name: Require explicit authorization and the pinned fresh-cluster inputs
@@ -248,8 +248,8 @@
     - name: Verify the old Server is retired before joining the new cluster
       ansible.builtin.assert:
         that:
-          - fresh_old_server_active.stdout == 'inactive'
-          - fresh_old_server_enabled.stdout == 'disabled'
+          - fresh_old_server_active.stdout in ['inactive', 'unknown']
+          - fresh_old_server_enabled.stdout in ['disabled', 'not-found']
         fail_msg: "Stop and disable the old K3s Server before starting the fresh Runtime Agent."
 
     - name: Inspect Runtime's new Agent paths
@@ -303,7 +303,7 @@
     - name: Install the new Agent token without logging it
       ansible.builtin.copy:
         content: "{{ hostvars[groups['management'][0]].fresh_k3s_agent_token }}\n"
-        dest: "{{ fresh_k3s_agent_token }}"
+        dest: "{{ fresh_k3s_agent_token_path }}"
         owner: root
         group: root
         mode: "0600"
@@ -317,7 +317,7 @@
         mode: "0600"
         content: |
           server: {{ ('https://' + fresh_k3s_api_host + ':6443') | to_json }}
-          token-file: {{ fresh_k3s_agent_token | to_json }}
+          token-file: {{ fresh_k3s_agent_token_path | to_json }}
           data-dir: {{ fresh_k3s_agent_data_dir | to_json }}
           node-label:
             - {{ ('praetorium.io/cluster-id=' + fresh_k3s_cluster_id) | to_json }}
@@ -347,6 +347,7 @@
           LimitNPROC=infinity
           LimitCORE=infinity
           TasksMax=infinity
+          TimeoutStartSec=0
 
           [Install]
           WantedBy=multi-user.target

@@ -27,13 +27,14 @@ the separately reviewed reclaim recovery in `c512fc0`.
 - No manual identity renewal was performed after the bounded recovery at `15:03:03Z`.
 - Autonomous renewal counter advanced to 1, 2, then 3 by approximately `15:16Z`; no identity refresh failure counter was observed.
 - The second renewal reached the mounted file at `15:12:49Z`, with epoch 3 and expiry `15:16:28Z`.
+- The third renewal was mounted by `15:16:00.826Z`, with expiry `15:20:04Z`.
 - Tenant Pod UID stayed `5e78235c-e177-4c26-9e91-6995aebaca72`, Ready, restart count 0.
 
 This demonstrates continued identity renewal beyond the original five-minute
 identity lifetime. It does not certify a GitHub push or browser session refresh.
 The pinned Scriptorium source rereads the projected identity on each Git
 credential operation; it does not require a tenant restart to consume renewal.
-Separate `idle_observation_unavailable` errors remain under investigation.
+The separate idle observation error was subsequently identified below.
 
 ## Browser refresh: diagnostic evidence still required
 
@@ -55,3 +56,74 @@ For both code changes, `corepack pnpm@11.18.0 install --frozen-lockfile` and
 Independent read-only reviews found no material defect. The diagnostic commit's
 [main CI run](https://github.com/yohn-jp/praetorium/actions/runs/39446004424)
 also passed, including Kubernetes admission and all four candidate image builds.
+
+## Idle stop and retained legacy canary metadata
+
+The safe Provisioner error diagnostic in `5519c9a` passed frozen install, full
+check and independent review. Publication [39447799693](https://github.com/yohn-jp/praetorium/actions/runs/39447799693)
+passed. Source, OCI hashes and SLSA subject/source were verified before the
+canonical deployment completed. The current Provisioner index is
+`sha256:0fbd24700dde7aa9ec5bf7ca1ff1b5346da981e310f4709fa9c12c95ff07323b`
+(amd64 `sha256:15325716ace52f690b347881aa401e28915e667bd27812611c9a8a5690c04e18`),
+Ready at `15:27:21Z`.
+
+Natural retries then exposed `409 idle_stop_fence_conflict`. Read-only D1
+inspection established that a retained `canary_observing` workflow referred to
+a succeeded generation-2/epoch-1 operation. The current instance was
+generation 4/epoch 3. All other inspected stop predicates passed. The health
+scheduler correctly excluded the old tuple, while the atomic idle-stop fence
+continued to protect the logical binding from stopping during that old workflow.
+
+Under the owner's explicit instruction to discard the entire old environment,
+the operator administratively blocked this one pre-reset workflow. Its full
+row was backed up. A fresh Kubernetes and Runtime-host census confirmed one
+Ready epoch-3 writer, no epoch-1 workload, no legacy Pod UID/process/cgroup, and
+no old K3s Server. The review covered a narrowly fenced workflow update and
+same-batch audit, using the existing transaction sentinel. The exact updated
+row revision, lease tuple, old succeeded operation, current ready tuple,
+released old reservation, reserved current reservation, and absence of active
+operations were checked atomically. The result changed one workflow row and
+inserted one audit event: workflow revision 403 → 404, state `blocked`, reason
+`owner_authorized_legacy_environment_discarded`.
+
+This is an administrative legacy abort. `canary_cleanup_complete` remains 0
+and cleanup evidence remains null; no normal canary cleanup or promotion is
+certified. The batch did not change the current instance, runtime, reservation,
+operation or artifact admission. The existing stale canary cleanup code must
+not be used to stop a replacement runtime.
+
+The normal Provisioner timer subsequently requested idle stop at
+`15:47:21.676Z`, creating `op_01M5CZXVCASQG1MG32CNF09QAY`, generation 5/epoch 3.
+At `15:48:54Z` it remained pending with attempt/lease epoch 0. Natural
+notification delivery and stop completion were still **NOT_CHECKED**; no
+manual wake-up hint had been sent for this operation.
+
+The missed-notification recovery poll claimed the stop at `15:52:29Z`. The
+first attempt persisted `quiescing-old`, then returned the Control Plane error
+`upstream_unavailable`. Attempt 2 checkpointed `unknown` at `15:57:34Z`, with
+`producer_remote_preflight_unverified`. No old-quiesced, writer-absence or
+physical stop checkpoint was observed. The mounted Git identity expired at
+`15:55:04Z`; a persisted quiesce request intentionally closes further observed
+identity issuance until matching resume and a cleared accepted checkpoint.
+
+A read-only count at `16:03:22Z` found 378 unexpired `revocation_pending`
+Git credentials and eight revoked records for epoch 3. The Gateway retires
+at most eight credentials per call, while the post-checkpoint Control Plane
+barrier requires the authoritative pending count to reach zero. Resumable
+retirement and recovery after this durable checkpoint are under repair.
+The producer's quiesce route does not emit `upstream_unavailable`; the first
+error came from the Control Plane API. Stop/Wake acceptance remains incomplete.
+
+## Observed Cloudflare traffic
+
+A valid buffered JSON tail capture covered `15:25:32–15:30:38Z` (306 seconds):
+Control Plane had 236 HTTP requests and one scheduled invocation; Gateway had
+94 HTTP requests. Control Plane returned twelve 409 responses in the aggregate;
+Gateway HTTP responses were all 200. The streams were visibly receiving
+structured events. An earlier collector that incorrectly parsed multiline
+JSON one line at a time was discarded.
+
+The window crosses the Provisioner rollout, and user activity is unknown. It
+therefore does **not** certify an idle baseline or reduced unnecessary traffic.
+Broad route buckets do not establish individual causes; CPU/D1/DO consumption
+and receiver-side request counts were not checked.

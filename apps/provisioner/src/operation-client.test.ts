@@ -97,6 +97,7 @@ function claimBody(overrides: Record<string, unknown> = {}) {
         observedState: "stopped",
         observedGeneration: 1,
         observedRuntimeEpoch: 4,
+        observedSequence: 12,
         observedRevisionId: "rev_old",
         desiredRevisionId: "rev_01",
         currentArtifactDigest:
@@ -378,6 +379,7 @@ describe("OperationServiceHttpClient", () => {
       clusterId: "cluster-a",
     });
     expect(claim?.snapshot.binding.suspended).toBe(false);
+    expect(claim?.snapshot.instance.observedSequence).toBe(12);
   });
 
   it("accepts the Control Plane's JSON null when its operation queue is empty", async () => {

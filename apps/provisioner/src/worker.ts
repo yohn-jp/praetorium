@@ -109,6 +109,13 @@ function observationFor(
 ): ProvisionerObservation | null {
   const operation = claim.operation;
   const reportedAt = new Date(now).toISOString();
+  const observationSequence = (runtimeEpoch: number): number | null => {
+    const instance = claim.snapshot.instance;
+    const priorSequence =
+      instance.observedRuntimeEpoch === runtimeEpoch ? instance.observedSequence : 0;
+    const nextSequence = priorSequence + sequence;
+    return Number.isSafeInteger(nextSequence) ? nextSequence : null;
+  };
   if (result?.status !== "complete") {
     const target = claim.runtimeContext.target;
     const imageDigest = target?.assignment.imageDigest;
@@ -140,12 +147,14 @@ function observationFor(
       details.imageDigest !== imageDigest
     )
       return null;
+    const observedSequence = observationSequence(operation.runtimeEpoch);
+    if (observedSequence === null) return null;
     return {
       instanceId: operation.instanceId,
       repositoryId: operation.repositoryId,
       generation: operation.generation,
       runtimeEpoch: operation.runtimeEpoch,
-      sequence,
+      sequence: observedSequence,
       observedState: "ready",
       observedArtifactDigest: imageDigest,
       observedRevisionId: target.revisionId,
@@ -154,12 +163,14 @@ function observationFor(
   }
   if (result.observed === null) {
     if (operation.kind !== "stop") return null;
+    const observedSequence = observationSequence(operation.runtimeEpoch);
+    if (observedSequence === null) return null;
     return {
       instanceId: operation.instanceId,
       repositoryId: operation.repositoryId,
       generation: operation.generation,
       runtimeEpoch: operation.runtimeEpoch,
-      sequence,
+      sequence: observedSequence,
       observedState: "stopped",
       observedArtifactDigest: null,
       observedRevisionId: null,
@@ -179,12 +190,14 @@ function observationFor(
     assignment.deployment.imageDigest !== admittedTarget.assignment.imageDigest
   )
     return null;
+  const observedSequence = observationSequence(assignment.runtimeEpoch);
+  if (observedSequence === null) return null;
   return {
     instanceId: assignment.instanceId,
     repositoryId: assignment.repositoryId,
     generation: assignment.generation,
     runtimeEpoch: assignment.runtimeEpoch,
-    sequence,
+    sequence: observedSequence,
     observedState: "ready",
     observedArtifactDigest: assignment.deployment.imageDigest,
     observedRevisionId: assignment.deployment.revisionId,

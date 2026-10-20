@@ -896,8 +896,23 @@ export class D1PlatformStore implements OperationStore {
         this.db
           .prepare(
             `UPDATE runtime_reservations
-             SET status = 'released', updated_at = ?
-             WHERE reservation_id = ? AND runtime_epoch = ? AND status IN ('reserved', 'allocated')
+             SET status = 'released', updated_at = CASE
+               WHEN status IN ('reserved', 'allocated') THEN ? ELSE updated_at END
+             WHERE reservation_id = ? AND runtime_epoch = ?
+               AND ((status IN ('reserved', 'allocated') AND NOT EXISTS (
+                 SELECT 1 FROM audit_events conflicting_release WHERE conflicting_release.event_id = ?
+               )) OR (status = 'released' AND EXISTS (
+                 SELECT 1 FROM audit_events prior_release
+                 WHERE prior_release.event_id = ?
+                   AND prior_release.operation_id = ?
+                   AND prior_release.repository_id = runtime_reservations.repository_id
+                   AND prior_release.instance_id = runtime_reservations.instance_id
+                   AND prior_release.actor_kind = 'provisioner'
+                   AND prior_release.action = 'runtime.reservation.released'
+                   AND prior_release.outcome = 'accepted'
+                   AND json_extract(prior_release.metadata_json, '$.reservationId') = runtime_reservations.reservation_id
+                   AND CAST(json_extract(prior_release.metadata_json, '$.retiredRuntimeEpoch') AS INTEGER) = runtime_reservations.runtime_epoch
+               )))
                AND EXISTS (
                  SELECT 1 FROM operations o JOIN logical_instances i ON i.instance_id = o.instance_id
                  WHERE o.operation_id = ? AND o.instance_id = runtime_reservations.instance_id
@@ -928,6 +943,9 @@ export class D1PlatformStore implements OperationStore {
             input.now,
             input.reservationId,
             input.expectedReservationRuntimeEpoch,
+            `runtime.reservation.released:${input.reservationId}:${input.operationId}`,
+            `runtime.reservation.released:${input.reservationId}:${input.operationId}`,
+            input.operationId,
             input.operationId,
             input.workerId,
             input.leaseToken,
@@ -952,10 +970,11 @@ export class D1PlatformStore implements OperationStore {
             `INSERT INTO audit_events (
                event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
                action, outcome, request_id, metadata_json, occurred_at
-             ) SELECT ?, repository_id, instance_id, operation_id, ?, 'provisioner',
+           ) SELECT ?, repository_id, instance_id, operation_id, ?, 'provisioner',
                       'runtime.reservation.released', 'accepted', request_id, ?, ?
                FROM operations WHERE operation_id = ?
-                 AND EXISTS (SELECT 1 FROM runtime_reservations WHERE reservation_id = ? AND status = 'released')`,
+                 AND EXISTS (SELECT 1 FROM runtime_reservations WHERE reservation_id = ? AND status = 'released')
+             ON CONFLICT(event_id) DO NOTHING`,
           )
           .bind(
             `runtime.reservation.released:${input.reservationId}:${input.operationId}`,

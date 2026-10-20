@@ -45,6 +45,8 @@ function claimed(): ClaimedProvisionerOperation {
       instance: {
         generation: 2,
         observedState: "ready",
+        observedRuntimeEpoch: 4,
+        observedSequence: 7,
       } as ClaimedProvisionerOperation["snapshot"]["instance"],
     },
     reservation: null,
@@ -173,17 +175,107 @@ describe("ProvisionerWorker observation reporting", () => {
     expect(reports[0]).not.toHaveProperty("terminal");
     expect(reports[1]).toMatchObject({ observation: null });
     expect(reports[2]).toMatchObject({ observation: readyObservation });
+    expect(reports[2]).toMatchObject({ sequence: 7, observation: { sequence: 7 } });
     expect(reports[2]).not.toHaveProperty("terminal");
     expect(reports[3]).toMatchObject({
       terminal: "succeeded",
       observation: {
         ...readyObservation,
+        sequence: 9,
       },
     });
     expect(reports[3]?.observation).not.toHaveProperty("operationId");
     expect(releaseRuntime).toHaveBeenCalledOnce();
     expect(onOperationSettled).toHaveBeenCalledOnce();
     expect(onOperationSettled).toHaveBeenCalledWith(claim.operation.instanceId);
+  });
+
+  it("advances the runtime observation sequence after a reclaimed lease", async () => {
+    const controller = new AbortController();
+    const reports: Array<Record<string, unknown>> = [];
+    let firstClaim = true;
+    const initialClaim = claimed();
+    const claim = {
+      ...initialClaim,
+      operation: {
+        ...initialClaim.operation,
+        phase: "route-activated",
+        checkpointSequence: 8,
+        checkpoint: { lifecycle: { phase: "route-activated" } },
+      },
+      snapshot: {
+        ...initialClaim.snapshot,
+        instance: {
+          ...initialClaim.snapshot.instance,
+          observedRuntimeEpoch: initialClaim.operation.runtimeEpoch,
+          observedSequence: 1,
+        },
+      },
+    } as ClaimedProvisionerOperation;
+    const operations = {
+      async claimNext() {
+        if (firstClaim) {
+          firstClaim = false;
+          return claim;
+        }
+        return null;
+      },
+      async heartbeat(input: {
+        readonly operationId: string;
+        readonly leaseEpoch: number;
+        readonly leaseToken: string;
+      }) {
+        return {
+          leaseExpiresAt: Date.now() + 60_000,
+          operation: {
+            ...claim.operation,
+            id: input.operationId,
+            leaseEpoch: input.leaseEpoch,
+            leaseToken: input.leaseToken,
+            leaseExpiresAt: Date.now() + 60_000,
+          },
+        };
+      },
+      async report(input: Record<string, unknown>) {
+        reports.push(input);
+        if (input.terminal !== undefined) controller.abort();
+        return { operation: claim.operation, applied: true, duplicate: false };
+      },
+    } as unknown as ProvisionerOperationService;
+    const worker = new ProvisionerWorker({
+      operations,
+      executor: {
+        async execute(_claim: ClaimedProvisionerOperation, context: LifecycleExecutionContext) {
+          await context.report?.("route-activated", {
+            instanceId: INSTANCE_ID,
+            repositoryId: "123456",
+            generation: "2",
+            clusterId: "cluster-a",
+            runtimeEpoch: "5",
+            revisionId: "rev-target",
+            imageDigest: `sha256:${"b".repeat(64)}`,
+          });
+          return { status: "complete", observed: actualAssignment() } as LifecycleResult;
+        },
+      },
+      workerId: "worker-a",
+      clusterId: "cluster-a",
+      recoveryIntervalMs: 100,
+      retryIntervalMs: 100,
+    });
+
+    await worker.run(controller.signal);
+
+    expect(reports).toHaveLength(2);
+    expect(reports[0]).toMatchObject({
+      sequence: 3,
+      observation: { runtimeEpoch: 5, sequence: 4 },
+    });
+    expect(reports[1]).toMatchObject({
+      sequence: 5,
+      observation: { runtimeEpoch: 5, sequence: 6 },
+      terminal: "succeeded",
+    });
   });
 
   it("does not report rollback route readiness as the admitted target", async () => {

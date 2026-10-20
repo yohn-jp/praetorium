@@ -649,11 +649,27 @@ describe("D1PlatformStore with SQLite transactions", () => {
       },
     });
 
+    database
+      .prepare("UPDATE operations SET lease_expires_at = 103 WHERE operation_id = ?")
+      .run(operation.id);
+    const reclaimedBeforeRelease = await operations.claimNext({
+      workerId: "provisioner-recovery-1",
+      clusterId: "cluster-a",
+      now: 104,
+    });
+    if (!reclaimedBeforeRelease) throw new Error("expected route-activated operation reclaim");
+    const recoveredLease = {
+      operationId: reclaimedBeforeRelease.operation.id,
+      workerId: reclaimedBeforeRelease.operation.workerId!,
+      leaseToken: reclaimedBeforeRelease.operation.leaseToken!,
+      leaseEpoch: reclaimedBeforeRelease.operation.leaseEpoch,
+    } as const;
+
     await operations.releaseRuntime({
-      ...lease,
+      ...recoveredLease,
       reservationId: "old-reservation",
       expectedReservationRuntimeEpoch: 1,
-      now: 104,
+      now: 105,
     });
     expect(
       database
@@ -661,35 +677,112 @@ describe("D1PlatformStore with SQLite transactions", () => {
         .get(),
     ).toMatchObject({ status: "released" });
 
+    database
+      .prepare("UPDATE operations SET lease_expires_at = 106 WHERE operation_id = ?")
+      .run(operation.id);
+    const reclaimedAfterRelease = await operations.claimNext({
+      workerId: "provisioner-recovery-2",
+      clusterId: "cluster-a",
+      now: 107,
+    });
+    if (!reclaimedAfterRelease) throw new Error("expected post-release operation reclaim");
+    const replayLease = {
+      operationId: reclaimedAfterRelease.operation.id,
+      workerId: reclaimedAfterRelease.operation.workerId!,
+      leaseToken: reclaimedAfterRelease.operation.leaseToken!,
+      leaseEpoch: reclaimedAfterRelease.operation.leaseEpoch,
+    } as const;
+    await operations.releaseRuntime({
+      ...replayLease,
+      reservationId: "old-reservation",
+      expectedReservationRuntimeEpoch: 1,
+      now: 108,
+    });
+    expect(
+      database
+        .prepare(
+          "SELECT count(*) AS n FROM audit_events WHERE event_id = 'runtime.reservation.released:old-reservation:' || ?",
+        )
+        .get(operation.id),
+    ).toMatchObject({ n: 1 });
+
     const complete = lifecycleCheckpoint(operation, { phase: "complete" });
     await operations.checkpoint({
-      ...lease,
+      ...replayLease,
       expectedCheckpointSequence: 1,
       phase: "complete",
       checkpoint: complete,
-      now: 105,
+      now: 109,
     });
     await expect(
       operations.report({
-        ...lease,
-        sequence: 2,
-        now: 106,
+        ...replayLease,
+        sequence: 1,
+        now: 110,
         terminal: "succeeded",
         observation: null,
       }),
     ).rejects.toBeInstanceOf(OperationFenceConflict);
     await expect(
       operations.report({
-        ...lease,
-        sequence: 2,
-        now: 106,
+        ...replayLease,
+        sequence: 1,
+        now: 110,
         terminal: "succeeded",
         observation: { ...targetObservation, sequence: 2 },
       }),
     ).resolves.toMatchObject({
       applied: true,
-      operation: { status: "succeeded", phase: "complete", reportSequence: 2 },
+      operation: { status: "succeeded", phase: "complete", reportSequence: 1 },
     });
+  });
+
+  it("requires the matching release audit proof to replay a released reservation", async () => {
+    const fixture = await prepareTargetRedeploy();
+    const { database, operations, binding, operation, lease } = fixture;
+    await operations.report({
+      ...lease,
+      sequence: 1,
+      now: 103,
+      observation: readyTargetObservation(operation, binding.instanceId, 1),
+    });
+    await operations.releaseRuntime({
+      ...lease,
+      reservationId: "old-reservation",
+      expectedReservationRuntimeEpoch: 1,
+      now: 104,
+    });
+
+    database
+      .prepare(
+        `UPDATE audit_events SET metadata_json = ?
+         WHERE event_id = ?`,
+      )
+      .run(
+        JSON.stringify({ reservationId: "old-reservation", retiredRuntimeEpoch: 99 }),
+        `runtime.reservation.released:old-reservation:${operation.id}`,
+      );
+    database
+      .prepare("UPDATE operations SET lease_expires_at = 105 WHERE operation_id = ?")
+      .run(operation.id);
+    const reclaimed = await operations.claimNext({
+      workerId: "provisioner-recovery",
+      clusterId: "cluster-a",
+      now: 106,
+    });
+    if (!reclaimed) throw new Error("expected route-activated operation reclaim");
+
+    await expect(
+      operations.releaseRuntime({
+        operationId: reclaimed.operation.id,
+        workerId: reclaimed.operation.workerId!,
+        leaseToken: reclaimed.operation.leaseToken!,
+        leaseEpoch: reclaimed.operation.leaseEpoch,
+        reservationId: "old-reservation",
+        expectedReservationRuntimeEpoch: 1,
+        now: 107,
+      }),
+    ).rejects.toBeInstanceOf(OperationFenceConflict);
   });
 
   it("accepts a stopped-to-running target with a fresh census and no retired epoch", async () => {

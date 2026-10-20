@@ -66,7 +66,9 @@ export function deploymentFromResolvedRuntime(
 ): RuntimeDeployment {
   return {
     revisionId: runtime.revisionId,
-    ...(runtime.legacyRuntimeEpoch === undefined ? {} : { legacyRuntimeEpoch: runtime.legacyRuntimeEpoch }),
+    ...(runtime.legacyRuntimeEpoch === undefined
+      ? {}
+      : { legacyRuntimeEpoch: runtime.legacyRuntimeEpoch }),
     repositoryId: runtime.assignment.repositoryId,
     repositoryLocator: runtime.assignment.repositoryLocator,
     defaultBranchPolicy: runtime.assignment.defaultBranchPolicy,
@@ -117,13 +119,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function mayRefreshObservedIdentityBeforeRetirement(claim: ClaimedProvisionerOperation): boolean {
   if (claim.runtimeContext.current === null) return false;
   const checkpoint = claim.operation.checkpoint;
-  const lifecycle = checkpoint !== null && isRecord(checkpoint.lifecycle)
-    ? checkpoint.lifecycle
-    : null;
+  const lifecycle =
+    checkpoint !== null && isRecord(checkpoint.lifecycle) ? checkpoint.lifecycle : null;
   const phase = typeof lifecycle?.phase === "string" ? lifecycle.phase : claim.operation.phase;
   return (
     !observedIdentityRefreshBarrierPhases.has(phase) &&
-    (lifecycle === null || lifecycle.quiesceRequest === null || lifecycle.quiesceRequest === undefined)
+    (lifecycle === null ||
+      lifecycle.quiesceRequest === null ||
+      lifecycle.quiesceRequest === undefined)
   );
 }
 
@@ -163,12 +166,17 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
       generation: operation.generation,
       runtimeEpoch: operation.runtimeEpoch,
     };
-    const runtime = new KubernetesLifecycleRuntimeAdapter(this.options.runtime, fence, {
-      currentReservations: (clusterId) =>
-        this.options.operations.currentReservations({ clusterId, signal: context.signal }),
-      recordCapacitySnapshot: (input) =>
-        this.options.operations.recordCapacitySnapshot({ ...input, signal: context.signal }),
-    }, this.options.assignmentTransport.forClaim(claim));
+    const runtime = new KubernetesLifecycleRuntimeAdapter(
+      this.options.runtime,
+      fence,
+      {
+        currentReservations: (clusterId) =>
+          this.options.operations.currentReservations({ clusterId, signal: context.signal }),
+        recordCapacitySnapshot: (input) =>
+          this.options.operations.recordCapacitySnapshot({ ...input, signal: context.signal }),
+      },
+      this.options.assignmentTransport.forClaim(claim),
+    );
     const currentAssignment =
       claim.runtimeContext.current === null
         ? null
@@ -223,6 +231,12 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
       operations: this.options.operations,
       workerId: this.options.workerId,
     });
+    const checkpointedCurrent = journal.currentOperation.current;
+    const retirementReservation =
+      operation.checkpoint === null &&
+      (checkpointedCurrent === null || checkpointedCurrent.reservationId === null)
+        ? claim.currentReservation
+        : checkpointedCurrent;
     const capacity = new LifecycleReservationAdapter({
       runtime,
       operations: this.options.operations,
@@ -239,8 +253,8 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
         instanceId: operation.instanceId,
         repositoryId: operation.repositoryId,
         reservationId: claim.reservation?.reservationId ?? null,
-        currentReservationId: claim.currentReservation?.reservationId ?? null,
-        currentReservationEpoch: claim.currentReservation?.runtimeEpoch ?? null,
+        currentReservationId: retirementReservation?.reservationId ?? null,
+        currentReservationEpoch: retirementReservation?.runtimeEpoch ?? null,
       },
     });
     const service = new LifecycleService({
@@ -268,7 +282,11 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
       // quiesce checkpoint closes observed-writer identity authority.
       if (currentAssignment !== null && mayRefreshObservedIdentityBeforeRetirement(claim)) {
         try {
-          await runtime.refreshRuntimeIdentity(currentAssignment, context.assertLease, context.signal);
+          await runtime.refreshRuntimeIdentity(
+            currentAssignment,
+            context.assertLease,
+            context.signal,
+          );
         } catch {
           // Renewal is best-effort here. The lifecycle's fresh producer status
           // check remains the safety gate and will block retirement if remote

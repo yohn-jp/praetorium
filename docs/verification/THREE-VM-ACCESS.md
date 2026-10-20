@@ -261,3 +261,35 @@ reachable during this observation because the public route still returns
 `INSTANCE_STARTING`. The browser edit/save/reload sequence is therefore a
 prepared future check, not an acceptance result. No tests were run for this
 documentation-only update.
+
+## Fresh operation visibility evidence (12:05 UTC)
+
+A fresh read-only D1 `SELECT` at 12:05 UTC used the same latest-50 operation
+ordering as the Control Plane dashboard (`created_at DESC, operation_id DESC`)
+and joined the current instance and binding. It found instance
+`ins_01M56ESTANTNHV8BA5J1PCNNQJ` at generation 4, desired state `running`,
+runtime epoch 3, with observed generation 2 / runtime epoch 1 / state `ready`;
+the binding is not suspended. The returned operations were:
+
+| Operation | Kind | Status | Generation | Runtime epoch | Attempts / leases |
+| --- | --- | --- | --- | --- | --- |
+| `op_01M5CJPCNGXYECX1ZTFPFWBV2Q` | `start` | `pending` | 4 | 3 | 0 / 0 |
+| `op_01M5A7KFDBQ2KP0RAECRR1BRPN` | `redeploy` | `failed` | 3 | 2 | 251 / 251 |
+| `op_01M57D1J5AQ3SJVHKAGEQEM03G` | `redeploy` | `succeeded` | 2 | 1 | 34 / 34 |
+
+This establishes why a Retry control for the failed generation-3 operation is
+not available: Gateway marks an operation retryable only when it is failed or
+blocked and its generation equals the current generation. Generation 3 is
+stale against generation 4, and the Control Plane retry endpoint also fences
+the expected generation. The pending generation-4 start is already the
+current lifecycle operation; no owner retry is indicated. Separately, the
+Gateway only renders a Retry control when the viewer can configure the
+repository (`maintain` or `admin` role and an unsuspended binding).
+
+This query does not establish whether the failed operation card itself was
+present in the owner's authenticated page. The dashboard source includes
+operations returned in its latest-50 list, but no authenticated dashboard
+response or captured page was available to distinguish a hidden card from a
+card without a Retry control. The card-absence cause therefore remains
+unknown; no UI change is justified by this evidence. This is a read-only
+operator observation, not proof of the owner's authenticated browser journey.

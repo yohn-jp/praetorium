@@ -8,20 +8,24 @@
       - management_k3s_version == 'v1.35.9+k3s1'
       - management_k3s_binary_src | length > 0
       - management_k3s_binary_sha256 is match('^[a-fA-F0-9]{64}$')
-      - management_k3s_installer_src | length > 0
-      - management_k3s_installer_sha256 is match('^[a-fA-F0-9]{64}$')
       - management_restore_evidence_file | length > 0
       - not praetorium_management_server_start or management_server_token_src | default('') | length > 0
-      - management_k3s_server_config is mapping
-      - management_k3s_server_config['data-dir'] | default('') == management_server_data_dir
-      - management_k3s_server_config['token-file'] | default('') == management_server_token_file
-      - "'praetorium.io/node-role=management' in (management_k3s_server_config['node-label'] | default([]))"
-      - "'praetorium.io/node-role=management:NoSchedule' in (management_k3s_server_config['node-taint'] | default([]))"
-      - ('praetorium.io/cluster-id=' + management_cluster_id) in (management_k3s_server_config['node-label'] | default([]))
-      - "'traefik' in (management_k3s_server_config['disable'] | default([]))"
-      - (management_k3s_server_config['tls-san'] | default([])) | length > 0
-      - management_api_bind_address in (management_k3s_server_config['tls-san'] | default([]))
-    fail_msg: "Management K3s configuration must be pinned and match the reviewed cluster identity, API SAN, token-file reference, and scheduling fence."
+    fail_msg: "Management K3s preparation requires the pinned cluster identity, private API address, binary and restore evidence."
+
+- name: Define the only supported steady-state Management K3s configuration
+  ansible.builtin.set_fact:
+    management_server_config_expected:
+      data-dir: "{{ management_server_data_dir }}"
+      token-file: "{{ management_server_token_file }}"
+      node-label:
+        - "praetorium.io/cluster-id={{ management_cluster_id }}"
+        - praetorium.io/node-role=management
+      node-taint:
+        - praetorium.io/node-role=management:NoSchedule
+      tls-san:
+        - "{{ management_api_bind_address }}"
+      disable:
+        - traefik
 
 - name: Inspect the operator-owned Management restore evidence file
   ansible.builtin.stat:
@@ -93,27 +97,21 @@
   no_log: true
   when: praetorium_management_server_start | bool
 
-- name: Inspect the staged K3s binary and installer sources on the controller
+- name: Inspect the pinned K3s binary source on the controller
   ansible.builtin.stat:
-    path: "{{ item.path }}"
+    path: "{{ management_k3s_binary_src }}"
     follow: false
     checksum_algorithm: sha256
   delegate_to: localhost
   become: false
-  loop:
-    - path: "{{ management_k3s_binary_src }}"
-      checksum: "{{ management_k3s_binary_sha256 }}"
-    - path: "{{ management_k3s_installer_src }}"
-      checksum: "{{ management_k3s_installer_sha256 }}"
-  register: management_k3s_source_artifacts
+  register: management_k3s_source_artifact
 
-- name: Verify staged K3s artifact digests
+- name: Verify the staged K3s binary digest
   ansible.builtin.assert:
     that:
-      - item.stat.isreg
-      - item.stat.checksum | lower == item.item.checksum | lower
-    fail_msg: "Staged K3s artifacts must be regular files matching the independently verified inventory digests."
-  loop: "{{ management_k3s_source_artifacts.results }}"
+      - management_k3s_source_artifact.stat.isreg
+      - management_k3s_source_artifact.stat.checksum | lower == management_k3s_binary_sha256 | lower
+    fail_msg: "The staged K3s binary must be a regular file matching the independently verified inventory digest."
 
 - name: Inspect the existing K3s binary and systemd unit
   ansible.builtin.stat:
@@ -160,32 +158,10 @@
       - (management_k3s_marker_contents.content | b64decode | from_json).k3sVersion == management_k3s_version
       - (management_k3s_marker_contents.content | b64decode | from_json).binarySha256 | lower == management_k3s_binary_sha256 | lower
       - (management_k3s_marker_contents.content | b64decode | from_json).configPath == management_server_config_path
+      - (management_k3s_marker_contents.content | b64decode | from_json).unitSha256 == (lookup('ansible.builtin.template', 'k3s-server.service.j2') | hash('sha256'))
     fail_msg: "The existing Management Server ownership marker identifies a different cluster, version, binary, or config."
   no_log: true
   when: management_k3s_existing_paths.results[2].stat.exists
-
-- name: Read an existing Management Server systemd unit without logging its contents
-  ansible.builtin.slurp:
-    src: /etc/systemd/system/k3s.service
-  register: management_k3s_unit_contents
-  no_log: true
-  when: management_k3s_existing_paths.results[1].stat.exists
-
-- name: Verify an existing Management unit still runs K3s Server
-  ansible.builtin.assert:
-    that:
-      - (management_k3s_unit_contents.content | b64decode) is search('ExecStart=/usr/local/bin/k3s server')
-    fail_msg: "The existing Management systemd unit no longer runs the pinned K3s Server executable."
-  no_log: true
-  when: management_k3s_existing_paths.results[1].stat.exists
-
-- name: Create the private K3s staging directory
-  ansible.builtin.file:
-    path: "{{ management_k3s_stage_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0700"
 
 - name: Install the pinned K3s binary only when no binary exists
   ansible.builtin.copy:
@@ -341,17 +317,11 @@
   no_log: true
   when: management_server_config_stat.stat.exists
 
-- name: Verify existing K3s configuration identity and management scheduling fences
+- name: Require the existing K3s configuration to equal the complete steady-state allowlist
   ansible.builtin.assert:
     that:
-      - (management_server_config_existing.content | b64decode | from_yaml)['data-dir'] == management_server_data_dir
-      - (management_server_config_existing.content | b64decode | from_yaml)['token-file'] == management_server_token_file
-      - "'praetorium.io/node-role=management' in ((management_server_config_existing.content | b64decode | from_yaml)['node-label'] | default([]))"
-      - "'praetorium.io/node-role=management:NoSchedule' in ((management_server_config_existing.content | b64decode | from_yaml)['node-taint'] | default([]))"
-      - ('praetorium.io/cluster-id=' + management_cluster_id) in ((management_server_config_existing.content | b64decode | from_yaml)['node-label'] | default([]))
-      - management_api_bind_address in ((management_server_config_existing.content | b64decode | from_yaml)['tls-san'] | default([]))
-      - "'traefik' in ((management_server_config_existing.content | b64decode | from_yaml)['disable'] | default([]))"
-    fail_msg: "Existing K3s server configuration does not match the restored identity or Management scheduling boundary."
+      - (management_server_config_existing.content | b64decode | from_yaml) == management_server_config_expected
+    fail_msg: "Existing K3s config must exactly match the steady-state allowlist; restore-only and unreviewed keys are rejected."
   no_log: true
   when: management_server_config_stat.stat.exists
 
@@ -365,50 +335,61 @@
     force: false
   when: not management_server_config_stat.stat.exists
 
-- name: Inspect the staged K3s installer before unit generation
-  ansible.builtin.stat:
-    path: "{{ management_k3s_stage_dir }}/k3s-install.sh"
-    follow: false
-    checksum_algorithm: sha256
-  register: management_k3s_staged_installer
-
-- name: Refuse a staged K3s installer that differs from the pinned source
-  ansible.builtin.assert:
-    that:
-      - not management_k3s_staged_installer.stat.exists or
-        (management_k3s_staged_installer.stat.isreg and management_k3s_staged_installer.stat.checksum | lower == management_k3s_installer_sha256 | lower)
-    fail_msg: "The staged K3s installer differs from its pinned source; inspect the partial installation before continuing."
-  when: not management_k3s_existing_paths.results[1].stat.exists
-
-- name: Stage the pinned K3s installer only when absent
-  ansible.builtin.copy:
-    src: "{{ management_k3s_installer_src }}"
-    dest: "{{ management_k3s_stage_dir }}/k3s-install.sh"
+- name: Install the fixed Management Server unit only when absent
+  ansible.builtin.template:
+    src: k3s-server.service.j2
+    dest: /etc/systemd/system/k3s.service
     owner: root
     group: root
-    mode: "0700"
+    mode: "0644"
     force: false
   when: not management_k3s_existing_paths.results[1].stat.exists
 
-- name: Create the K3s Server systemd unit without enabling or starting it
+- name: Read the complete Management Server unit without logging it
+  ansible.builtin.slurp:
+    src: /etc/systemd/system/k3s.service
+  register: management_k3s_unit_contents
+  no_log: true
+  when: not ansible_check_mode or management_k3s_existing_paths.results[1].stat.exists
+
+- name: Require the complete Management Server unit to equal the reviewed template
+  ansible.builtin.assert:
+    that:
+      - (management_k3s_unit_contents.content | b64decode) == lookup('ansible.builtin.template', 'k3s-server.service.j2')
+    fail_msg: "The K3s Server unit differs from the fixed template; extra commands, arguments, and environment are rejected."
+  no_log: true
+  when: not ansible_check_mode or management_k3s_existing_paths.results[1].stat.exists
+
+- name: Reload systemd metadata without starting K3s
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Inspect effective Management Server unit origin and drop-ins
   ansible.builtin.command:
     argv:
-      - /bin/sh
-      - "{{ management_k3s_stage_dir }}/k3s-install.sh"
-  environment:
-    INSTALL_K3S_SKIP_DOWNLOAD: "true"
-    INSTALL_K3S_SKIP_START: "true"
-    INSTALL_K3S_SKIP_ENABLE: "true"
-    INSTALL_K3S_EXEC: server
-    INSTALL_K3S_SYMLINK: skip
-  register: management_k3s_install_unit
-  changed_when: true
-  when: not management_k3s_existing_paths.results[1].stat.exists
+      - systemctl
+      - show
+      - k3s.service
+      - --property=FragmentPath
+      - --property=DropInPaths
+  register: management_k3s_systemd_show
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Reject redirected or extended Management Server units
+  ansible.builtin.assert:
+    that:
+      - "'FragmentPath=/etc/systemd/system/k3s.service' in management_k3s_systemd_show.stdout_lines"
+      - "'DropInPaths=' in management_k3s_systemd_show.stdout_lines"
+    fail_msg: "Management K3s startup requires the reviewed unit file with no systemd drop-ins."
+  when: not ansible_check_mode
 
 - name: Record ownership of the generated K3s Server unit
   ansible.builtin.copy:
     dest: "{{ management_k3s_marker_path }}"
-    content: "{{ {'clusterId': management_cluster_id, 'k3sVersion': management_k3s_version, 'binarySha256': management_k3s_binary_sha256, 'configPath': management_server_config_path} | to_nice_json }}\n"
+    content: "{{ {'clusterId': management_cluster_id, 'k3sVersion': management_k3s_version, 'binarySha256': management_k3s_binary_sha256, 'configPath': management_server_config_path, 'unitSha256': (lookup('ansible.builtin.template', 'k3s-server.service.j2') | hash('sha256'))} | to_nice_json }}\n"
     owner: root
     group: root
     mode: "0600"

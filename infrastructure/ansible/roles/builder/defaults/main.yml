@@ -9,6 +9,9 @@ builder_expected_version: v0.34.0
 builder_expected_cpu_quota: 200%
 builder_expected_memory_max: 4G
 builder_expected_tasks_max: 4096
+builder_expected_cgroup_cpu_quota_cores: 2.0
+builder_expected_cgroup_memory_max: "4294967296"
+builder_expected_cgroup_pids_max: "4096"
 builder_expected_gc_max_used_bytes: 8589934592
 builder_expected_gc_min_free_bytes: 2147483648
 builder_expected_gc_reserved_space: 5%

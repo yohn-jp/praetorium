@@ -64,6 +64,53 @@
       - builder_service_unit.stdout is search('TasksMax=' + (builder_expected_tasks_max | string))
     fail_msg: "The existing BuildKit systemd unit differs from its measured rootless CPU, memory, or task limits."
 
+- name: Read effective BuildKit systemd identity, fragment, and cgroup
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - "{{ builder_service_name }}"
+      - --property=FragmentPath
+      - --property=DropInPaths
+      - --property=User
+      - --property=Group
+      - --property=ControlGroup
+  register: builder_effective_unit
+  changed_when: false
+  check_mode: false
+
+- name: Require the measured effective BuildKit unit boundary
+  ansible.builtin.assert:
+    that:
+      - "'FragmentPath=/etc/systemd/system/praetorium-buildkit.service' in builder_effective_unit.stdout_lines"
+      - "'DropInPaths=' in builder_effective_unit.stdout_lines"
+      - "'User=buildkit' in builder_effective_unit.stdout_lines"
+      - "'Group=buildkit' in builder_effective_unit.stdout_lines"
+      - "('ControlGroup=/system.slice/' + builder_service_name) in builder_effective_unit.stdout_lines"
+    fail_msg: "Builder effective systemd properties differ from the measured rootless service boundary."
+
+- name: Read the effective BuildKit cgroup v2 limits
+  ansible.builtin.slurp:
+    src: "/sys/fs/cgroup/system.slice/{{ builder_service_name }}/{{ item }}"
+  loop:
+    - cpu.max
+    - memory.max
+    - pids.max
+  register: builder_effective_cgroup_limits
+
+- name: Parse effective Builder CPU quota and period
+  ansible.builtin.set_fact:
+    builder_effective_cpu_max_parts: "{{ (builder_effective_cgroup_limits.results[0].content | b64decode | trim) | regex_findall('[0-9]+') | map('int') | list }}"
+
+- name: Require effective cgroup limits to match measured BuildKit values
+  ansible.builtin.assert:
+    that:
+      - builder_effective_cpu_max_parts | length == 2
+      - ((builder_effective_cpu_max_parts[0] | float) / (builder_effective_cpu_max_parts[1] | float)) == builder_expected_cgroup_cpu_quota_cores
+      - (builder_effective_cgroup_limits.results[1].content | b64decode | trim) == builder_expected_cgroup_memory_max
+      - (builder_effective_cgroup_limits.results[2].content | b64decode | trim) == builder_expected_cgroup_pids_max
+    fail_msg: "Effective Builder cgroup CPU, memory, or task limits differ from the measured profile."
+
 - name: Read the BuildKit daemon configuration without modifying it
   ansible.builtin.slurp:
     src: "{{ builder_config_path }}"

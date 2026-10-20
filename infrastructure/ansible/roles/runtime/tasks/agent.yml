@@ -13,6 +13,16 @@
       - runtime_agent_token_src | length > 0
     fail_msg: "Runtime Agent join requires pinned K3s artifacts, exact Management endpoint, protected token source, and migration evidence."
 
+- name: Define the complete Runtime Agent configuration allowlist
+  ansible.builtin.set_fact:
+    runtime_agent_config_expected:
+      server: "{{ runtime_k3s_server_address }}"
+      token-file: "{{ runtime_agent_token_file }}"
+      data-dir: "{{ runtime_agent_data_dir }}"
+      node-label:
+        - "praetorium.io/cluster-id={{ runtime_cluster_id }}"
+        - praetorium.io/node-role=runtime
+
 - name: Inspect the operator-owned Runtime migration evidence file
   ansible.builtin.stat:
     path: "{{ runtime_agent_migration_evidence_file }}"
@@ -225,9 +235,9 @@
     that:
       - not runtime_agent_existing_paths.results[0].stat.exists or runtime_agent_existing_paths.results[2].stat.exists
       - not runtime_agent_existing_paths.results[1].stat.exists or runtime_agent_existing_paths.results[2].stat.exists
-      - not runtime_agent_existing_paths.results[0].stat.exists or not runtime_agent_existing_paths.results[0].stat.islnk
-      - not runtime_agent_existing_paths.results[1].stat.exists or not runtime_agent_existing_paths.results[1].stat.islnk
-      - not runtime_agent_existing_paths.results[2].stat.exists or not runtime_agent_existing_paths.results[2].stat.islnk
+      - not runtime_agent_existing_paths.results[0].stat.exists or (runtime_agent_existing_paths.results[0].stat.isdir and not runtime_agent_existing_paths.results[0].stat.islnk)
+      - not runtime_agent_existing_paths.results[1].stat.exists or (runtime_agent_existing_paths.results[1].stat.isreg and not runtime_agent_existing_paths.results[1].stat.islnk)
+      - not runtime_agent_existing_paths.results[2].stat.exists or (runtime_agent_existing_paths.results[2].stat.isreg and not runtime_agent_existing_paths.results[2].stat.islnk)
     fail_msg: "An existing Agent data directory or systemd unit has no Praetorium ownership marker; inspect it before adoption."
 
 - name: Read the existing Runtime Agent ownership marker
@@ -245,6 +255,7 @@
       - (runtime_agent_marker_contents.content | b64decode | from_json).server == runtime_k3s_server_address
       - (runtime_agent_marker_contents.content | b64decode | from_json).configPath == runtime_agent_config_path
       - (runtime_agent_marker_contents.content | b64decode | from_json).unitPath == runtime_agent_unit_path
+      - (runtime_agent_marker_contents.content | b64decode | from_json).unitSha256 is match('^[a-fA-F0-9]{64}$')
     fail_msg: "The existing Runtime Agent marker identifies a different cluster, version, endpoint, or service path."
   no_log: true
   when: runtime_agent_existing_paths.results[2].stat.exists
@@ -263,6 +274,18 @@
     group: root
     mode: "0755"
 
+- name: Inspect the Runtime Agent configuration path without following links
+  ansible.builtin.stat:
+    path: "{{ runtime_agent_config_path }}"
+    follow: false
+  register: runtime_agent_config_stat
+
+- name: Refuse a non-regular or symlink Runtime Agent configuration
+  ansible.builtin.assert:
+    that:
+      - not runtime_agent_config_stat.stat.exists or (runtime_agent_config_stat.stat.isreg and not runtime_agent_config_stat.stat.islnk)
+    fail_msg: "Runtime Agent config must be an absent path or a regular non-symlink file."
+
 - name: Install the isolated K3s Agent configuration without reusing Server state
   ansible.builtin.template:
     src: k3s-agent-config.yaml.j2
@@ -273,24 +296,20 @@
     force: false
   register: runtime_agent_config_write
 
-- name: Inspect the existing K3s Agent configuration
+- name: Inspect the K3s Agent configuration without logging it
   ansible.builtin.slurp:
     src: "{{ runtime_agent_config_path }}"
   register: runtime_agent_config_existing
   no_log: true
-  when: not runtime_agent_config_write.changed
+  when: not ansible_check_mode or runtime_agent_config_stat.stat.exists
 
-- name: Verify the existing Agent configuration preserves the intended cluster and role labels
+- name: Require the complete Runtime Agent config to equal its allowlist
   ansible.builtin.assert:
     that:
-      - (runtime_agent_config_existing.content | b64decode | from_yaml)['server'] == runtime_k3s_server_address
-      - (runtime_agent_config_existing.content | b64decode | from_yaml)['token-file'] == runtime_agent_token_file
-      - (runtime_agent_config_existing.content | b64decode | from_yaml)['data-dir'] == runtime_agent_data_dir
-      - "'praetorium.io/node-role=runtime' in ((runtime_agent_config_existing.content | b64decode | from_yaml)['node-label'] | default([]))"
-      - ('praetorium.io/cluster-id=' + runtime_cluster_id) in ((runtime_agent_config_existing.content | b64decode | from_yaml)['node-label'] | default([]))
-    fail_msg: "Existing K3s Agent configuration differs from the reviewed cluster identity or isolated data directory."
+      - (runtime_agent_config_existing.content | b64decode | from_yaml) == runtime_agent_config_expected
+    fail_msg: "Runtime Agent config must exactly match the fixed allowlist; extra or restore-only options are rejected."
   no_log: true
-  when: not runtime_agent_config_write.changed
+  when: not ansible_check_mode or runtime_agent_config_stat.stat.exists
 
 - name: Install the dedicated K3s Agent service without altering the old Server unit
   ansible.builtin.template:
@@ -307,21 +326,55 @@
     src: "{{ runtime_agent_unit_path }}"
   register: runtime_agent_unit_existing
   no_log: true
-  when: runtime_agent_existing_paths.results[1].stat.exists
+  when: not ansible_check_mode or runtime_agent_existing_paths.results[1].stat.exists
 
-- name: Verify the existing K3s Agent unit uses the isolated Agent config
+- name: Require the complete Runtime Agent unit to equal the reviewed template
   ansible.builtin.assert:
     that:
-      - (runtime_agent_unit_existing.content | b64decode) is search('ExecStart=/usr/local/bin/k3s agent --config ' + (runtime_agent_config_path | regex_escape))
-      - (runtime_agent_unit_existing.content | b64decode) is not search('k3s server')
-    fail_msg: "The existing K3s Agent unit does not run the isolated Agent configuration."
+      - (runtime_agent_unit_existing.content | b64decode) == lookup('ansible.builtin.template', 'k3s-agent.service.j2')
+    fail_msg: "Runtime Agent unit differs from its complete fixed template; extra commands and arguments are rejected."
   no_log: true
-  when: runtime_agent_existing_paths.results[1].stat.exists
+  when: not ansible_check_mode or runtime_agent_existing_paths.results[1].stat.exists
+
+- name: Reload systemd metadata without changing K3s service state
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Inspect effective Runtime Agent unit origin and drop-ins
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - k3s-agent.service
+      - --property=FragmentPath
+      - --property=DropInPaths
+  register: runtime_agent_systemd_show
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Reject redirected or extended Runtime Agent units
+  ansible.builtin.assert:
+    that:
+      - "('FragmentPath=' + runtime_agent_unit_path) in runtime_agent_systemd_show.stdout_lines"
+      - "'DropInPaths=' in runtime_agent_systemd_show.stdout_lines"
+    fail_msg: "Runtime Agent requires the reviewed unit file with no systemd drop-ins."
+  when: not ansible_check_mode
+
+- name: Require the existing Runtime Agent ownership marker to bind the complete unit
+  ansible.builtin.assert:
+    that:
+      - (runtime_agent_marker_contents.content | b64decode | from_json).unitSha256 == (lookup('ansible.builtin.template', 'k3s-agent.service.j2') | hash('sha256'))
+    fail_msg: "The Runtime Agent marker does not bind the current complete systemd unit."
+  no_log: true
+  when:
+    - runtime_agent_existing_paths.results[2].stat.exists
 
 - name: Record the evidence-gated Runtime Agent configuration
   ansible.builtin.copy:
     dest: "{{ runtime_agent_marker_path }}"
-    content: "{{ {'clusterId': runtime_cluster_id, 'k3sVersion': runtime_k3s_version, 'server': runtime_k3s_server_address, 'configPath': runtime_agent_config_path, 'unitPath': runtime_agent_unit_path, 'evidenceFile': runtime_agent_migration_evidence_file} | to_nice_json }}\n"
+    content: "{{ {'clusterId': runtime_cluster_id, 'k3sVersion': runtime_k3s_version, 'server': runtime_k3s_server_address, 'configPath': runtime_agent_config_path, 'unitPath': runtime_agent_unit_path, 'unitSha256': (lookup('ansible.builtin.template', 'k3s-agent.service.j2') | hash('sha256')), 'evidenceFile': runtime_agent_migration_evidence_file} | to_nice_json }}\n"
     owner: root
     group: root
     mode: "0600"

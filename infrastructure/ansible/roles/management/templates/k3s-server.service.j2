@@ -1,0 +1,23 @@
+[Unit]
+Description=Praetorium restored K3s Management Server
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists={{ management_server_config_path }}
+
+[Service]
+Type=notify
+User=root
+Group=root
+ExecStart=/usr/local/bin/k3s server --config {{ management_server_config_path }}
+KillMode=process
+Delegate=yes
+Restart=always
+RestartSec=5s
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

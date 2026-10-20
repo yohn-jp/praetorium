@@ -7,13 +7,9 @@ management_api_bind_address: ""
 management_k3s_version: v1.35.9+k3s1
 management_k3s_binary_src: ""
 management_k3s_binary_sha256: ""
-management_k3s_installer_src: ""
-management_k3s_installer_sha256: ""
 management_server_token_src: ""
 management_server_token_file: /var/lib/rancher/k3s/server/token
 management_server_config_path: /etc/rancher/k3s/config.yaml
 management_server_data_dir: /var/lib/rancher/k3s
 management_restored_etcd_member_path: /var/lib/rancher/k3s/server/db/etcd/member/snap/db
-management_k3s_stage_dir: /var/lib/praetorium/staging
 management_k3s_marker_path: /etc/praetorium/management-k3s-server.json
-management_k3s_server_config: {}

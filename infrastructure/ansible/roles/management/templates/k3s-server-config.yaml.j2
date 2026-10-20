@@ -1,1 +1,11 @@
-{{ management_k3s_server_config | to_nice_yaml(indent=2, sort_keys=false) }}
+data-dir: {{ management_server_data_dir | to_json }}
+token-file: {{ management_server_token_file | to_json }}
+node-label:
+  - {{ ('praetorium.io/cluster-id=' + management_cluster_id) | to_json }}
+  - praetorium.io/node-role=management
+node-taint:
+  - praetorium.io/node-role=management:NoSchedule
+tls-san:
+  - {{ management_api_bind_address | to_json }}
+disable:
+  - traefik

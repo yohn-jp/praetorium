@@ -1,16 +1,18 @@
 # Public access verification for the three-VM migration
 
-Observed 2026-10-20 from 10:52 to 11:00 UTC against Praetorium source
+Observed 2026-10-20 from 10:52 to 11:06 UTC against Praetorium source
 `59449ffd65a9210435b882504933cbaf57db1418`. This is sanitized, read-only
 evidence for [Issue #24](https://github.com/yohn-jp/praetorium/issues/24).
 The integration owner applied the public-host Certificate/TLSStore/fallback
-changes during this observation window; the post-apply state below is the
-latest sample. This worker made no production changes.
+changes during this observation window. The latest public and direct Runtime
+TLS sample is 11:04 UTC, and the latest HTTP sample is 11:05 UTC. This worker
+made no production changes.
 
-**Issue #24 remains open.** The public network forwarding path works, but
-public HTTPS still serves a certificate without the application hostname and
-the deployed Instance Access image rejects that public Host. No authenticated
-browser session or GitHub write was verified.
+**Issue #24 remains open.** Public HTTPS now presents a trusted certificate
+for the application Host, and the public edge forwards TLS to Runtime. The
+deployed Instance Access service still returns `INSTANCE_NOT_FOUND` for that
+valid public Host. No authenticated browser session or GitHub write was
+verified.
 
 ## Public TLS and routing
 
@@ -18,48 +20,53 @@ browser session or GitHub write was verified.
 `222.224.247.206` for both names. Issue #24 separately records the Cloudflare
 DNS-only wildcard CNAME. Name resolution alone does not verify TLS or routing.
 
-Strict TLS verification failed with curl exit 60 for both the public address
-and direct Runtime address:
+Strict TLS verification now succeeds for the public address and direct Runtime
+address. The latest curl result was:
 
 ```text
-curl --max-time 15 -sS -I -v https://1423923158.scriptorium.yohn.jp/ -o /dev/null
-curl --max-time 15 -sS -I -v --resolve 1423923158.scriptorium.yohn.jp:443:10.7.0.31 https://1423923158.scriptorium.yohn.jp/ -o /dev/null
-curl: (60) SSL: no alternative certificate subject name matches target hostname '1423923158.scriptorium.yohn.jp'
+curl --max-time 12 -sS -I -w 'status=%{http_code} verify=%{ssl_verify_result}\n' https://1423923158.scriptorium.yohn.jp/ -o /dev/null
+status=404 verify=0
 ```
 
-Both handshakes returned the same publicly trusted Let's Encrypt certificate:
+Node TLS inspection returned the same publicly trusted Let's Encrypt
+certificate from `222.224.247.206:443` and `10.7.0.31:443` when using SNI
+`1423923158.scriptorium.yohn.jp`:
 
 ```text
 subject: CN=instances.praetorium.yohn.jp
 issuer: C=US, O=Let's Encrypt, CN=YR1
-SANs: DNS:*.instances.praetorium.yohn.jp, DNS:instances.praetorium.yohn.jp
-valid: 2026-10-18 03:57:38 UTC through 2027-01-16 03:57:37 UTC
-SHA-256 fingerprint: F5:C1:76:94:01:3E:F7:EB:9C:1F:93:6A:CE:A6:C8:3A:8B:AB:DF:5F:D7:20:9E:FB:F4:26:A3:7B:06:15:FF:82
+SANs: DNS:*.instances.praetorium.yohn.jp, DNS:*.scriptorium.yohn.jp, DNS:instances.praetorium.yohn.jp
+valid: 2026-10-20 10:05:42 UTC through 2027-01-18 10:05:41 UTC
+SHA-256 fingerprint: 41:57:A4:0E:F5:51:E9:C1:D2:D0:EF:90:7E:60:D0:BA:29:8E:C3:AC:BE:AD:99:51:D2:38:6C:8F:39:A4:A0:61
+TLS authorization: true; curl ssl_verify_result: 0
 ```
 
-After the owner's apply, the live Certificate requests
-`instances.praetorium.yohn.jp`, `*.instances.praetorium.yohn.jp`, and
-`*.scriptorium.yohn.jp`, but is `Ready=False` with reason `RequestChanged`.
-`TLSStore/default` now exists and references `praetorium-instance-tls`. The
-public and direct handshakes still serve the old certificate from that Secret;
-the new SAN is not yet live.
+This supersedes the 11:00 UTC sample, when both endpoints still served the
+older certificate without the public SAN and the Certificate reported
+`Ready=False`, reason `RequestChanged`. The Certificate API status was not
+re-read after the new certificate appeared on both endpoints.
 
-For HTTP inspection, unauthenticated GET requests used browser navigation
-headers and `curl -k` only to bypass the known TLS-name failure. Public and
-direct Runtime responses were identical:
+The owner confirms `TLSStore/default` references `praetorium-instance-tls`.
+All requests below used normal certificate verification. Public and direct
+Runtime responses were identical at 11:05 UTC:
 
 ```text
-GET https://1423923158.scriptorium.yohn.jp/platform/handoff  -> 404 application/json: {"error":{"code":"INSTANCE_NOT_FOUND"}}
-GET https://1423923158.scriptorium.yohn.jp/_platform/handoff -> 404 application/json: {"error":{"code":"INSTANCE_NOT_FOUND"}}
+GET  /                                                       -> 404 {"error":{"code":"INSTANCE_NOT_FOUND"}}
+GET  /platform/handoff                                      -> 404 {"error":{"code":"INSTANCE_NOT_FOUND"}}
+GET  /_platform/handoff                                     -> 404 {"error":{"code":"INSTANCE_NOT_FOUND"}}
+POST /_platform/handoff (empty form, correct Gateway Origin) -> 404 {"error":{"code":"INSTANCE_NOT_FOUND"}}
 ```
 
-The server Date header was `Tue, 20 Oct 2026 10:59:58 GMT`. No cookie, handoff
-code, authorization header, or query parameter was sent. These GETs are not a
-handoff POST test. The matching certificate fingerprint and identical
-response from public and direct Runtime paths show that the existing public
-forwarding path delivers the original TLS SNI and HTTP Host to Runtime
-Traefik/Instance Access. No firewall or NAT change is indicated by these
-results.
+The server Date header was `Tue, 20 Oct 2026 11:05:54 GMT`. The empty POST
+sent only `Origin: https://praetorium.yohn.jp` and an empty
+`application/x-www-form-urlencoded` body. No cookie, handoff code,
+authorization header, or query parameter was sent. The response shows that
+the currently deployed Instance Access path still does not recognize the
+public Host; the current source would reject this empty form as
+`HANDOFF_REQUEST_INVALID` after accepting that Host. The matching certificate
+fingerprint and identical responses confirm that the public path preserves
+SNI and Host through to Runtime Traefik/Instance Access. No firewall or NAT
+change is indicated.
 
 The screenshot path `/platform/handoff` is not emitted by the current Gateway
 renderer. Current source renders a form POST to
@@ -71,14 +78,14 @@ bookmark, or another redirect.
 
 ## Read-only Runtime inspection
 
-SSH through `runtime.praetorium.vm` succeeded. `k3s` was active and the sole
+The 11:00 UTC snapshot through `runtime.praetorium.vm` showed `k3s` active and the sole
 Node was Ready on Kubernetes `v1.35.9+k3s1`, with `control-plane,etcd` roles.
 Traefik had two Ready replicas; Instance Access had one Ready replica and its
 ClusterIP Service had one endpoint.
 
-| Resource | Latest live result |
+| Resource | 11:00 UTC Runtime snapshot |
 | --- | --- |
-| `praetorium-system/praetorium-instance-origin` Certificate | Requests the three SANs above; `Ready=False`, reason `RequestChanged`; current Secret still serves only the legacy SANs |
+| `praetorium-system/praetorium-instance-origin` Certificate | At 11:00, requested the three SANs above but was `Ready=False`, reason `RequestChanged`; by 11:04 the public and Runtime endpoints both served a new certificate with the public wildcard SAN. API status after issuance was not checked |
 | `praetorium-system/TLSStore/default` | Present; default certificate Secret is `praetorium-instance-tls` |
 | `praetorium-system/praetorium-instance-access-fallback` IngressRoute | Matches `^[1-9][0-9]*\.scriptorium\.yohn\.jp$`; `/_platform` priority 1000 and catch-all priority 1 |
 | Ready application route for repository `1423923158` | Still matches `ins-01m56estantnhv8ba5j1pcnnqj.instances.praetorium.yohn.jp` at priority 10 |
@@ -90,15 +97,21 @@ the stable repository Host, so ordinary traffic for
 `1423923158.scriptorium.yohn.jp` is not yet demonstrated to reach the Ready
 Scriptorium service.
 
-The Instance Access ConfigMap contains
+At 11:00, the Instance Access ConfigMap contained
 `INSTANCE_ACCESS_INSTANCE_HOSTNAME_SUFFIX=instances.praetorium.yohn.jp` and
 `GATEWAY_ORIGIN=https://praetorium.yohn.jp`. The live Instance Access image is
 still
 `ghcr.io/yohn-jp/praetorium/instance-access@sha256:6a3f9a01431c713c25c1797b6ba0d23cb709dda7d318d387d6bdb8a5241c29a4`.
-The handler returns `INSTANCE_NOT_FOUND` for the valid public application
-host, while current source parses `repository_id.scriptorium.yohn.jp` through
-`applicationFromHostname`. The deployed image is therefore behind the current
-source contract. The Ready application workload uses
+At 11:05, the safe public and direct probes still returned
+`INSTANCE_NOT_FOUND` for the valid public application Host, while current
+source parses `repository_id.scriptorium.yohn.jp` through
+`applicationFromHostname`. Workflow run
+[39412075129](https://github.com/yohn-jp/praetorium/actions/runs/39412075129)
+completed successfully at 11:05 UTC, including the Instance Access image
+publication job. That run published an image; it did not deploy it. The live
+deployment digest could not be independently re-read at 11:05 because the
+configured Runtime `k3s kubectl` context returned connection refused for
+`127.0.0.1:16443`. The Ready application workload uses
 `ghcr.io/yohn-jp/praetorium/candidates@sha256:446a6a8a6703ebe54cc2ef924f71a885eabccf35b0397be6177cebb2f776ce99`;
 no source-revision label tying that producer image to the current Scriptorium
 contract was verified.
@@ -112,20 +125,30 @@ entry point; no per-repository record is needed.
 
 ## Public edge path
 
-The latest owner instruction identifies `gateway.yohn.jp` as forwarding via
-the default-gateway OPNsense router at `10.7.0.1`, not a Caddy deployment.
-Comparing the public endpoint with direct Runtime SNI/HTTP responses confirms
-that forwarding works and preserves Host/SNI. No edge or firewall mutation is
-needed for the observed failure. Older tracked Caddy guidance and the
-2026-10-18 Caddy status record describe a previous deployment path and are not
-an acceptance requirement under the latest owner decision.
+The owner identified `gateway.yohn.jp` as the default-gateway OPNsense router
+and inspected its live Caddy configuration read-only. The owner reports Caddy
+PID `57426` listening on TCP/443, with the Caddy Layer4 module installed. The
+sanitized adapted listener configuration matches `scriptorium.yohn.jp` and
+`*.scriptorium.yohn.jp` first in a Layer4 SNI route and proxies TCP to
+`10.7.0.31:443`; a TLS wrapper follows. The physical namespace has a separate
+equivalent route. The protected live Caddyfile and adapted JSON were saved in
+the owner's private backup area; no Caddy or firewall configuration was
+changed for this investigation.
+
+The unprivileged admin API probe to `127.0.0.1:2019` was refused, so this note
+does not reproduce or expose raw Caddy configuration. The owner's privileged
+read-only process/configuration inspection and matching public/direct
+certificate and HTTP responses establish the forwarding path. No edge or
+firewall mutation is indicated.
 
 ## Remaining acceptance gates
 
-Public HTTPS remains **BLOCKED** until cert-manager issues the requested
-public wildcard certificate and the public endpoint presents its SAN. Hosted
-entry remains **BLOCKED** until the current Instance Access image is built and
-deployed, and the Ready application route is verified on the repository Host.
+Public HTTPS certificate verification is now **PASSING** for the tested
+repository Host. Hosted entry remains **BLOCKED** until the current Instance
+Access image is deployed and accepts the public Host, and the Ready
+application route is verified on the repository Host. The Instance Access
+deployment digest and Certificate API status need a read-only verification
+after the owner's rollout.
 
 Issue #24 browser acceptance also requires an explicitly owned disposable
 GitHub repository and current producer support. The current

@@ -1,0 +1,117 @@
+{
+  "schema": "praetorium.three-vm-infra-evidence/v1",
+  "evidenceTimestampUtc": "2026-10-20T11:41:02Z",
+  "source": {
+    "host": "runtime.praetorium.vm",
+    "clusterId": "clu_01M552J5HCXXJAPCCPN480JSJN",
+    "datastore": "embedded-etcd",
+    "k3sVersion": "v1.35.9+k3s1"
+  },
+  "snapshotArtifact": "/data/praetorium/production/backups/20261020/k3s-embedded-etcd-full-restore-20261020T1125Z.tar.aesgcm",
+  "snapshotArtifactSha256": "e9e882f69b003a2e074bb65ccb6e120674f9fb1a380087146a33cf860e95ea8a",
+  "snapshotTimestampUtc": "2026-10-20T10:57:39Z",
+  "snapshotCompare": {
+    "status": "PASS",
+    "evidenceRef": "/data/praetorium/production/backups/20261020/three-vm-infra-private-evidence.json#snapshot",
+    "sourceSnapshotSha256": "e3de10eb9bab93f212e8bf1246d33cc4c60d266ca420075b5fa920b8356709c4",
+    "sourceSnapshotBytes": 6791200
+  },
+  "isolatedRestore": {
+    "status": "PASS",
+    "evidenceRef": "/data/praetorium/production/backups/20261020/three-vm-infra-private-evidence.json#isolatedRestore",
+    "restoredApiReady": true,
+    "restoredServerCaMatch": true,
+    "clusterId": "clu_01M552J5HCXXJAPCCPN480JSJN",
+    "pvcRestoreMatch": true,
+    "serverTokenMatch": true,
+    "restoredResourceCounts": {
+      "nodes": 1,
+      "pods": 19,
+      "deployments": 17,
+      "persistentVolumes": 1,
+      "persistentVolumeClaims": 1,
+      "namespaces": 12,
+      "secrets": 26
+    }
+  },
+  "secretComparison": {
+    "snapshotCount": 26,
+    "liveCount": 27,
+    "identicalCount": 24,
+    "changed": [
+      {
+        "namespace": "flux-system",
+        "name": "sh.helm.release.v1.traefik.v1",
+        "type": "helm.sh/release.v1",
+        "reason": "Existing Traefik Helm release object changed after the snapshot during the v1-to-v2 upgrade."
+      },
+      {
+        "namespace": "praetorium-system",
+        "name": "praetorium-instance-tls",
+        "type": "kubernetes.io/tls",
+        "reason": "Existing static TLS Secret changed after the snapshot during the Issue24 TLS repair."
+      }
+    ],
+    "snapshotOnly": [],
+    "liveOnly": [
+      {
+        "namespace": "flux-system",
+        "name": "sh.helm.release.v1.traefik.v2",
+        "type": "helm.sh/release.v1",
+        "createdAt": "2026-10-20T10:58:00Z",
+        "reason": "New Helm release revision created after the snapshot."
+      }
+    ],
+    "valuesOrFingerprintsEmitted": false
+  },
+  "pvcArchive": {
+    "artifact": "/data/praetorium/production/backups/20261020/pvc-provisioner-idle-journal-20261020T1115Z.tar.aesgcm",
+    "sha256": "f502bcc96b4c9cd49b825b3f68af44c81f755e972873fbba02b94ac8bb85917b",
+    "status": "PASS",
+    "namespace": "praetorium-system",
+    "pvcName": "praetorium-provisioner-idle-journal",
+    "bytes": 10273,
+    "contentHashMatch": true,
+    "scope": "Only the provisioner idle-journal hostPath PVC state.json was archived and byte-verified; this does not cover Scriptorium emptyDir workspace data or pending checkpoints."
+  },
+  "workspaceGitBundle": {
+    "artifact": "/data/praetorium/production/backups/20261020/scriptorium-main-7e1bb31ca3c5.bundle.aesgcm",
+    "sha256": "a6df02259e7f2ff77a696fb84960a4d8b87eb79d12a53002b27e3de1764bd167",
+    "status": "PARTIAL",
+    "branch": "main",
+    "headCommit": "7e1bb31ca3c545857bf6a4e6295bf3b87c031728",
+    "refsVerified": 8,
+    "exactHeadRestoreMatch": true,
+    "unpushedCommitPreserved": true,
+    "fullWorkspaceCopyStatus": "BLOCKED_UNTIL_WRITER_QUIESCE"
+  },
+  "d1Restore": {
+    "status": "PASS",
+    "evidenceRef": "/data/praetorium/production/backups/20261020/d1-restore-evidence.json",
+    "owner": "root"
+  },
+  "runtime": {
+    "writerQuiesced": false,
+    "writerAbsent": false,
+    "runtimeServerRetired": false,
+    "runtimeAgentTransitionAllowed": false,
+    "evidenceRef": "/data/praetorium/production/backups/20261020/three-vm-infra-private-evidence.json#runtimeGate",
+    "gateReason": "Authenticated producer status/quiesce returned HTTP 409 because active operation/generation did not match. No checkpoint/quiesce receipt or writer-absence proof; live Scriptorium Pod remained Ready."
+  },
+  "cutoverStatus": "BLOCKED",
+  "productionCutoverPerformed": false,
+  "runtimeKubeconfigTransientlyModifiedDuringRejectedRehearsal": true,
+  "runtimeKubeconfigRestoredAndReadOnlyVerified": true,
+  "rejectedRehearsals": [
+    {
+      "status": "NOT_COUNTED",
+      "attempt": "Runtime restore in network namespace without mount isolation",
+      "limitation": "Temporarily rewrote the host operator kubeconfig endpoint; restored the exact protected copy and verified API readiness directly on 10.7.0.31:6443."
+    },
+    {
+      "status": "NOT_COUNTED",
+      "attempt": "Management restore from incomplete encrypted bundle",
+      "limitation": "Bundle omitted server/cred; restored server exited without supervisor client credentials."
+    }
+  ]
+}

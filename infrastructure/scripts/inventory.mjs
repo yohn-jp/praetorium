@@ -458,9 +458,15 @@ export function validateInventory(value) {
 
   const workNotificationsEnabled = value.workNotifications?.enabled === true;
   if (Object.hasOwn(value, "workNotifications")) {
-    exactKeys(value.workNotifications, ["enabled"], "workNotifications", errors);
+    exactKeys(value.workNotifications, ["enabled", "coordinationVpcServiceId"], "workNotifications", errors, ["coordinationVpcServiceId"]);
     if (typeof value.workNotifications?.enabled !== "boolean") {
       errors.push("workNotifications.enabled must be boolean");
+    }
+    if (Object.hasOwn(value.workNotifications ?? {}, "coordinationVpcServiceId")) {
+      if (!workNotificationsEnabled ||
+          !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(value.workNotifications.coordinationVpcServiceId ?? "")) {
+        errors.push("workNotifications.coordinationVpcServiceId requires enabled notifications and a provisioned UUID");
+      }
     }
   }
 

@@ -64,17 +64,17 @@ means no suitable current evidence yet; no fixture or CI result substitutes.
 | Requirement | Current result | Required evidence |
 | --- | --- | --- |
 | Full three-host inventory, CPU/memory/cgroups/OOM/cache baseline | IN PROGRESS | Sanitized per-host measurements and datastore/network/secret references |
-| K3s token/CA/datastore/PVC backup and independent recovery | NOT_CHECKED | Actual restored identities, resources and durable data; rollback rehearsal |
+| K3s token/CA/datastore/PVC backup and independent recovery | VERIFIED datastore/journal/Git restore slices; workspace pending | Actual restored identities, resources and durable data; rollback rehearsal |
 | Management host-systemd K3s Server; Runtime Agent | NOT_CHECKED | Live node roles, CA/cluster continuity and systemd state |
 | Rootless independent Quadlet Coordination | NOT_CHECKED | Dedicated UID, digest, reboot recovery and health with K3s stopped |
 | Management tenant exclusion and future Agent placement | NOT_CHECKED | Node taint/labels and rendered/observed tenant affinity |
 | Existing BuildKit/cache preserved and bounded | IN PROGRESS | Version/cache identity, actual build peak, GC and resource limits |
 | Authenticated private work delivery and recovery | NOT_CHECKED | Duplicate/lost hint, coordinator restart, D1 fencing and bounded recovery |
-| Issue #24 HTTPS, SNI, DNS-01, default TLSStore | FAILED public TLS | Trusted external TLS and observed Caddy/Traefik/cert-manager path |
-| Ready/stopped handoff routing and auth rejection | NOT_CHECKED | Real POST, Origin, 303, cookies, replay/expiry and unauthorized checks |
+| Issue #24 HTTPS, SNI, DNS-01, default TLSStore | VERIFIED TLS slice; Issue #24 remains open | Trusted external TLS and observed Caddy/Traefik/cert-manager path |
+| Ready/stopped handoff routing and auth rejection | VERIFIED unauthenticated entry/rejection only | Real POST, Origin, 303, cookies, replay/expiry and unauthorized checks |
 | GitHub login, two principals and access revocation | NOT_CHECKED | Real browser/session/permission evidence (G1/G2) |
 | Real edit, checkpoint, GitHub save and reload | NOT_CHECKED | Confirmed remote commit/content and browser recovery (G3) |
-| Two admitted compositions and identical-input cache reuse | NOT_CHECKED | Producer/build-input revisions, OCI digests/signature and runtime readiness (G4) |
+| Two admitted compositions and identical-input cache reuse | VERIFIED provider builds/reuse; admission NOT_CHECKED | Producer/build-input revisions, OCI digests/signature and runtime readiness (G4) |
 | Stop/wake/redeploy, pending work protection, writer absence | NOT_CHECKED | Current-epoch quiesce and actual writer census (G5) |
 | Stable/pinned rollout and fault recovery | NOT_CHECKED | Real release/canary/retry/interruption evidence (G6) |
 | Infrastructure/credential/network isolation | NOT_CHECKED | Actual RBAC/admission/network/build isolation (G7) |
@@ -84,3 +84,70 @@ means no suitable current evidence yet; no fixture or CI result substitutes.
 Final report must include main HEAD, each VM's live state, deployed digests,
 actual E2E results, remaining requirements, and recovery/runbook paths. Keep
 this campaign active until all owner requirements and original G1–G9 pass.
+
+## Integrated slices and live changes
+
+At integrated source `0b5532ee919dd2e83e9de3db1ce93b1d6dc533ee`, the frozen
+install and full check passed (30 Turbo tasks plus boundaries/schema checks).
+[Main CI](https://github.com/yohn-jp/praetorium/actions/runs/39412425385) and
+[explicit source image publication](https://github.com/yohn-jp/praetorium/actions/runs/39412481019)
+succeeded. The new service image was read back from GHCR by its immutable digest:
+`ghcr.io/yohn-jp/praetorium/coordination@sha256:bf43bed86b8eca82f6bd6dfe2cd6b3ad4382975b6783de2681950edfa1916ced`.
+Publication alone does not mean the service is deployed.
+
+Independent read-only review of that slice found no defect in the focused relay,
+per-kind authentication, D1 authority or bounded notification/fallback path. It
+identified missing Coordination inclusion in the separately encrypted candidate
+archive builder. That builder now includes the fourth image, its metadata,
+archive, size accounting and report; shell syntax validation passed. The
+separately encrypted four-image job has not been executed in this campaign.
+
+The canonical deployment inventory/Worker renderer now accepts a provisioned
+`workNotifications.coordinationVpcServiceId` and projects it to the Control
+Plane `COORDINATION_SERVICE` binding only when notifications are enabled. The
+new private Management Tunnel and VPC Service have been created; the connector
+and binding still require actual deployment. Existing unrelated tunnels were
+not reused. See `THREE-VM-CONTROL.md`.
+
+The owner identified OPNsense as the public gateway and supplied its configured
+SSH alias. Read-only inspection confirmed Caddy running on OPNsense with Layer 4
+support and an SNI proxy to Runtime TCP/443 before its TLS listener wrapper.
+Its configuration was backed up privately. No OPNsense/Caddy mutation was needed.
+This supersedes the earlier uncertainty about the gateway's management path.
+
+Existing committed Certificate, TLSStore/default, fallback IngressRoute and
+Traefik HelmRelease were rendered with the protected inventory, backed up,
+server-dry-run checked, then applied. No tenant Deployment was changed by this
+step. cert-manager completed DNS-01 and the new certificate is Ready. Strict
+public HTTPS verification now succeeds for `1423923158.scriptorium.yohn.jp`;
+public and direct Runtime connections present the same certificate. See the
+exact SAN, validity and fingerprint in `THREE-VM-ACCESS.md`.
+
+Instance Access alone was then conditionally updated from its recorded old
+digest to the verified source-36574d1 image:
+`ghcr.io/yohn-jp/praetorium/instance-access@sha256:68914e8dffccee11a6ad9cbb9a7b30b7eddfdf6aab6d66c7391f4fd6fc68c8b5`.
+The dry-run and actual patch both tested the old digest before replacement;
+Deployment rollout completed and the private inventory now pins the result.
+Empty handoff POST is 400, fake-code POST is 401, unauthenticated browser
+navigation reaches Gateway entry/login, and API-style GET remains bounded 503
+`INSTANCE_STARTING`. Authenticated handoff/Ready routing is not yet proved.
+
+The active writer's unpushed commit has been protected by an encrypted off-host
+Git bundle, restored in an isolated tmpfs bare repository and matched against
+the source commit. This does not protect uncommitted/pending producer work by
+itself. The old claimed lifecycle operation remains a migration gate. Migration
+`0006_application_origins.sql` explicitly refuses active operations; it has not
+been bypassed or applied over the unresolved claim.
+
+The first K3s restore rehearsal used an insufficiently isolated filesystem and
+rewrote the operator kubeconfig endpoint. It was stopped; the kubeconfig was
+restored byte-for-byte. The production API and workloads stayed live. That
+attempt is FAILED, not acceptance evidence. A subsequent independent rehearsal
+on empty Management used both private mount and network namespaces, restored
+the snapshot/token/CA and authenticated the restored API. Detailed scope and
+Secret time-delta comparisons belong in `THREE-VM-INFRA.md`; the successful
+rehearsal does not retire the live writer or prove its pending workspace safe.
+
+The owner will perform the real authenticated browser edit/save journey once the
+service is ready. No GitHub browser authentication state is available to this
+agent. That manual gate remains NOT_CHECKED until actual results are recorded.

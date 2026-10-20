@@ -105,6 +105,12 @@ export function renderWorkerTemplate(template, inventory, worker) {
       const endpoints = workNotificationEndpoints(inventory);
       setStringVariable(variables, "PROVISIONER_WORK_NOTIFICATION_URL", endpoints.provisioner);
       setStringVariable(variables, "BUILD_WORK_NOTIFICATION_URL", endpoints.build);
+      if (inventory.workNotifications.coordinationVpcServiceId) {
+        config.vpc_services = [{
+          binding: "COORDINATION_SERVICE",
+          service_id: inventory.workNotifications.coordinationVpcServiceId,
+        }];
+      }
     }
     const policy = buildPolicy(inventory);
     if (policy) variables.BUILD_POLICY_JSON = JSON.stringify(policy);

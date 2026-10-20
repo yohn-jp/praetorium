@@ -79,6 +79,25 @@ test("worker template uses the same inventory source for both endpoints", () => 
   );
 });
 
+test("provisioned Coordination binding survives canonical Worker rendering and rejects invalid activation", () => {
+  const inventory = json("infrastructure/test/disposable-inventory.json");
+  const template = readFileSync(path.join(root, "infrastructure/workers/control-plane.template.json"), "utf8");
+  assert.equal(JSON.parse(renderWorkerTemplate(template, inventory, "control-plane")).vpc_services, undefined);
+  inventory.workNotifications = { enabled: true, coordinationVpcServiceId: "01a158fc-ef0d-7d11-8976-af6247908574" };
+  inventory.secretRefs.provisionerWorkNotificationToken = { name: "provisioner-hint", key: "token" };
+  inventory.secretRefs.buildWorkerWorkNotificationToken = { name: "build-hint", key: "token" };
+  assert.deepEqual(validateInventory(inventory).errors, []);
+  const rendered = JSON.parse(renderWorkerTemplate(template, inventory, "control-plane"));
+  assert.deepEqual(rendered.vpc_services, [{ binding: "COORDINATION_SERVICE", service_id: inventory.workNotifications.coordinationVpcServiceId }]);
+  const gateway = readFileSync(path.join(root, "infrastructure/workers/gateway.template.json"), "utf8");
+  assert.equal(JSON.parse(renderWorkerTemplate(gateway, inventory, "gateway")).vpc_services, undefined);
+  inventory.workNotifications.enabled = false;
+  assert.ok(validateInventory(inventory).errors.some((e) => e.includes("coordinationVpcServiceId")));
+  inventory.workNotifications.enabled = true;
+  inventory.workNotifications.coordinationVpcServiceId = "unprovisioned";
+  assert.ok(validateInventory(inventory).errors.some((e) => e.includes("coordinationVpcServiceId")));
+});
+
 test("work notification inventory requires dedicated secret refs and deployment render selects the gated overlay", () => {
   const baseline = json("infrastructure/test/disposable-inventory.json");
   baseline.network.kubernetesApiEndpoints = [{ address: "10.96.0.1", port: 6443 }];

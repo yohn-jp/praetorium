@@ -158,6 +158,7 @@ build_service() {
 build_service provisioner infrastructure/docker/service-runtime.Dockerfile @praetorium/provisioner
 build_service instance-access infrastructure/docker/service-runtime.Dockerfile @praetorium/instance-access
 build_service build-worker infrastructure/docker/build-worker.Dockerfile @praetorium/build-worker
+build_service coordination infrastructure/docker/service-runtime.Dockerfile @praetorium/coordination
 
 node - "$PRAETORIUM_REVISION" "$IMAGE_REPOSITORY" "$ARCHIVES" "$METADATA" "$OUT/build-report.json" "$BUILDKIT_SHA256" "$BUILDKIT_CLIENT_IMAGE" "$NODE_IMAGE" "$RECIPIENT_FINGERPRINT" "$REGISTRY_IMAGE" <<'NODE'
 const fs = require('node:fs');
@@ -168,7 +169,8 @@ const [revision, repository, archiveDir, metadataDir, reportPath, buildkitSha256
 const services = {
   provisioner: { dockerfile: 'infrastructure/docker/service-runtime.Dockerfile', package: '@praetorium/provisioner' },
   'instance-access': { dockerfile: 'infrastructure/docker/service-runtime.Dockerfile', package: '@praetorium/instance-access' },
-  'build-worker': { dockerfile: 'infrastructure/docker/build-worker.Dockerfile', package: '@praetorium/build-worker' }
+  'build-worker': { dockerfile: 'infrastructure/docker/build-worker.Dockerfile', package: '@praetorium/build-worker' },
+  coordination: { dockerfile: 'infrastructure/docker/service-runtime.Dockerfile', package: '@praetorium/coordination' }
 };
 const images = Object.fromEntries(Object.keys(services).map(service => {
   const digest = fs.readFileSync(path.join(metadataDir, `${service}.digest`), 'utf8').trim();
@@ -202,7 +204,7 @@ fs.writeFileSync(reportPath, JSON.stringify({
 NODE
 
 OCI_BYTES=0
-for archive in "$ARCHIVES/provisioner.oci.tar" "$ARCHIVES/instance-access.oci.tar" "$ARCHIVES/build-worker.oci.tar"; do
+for archive in "$ARCHIVES/provisioner.oci.tar" "$ARCHIVES/instance-access.oci.tar" "$ARCHIVES/build-worker.oci.tar" "$ARCHIVES/coordination.oci.tar"; do
   test -s "$archive"
   OCI_BYTES=$((OCI_BYTES + $(stat -c '%s' "$archive")))
 done
@@ -213,8 +215,8 @@ fi
 
 tar -cf - -C "$OUT" \
   build-report.json \
-  metadata/provisioner.json metadata/instance-access.json metadata/build-worker.json \
-  archives/provisioner.oci.tar archives/instance-access.oci.tar archives/build-worker.oci.tar |
+  metadata/provisioner.json metadata/instance-access.json metadata/build-worker.json metadata/coordination.json \
+  archives/provisioner.oci.tar archives/instance-access.oci.tar archives/build-worker.oci.tar archives/coordination.oci.tar |
   openssl cms -encrypt -binary -stream -aes-256-gcm \
     -in /dev/stdin -out "$CIPHERTEXT" -outform DER "$OUT/recipient-cert.pem"
 CIPHERTEXT_BYTES="$(stat -c '%s' "$CIPHERTEXT")"

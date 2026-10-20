@@ -145,6 +145,7 @@ test("Worker plan reports exact secret surfaces and producer-blocked release gat
     "0003_staged_configurations.sql",
     "0004_runtime_git_credentials.sql",
     "0005_runtime_health_observations.sql",
+    "0006_application_origins.sql",
   ]);
   assert.ok(plan.discoveredMigrations.includes("0004_runtime_git_credentials.sql"));
   assert.deepEqual(plan.serviceBindings, [
@@ -231,6 +232,7 @@ test("Worker preflight recognizes credential retirement wiring without inspectin
     "0003_staged_configurations.sql",
     "0004_runtime_git_credentials.sql",
     "0005_runtime_health_observations.sql",
+    "0006_application_origins.sql",
   ]);
   assert.ok(preflight.discoveredMigrations.includes("0004_runtime_git_credentials.sql"));
   assert.deepEqual(preflight.serviceBindings, [

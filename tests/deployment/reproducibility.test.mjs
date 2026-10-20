@@ -98,6 +98,45 @@ test("provisioned Coordination binding survives canonical Worker rendering and r
   assert.ok(validateInventory(inventory).errors.some((e) => e.includes("coordinationVpcServiceId")));
 });
 
+
+test("production deploy paths retain the exact Management VPC binding", () => {
+  const inventory = json("infrastructure/test/disposable-inventory.json");
+  inventory.environment = "deployment";
+  const vpcId = "01a158fc-ef0d-7d11-8976-af6247908574";
+  inventory.workNotifications = { enabled: true, coordinationVpcServiceId: vpcId };
+
+  // Git-connected builds deploy the checked-in TOML, while operator deployments
+  // render the same binding from the protected production inventory.
+  const direct = readFileSync(path.join(root, "apps/control-plane/wrangler.toml"), "utf8");
+  const directBinding = direct.match(/^\[\[vpc_services\]\]\r?\nbinding = "COORDINATION_SERVICE"\r?\nservice_id = "([^"]+)"/mu);
+  assert.ok(directBinding, "direct Wrangler deploy must retain COORDINATION_SERVICE");
+  assert.equal(directBinding[1], vpcId);
+  const template = readFileSync(path.join(root, "infrastructure/workers/control-plane.template.json"), "utf8");
+  const rendered = JSON.parse(renderWorkerTemplate(template, inventory, "control-plane"));
+  assert.deepEqual(rendered.vpc_services, [{ binding: "COORDINATION_SERVICE", service_id: vpcId }]);
+  const guard = "deployment requires enabled workNotifications with coordinationVpcServiceId";
+  assert.ok(!validateInventory(inventory).blockers.includes(guard));
+
+  const missing = structuredClone(inventory);
+  delete missing.workNotifications.coordinationVpcServiceId;
+  assert.ok(validateInventory(missing).blockers.includes(guard));
+  const disabled = structuredClone(inventory);
+  disabled.workNotifications = { enabled: false };
+  assert.ok(validateInventory(disabled).blockers.includes(guard));
+  const absent = structuredClone(inventory);
+  delete absent.workNotifications;
+  assert.ok(validateInventory(absent).blockers.includes(guard));
+
+  const schema = json("infrastructure/schemas/deployment-inventory.schema.json");
+  assert.equal(schema.allOf.length, 3);
+  assert.deepEqual(schema.allOf[0].then.properties.secretRefs.required, [
+    "provisionerWorkNotificationToken", "buildWorkerWorkNotificationToken",
+  ]);
+  assert.deepEqual(schema.allOf[1].then.properties.workNotifications.required, [
+    "enabled", "coordinationVpcServiceId",
+  ]);
+});
+
 test("Gateway deployment retains the authentication rate-limit bindings and environment", () => {
   const inventory = json("infrastructure/test/disposable-inventory.json");
   const template = readFileSync(path.join(root, "infrastructure/workers/gateway.template.json"), "utf8");

@@ -63,7 +63,100 @@
           "minLength": 1
         }
       },
-      "allOf": [
+      "$defs": {
+    "digestOrMissing": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^([a-z0-9.-]+/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$"
+    },
+    "secretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "key"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$"
+        }
+      }
+    },
+    "runtimeResourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpuMilli",
+        "memoryMiB",
+        "ephemeralStorageMiB"
+      ],
+      "properties": {
+        "cpuMilli": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "memoryMiB": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "ephemeralStorageMiB": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "builderKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId",
+        "publicKeyBase64",
+        "revoked",
+        "validFrom",
+        "validUntil"
+      ],
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "publicKeyBase64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{43}=$"
+        },
+        "revoked": {
+          "type": "boolean"
+        },
+        "validFrom": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+        },
+        "validUntil": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+        }
+      }
+    }
+  },
+  "allOf": [
         {
           "if": {
             "properties": {
@@ -842,102 +935,7 @@
         },
         "required": ["secretRefs"]
       }
-    }
-  ],
-  "$defs": {
-    "digestOrMissing": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "pattern": "^([a-z0-9.-]+/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$"
     },
-    "secretRef": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "key"
-      ],
-      "properties": {
-        "name": {
-          "type": "string",
-          "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$"
-        },
-        "key": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9._-]+$"
-        }
-      }
-    },
-    "runtimeResourceLimits": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "cpuMilli",
-        "memoryMiB",
-        "ephemeralStorageMiB"
-      ],
-      "properties": {
-        "cpuMilli": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "memoryMiB": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "ephemeralStorageMiB": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        }
-      }
-    },
-    "builderKey": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "keyId",
-        "publicKeyBase64",
-        "revoked",
-        "validFrom",
-        "validUntil"
-      ],
-      "properties": {
-        "keyId": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
-        },
-        "publicKeyBase64": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9+/]{43}=$"
-        },
-        "revoked": {
-          "type": "boolean"
-        },
-        "validFrom": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
-        },
-        "validUntil": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
-        }
-      }
-    }
-  },
-  "allOf": [
     {
       "if": {
         "properties": {
@@ -967,8 +965,22 @@
                 "const": "remote"
               }
             }
+          },
+          "workNotifications": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled",
+              "coordinationVpcServiceId"
+            ]
           }
-        }
+        },
+        "required": [
+          "workNotifications"
+        ]
       }
     },
     {

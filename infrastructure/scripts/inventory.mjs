@@ -469,6 +469,14 @@ export function validateInventory(value) {
       }
     }
   }
+  // The production Coordination transport is provisioned. A partial inventory
+  // must not silently remove its binding on the next Worker deployment.
+  if (
+    value.environment === "deployment" &&
+    (!workNotificationsEnabled || !value.workNotifications?.coordinationVpcServiceId)
+  ) {
+    blockers.push("deployment requires enabled workNotifications with coordinationVpcServiceId");
+  }
 
   exactKeys(
     value.buildPolicy,

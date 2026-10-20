@@ -31,11 +31,11 @@ new_sqlite_classes = ["RepositoryCoordinator"]
 pattern = "control.praetorium.yohn.jp"
 custom_domain = true
 
-# Optional during the HTTPS-to-VPC rollout. After the Management Tunnel and
-# scoped VPC Service are provisioned, add its actual service ID here:
-# [[vpc_services]]
-# binding = "COORDINATION_SERVICE"
-# service_id = "<managed-workers-vpc-service-id>"
+# The provisioned Management VPC Service is required by the active production
+# Coordination path. Preserve it in Git-connected/direct Wrangler deployments.
+[[vpc_services]]
+binding = "COORDINATION_SERVICE"
+service_id = "01a158fc-ef0d-7d11-8976-af6247908574"
 # Keep the existing per-kind HTTPS URL/token variables configured until the
 # private service path has been accepted; the Worker falls back on VPC failure.
 

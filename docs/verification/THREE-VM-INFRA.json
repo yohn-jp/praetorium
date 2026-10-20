@@ -135,6 +135,173 @@
     "evidenceRef": "/data/praetorium/production/backups/20261020/three-vm-infra-private-evidence.json#runtimeGate",
     "gateReason": "Owner-reported no-active-work preflight at 2026-10-20T12:11Z, but no authenticated quiesce receipt exists; the live Scriptorium Pod remained Running/Ready and the provisional archive is not a consistency or writer-absence proof."
   },
+  "runtimeTransitionPreflight": {
+    "status": "PASS",
+    "result": "GUARD_ONLY_PASS",
+    "mode": "preflight-only",
+    "scriptPath": "scripts/infra/rehearse-k3s-server-to-agent-transition.sh",
+    "scriptSha256": "8bc57679588e798b3f9e8a10385ce23858bb06ed2fd133cd713e3d35acce7ca1",
+    "evidenceRecordedAtUtc": "2026-10-20T13:01:41Z",
+    "systemdVersion": "259 (259.5-0ubuntu3)",
+    "delegateControllers": [
+      "cpu",
+      "memory",
+      "pids"
+    ],
+    "fullModeRequiresExplicitFlag": "--full",
+    "fullModeExecuted": false,
+    "namespaceAndMountGuards": "PASS",
+    "rootVfsReadOnly": true,
+    "rootMountPrivate": true,
+    "sysVfsReadOnly": true,
+    "sysMountPrivate": true,
+    "procSysVfsReadOnly": true,
+    "temporaryMasksTmpfs": true,
+    "devTmpfs": true,
+    "cgroupFilesystem": "cgroup2fs",
+    "cgroupVfsReadWrite": true,
+    "cgroupNamespaceRootPath": "/",
+    "cgroupProcessPath": "/praetorium-rehearsal",
+    "memoryMaxBytes": 3221225472,
+    "cpuMax": "100000 100000",
+    "pidsMax": 4096,
+    "scopeControllers": "cpu memory pids",
+    "scopeSubtreeBeforeDirectEnable": "empty",
+    "scopeSubtreeAfterDirectEnable": "cpu memory pids",
+    "systemSliceSubtreeBeforeLaunch": "cpu memory pids",
+    "systemSliceSubtreeAfterScopeCreated": "cpu memory pids",
+    "systemSliceSubtreeBeforeInner": "cpu memory pids",
+    "systemSliceSubtreeAfterInner": "cpu memory pids",
+    "systemSliceSubtreeAfterScopeExit": "cpu memory pids",
+    "guardOnlyK3sCommandInvoked": false,
+    "k3sCommandInvokedInFullAttempts": true,
+    "defaultRouteGuard": "PASS",
+    "managementK3sServiceTouched": false,
+    "coordinationHealth": "PASS",
+    "runtimeContinuity": "NOT_CHECKED",
+    "fullTransitionStatus": "BLOCKED",
+    "fullRunPreparation": {
+      "status": "PASS_PRECHECKS",
+      "observedAtUtc": "2026-10-20T13:17:52Z",
+      "managementMemoryTotalKiB": 6062860,
+      "managementMemoryAvailableKiB": 5380908,
+      "managementLoadAverage1m": "0.00",
+      "managementCpuCount": 2,
+      "managementK3sService": {
+        "loadState": "not-found",
+        "activeState": "inactive",
+        "subState": "dead"
+      },
+      "coordinationHealth": "PASS",
+      "stagingDirectory": "/tmp/praetorium-k3s-transition.preflight-20261020-infra",
+      "stagingDirectoryOwnerMode": "0:700",
+      "assetChecks": [
+        {
+          "path": "k3s",
+          "expectedSha256": "897acb21cca57d477a211102251a6591450ce767344a9faaa121a1007ca9fa9a",
+          "present": true,
+          "verified": true,
+          "source": "Read-only copy of Runtime /usr/local/bin/k3s; v1.35.9+k3s1"
+        },
+        {
+          "path": "pause.oci.tar",
+          "expectedSha256": "151f115213f522a5b9a43a257bd591bce3f362daca34329bb00d63a68953b3ce",
+          "present": true,
+          "verified": true,
+          "source": "Read-only export of existing Runtime containerd image docker.io/rancher/mirrored-pause:3.10.2"
+        }
+      ],
+      "pauseOci": {
+        "archiveIndexDigest": "sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4",
+        "linuxAmd64ManifestDigest": "sha256:412c4a7219cb8a299a37337f3d87810c5340095322e15594a1637785adad0f17",
+        "configDigest": "sha256:4a83b15d3ecfe0d916b2d0a7991bc2854a629b8097017c2ee1ff65b30ae4c07c",
+        "layerDigest": "sha256:81ede36234b06d9a16771d804ef81ea888e29f8c425a5269e3d55d34a1b128a8",
+        "nativePlatformBlobsVerified": true
+      },
+      "fullModeExecuted": true,
+      "reason": "Both full attempts passed the guard-only preflight and input SHA checks. They failed while starting the disposable source K3s API; no production K3s service or state was touched."
+    },
+    "attempts": [
+      {
+        "scriptSha256": "50e07b547270ca1e7e11822b6d62cb7fa44adf02700ceb98d4ddbcb45e5d0a54",
+        "status": "BLOCKED",
+        "failureStage": "cgroup-subtree-controller-cpu",
+        "k3sCommandInvoked": false,
+        "limitation": "The scope exposed cpu in cgroup.controllers but not cgroup.subtree_control; the guard stopped without enabling a controller."
+      },
+      {
+        "scriptSha256": "3f14e91fc0c6548cbc02a37a2c1c7afd75405fca6163ee247d70289f3e1ee58e",
+        "status": "PARTIAL_GUARD_PASS_PARENT_CHECK_FAILED",
+        "innerNamespaceMountAndNetworkGuards": "PASS",
+        "k3sCommandInvoked": false,
+        "parentControllerSnapshot": "NOT_CAPTURED"
+      },
+      {
+        "scriptSha256": "ffca1ce34f8ffec6f1f0c5fefd592267d3fd749ec128996b140145c361a7ad46",
+        "status": "BLOCKED",
+        "failureStage": "scope-activation-snapshot",
+        "systemSliceSubtreeBeforeLaunch": "cpu memory pids",
+        "systemSliceSubtreeAfterScopeCreated": "cpuset cpu io memory pids",
+        "scopeSubtreeBefore": "empty",
+        "systemSliceSubtreeAfterScopeExit": "cpu io memory pids",
+        "k3sCommandInvoked": false,
+        "limitation": "systemd Delegate=yes scope activation added cpuset and io before inner isolation; the run stopped before unshare and made no direct scope controller change."
+      },
+      {
+        "scriptSha256": "ad5bc435e2956ff034ad21d9e32ae1e77da927127daafea980b017dc1fef8c20",
+        "status": "PASS",
+        "operation": "Move direct scope processes into an owned child cgroup, enable cpu/memory/pids only on the owned scope, then verify the parent snapshot is unchanged.",
+        "scopeControllersBefore": "cpu memory pids",
+        "scopeSubtreeBefore": "empty",
+        "scopeSubtreeAfter": "cpu memory pids",
+        "parentSubtreeUnchanged": true,
+        "k3sCommandInvoked": false
+      },
+      {
+        "scriptSha256": "8bc57679588e798b3f9e8a10385ce23858bb06ed2fd133cd713e3d35acce7ca1",
+        "status": "PASS",
+        "systemSliceSubtreeBeforeLaunch": "cpu memory pids",
+        "systemSliceSubtreeAfterScopeCreated": "cpu memory pids",
+        "scopeSubtreeBefore": "empty",
+        "scopeSubtreeAfter": "cpu memory pids",
+        "systemSliceUnchangedAcrossInnerRun": true,
+        "k3sCommandInvoked": false,
+        "defaultRouteGuard": "PASS"
+      },
+      {
+        "scriptSha256": "8bc57679588e798b3f9e8a10385ce23858bb06ed2fd133cd713e3d35acce7ca1",
+        "status": "FAILED_BEFORE_API_READY",
+        "executionTimeUtc": "NOT_CAPTURED",
+        "failureStage": "source-api-ready",
+        "k3sCommandInvoked": true,
+        "productionK3sServiceTouched": false,
+        "diagnostic": "No failure-only diagnostic was available in this script revision.",
+        "limitation": "The disposable source API readiness wait expired; this does not establish Server-to-Agent continuity."
+      },
+      {
+        "scriptSha256": "ab7e5178cbeda010a597688716ac421ae2c283ca676a42bfc82d00517e6ea414",
+        "status": "FAILED_BEFORE_API_READY",
+        "executionTimeUtc": "2026-10-20T13:18:07Z",
+        "failureStage": "source-api-ready",
+        "k3sCommandInvoked": true,
+        "productionK3sServiceTouched": false,
+        "diagnosticsArtifact": "/tmp/praetorium-k3s-transition.preflight-20261020-infra/failure-diagnostics.log",
+        "diagnosticsSha256": "af04788ffaf20c0aedde29a09839721527e0a27d6b82224f71c9444a56157b51",
+        "diagnosticsFileOwnerMode": "0:600",
+        "diagnostic": "Error: cgroups: cgroup mountpoint does not exist",
+        "processState": "exited",
+        "logBytes": 5184,
+        "errorLines": 1,
+        "errorCategories": [
+          "tls",
+          "cgroup",
+          "datastore",
+          "error"
+        ],
+        "interpretation": "The disposable K3s process could not discover a cgroup mountpoint in the isolated environment. Runtime Agent continuity remains NOT_CHECKED; this is not evidence of a production conversion failure."
+      }
+    ]
+  },
   "cutoverStatus": "BLOCKED",
   "productionCutoverPerformed": false,
   "runtimeKubeconfigTransientlyModifiedDuringRejectedRehearsal": true,

@@ -2,6 +2,10 @@
 
 > 2026-10-18、`main ecabf265693e395c40bfcf9be8279c1baf4740ff`を基準に資料を分類。**製品要件の正本は[初期Epic #1](https://github.com/yohn-jp/praetorium/issues/1)と最新の明示的なオーナー指示**。このディレクトリの文章は製品要件や実環境の成功を自動的に追加・保証しない。後のユーザー指示により**CI実行は許可**されている。
 
+## 将来の3VM目標アーキテクチャ（オーナー合意済み、未実装）
+
+[Management / Coordination / Execution分離](architecture/MANAGEMENT-PLANE.md)で、Management VM（ホストk3s Server + rootless Podman Quadlet）、Runtime VM（k3s Agent、追加可能）、Builder VM（独立rootless BuildKit）、Ansibleによるハイパーバイザー非依存Bootstrapを定義している。移行の停止条件とバックアップ/復旧ゲートは[Management移行計画](architecture/MANAGEMENT-PLANE-MIGRATION.md)を参照。**下記のSYSTEM/EXECUTIONや2VMデプロイ手順は現行実装の説明であり、この将来設計が本番適用されたわけではない。**
+
 ## 最初に読む3文書
 
 | 文書 | 何が分かるか | 種別 |
@@ -16,6 +20,7 @@
 
 | 目的 | 読む資料 | 解釈上の注意 |
 | --- | --- | --- |
+| Management・Coordination・Executionの3VM構成 | [Management Plane Architecture](architecture/MANAGEMENT-PLANE.md)、[Migration Gates](architecture/MANAGEMENT-PLANE-MIGRATION.md) | **2026-10-20合意済みの将来設計**。Ansible・Quadlet・k3s Server移設は未実装/未適用 |
 | アプリURL・DNS・画面状態遷移 | [Application Origins](architecture/APPLICATION-ORIGINS.md) | **2026-10-19オーナー決定に基づく目標設計**。現行の`ins-` URLや実際のDNS/TLS/Ingressは未移行 |
 | 内部通信・周期・最適化候補 | [Internal Traffic Inventory](architecture/INTERNAL-TRAFFIC.md) | 現行コードのタイマー/通知/HTTPの根拠と、固定費・状態比例・ユーザー比例の区別。実測コストは別途計測 |
 | 責務から見直す通信アーキテクチャ | [Traffic Responsibility Review](architecture/TRAFFIC-RESPONSIBILITIES.md) | Gateway／Control Plane／Build Worker／Provisioner／Runtimeの正本・起動契機・削減候補・決定保留を最初から整理 |

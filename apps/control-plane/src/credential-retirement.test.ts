@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OperationRecord } from "@praetorium/application/instances";
 import type { D1Database } from "@praetorium/persistence/d1";
 import { createProvisionerRoutes } from "./provisioner-routes.js";
-import type { OperationService } from "@praetorium/application/operations";
+import { OperationFenceConflict, type OperationService } from "@praetorium/application/operations";
 import { createCredentialRetirementBarrier } from "./credential-retirement.js";
 
 const operation = {
@@ -160,6 +160,9 @@ describe("known credential retirement barrier", () => {
         },
         async checkpoint() {
           checkpointCalls += 1;
+          // The production CAS rejects an already committed expected sequence.
+          // Only the route's exact replay may bypass another append attempt.
+          if (persisted !== null) throw new OperationFenceConflict();
           persisted = {
             ...operation,
             status: "running",
@@ -185,6 +188,11 @@ describe("known credential retirement barrier", () => {
         return barrierCalls > 2;
       },
     });
+    app.onError((error, c) => {
+      if (error instanceof OperationFenceConflict)
+        return c.json({ error: { code: error.code } }, 409);
+      throw error;
+    });
     const request = (overrides: Partial<typeof input> = {}) =>
       app.request("/checkpoint", {
         method: "POST",
@@ -207,8 +215,11 @@ describe("known credential retirement barrier", () => {
     const changedPayload = await request({
       checkpoint: { unsafe: true } as unknown as typeof input.checkpoint,
     });
-    expect(changedPayload.status).toBe(200);
+    expect(changedPayload.status).toBe(409);
+    expect(await changedPayload.json()).toEqual({ error: { code: "OPERATION_FENCE_CONFLICT" } });
     expect(checkpointCalls).toBe(2);
+    expect(barrierCalls).toBe(3);
+    expect((persisted as OperationRecord | null)?.checkpoint).toEqual(input.checkpoint);
   });
 
   it("returns the recovered operation in the provisioner client's operation envelope", async () => {

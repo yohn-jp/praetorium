@@ -150,3 +150,18 @@ One manual, coalescible hint through Management's loopback Coordination endpoint
 returned HTTP 202; that relay response requires a downstream Provisioner 2xx.
 This verifies this one manual transport path. It does not certify natural
 Control Plane/VPC notification delivery or operation completion.
+
+## Conditional cross-tab refresh failure
+
+A synthetic local test using the actual Instance Access handler reproduced a
+shared-cookie race. Separate browser tabs can submit the same one-use refresh
+credential because the pinned client's refresh promise is local to each tab.
+One rotation succeeds; the losing tab receives 401 and navigates to
+`/_platform/reauth`, which clears the shared access, refresh and CSRF cookies,
+including the winner's newly rotated cookies. The saved disposable test passed
+(1 test); its SHA-256 is
+`8fe64c2cc41d1e171b128d75f45b436b5c6a9058af2dbf40b31db9097edee9f5`.
+
+This confirms a conditional failure mode, not the cause of the owner's report.
+No authenticated production browser was used, and no authentication behavior
+was changed. The single-tab early-expiry symptom remains unresolved.

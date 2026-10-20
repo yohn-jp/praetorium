@@ -869,7 +869,13 @@ async function handleInstanceAccessRefresh(request: Request, context: GatewayCon
     origin: bound.origin,
     now,
   });
-  if (!refreshed.ok) return errorResponse(request, "UNAUTHENTICATED", "refresh credential is invalid or access has changed", context.requestId);
+  if (!refreshed.ok) {
+    console.warn(JSON.stringify({
+      event: "instance_access_refresh_rejected",
+      reason: refreshed.error.code,
+    }));
+    return errorResponse(request, "UNAUTHENTICATED", "refresh credential is invalid or access has changed", context.requestId);
+  }
   return json({ contractVersion: "instance-access/v2", ...refreshed.value });
 }
 

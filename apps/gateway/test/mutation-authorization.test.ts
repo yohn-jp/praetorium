@@ -699,7 +699,16 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(rotatedResponse.status).toBe(200);
     const rotated = await rotatedResponse.json() as typeof initial;
     expect(rotated.refreshCredential).not.toBe(initial.refreshCredential);
-    expect((await test.router.fetch(refresh(initial.refreshCredential))).status).toBe(401);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect((await test.router.fetch(refresh(initial.refreshCredential))).status).toBe(401);
+      expect(warning.mock.calls).toEqual([[JSON.stringify({
+        event: "instance_access_refresh_rejected",
+        reason: "INVALID_CREDENTIAL",
+      })]]);
+    } finally {
+      warning.mockRestore();
+    }
 
     const revoked = await test.router.fetch(new Request(`${ORIGIN}/internal/instance-access/revoke`, {
       method: "POST",

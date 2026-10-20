@@ -21,6 +21,8 @@ import type { KubernetesResource, KubernetesResourceRenderer } from "./types.js"
 
 const APPLICATION_LABEL_KEY = "app.kubernetes.io/name";
 const APPLICATION_LABEL_VALUE = "scriptorium";
+const RUNTIME_NODE_ROLE_LABEL_KEY = "praetorium.io/node-role";
+const RUNTIME_NODE_ROLE_LABEL_VALUE = "runtime";
 // Current Scriptorium Core OCI images declare USER node (UID:GID 1000:1000);
 // `/data` in that image is owned by the same identity. Keep mounted emptyDirs
 // writable for this non-root runtime while retaining explicit pod identity.
@@ -451,13 +453,38 @@ function deployment(
       strategy: { type: "Recreate" },
       selector: { matchLabels: selector(spec.instanceId) },
       template: {
-        metadata: { labels: podLabels, ...(spec.physicalInstanceId === undefined ? {} : { annotations: { "praetorium.io/physical-instance-id": spec.physicalInstanceId } }) },
+        metadata: {
+          labels: podLabels,
+          ...(spec.physicalInstanceId === undefined
+            ? {}
+            : { annotations: { "praetorium.io/physical-instance-id": spec.physicalInstanceId } }),
+        },
         spec: {
           serviceAccountName: `${name}-app`,
           ...(options.includeImagePullSecret === true
             ? { imagePullSecrets: [{ name: `${name}-image-pull` }] }
             : {}),
           automountServiceAccountToken: false,
+          // Tenant writers must only run on Agent nodes admitted by the
+          // operator's runtime role label. Missing labels leave the writer
+          // Pending instead of scheduling it onto the Management Server.
+          affinity: {
+            nodeAffinity: {
+              requiredDuringSchedulingIgnoredDuringExecution: {
+                nodeSelectorTerms: [
+                  {
+                    matchExpressions: [
+                      {
+                        key: RUNTIME_NODE_ROLE_LABEL_KEY,
+                        operator: "In",
+                        values: [RUNTIME_NODE_ROLE_LABEL_VALUE],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
           // Retain the old writer in the API census during a node partition.
           // Default 300-second eviction cannot prove its process has stopped.
           tolerations: [

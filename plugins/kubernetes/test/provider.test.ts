@@ -572,6 +572,21 @@ describe("Kubernetes runtime provider", () => {
     expect(resources.map((resource) => resource.kind)).not.toContain("IngressRoute");
     expect(resources.map((resource) => resource.kind)).not.toContain("PersistentVolumeClaim");
     expect(podSpec.automountServiceAccountToken).toBe(false);
+    expect(record(record(podSpec.affinity).nodeAffinity)).toMatchObject({
+      requiredDuringSchedulingIgnoredDuringExecution: {
+        nodeSelectorTerms: [
+          {
+            matchExpressions: [
+              {
+                key: "praetorium.io/node-role",
+                operator: "In",
+                values: ["runtime"],
+              },
+            ],
+          },
+        ],
+      },
+    });
     expect(podSpec.securityContext).toMatchObject({
       runAsNonRoot: true,
       runAsUser: 1_000,

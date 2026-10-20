@@ -1,6 +1,6 @@
 # Builder composition and cache evidence — 2026-10-20
 
-Status: **Builder provider execution PASS; Control Plane admission and Runtime acceptance are not claimed.** This record covers actual rootless BuildKit output on the Builder VM. It does not mark the full G4 release or the three-VM production goal complete.
+Status: **Builder provider execution PASS; existing no-module queue build succeeded; the distinct `publishing` provider output remains unsigned and unadmitted.** This record covers actual rootless BuildKit output on the Builder VM. It does not mark full G4 acceptance or the three-VM production goal complete.
 
 ## Producer and execution path
 
@@ -15,9 +15,11 @@ Two sequential provider calls used the exact same canonical input: `linux/amd64`
 | `operator1423923158-20261020-repeat-01` | 5.491 s | `sha256:446a6a8a6703ebe54cc2ef924f71a885eabccf35b0397be6177cebb2f776ce99` | `sha256:988f9f58a69c145d934a26ac170d9ae0d6c39bb407579e001bf9c34f9f00e613` | Passed |
 | `operator1423923158-20261020-repeat-02` | 3.597 s | Same digest | Same digest | Passed |
 
+A read-only `GET /v1/operator/releases/rel_28a87a55-f1b3-4675-b57a-d9f3cca5cb6b` later returned the existing owner canary workflow at `canary_observing`, revision 375, attempt 10, with no workflow failure. Its canary build key matches the no-module inputs above, and build `build_2f92619e-66d7-4b20-ac89-f461418ddd06` is `succeeded` at attempt 10. The private sanitized D1 readback for that queue build records its admitted artifact digest equal to the no-module candidate image digest above. This is admission evidence from the existing Build Worker queue, not from the direct provider calls in this task. The status route does not expose the existing Composition digest, so equality with the direct runs' Composition blob is not claimed. The GET made no state change.
+
 The owner-approved distinct catalog selection `publishing` was normalized with the repository's revision-bound Scriptorium catalog resolver. The resolver revision matched the catalog producer revision. It resolved only `publishing@0.1.0` (`sha256:88c436aa0b4537e221d662ddba0cd51a7fc156a15b96fa894603adff2fe7fc5c`). Its minimum requirements were 250m CPU, 256 MiB memory, and 512 MiB ephemeral storage; the selected `small` profile provides 500m CPU, 512 MiB, and 1 GiB. The canonical build key was `sha256:b7f8f205f5d0b13842a4b08f905a4b58317ee43794e6657b4d850c14bf58f275`.
 
-That solve completed in 42.033 seconds and produced candidate `sha256:db70a5adae6579dfee4bccd851a6dbe0c4a0a1b930f398d31de9ff9af172fe96` and Composition blob `sha256:0a0ca10ddb53eea6c0a63f39b36840667311894fcf9cea17425311ae393bf979`. In addition to provider receipt validation, the existing `GhcrCandidateVerifier.verifyUnsignedCandidate` read back and verified the candidate image and Composition blob with the mounted registry credentials, including the `linux/amd64` platform and resolved module. The private GHCR packages returned HTTP 401 to anonymous read probes; authenticated service verification passed. The result remains unsigned and unadmitted.
+That solve completed in 42.033 seconds and produced candidate `sha256:db70a5adae6579dfee4bccd851a6dbe0c4a0a1b930f398d31de9ff9af172fe96` and Composition blob `sha256:0a0ca10ddb53eea6c0a63f39b36840667311894fcf9cea17425311ae393bf979`. In addition to provider receipt validation, the existing `GhcrCandidateVerifier.verifyUnsignedCandidate` read back and verified the candidate image and Composition blob with the mounted registry credentials, including the `linux/amd64` platform and resolved module. The private GHCR packages returned HTTP 401 to anonymous read probes; authenticated service verification passed. This output remains unsigned and unadmitted.
 
 ## Cache and Builder resources
 
@@ -37,7 +39,9 @@ The observed 12 GiB VM allocation differs from the stated 8 GiB goal target. Thi
 
 ## Admission and diagnostic gates
 
-The two empty-input runs and the distinct `publishing` run demonstrate actual provider output and cache behavior. Control Plane signing, D1 admission, Runtime rollout, tenant health, and full G4 acceptance remain **BLOCKED / NOT_CHECKED** until the active-writer lifecycle gate is safe. These unsigned outputs are not deployable evidence by themselves.
+Tenant artifact admission has no operator signing endpoint. The supported Build Queue report route, `POST /internal/builds/:buildId/report`, accepts only a persisted build with a live matching attempt/lease and canonical input; `BuildQueueService.report` verifies the Builder statement and registry artifact before D1 admission. The Build Worker creates that signature through `VerifiedBuildAttestor` after candidate verification. Creating a fresh queue build through `POST /v1/instances/:instanceId/configuration` also commits a new configuration revision and, when desired state is running, a pending update operation. The separate release operator `POST /v1/operator/releases` admits signed producer-release manifests, then advances the canary workflow; its canary service can create a Build Queue item and later request a Runtime operation. Those mutation paths were not invoked. The internal `ConfigurationService.stage` method has no operator HTTP route and is used behind stable-rollout fences.
+
+The existing no-module canary build succeeded through the canonical Build Worker queue, and its admitted artifact image digest matches the two direct no-module candidate digests. The operator status surface omits the persisted Composition digest, so direct Composition-blob identity with that queue admission remains **NOT_CHECKED**. This task's provider outputs did not go through queue signing/reporting or write D1. The distinct `publishing` output remains unsigned and unadmitted; its queue admission, Runtime rollout, tenant health, and full G4 acceptance remain **BLOCKED / NOT_CHECKED** pending the active-writer lifecycle gate. The release operator's read-only `GET /v1/operator/releases/:releaseId` status route is the surface used above.
 
 One post-build read-only query through the operator's default kubeconfig targeted port `16443` and was refused. The parent confirmed the production API was Ready on explicit port `6443`, and the Build Worker pod was Ready there. This was a temporary operator kubeconfig mismatch, not evidence of a Runtime service outage.
 

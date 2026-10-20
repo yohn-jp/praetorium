@@ -34,7 +34,7 @@ describe("fallback entry routing", () => {
     const response = await request("/_platform/reauth");
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe(ENTRY);
-    expect(response.headers.getSetCookie()).toHaveLength(4);
+    expect(response.headers.getSetCookie()).toHaveLength(0);
     expect(gateway).not.toHaveBeenCalled();
   });
 });

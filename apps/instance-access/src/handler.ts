@@ -12,8 +12,6 @@ import {
 const ACCESS_COOKIE = "__Host-praetorium_access";
 const REFRESH_COOKIE = "__Secure-praetorium_refresh";
 const CSRF_COOKIE = "__Host-praetorium_csrf";
-const REFRESH_FAILURE_COOKIE = "__Host-praetorium_refresh_failure";
-const REFRESH_FAILURE_MAX_AGE_SECONDS = 60;
 const MAX_FORM_BYTES = 8_192;
 const RETRY_AFTER_SECONDS = 5;
 
@@ -191,79 +189,6 @@ async function csrfValue(config: InstanceAccessConfig, instance: Instance): Prom
     new TextEncoder().encode(`praetorium-instance-access-csrf:v1:${instance.appIdentity}:${instance.repositoryId}:${instance.origin}`),
   );
   return base64Url(new Uint8Array(signature));
-}
-
-async function hmacValue(config: InstanceAccessConfig, value: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(config.serviceToken),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
-  return base64Url(new Uint8Array(signature));
-}
-
-function constantTimeEqual(left: string, right: string): boolean {
-  if (left.length !== right.length) return false;
-  let mismatch = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  }
-  return mismatch === 0;
-}
-
-async function refreshFailureMarker(
-  config: InstanceAccessConfig,
-  instance: Instance,
-  credential: string,
-  now: number,
-): Promise<string> {
-  const issuedAt = Math.floor(now / 1000);
-  const credentialTag = await hmacValue(
-    config,
-    `praetorium-instance-access-refresh-failure-credential:v1:${instance.origin}:${credential}`,
-  );
-  const envelope = `v1.${issuedAt}.${credentialTag}`;
-  const envelopeTag = await hmacValue(
-    config,
-    `praetorium-instance-access-refresh-failure-envelope:v1:${instance.origin}:${envelope}`,
-  );
-  return `${envelope}.${envelopeTag}`;
-}
-
-async function refreshFailureMarkerMatches(
-  config: InstanceAccessConfig,
-  instance: Instance,
-  marker: string | null,
-  credential: string,
-  now: number,
-): Promise<boolean | null> {
-  // null means absent, malformed, expired, foreign-origin, or unauthenticated marker.
-  if (!marker || marker.length > 128) return null;
-  const match = /^v1\.(0|[1-9][0-9]{0,11})\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})$/u.exec(marker);
-  if (!match) return null;
-  const issuedAt = Number(match[1]);
-  const nowSeconds = Math.floor(now / 1000);
-  if (
-    !Number.isSafeInteger(issuedAt) ||
-    issuedAt > nowSeconds ||
-    nowSeconds - issuedAt > REFRESH_FAILURE_MAX_AGE_SECONDS
-  ) return null;
-
-  const envelope = `v1.${issuedAt}.${match[2]}`;
-  const expectedEnvelopeTag = await hmacValue(
-    config,
-    `praetorium-instance-access-refresh-failure-envelope:v1:${instance.origin}:${envelope}`,
-  );
-  if (!constantTimeEqual(match[3] ?? "", expectedEnvelopeTag)) return null;
-
-  const currentCredentialTag = await hmacValue(
-    config,
-    `praetorium-instance-access-refresh-failure-credential:v1:${instance.origin}:${credential}`,
-  );
-  return constantTimeEqual(match[2] ?? "", currentCredentialTag);
 }
 
 function cookie(name: string, value: string, path: string, maxAge: number, httpOnly: boolean): string {
@@ -491,13 +416,7 @@ export function createInstanceAccessHandler(
       });
       if (!input.success) return problem(401, "SESSION_INVALID");
       const upstream = await postGateway(config, "/internal/instance-access/refresh", input.data, fetcher);
-      if (!upstream.ok) {
-        if (upstream.status !== 401) return upstream;
-        const marker = await refreshFailureMarker(config, instance, refreshCredential, now());
-        return withCookies(upstream, [
-          cookie(REFRESH_FAILURE_COOKIE, marker, "/", REFRESH_FAILURE_MAX_AGE_SECONDS, true),
-        ]);
-      }
+      if (!upstream.ok) return upstream;
       const grant = RefreshAccessResponseSchema.safeParse(await upstream.json().catch(() => null));
       if (!grant.success) return problem(502, "INVALID_GATEWAY_RESPONSE");
       const accessSeconds = Math.floor((Date.parse(grant.data.expiresAt) - now()) / 1000);
@@ -541,28 +460,7 @@ export function createInstanceAccessHandler(
     if (request.method === "GET" && url.pathname === "/_platform/reauth") {
       if (!isHtmlNavigation(request) || request.headers.get("Sec-Fetch-Site") !== "same-origin")
         return problem(400, "REAUTH_REQUIRES_NAVIGATION");
-      const refreshCredential = readCookie(request, REFRESH_COOKIE);
-      const markerMatches = refreshCredential
-        ? await refreshFailureMarkerMatches(
-            config,
-            instance,
-            readCookie(request, REFRESH_FAILURE_COOKIE),
-            refreshCredential,
-            now(),
-          )
-        : null;
-      if (refreshCredential && markerMatches === false) {
-        // A newer refresh response has already replaced the credential that failed.
-        // Keep the shared session for any other in-flight stale refresh. The marker's
-        // original Max-Age and authenticated issuedAt bound this correlation window.
-        return noStoreRedirect("/");
-      }
-      return withCookies(fallbackEntry(instance, config), [
-        expiredCookie(ACCESS_COOKIE, "/", true),
-        expiredCookie(REFRESH_COOKIE, "/_platform", true),
-        expiredCookie(CSRF_COOKIE, "/", false),
-        expiredCookie(REFRESH_FAILURE_COOKIE, "/", true),
-      ]);
+      return fallbackEntry(instance, config);
     }
 
     if (isHtmlNavigation(request)) return fallbackEntry(instance, config, true);

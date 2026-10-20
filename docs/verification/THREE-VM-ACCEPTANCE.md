@@ -151,3 +151,31 @@ rehearsal does not retire the live writer or prove its pending workspace safe.
 The owner will perform the real authenticated browser edit/save journey once the
 service is ready. No GitHub browser authentication state is available to this
 agent. That manual gate remains NOT_CHECKED until actual results are recorded.
+
+## Measured Cloudflare windows and operator preflight
+
+Read-only analytics captured these API-returned adaptive Worker counts:
+
+| UTC window, 2026-10-20 | Control Plane requests / subrequests / errors | Gateway requests / subrequests / errors |
+| --- | --- | --- |
+| 10:52–10:57 | 4 / 13 / 0 | 1 / 0 / 0 |
+| 11:09–11:14 | 5 / 13 / 0 | 3 / 2 / 0 |
+
+These are sampled/adaptive analytics windows containing active claimed work and
+operator probes, not an empty/stopped idle acceptance run or a monthly forecast.
+D1 whole-day aggregates were 2456 reads, 275 writes, 8638 rows read and 550 rows
+written. Available Durable Object data was account-wide and includes unrelated
+services, so it cannot certify Praetorium DO cost. Raw CPU fields retain API
+units without speculative conversion. Exact queries, scope, timestamps,
+measurement overhead and limitations are saved privately at
+`/data/praetorium/production/verification/three-vm-cost-20261020.json`.
+G8 remains unproved until suitable final-cut idle/active/outage windows pass.
+
+The real three-host Ansible `ansible.builtin.ping --become` preflight succeeded
+on all hosts with `changed=false`, using isolated ansible-core 2.20.10 and each
+host's `/usr/bin/python3.14`. Canonical Cloudflare deployment `--check` with the
+private inventory and secret manifest also passed: Worker secret names,
+resources and active public-key registry are present, with no remote mutation.
+This does not check the unregistered notification Worker secrets or execute the
+still-gated D1 migration. Private inventory now includes the observed live
+canary probe principal and the provisioned Coordination VPC service ID.

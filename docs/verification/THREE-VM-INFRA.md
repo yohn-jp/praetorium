@@ -112,3 +112,22 @@ For an Agent, K3s documents setting `K3S_URL` and the matching agent token; sett
 ## Coordination transport state
 
 Coordination's agreed process interface listens on container `0.0.0.0:8789`, published only on host `127.0.0.1:8789`; it uses existing provisioner/build notification token files read-only and has no public hostname. A dedicated Cloudflare VPC Service targets that loopback listener. The remote-managed tunnel/route exists without hostname ingress, but the host connector remains inactive pending Ansible wiring and service deployment. This is transport setup evidence only; notification delivery, D1 recovery, and single-execution behavior have not been accepted here.
+
+
+## Resource follow-up — 2026-10-20 16:35 UTC
+
+A later read-only sample found no current-boot kernel OOM matches or sampled
+cgroup memory events on any of the three VMs. Management had 4.65 GiB
+`MemAvailable`, Runtime 10.41 GiB, and Builder 11.07 GiB. The actual guest RAM
+remains 5.78/11.68/11.68 GiB, differing from the 4/8/8 GiB target table; no
+allocation was changed.
+
+Runtime's Agent cgroup used 3.09 GiB, including about 2.73 GiB of file/inactive
+page cache and 209 MiB anonymous memory. BuildKit used 939 MiB, with its previous
+1.18 GiB peak below the 4 GiB service limit. These host availability values are
+consistent with the earlier rounded measurements; they do not establish a
+precise growth rate or peak-load guarantee. The tenant's individual cgroup and
+the current BuildKit cache size were **NOT_CHECKED** in this bounded follow-up;
+the prior cache measurement remains 2.74 GB. No build, GC, restart or cache
+clearing was performed. Protected sample SHA-256:
+`19935b86e909b20762f5b13e2f6d7400ebdd8804814f14a4dc2e74ec5e5454e7`.

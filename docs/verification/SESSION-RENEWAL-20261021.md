@@ -136,7 +136,7 @@ pending count, and the Provisioner repeats the identical checkpoint under its
 live lease. Exact checkpoint replay retains the existing sequence and rejects
 changed lease/payload/phase. The in-lease journal no longer reloads an older
 checkpoint from the immutable claim. Frozen install and the full check passed.
-This source change has not yet been deployed.
+The later deployment and actual results are recorded below.
 
 Independent review found a cross-version constraint: the old Provisioner
 accepts any 2xx checkpoint response and would ignore the new pending field.
@@ -165,3 +165,56 @@ including the winner's newly rotated cookies. The saved disposable test passed
 This confirms a conditional failure mode, not the cause of the owner's report.
 No authenticated production browser was used, and no authentication behavior
 was changed. The single-tab early-expiry symptom remains unresolved.
+
+## Deployed retirement and quiesce recovery — 16:42 UTC
+
+Source `33248126af14c05ea54fdcf10c2d347aabe2180f` passed frozen install,
+full check and independent review. The review's legacy-physical-identity omission
+was fixed with a regression shown to fail before the fix and pass afterward.
+The earlier publication of `bd32cbd` was cancelled; it was not deployed.
+[Publication 39458937755](https://github.com/yohn-jp/praetorium/actions/runs/39458937755)
+passed verification and all four publication jobs. Registry index, amd64
+manifest/config and SLSA source/subject digests were verified.
+
+Provisioner index:
+`sha256:0c8049ae543447176dd66e207e0d9f5fa0722a0e59d8d1aa87dbc61dfe3354bc`.
+Canonical deployment completed successfully using `Recreate`; one new Ready
+Provisioner with UID `66cc5195-5351-4a95-80f1-b4a661b6e248` was verified before
+Gateway version `7ff0b6e3-ea9d-407e-895a-4bcdbdc594c6` and Control Plane version
+`3d088d70-acee-4f33-b15a-a3c7b9815c5c` were deployed in that order. No schema
+migration was used. A normal coalescible recovery hint returned HTTP 202.
+
+The 16:38:01 D1 baseline had 96 unexpired pending credentials. At 16:42:21,
+there were 60 future-expiry revoked credentials and no pending credentials;
+30 new active credentials also had future expiry. The operation reached a
+durable `accepted` checkpoint at sequence 13 with its quiesce request cleared.
+This demonstrates multi-batch retirement and recovery into normal credential
+issuance. It does not certify stop completion.
+
+The normal lifecycle subsequently checkpointed `unknown` at sequence 14,
+16:42:53, with `producer_remote_preflight_unverified` and null quiesce request,
+receipt and writer-absence proof. The tenant remained Running/Ready. A bounded,
+fetch-only Core observation on an owned temporary workspace copy returned
+`fresh`, remote commit `c1d9c951965c225d4325dbb873b9d142ccef3c58`, pending count 0.
+The copy excluded inherited `.locks` markers; the original workspace was not
+changed. This checks the Git read path, not the running producer's persistence
+census or Writer absence. Stop/Wake and authenticated browser acceptance remain
+incomplete.
+
+## Producer census timing confirmed — 16:53 UTC
+
+A read-only probe used the current normal worker lease and a newly issued,
+scoped status credential for each request. Three adjacent GETs returned 200:
+
+1. 3,953 ms: unknown persistence, no remote revision (the in-flight placeholder).
+2. 3,194 ms: verified persistence, commit `c1d9c951965c225d4325dbb873b9d142ccef3c58`, remote observation `16:53:28.790Z`, status observation `16:53:28.819Z`.
+3. 3,937 ms: a new unknown placeholder after the completed census was discarded.
+
+All runtime identity, image, composition and module comparisons matched.
+The pinned producer discards its shared census when it finishes. If the initial
+adjacent retry budget was spent before the renewed Secret reached the Pod,
+subsequent single reads separated by five seconds could repeatedly miss the
+completed census. Commit `c78f678` resets the adjacent-read budget after each
+bounded delayed wait. Its regression, frozen install, full check and independent
+review passed. Publication/deployment verification for this follow-up is pending.
+This timing repair does not certify authenticated browser session renewal.

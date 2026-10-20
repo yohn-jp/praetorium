@@ -142,6 +142,8 @@ function sameCheckpointCurrentAssignment(
     checkpointCurrent.clusterId === claimedCurrent.clusterId &&
     checkpointCurrent.reservationId === claimedCurrent.reservationId &&
     checkpointCurrent.deployment.revisionId === claimedCurrent.deployment.revisionId &&
+    (checkpointCurrent.deployment.legacyRuntimeEpoch ?? null) ===
+      (claimedCurrent.deployment.legacyRuntimeEpoch ?? null) &&
     checkpointCurrent.deployment.imageDigest === claimedCurrent.deployment.imageDigest &&
     checkpointCurrent.deployment.compositionManifestDigest ===
       claimedCurrent.deployment.compositionManifestDigest &&

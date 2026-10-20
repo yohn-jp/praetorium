@@ -1,0 +1,27 @@
+---
+praetorium_host_role: management
+
+# Host services are independently opt-in. K3s Server preparation and startup
+# remain disabled until a verified datastore restore record is supplied.
+praetorium_management_server_prepare: false
+praetorium_management_server_start: false
+management_restore_evidence_file: ""
+
+# Coordination/tunnel values are supplied by an operator-owned inventory.
+coordination_enabled: false
+coordination_tunnel_enabled: false
+coordination_image: "ghcr.io/example/praetorium/coordination@sha256:REPLACE_WITH_64_HEX_DIGEST"
+coordination_podman_package_version: ""
+coordination_cloudflared_package_version: ""
+coordination_provisioner_notification_url: "https://notify-provisioner.instances.praetorium.yohn.jp/internal/work-available"
+coordination_build_notification_url: "https://notify-build.instances.praetorium.yohn.jp/internal/work-available"
+coordination_downstream_hosts:
+  - name: notify-provisioner.instances.praetorium.yohn.jp
+    address: 10.7.0.31
+  - name: notify-build.instances.praetorium.yohn.jp
+    address: 10.7.0.31
+coordination_provisioner_token_src: ""
+coordination_build_token_src: ""
+coordination_tunnel_token_src: ""
+coordination_tunnel_id: ""
+coordination_vpc_service_id: ""

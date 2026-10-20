@@ -1,0 +1,39 @@
+---
+- name: Validate the declared Praetorium host role and identity
+  ansible.builtin.assert:
+    that:
+      - praetorium_host_role in ['management', 'runtime', 'builder']
+      - praetorium_host_identity | string | length > 0
+      - praetorium_host_identity not in ['replace-me', 'example.invalid']
+    fail_msg: "Supply this existing Linux host's Praetorium role and identity in inventory."
+
+- name: Restrict the initial Ansible implementation to supported Ubuntu guests
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - ansible_facts.distribution_major_version in ['24', '26']
+    fail_msg: "Praetorium Ansible currently supports Ubuntu 24.04 and 26.04 hosts."
+
+- name: Install common host inspection prerequisites without upgrading the OS
+  ansible.builtin.apt:
+    name: "{{ praetorium_common_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: praetorium_common_manage_packages | bool
+
+- name: Create the Praetorium host configuration directory
+  ansible.builtin.file:
+    path: /etc/praetorium
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Record the inventory-declared Praetorium host role
+  ansible.builtin.copy:
+    dest: /etc/praetorium/host-role
+    content: "{{ praetorium_host_role }}\n"
+    owner: root
+    group: root
+    mode: "0644"

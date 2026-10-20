@@ -1,0 +1,8 @@
+---
+praetorium_host_role: ""
+praetorium_host_identity: "{{ inventory_hostname }}"
+praetorium_common_manage_packages: true
+praetorium_common_packages:
+  - ca-certificates
+  - curl
+  - jq

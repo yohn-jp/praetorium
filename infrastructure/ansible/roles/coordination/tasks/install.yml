@@ -1,0 +1,567 @@
+---
+- name: Validate immutable image, package pins, private target URLs, and secret references
+  ansible.builtin.assert:
+    that:
+      - coordination_image is match('^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[a-f0-9]{64}$')
+      - coordination_podman_package_version | length > 0
+      - coordination_provisioner_notification_url is match('^https://[^/@:]+(?::[0-9]+)?/internal/work-available$')
+      - coordination_build_notification_url is match('^https://[^/@:]+(?::[0-9]+)?/internal/work-available$')
+      - coordination_provisioner_notification_url == 'https://notify-provisioner.instances.praetorium.yohn.jp/internal/work-available'
+      - coordination_build_notification_url == 'https://notify-build.instances.praetorium.yohn.jp/internal/work-available'
+      - coordination_provisioner_token_src | length > 0
+      - coordination_build_token_src | length > 0
+      - coordination_downstream_hosts | map(attribute='name') | list | sort == ['notify-build.instances.praetorium.yohn.jp', 'notify-provisioner.instances.praetorium.yohn.jp']
+      - coordination_downstream_hosts | selectattr('address', 'equalto', '10.7.0.31') | list | length == 2
+      - coordination_service_uid | int > 999
+      - coordination_container_uid | int == 1000
+      - coordination_container_gid | int == 1000
+      - coordination_memory_limit is match('^[1-9][0-9]*[kKmMgGtT]?[bB]?$')
+      - coordination_cpu_limit is match('^[0-9]+(\.[0-9]+)?$')
+      - coordination_pids_limit | int > 0
+    fail_msg: "Coordination requires an immutable image digest, pinned packages, private HTTPS targets, and protected local credential paths."
+
+- name: Validate tunnel identity and token source when the private connector is enabled
+  ansible.builtin.assert:
+    that:
+      - coordination_cloudflared_package_version | length > 0
+      - coordination_tunnel_id is match('^[0-9a-fA-F-]{36}$')
+      - coordination_vpc_service_id is match('^[0-9a-fA-F-]{36}$')
+      - coordination_tunnel_token_src | length > 0
+      - coordination_tunnel_origin == 'http://127.0.0.1:8789'
+  when: coordination_tunnel_enabled | bool
+
+- name: Require unified cgroup v2 for the rootless service limits
+  ansible.builtin.stat:
+    path: /sys/fs/cgroup/cgroup.controllers
+  register: coordination_cgroup_v2
+
+- name: Refuse to run without cgroup v2
+  ansible.builtin.assert:
+    that:
+      - coordination_cgroup_v2.stat.exists
+      - coordination_cgroup_v2.stat.isreg
+    fail_msg: "The Coordination Plane requires cgroup v2 for its resource limits."
+
+- name: Install the pinned Podman and rootless-user prerequisites
+  ansible.builtin.apt:
+    name:
+      - "podman={{ coordination_podman_package_version }}"
+      - dbus-user-session
+      - uidmap
+      - slirp4netns
+      - fuse-overlayfs
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    install_recommends: true
+
+- name: Read the installed Podman version
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - --show
+      - --showformat=${Version}
+      - podman
+  register: coordination_podman_version_result
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Ensure Podman matches the pinned package version
+  ansible.builtin.assert:
+    that:
+      - coordination_podman_version_result.stdout == coordination_podman_package_version
+    fail_msg: "Installed Podman does not match coordination_podman_package_version."
+  when: not ansible_check_mode
+
+- name: Ensure the dedicated Coordination group exists
+  ansible.builtin.group:
+    name: "{{ coordination_service_group }}"
+    system: true
+    state: present
+
+- name: Refuse to reuse another account's fixed Coordination UID
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ coordination_service_uid }}"
+  register: coordination_uid_lookup
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Check that the fixed Coordination UID is unused or already owned by the service account
+  ansible.builtin.assert:
+    that:
+      - (coordination_uid_lookup.ansible_facts.getent_passwd | default({}))[coordination_service_uid | string] is not defined or
+        (coordination_uid_lookup.ansible_facts.getent_passwd | default({}))[coordination_service_uid | string][0] == coordination_service_user
+    fail_msg: "The chosen Coordination UID is already assigned to another host account."
+
+- name: Create the dedicated non-login Coordination account
+  ansible.builtin.user:
+    name: "{{ coordination_service_user }}"
+    uid: "{{ coordination_service_uid }}"
+    group: "{{ coordination_service_group }}"
+    home: "{{ coordination_service_home }}"
+    create_home: true
+    system: true
+    shell: /usr/sbin/nologin
+    password: "!"
+    update_password: on_create
+    state: present
+
+- name: Ensure the Coordination home is private
+  ansible.builtin.file:
+    path: "{{ coordination_service_home }}"
+    state: directory
+    owner: "{{ coordination_service_user }}"
+    group: "{{ coordination_service_group }}"
+    mode: "0700"
+
+- name: Read subordinate UID and GID maps
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop:
+    - /etc/subuid
+    - /etc/subgid
+  register: coordination_subid_maps
+
+- name: Validate subordinate ID ranges without changing existing mappings
+  ansible.builtin.assert:
+    that:
+      - coordination_subid_start | int >= 65536
+      - coordination_subid_size | int >= 65536
+    fail_msg: "Coordination requires a reserved subordinate ID range of at least 65536 IDs."
+
+- name: Parse existing subordinate UID and GID assignments
+  ansible.builtin.set_fact:
+    coordination_existing_subid_ranges: >-
+      {{ coordination_subid_maps.results
+         | map(attribute='content')
+         | map('b64decode')
+         | map('regex_findall', '(?m)^.+$')
+         | flatten
+         | map('split', ':')
+         | list }}
+
+- name: Refuse malformed or overlapping subordinate UID and GID assignments
+  ansible.builtin.assert:
+    that:
+      - item | length == 3 and item[1] is match('^[0-9]+$') and item[2] is match('^[0-9]+$') and
+        ((item[0] == coordination_service_user and item[1] | int == coordination_subid_start | int and item[2] | int == coordination_subid_size | int) or
+         (item[0] != coordination_service_user and
+          ((coordination_subid_start | int + coordination_subid_size | int <= item[1] | int) or
+           (coordination_subid_start | int >= item[1] | int + item[2] | int))))
+    fail_msg: "Coordination subordinate UID/GID ranges overlap another account or conflict with an existing service-account range."
+  loop: "{{ coordination_existing_subid_ranges }}"
+  loop_control:
+    label: "subordinate ID range entry"
+
+- name: Add the Coordination subordinate UID and GID ranges when absent
+  ansible.builtin.lineinfile:
+    path: "{{ item.path }}"
+    line: "{{ coordination_service_user }}:{{ coordination_subid_start }}:{{ coordination_subid_size }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    state: present
+    validate: "awk -F: 'NF != 3 { exit 1 }' %s"
+  loop:
+    - path: /etc/subuid
+    - path: /etc/subgid
+
+- name: Read the Coordination account linger state
+  ansible.builtin.command:
+    argv:
+      - loginctl
+      - show-user
+      - --property=Linger
+      - --value
+      - "{{ coordination_service_user }}"
+  register: coordination_linger_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Ensure lingering starts the rootless user manager at boot
+  ansible.builtin.command:
+    argv:
+      - loginctl
+      - enable-linger
+      - "{{ coordination_service_user }}"
+  register: coordination_linger_enable
+  changed_when: coordination_linger_enable.rc == 0
+  when:
+    - coordination_linger_state.stdout | default('') != 'yes'
+    - not ansible_check_mode
+
+- name: Create shared credential parent without granting write access
+  ansible.builtin.file:
+    path: /var/lib/praetorium/credentials
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create the Coordination-only credential directory
+  ansible.builtin.file:
+    path: /var/lib/praetorium/credentials/coordination
+    state: directory
+    owner: "{{ coordination_service_user }}"
+    group: "{{ coordination_service_group }}"
+    mode: "0700"
+
+- name: Inspect the existing local provisioner token source
+  ansible.builtin.stat:
+    path: "{{ coordination_provisioner_token_src }}"
+    follow: false
+    checksum_algorithm: sha256
+  delegate_to: localhost
+  become: false
+  register: coordination_provisioner_source
+  no_log: true
+
+- name: Inspect the existing local build-worker token source
+  ansible.builtin.stat:
+    path: "{{ coordination_build_token_src }}"
+    follow: false
+    checksum_algorithm: sha256
+  delegate_to: localhost
+  become: false
+  register: coordination_build_source
+  no_log: true
+
+- name: Require protected regular files for the existing notification credentials
+  ansible.builtin.assert:
+    that:
+      - coordination_provisioner_source.stat.isreg
+      - coordination_provisioner_source.stat.mode == '0600'
+      - coordination_build_source.stat.isreg
+      - coordination_build_source.stat.mode == '0600'
+    fail_msg: "Notification token sources must be regular, local 0600 files."
+  no_log: true
+
+- name: Inspect existing host credential targets
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    checksum_algorithm: sha256
+  loop:
+    - "{{ coordination_provisioner_token_path }}"
+    - "{{ coordination_build_token_path }}"
+  register: coordination_notification_targets
+  no_log: true
+
+- name: Refuse implicit notification-token replacement
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or
+        (item.stat.isreg and item.stat.mode == '0600' and item.stat.checksum == source_checksum and
+         item.stat.pw_name == coordination_service_user and item.stat.gr_name == coordination_service_group)
+    fail_msg: "An existing Coordination token differs from its protected source; token rotation is not implicit."
+  loop: "{{ coordination_notification_targets.results }}"
+  loop_control:
+    index_var: coordination_target_index
+  vars:
+    source_checksum: "{{ [coordination_provisioner_source.stat.checksum, coordination_build_source.stat.checksum][coordination_target_index] }}"
+  no_log: true
+
+- name: Install only missing notification credentials
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ coordination_service_user }}"
+    group: "{{ coordination_service_group }}"
+    mode: "0600"
+    force: false
+  loop:
+    - src: "{{ coordination_provisioner_token_src }}"
+      dest: "{{ coordination_provisioner_token_path }}"
+    - src: "{{ coordination_build_token_src }}"
+      dest: "{{ coordination_build_token_path }}"
+  no_log: true
+
+- name: Install the official Cloudflare APT signing key for the stable cloudflared repository
+  ansible.builtin.get_url:
+    url: "{{ coordination_cloudflare_key_url }}"
+    dest: /usr/share/keyrings/cloudflare-main.gpg
+    owner: root
+    group: root
+    mode: "0644"
+    validate_certs: true
+  when: coordination_tunnel_enabled | bool
+
+- name: Configure the official stable Cloudflare Tunnel package repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main"
+    filename: cloudflared
+    state: present
+    update_cache: true
+  when: coordination_tunnel_enabled | bool
+
+- name: Install the pinned cloudflared package
+  ansible.builtin.apt:
+    name: "cloudflared={{ coordination_cloudflared_package_version }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: coordination_tunnel_enabled | bool
+
+- name: Ensure cloudflared matches the pinned package version
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - --show
+      - --showformat=${Version}
+      - cloudflared
+  register: coordination_cloudflared_package_result
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: coordination_tunnel_enabled | bool
+
+- name: Ensure cloudflared package matches the pinned version
+  ansible.builtin.assert:
+    that:
+      - coordination_cloudflared_package_result.stdout == coordination_cloudflared_package_version
+    fail_msg: "Installed cloudflared does not match coordination_cloudflared_package_version."
+  when:
+    - coordination_tunnel_enabled | bool
+    - not ansible_check_mode
+
+- name: Create the dedicated cloudflared system account
+  ansible.builtin.user:
+    name: cloudflared
+    system: true
+    home: /var/lib/cloudflared
+    create_home: true
+    shell: /usr/sbin/nologin
+    password: "!"
+    update_password: on_create
+    state: present
+  when: coordination_tunnel_enabled | bool
+
+- name: Inspect the protected local tunnel token source
+  ansible.builtin.stat:
+    path: "{{ coordination_tunnel_token_src }}"
+    follow: false
+    checksum_algorithm: sha256
+  delegate_to: localhost
+  become: false
+  register: coordination_tunnel_source
+  no_log: true
+  when: coordination_tunnel_enabled | bool
+
+- name: Require a protected regular tunnel-token source
+  ansible.builtin.assert:
+    that:
+      - coordination_tunnel_source.stat.isreg
+      - coordination_tunnel_source.stat.mode == '0600'
+    fail_msg: "The tunnel token source must be a regular local 0600 file."
+  no_log: true
+  when: coordination_tunnel_enabled | bool
+
+- name: Inspect the installed host tunnel token
+  ansible.builtin.stat:
+    path: "{{ coordination_tunnel_token_path }}"
+    follow: false
+    checksum_algorithm: sha256
+  register: coordination_tunnel_target
+  no_log: true
+  when: coordination_tunnel_enabled | bool
+
+- name: Refuse implicit Cloudflare Tunnel token replacement
+  ansible.builtin.assert:
+    that:
+      - not coordination_tunnel_target.stat.exists or
+        (coordination_tunnel_target.stat.isreg and coordination_tunnel_target.stat.mode == '0600' and
+         coordination_tunnel_target.stat.checksum == coordination_tunnel_source.stat.checksum and
+         coordination_tunnel_target.stat.pw_name == 'cloudflared' and coordination_tunnel_target.stat.gr_name == 'cloudflared')
+    fail_msg: "The installed tunnel token differs from its protected source; token rotation is not implicit."
+  no_log: true
+  when: coordination_tunnel_enabled | bool
+
+- name: Install only a missing remote-managed Tunnel token
+  ansible.builtin.copy:
+    src: "{{ coordination_tunnel_token_src }}"
+    dest: "{{ coordination_tunnel_token_path }}"
+    owner: cloudflared
+    group: cloudflared
+    mode: "0600"
+    force: false
+  no_log: true
+  when: coordination_tunnel_enabled | bool
+
+- name: Wait for the lingering Coordination user manager
+  ansible.builtin.wait_for:
+    path: "/run/user/{{ coordination_service_uid }}/bus"
+    state: present
+    timeout: 30
+  when: not ansible_check_mode
+
+- name: Create the rootless Quadlet user directory
+  ansible.builtin.file:
+    path: "{{ coordination_user_unit_dir }}/{{ coordination_service_uid }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Inspect Coordination Quadlet ownership marker and existing unit
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "{{ coordination_quadlet_marker_path }}"
+    - "{{ coordination_user_unit_dir }}/{{ coordination_service_uid }}/praetorium-coordination.container"
+  register: coordination_quadlet_ownership
+
+- name: Refuse to replace an unowned Coordination Quadlet
+  ansible.builtin.assert:
+    that:
+      - not coordination_quadlet_ownership.results[1].stat.exists or coordination_quadlet_ownership.results[0].stat.exists
+    fail_msg: "An existing Coordination Quadlet has no Praetorium ownership marker; inspect it before adoption."
+
+- name: Check whether the exact Coordination image digest is already in rootless storage
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - --user
+      - "{{ coordination_service_user }}"
+      - --
+      - podman
+      - image
+      - exists
+      - "{{ coordination_image }}"
+  register: coordination_image_exists
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Pull the exact Coordination image digest into rootless storage
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - --user
+      - "{{ coordination_service_user }}"
+      - --
+      - podman
+      - pull
+      - "{{ coordination_image }}"
+  register: coordination_image_pull
+  changed_when: coordination_image_pull.rc == 0
+  no_log: true
+  when:
+    - coordination_image_exists.rc != 0
+    - not ansible_check_mode
+
+- name: Install the digest-pinned Coordination Quadlet
+  ansible.builtin.template:
+    src: praetorium-coordination.container.j2
+    dest: "{{ coordination_user_unit_dir }}/{{ coordination_service_uid }}/praetorium-coordination.container"
+    owner: root
+    group: root
+    mode: "0644"
+    force: "{{ coordination_quadlet_ownership.results[0].stat.exists }}"
+
+- name: Record ownership of the Coordination Quadlet
+  ansible.builtin.copy:
+    dest: "{{ coordination_quadlet_marker_path }}"
+    content: "{{ {'unitPath': coordination_user_unit_dir + '/' + (coordination_service_uid | string) + '/praetorium-coordination.container', 'image': coordination_image} | to_nice_json }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+
+- name: Inspect Tunnel system unit ownership marker and existing unit
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "{{ coordination_tunnel_unit_marker_path }}"
+    - "/etc/systemd/system/{{ coordination_cloudflared_unit }}"
+  register: coordination_tunnel_unit_ownership
+  when: coordination_tunnel_enabled | bool
+
+- name: Refuse to replace an unowned Cloudflare Tunnel system unit
+  ansible.builtin.assert:
+    that:
+      - not coordination_tunnel_unit_ownership.results[1].stat.exists or coordination_tunnel_unit_ownership.results[0].stat.exists
+    fail_msg: "An existing Cloudflare Tunnel system unit has no Praetorium ownership marker; inspect it before adoption."
+  when: coordination_tunnel_enabled | bool
+
+- name: Install the isolated remote-managed Tunnel systemd unit
+  ansible.builtin.template:
+    src: praetorium-coordination-tunnel.service.j2
+    dest: /etc/systemd/system/{{ coordination_cloudflared_unit }}
+    owner: root
+    group: root
+    mode: "0644"
+    force: "{{ coordination_tunnel_unit_ownership.results[0].stat.exists }}"
+  when: coordination_tunnel_enabled | bool
+
+- name: Record ownership of the Cloudflare Tunnel system unit
+  ansible.builtin.copy:
+    dest: "{{ coordination_tunnel_unit_marker_path }}"
+    content: "{{ {'unitPath': '/etc/systemd/system/' + coordination_cloudflared_unit, 'tunnelId': coordination_tunnel_id, 'vpcServiceId': coordination_vpc_service_id} | to_nice_json }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+  when: coordination_tunnel_enabled | bool
+
+- name: Reload and start the rootless Coordination service
+  ansible.builtin.systemd_service:
+    name: praetorium-coordination.service
+    scope: user
+    daemon_reload: true
+    enabled: true
+    state: started
+  become_user: "{{ coordination_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ coordination_service_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ coordination_service_uid }}/bus"
+  when: not ansible_check_mode
+
+- name: Start the isolated Cloudflare Tunnel connector
+  ansible.builtin.systemd_service:
+    name: "{{ coordination_cloudflared_unit }}"
+    daemon_reload: true
+    enabled: true
+    state: started
+  when:
+    - coordination_tunnel_enabled | bool
+    - not ansible_check_mode
+
+- name: Check Notification token readability as container UID 1000
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - --user
+      - "{{ coordination_service_user }}"
+      - --
+      - podman
+      - exec
+      - --user
+      - "{{ coordination_container_uid }}:{{ coordination_container_gid }}"
+      - praetorium-coordination
+      - node
+      - -e
+      - "for (const p of process.argv.slice(1)) { require('node:fs').accessSync(p, require('node:fs').constants.R_OK) }"
+      - "{{ coordination_provisioner_token_container_path }}"
+      - "{{ coordination_build_token_container_path }}"
+  changed_when: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Wait for Coordination readiness on the private loopback listener
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8789/readyz
+    method: GET
+    status_code: 200
+    return_content: false
+  register: coordination_ready
+  retries: 20
+  delay: 3
+  until: coordination_ready.status == 200
+  when: not ansible_check_mode

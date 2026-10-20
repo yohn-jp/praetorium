@@ -1,0 +1,7 @@
+---
+- name: Configure Management host prerequisites and independent services
+  hosts: management
+  become: true
+  roles:
+    - common
+    - coordination

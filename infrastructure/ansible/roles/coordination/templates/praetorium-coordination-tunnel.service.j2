@@ -1,0 +1,34 @@
+[Unit]
+Description=Praetorium private Coordination VPC connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloudflared
+Group=cloudflared
+ExecStartPre=/usr/bin/test -r {{ coordination_tunnel_token_path }}
+ExecStart={{ coordination_cloudflared_binary }} tunnel --no-autoupdate run --token-file {{ coordination_tunnel_token_path }}
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=0
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths={{ coordination_tunnel_token_path }}
+StateDirectory=cloudflared
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,39 @@
+[Unit]
+Description=Praetorium Coordination notification relay
+
+[Container]
+ContainerName=praetorium-coordination
+Image={{ coordination_image }}
+Pull=never
+Network=bridge
+User={{ coordination_container_uid }}:{{ coordination_container_gid }}
+UserNS=keep-id:uid={{ coordination_container_uid }},gid={{ coordination_container_gid }}
+PublishPort=127.0.0.1:8789:8789/tcp
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=all
+Memory={{ coordination_memory_limit }}
+PodmanArgs=--cpus={{ coordination_cpu_limit }} --pids-limit={{ coordination_pids_limit }}
+HealthCmd=node -e "fetch('http://127.0.0.1:8789/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=15s
+Environment=PRAETORIUM_COORDINATION_HOST=0.0.0.0
+Environment=PRAETORIUM_COORDINATION_PORT=8789
+Environment=PRAETORIUM_COORDINATION_PROVISIONER_NOTIFICATION_URL={{ coordination_provisioner_notification_url }}
+Environment=PRAETORIUM_COORDINATION_PROVISIONER_NOTIFICATION_TOKEN_FILE={{ coordination_provisioner_token_container_path }}
+Environment=PRAETORIUM_COORDINATION_BUILD_NOTIFICATION_URL={{ coordination_build_notification_url }}
+Environment=PRAETORIUM_COORDINATION_BUILD_NOTIFICATION_TOKEN_FILE={{ coordination_build_token_container_path }}
+{% for target in coordination_downstream_hosts %}
+AddHost={{ target.name }}:{{ target.address }}
+{% endfor %}
+Volume={{ coordination_provisioner_token_path }}:{{ coordination_provisioner_token_container_path }}:ro
+Volume={{ coordination_build_token_path }}:{{ coordination_build_token_container_path }}:ro
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=0
+
+[Install]
+WantedBy=default.target

@@ -21,7 +21,11 @@ import {
   deploymentFromResolvedRuntime,
   type LifecycleProvisionerExecutorOptions,
 } from "./lifecycle-executor.js";
-import type { ProvisionerIdleCandidate, ProvisionerOperationService } from "./operation-client.js";
+import {
+  OperationServiceHttpError,
+  type ProvisionerIdleCandidate,
+  type ProvisionerOperationService,
+} from "./operation-client.js";
 import type { ProvisionerMetrics } from "./metrics.js";
 import { KubernetesLifecycleRuntimeAdapter } from "./kubernetes-lifecycle-adapter.js";
 import {
@@ -989,7 +993,7 @@ export class ProvisionerIdleController {
     } catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
       this.metrics?.increment("idle_observation_unavailable");
-      this.logger?.warn("idle_observation_unavailable", { code: errorCode(error) });
+      this.logger?.warn("idle_observation_unavailable", idleObservationErrorFields(error));
       this.scheduleRetry(tracked);
       if (healthTrigger !== undefined) this.scheduleHealthProbeRetry(tracked, healthTrigger);
     }
@@ -1260,4 +1264,17 @@ function errorCode(error: unknown): string {
     return error.message;
   }
   return error instanceof Error ? error.name : "idle_scan_error";
+}
+
+function idleObservationErrorFields(error: unknown): Readonly<Record<string, string | number>> {
+  if (!(error instanceof OperationServiceHttpError)) return { code: errorCode(error) };
+  const fields: { code: string; status?: number } = {
+    code: /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(error.code)
+      ? error.code
+      : "OperationServiceHttpError",
+  };
+  if (Number.isSafeInteger(error.status) && error.status >= 0 && error.status <= 599) {
+    fields.status = error.status;
+  }
+  return fields;
 }

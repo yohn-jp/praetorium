@@ -21,9 +21,11 @@ import type {
   ProvisionerOperationService,
   ProvisionerResolvedRuntime,
 } from "./operation-client.js";
+import { OperationServiceHttpError } from "./operation-client.js";
 import { ProvisionerIdleController, type IdleRuntimeInspector } from "./idle-controller.js";
 import { IdleDeadlineJournal } from "./idle-deadline-journal.js";
 import type { RuntimeAuthAcceptanceProbe } from "./scriptorium-control-client.js";
+import type { ProvisionerLogger } from "./worker.js";
 
 const now = Date.parse("2026-10-17T12:00:00.000Z");
 const instanceId = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -283,6 +285,7 @@ function harness(
       readonly healthOperationId: string | null;
     }>;
     readonly activityOffsetMs?: number;
+    readonly logger?: ProvisionerLogger;
     readonly candidates?: () => readonly ProvisionerIdleCandidate[];
     readonly readCandidate?: (instanceId: string) => ProvisionerIdleCandidate | null;
     readonly listCandidatePage?: (cursor: string | null) => Promise<{
@@ -398,6 +401,7 @@ function harness(
     now: () => currentNow,
     idleTimeoutMs: 15 * 60_000,
     ...(options.authProbe === undefined ? {} : { authProbe: options.authProbe }),
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
     ...(options.journalConfigured === false ? {} : { idleJournalPath: journalPath }),
     createInspector: () => inspector,
     fetch: async (_input, init) => {
@@ -479,6 +483,38 @@ describe("ProvisionerIdleController", () => {
       repositoryId,
       expectedGeneration: 7,
       expectedRuntimeEpoch: 9,
+    });
+  });
+
+  it("logs only the validated Operation Service code and bounded status on idle failure", async () => {
+    const logger: ProvisionerLogger = { info: vi.fn(), warn: vi.fn() };
+    const h = harness({ logger });
+    await persistDueDeadline(h);
+    h.createIdleStop.mockRejectedValue(
+      new OperationServiceHttpError("idle_stop_fence_conflict", 409, false),
+    );
+
+    await h.controller.scanOnce();
+
+    expect(h.createIdleStop).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith("idle_observation_unavailable", {
+      code: "idle_stop_fence_conflict",
+      status: 409,
+    });
+  });
+
+  it("redacts unsafe Operation Service error codes and statuses from idle logs", async () => {
+    const logger: ProvisionerLogger = { info: vi.fn(), warn: vi.fn() };
+    const h = harness({ logger });
+    await persistDueDeadline(h);
+    h.createIdleStop.mockRejectedValue(
+      new OperationServiceHttpError("bad code with secret", 600, false),
+    );
+
+    await h.controller.scanOnce();
+
+    expect(logger.warn).toHaveBeenCalledWith("idle_observation_unavailable", {
+      code: "OperationServiceHttpError",
     });
   });
 

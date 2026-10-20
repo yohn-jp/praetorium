@@ -317,3 +317,89 @@ passed independent read-only review. On combined source `755b167`, root ran
 `PATH=/tmp/praetorium-pnpm11-bin:$PATH corepack pnpm@11.18.0 check`; both passed.
 Deployment is pending. These checks do not certify authenticated hosted refresh
 or resolution of the owner's symptom.
+
+
+## Production deployment and sustained renewal — 17:49–18:04 UTC
+
+[Publication 39468579199](https://github.com/yohn-jp/praetorium/actions/runs/39468579199)
+passed verification and all four publication jobs at exact source
+`fb81de593f8892f4d20f223a42860cbbe91128d1`. Registry index, amd64 manifest/config,
+source-tag consistency and SLSA source/subject were verified for both services:
+
+- Provisioner index: `sha256:bee35f2f63e6b4b98d02cc41c9a793203d311e43e377ae72247fd40608cb7848`.
+- Instance Access index: `sha256:9e8b5acc836cb99cad78ef28762545de6fbbff134698e72af4f4d38eb32f180d`.
+
+Control Plane was deployed first as version
+`a775718b-cd97-4d98-a394-8e88ea58267a`: the previous Provisioner safely ignores
+stopped candidates, while the new Provisioner needs the new candidate reader
+at startup. The canonical K3s deployment then completed successfully, changing
+only the two service image pins. Provisioner Pod UID
+`7ffcf30c-108a-459a-8300-9c085c62d747` and Instance Access Pod UID
+`57f7762c-e53e-4e35-a0af-8e1d6500b17f` were Ready with no restarts. The tenant
+retained its original Pod UID and restart count zero.
+
+Normal Provisioner startup renewed the retained writer's identity without a
+manual issuance. At `17:49:30`, the mounted epoch-3 proof expired at `17:53:40`.
+The next proof expired at `17:57:10`; its projection changed at `17:53:03.301`,
+before the previous proof expired. At `18:04:00`, the normal renewal counter was
+5, with no refresh-failure metric present, and the mounted proof remained valid
+until `18:07:40`. This demonstrates renewal across multiple five-minute proof
+lifetimes while the desired state remains stopped and the writer remains Ready.
+
+A public same-origin HTML navigation to `/_platform/reauth` returned 302 to the
+canonical Gateway entry with TLS verification result 0 and no `Set-Cookie`.
+Authenticated Chrome refresh remains **NOT_CHECKED**; the owner was asked to
+retest login, wait over a minute, then edit/save after the actual deployment.
+The conditional race repair alone does not prove the original browser symptom
+is resolved.
+
+## Current writer metadata maintenance and rollback evidence
+
+The current writer was repaired without changing its immutable image or source.
+The optional `origin/HEAD` symbolic alias pointed to the already retained
+`origin/main`; removing that alias changes no commit or worktree content
+([Git remote documentation](https://git-scm.com/docs/git-remote)). The operation
+used the exact pinned CoreStore's real cross-process project lock. Lock
+contention or a stale lock would abort; no existing lock was evicted.
+
+The complete project-workspace backup contains 27 files / 64 entries / 18,817
+bytes, excluding the live lock directory. The usage directory was independently
+verified to be `/data/history`, outside this workspace. The persisted backup's
+content manifest is
+`49f227c826189bf1a2b1259991ef80141beb71242bea8c932652ac6ac5da1bee`.
+Every file's bytes were verified and restored in an owned local scratch before
+maintenance.
+
+The first exact-ref guard aborted before mutation because the initial inventory
+had omitted Core's checkpoint/reconciled refs. Both actually pointed to the
+expected remote commit. The corrected guard requires exactly those five refs
+and pins all relevant heads to that commit. A second attempt deleted only the
+alias/reflog but failed its postcheck when the container's Git also pruned their
+empty parent directories. The scratch preflight had checked file bytes and refs
+but missed directory presence. That attempt was rolled back under the real
+Core lock: the original manifest, including all file bytes, modes, uid/gid and
+directories, was restored exactly. It remains a failed attempt in the record.
+
+Independent review and five comparison cases then verified a narrow allowance
+for empty ancestor directories containing only the two allowed metadata files.
+The final guarded attempt succeeded. It removed only the redundant alias, its
+own reflog and their two empty parent directories. HEAD, origin/main, both Core
+heads, index, worktree and every other file remained unchanged. No D1 lifecycle
+row was edited and no runtime was force-stopped.
+
+A subsequent fetch-only census using the pinned Core on an owned scratch copy
+returned fresh remote commit `c1d9c951965c225d4325dbb873b9d142ccef3c58`, zero
+pending checkpoints, zero proposals, and `localWorkspaceDirty: false`. This is
+copy-based diagnostic evidence; it is not a live quiesce receipt or writer
+absence proof. At `18:04:22`, read-only D1 inspection still showed desired
+stopped generation 5, observed Ready generation 4/epoch 3, zero active
+operations, and the original terminal blocked stop. A newly authorized normal
+retry/wake and actual stop/reconnect remain pending. Idle traffic acceptance
+has not been measured on a stopped instance.
+
+The permanent producer correction is prepared separately as a one-line trim
+plus symbolic-HEAD regression patch. It was checked and applied only in an
+owned disposable fixture containing the exact pinned source files. The
+separately coordinated Scriptorium checkout was not changed; its build/tests,
+publication and admission for a corrected producer remain **NOT_CHECKED**.
+Fresh clones still require that source correction in a future admitted producer.

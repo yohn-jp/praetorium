@@ -99,6 +99,34 @@ export function deploymentFromResolvedRuntime(
   };
 }
 
+const observedIdentityRefreshBarrierPhases = new Set([
+  "quiescing-old",
+  "old-quiesced",
+  "stopping-old",
+  "old-writer-absent",
+  "starting-target",
+  "target-ready",
+  "route-activated",
+  "complete",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mayRefreshObservedIdentityBeforeRetirement(claim: ClaimedProvisionerOperation): boolean {
+  if (claim.runtimeContext.current === null) return false;
+  const checkpoint = claim.operation.checkpoint;
+  const lifecycle = checkpoint !== null && isRecord(checkpoint.lifecycle)
+    ? checkpoint.lifecycle
+    : null;
+  const phase = typeof lifecycle?.phase === "string" ? lifecycle.phase : claim.operation.phase;
+  return (
+    !observedIdentityRefreshBarrierPhases.has(phase) &&
+    (lifecycle === null || lifecycle.quiesceRequest === null || lifecycle.quiesceRequest === undefined)
+  );
+}
+
 export interface LifecycleProvisionerExecutorOptions {
   readonly operations: ProvisionerOperationService;
   readonly workerId: string;
@@ -230,6 +258,19 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
       now: this.now,
     });
     try {
+      // The old writer can need a fresh GitHub read proof before status and
+      // quiesce can obtain their remote persistence observation. Renew only
+      // from the exact claimed current assignment, and before the durable
+      // quiesce checkpoint closes observed-writer identity authority.
+      if (currentAssignment !== null && mayRefreshObservedIdentityBeforeRetirement(claim)) {
+        try {
+          await runtime.refreshRuntimeIdentity(currentAssignment, context.assertLease, context.signal);
+        } catch {
+          // Renewal is best-effort here. The lifecycle's fresh producer status
+          // check remains the safety gate and will block retirement if remote
+          // confirmation is still unavailable.
+        }
+      }
       return await service.execute(operation.id, context);
     } finally {
       await runtime.close();

@@ -25,8 +25,11 @@ The worktree was clean. GitHub Epic #1 and Issue #24 were read live.
   Gateway HTTPS answered with a valid TLS connection; HEAD `/` returned 404.
 - Live Cloudflare Worker settings were read through the API. Both Gateway
   `GATEWAY_INSTANCE_HOSTNAME_SUFFIX` and Control Plane `INSTANCE_HOST_SUFFIX`
-  still use `instances.praetorium.yohn.jp`, contradicting the required public
-  `scriptorium.yohn.jp` suffix. No work-notification endpoints were configured
+  use the physical-runtime suffix `instances.praetorium.yohn.jp`; this is
+  deliberately separate from the public `scriptorium.yohn.jp` namespace and
+  must remain intact. Live Certificate/fallback/Ready routes still omit the
+  public namespace; those resources require the already implemented application-
+  origin deployment. No work-notification endpoints were configured
   in the inspected Control Plane settings. Settings were backed up privately.
 - Protected operator inventory and eleven-role credential manifest exist at the
   established `/data/praetorium/production/` location on the control workstation.

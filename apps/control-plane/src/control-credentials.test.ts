@@ -354,7 +354,11 @@ describe("Control Plane runtime-control credential issuer", () => {
         hasActiveOperation: async () => stale.activeOperation ?? false,
       });
       await expect(
-        issuer.issueObservation(validObservationInput(stale.input)),
+        issuer.issueObservation(validObservationInput({
+          expectedGeneration: 2,
+          runtimeEpoch: 1,
+          ...stale.input,
+        })),
       ).rejects.toMatchObject({ code: "CONTROL_CREDENTIAL_FENCED" });
     }
   });

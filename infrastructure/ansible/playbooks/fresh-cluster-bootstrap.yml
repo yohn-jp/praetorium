@@ -384,3 +384,34 @@
         that:
           - (fresh_runtime_node.stdout | from_json).metadata.labels['praetorium.io/cluster-id'] == fresh_k3s_cluster_id
           - (fresh_runtime_node.stdout | from_json).metadata.labels['praetorium.io/node-role'] == 'runtime'
+
+    - name: Remove the retired Runtime K3s Server unit after Agent readiness
+      ansible.builtin.file:
+        path: /etc/systemd/system/k3s.service
+        state: absent
+
+    - name: Remove the retired Runtime K3s Server uninstall helper
+      ansible.builtin.file:
+        path: /usr/local/bin/k3s-uninstall.sh
+        state: absent
+
+    - name: Reload systemd after removing the old Server unit
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - daemon-reload
+      changed_when: false
+
+    - name: Confirm the new Runtime Agent remains active
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - k3s-agent.service
+      register: fresh_runtime_agent_active
+      changed_when: false
+
+    - name: Require the Runtime Agent to remain active after cleanup
+      ansible.builtin.assert:
+        that:
+          - fresh_runtime_agent_active.stdout == 'active'

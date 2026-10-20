@@ -27,3 +27,17 @@ ansible-playbook -i /path/to/operator/inventory.yml playbooks/host-bootstrap.yml
 ```
 
 The example inventory is intentionally non-deployable. Syntax checks and check mode do not validate the hosted Coordination path, tunnel connectivity, or notification delivery.
+
+## Fresh replacement cluster bootstrap
+
+`playbooks/fresh-cluster-bootstrap.yml` is a one-time path for starting a new single-server embedded-etcd cluster on Management and joining Runtime as an Agent. It is separate from the restore roles: it performs no datastore or workload restore and does not preserve the previous cluster's Kubernetes resources or persistent-volume data. It reads the existing `clusterId` from the supplied production inventory, starts the new server with `cluster-init`, and transfers its generated node token with task logging disabled. Management K3s state must be absent; Runtime's old Server must already be inactive and disabled. After Runtime is Ready, the playbook removes the obsolete Server unit and uninstall helper without restarting the Agent.
+
+Run it only with the operator's private host inventory, product inventory JSON, Management API address, and staged pinned K3s binary:
+
+```sh
+ansible-playbook -i /path/to/private/hosts.json playbooks/fresh-cluster-bootstrap.yml \
+  -e @/path/to/production/inventory.json \
+  -e praetorium_fresh_k3s_confirm=true \
+  -e praetorium_fresh_management_api_host=192.0.2.33 \
+  -e praetorium_fresh_k3s_binary_src=/path/to/pinned/k3s
+```

@@ -85,6 +85,43 @@
     "unpushedCommitPreserved": true,
     "fullWorkspaceCopyStatus": "BLOCKED_UNTIL_WRITER_QUIESCE"
   },
+  "workspaceCaptureProvisional": {
+    "status": "PROVISIONAL_NONCONSISTENT",
+    "artifact": "/data/praetorium/production/backups/20261020/scriptorium-workspace-provisional-20261020T121154Z/workspace-data-tmp.tar.prae1",
+    "artifactSha256": "57102df2dff74124f3f1e6eb56dd426d44d308cd9d99fe82e8ecccdce778ca3f",
+    "manifest": "/data/praetorium/production/backups/20261020/scriptorium-workspace-provisional-20261020T121154Z/manifest.json",
+    "capturedAtUtc": "2026-10-20T12:11:54Z",
+    "sourcePodUid": "2b25e922-d82b-46fb-aa6d-cdf2b8f9e1f9",
+    "sourcePodObservationUtc": "2026-10-20T12:11:04Z",
+    "sourcePodPhase": "Running",
+    "sourcePodReady": true,
+    "includedPaths": [
+      "/data",
+      "/tmp"
+    ],
+    "artifactBytes": 143393,
+    "authenticatedPlaintextBytes": 143360,
+    "tmpfsRestore": {
+      "status": "PASS",
+      "filesystemEntries": 125,
+      "regularFileContentHashesMatch": true,
+      "symlinkTargetsMatch": true,
+      "modesMatch": true
+    },
+    "restoredGit": {
+      "strictFsck": "PASS",
+      "mainHead": "7e1bb31ca3c545857bf6a4e6295bf3b87c031728",
+      "expectedMainHeadMatch": true,
+      "worktreeStatusEntries": 0,
+      "archivedOriginMain": "c1d9c951965c225d4325dbb873b9d142ccef3c58",
+      "mainAheadOfOriginMain": 0,
+      "mainBehindOriginMain": 1
+    },
+    "quiesceReceiptPresent": false,
+    "writerAbsent": false,
+    "consistentCopy": false,
+    "fullWorkspaceCopyGateSatisfied": false
+  },
   "d1Restore": {
     "status": "PASS",
     "evidenceRef": "/data/praetorium/production/backups/20261020/d1-restore-evidence.json",
@@ -96,7 +133,7 @@
     "runtimeServerRetired": false,
     "runtimeAgentTransitionAllowed": false,
     "evidenceRef": "/data/praetorium/production/backups/20261020/three-vm-infra-private-evidence.json#runtimeGate",
-    "gateReason": "Authenticated producer status/quiesce returned HTTP 409 because active operation/generation did not match. No checkpoint/quiesce receipt or writer-absence proof; live Scriptorium Pod remained Ready."
+    "gateReason": "Owner-reported no-active-work preflight at 2026-10-20T12:11Z, but no authenticated quiesce receipt exists; the live Scriptorium Pod remained Running/Ready and the provisional archive is not a consistency or writer-absence proof."
   },
   "cutoverStatus": "BLOCKED",
   "productionCutoverPerformed": false,

@@ -1,8 +1,25 @@
-# Three-VM infrastructure preflight and recovery evidence
+# Three-VM infrastructure verification
 
-**Observed:** 2026-10-20 UTC. **Source cut:** `59449ffd65a9210435b882504933cbaf57db1418` (the infrastructure worktree base). **Migration result:** the embedded-etcd snapshot and isolated full restore passed; Runtime Server→Agent cutover is **BLOCKED** by live writer and workspace recovery gates. This report does not claim three-VM production acceptance.
+**Current observation:** 2026-10-20 14:05 UTC. The owner reports successful Ansible apply from main commit `b073dfb07cb8abe620d4966dc6905a2918482c27` (Management: 18 ok, 5 changed, 0 failed; Runtime: 17 ok, 5 changed, 0 failed). Fresh Management K3s Server and Runtime K3s Agent are active, and both nodes are Ready on `v1.35.9+k3s1`. This is a new cluster bootstrap, not a restore of the old embedded-etcd snapshot.
 
-The Ansible implementation is being developed in a separate worktree. This report records the host inventory, the authorized protective backups and restore rehearsal, and the evidence still required before a cutover. It contains no token, TLS private key, Secret value, Secret fingerprint, or backup-encryption key material. Structured gate data is in [THREE-VM-INFRA.json](THREE-VM-INFRA.json); protected recovery metadata and private measurements are stored outside Git at `/data/praetorium/production/backups/20261020/three-vm-infra-private-evidence.json` (mode 0600).
+The owner explicitly authorized discarding the old environment, including tenant data. The old Scriptorium Pod UID `2b25e922-d82b-46fb-aa6d-cdf2b8f9e1f9` was not gracefully quiesced or preserved: Runtime's old K3s Server and its containers were stopped, the old datastore/configuration and local workload storage were removed, and no workspace, Pod UID, or container continuity is claimed. The old Runtime Server CA was not restored or reused; the new Management CA fingerprint differs from the CA recorded for the prior restore rehearsal. The configured Praetorium cluster-ID label is the same value, which is application metadata and does not establish datastore or writer continuity.
+
+The existing full encrypted backup of the old cluster remains off-host at `/data/praetorium/production/backups/20261020/k3s-embedded-etcd-full-restore-20261020T1125Z.tar.aesgcm`; it was not restored into the fresh cluster. The sanitized retirement and post-bootstrap observations are in `/data/praetorium/production/backups/20261020/runtime-retirement/runtime-retirement-evidence.json` (mode 0600, SHA-256 `6739713b82a878933a2d850fd83c5609a6743f9b5dc0b4a6d8035a5e3a2654af`). Current machine-readable assertions are in [THREE-VM-FRESH-DEPLOYMENT.json](THREE-VM-FRESH-DEPLOYMENT.json). The earlier [THREE-VM-INFRA.json](THREE-VM-INFRA.json) and following recovery sections are historical pre-bootstrap evidence, not current migration gates.
+
+## Current fresh-cluster assertions
+
+| Host | K3s service state | Node object |
+| --- | --- | --- |
+| `manage.praetorium.vm` (`10.7.0.33`) | `k3s.service` active/enabled; `v1.35.9+k3s1` | `manage`, UID `0cb90590-c42c-4417-b6d0-c8b0ca75fcaf`, Ready; `praetorium.io/node-role=management`; taint `praetorium.io/node-role=management:NoSchedule` |
+| `runtime.praetorium.vm` (`10.7.0.31`) | `k3s.service` inactive/disabled; `k3s-agent.service` active/enabled; `v1.35.9+k3s1` | `runtime`, UID `0ceea32e-61eb-4f4d-87b1-65eb2e40cb06`, Ready; `praetorium.io/node-role=runtime`; no taints |
+
+Both new Node objects carry the configured cluster-ID label `clu_01M552J5HCXXJAPCCPN480JSJN`. Their new UIDs, creation times, fresh Management CA, and read-only Node listing establish the current topology; the shared label is not a restore or continuity claim. Runtime's Agent config targets `https://10.7.0.33:6443` and uses `/var/lib/praetorium/k3s-agent` as its data directory. A post-Agent-start observation found `/var/lib/rancher/k3s` present again, but with no `server/` subtree, etcd snapshots, or server database files; it was left untouched after Agent startup.
+
+This report records host service state and Kubernetes node registration only. Application deployment is still in progress; this is not service, producer, registry, browser, or end-to-end acceptance evidence.
+
+## Archived pre-fresh-bootstrap evidence
+
+> The following observations describe the old Runtime Server cluster and its isolated restore rehearsal. They are retained for historical provenance. The owner-authorized destructive fresh bootstrap superseded the old restore, workspace-copy, quiesce, and Server→Agent continuity gates below. They are not current blockers and do not establish that the fresh cluster restored or retained old tenant state.
 
 ## Host observations
 

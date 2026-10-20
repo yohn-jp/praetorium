@@ -1,0 +1,129 @@
+{
+  "schema": "praetorium.three-vm-fresh-deployment-evidence/v1",
+  "observedAtUtc": "2026-10-20T14:05:27Z",
+  "deployment": {
+    "sourceCommit": "b073dfb07cb8abe620d4966dc6905a2918482c27",
+    "strategy": "owner-authorized destructive fresh bootstrap",
+    "k3sVersion": "v1.35.9+k3s1",
+    "applicationServiceE2e": "NOT_CLAIMED"
+  },
+  "ansibleApplyReportedByOwner": {
+    "management": {
+      "ok": 18,
+      "changed": 5,
+      "failed": 0
+    },
+    "runtime": {
+      "ok": 17,
+      "changed": 5,
+      "failed": 0
+    }
+  },
+  "oldEnvironment": {
+    "clusterIdLabel": "clu_01M552J5HCXXJAPCCPN480JSJN",
+    "tenantPodUid": "2b25e922-d82b-46fb-aa6d-cdf2b8f9e1f9",
+    "tenantDataPreserved": false,
+    "writerQuiesced": false,
+    "writerAbsent": true,
+    "runtimeServerRetired": true,
+    "runtimeAgentContinuityClaimed": false,
+    "oldDatastoreRestored": false,
+    "oldServerCaReused": false,
+    "removedAtRetirementPaths": [
+      "/var/lib/rancher/k3s",
+      "/etc/rancher/k3s",
+      "/etc/systemd/system/k3s.service.env"
+    ],
+    "oldServerUnit": {
+      "path": "/etc/systemd/system/k3s.service",
+      "active": false,
+      "enabled": false,
+      "retainedForAgentGate": true
+    },
+    "existingOffhostEncryptedBackup": {
+      "path": "/data/praetorium/production/backups/20261020/k3s-embedded-etcd-full-restore-20261020T1125Z.tar.aesgcm",
+      "preserved": true,
+      "restoredIntoFreshCluster": false
+    },
+    "retirementEvidence": {
+      "path": "/data/praetorium/production/backups/20261020/runtime-retirement/runtime-retirement-evidence.json",
+      "mode": "0600",
+      "sha256": "6739713b82a878933a2d850fd83c5609a6743f9b5dc0b4a6d8035a5e3a2654af"
+    }
+  },
+  "freshCluster": {
+    "apiReadOnlyNodeListSucceeded": true,
+    "nodeCount": 2,
+    "allNodesReady": true,
+    "clusterIdLabel": "clu_01M552J5HCXXJAPCCPN480JSJN",
+    "clusterIdLabelMatchesOldValue": true,
+    "clusterIdLabelIsNotContinuityEvidence": true,
+    "managementCaMatchesOldRestoreCa": false,
+    "managementCaFingerprintEmitted": false,
+    "managementServer": {
+      "host": "manage.praetorium.vm",
+      "address": "10.7.0.33",
+      "service": "k3s.service",
+      "active": true,
+      "enabled": true,
+      "node": {
+        "name": "manage",
+        "uid": "0cb90590-c42c-4417-b6d0-c8b0ca75fcaf",
+        "createdAtUtc": "2026-10-20T14:02:05Z",
+        "ready": true,
+        "kubeletVersion": "v1.35.9+k3s1",
+        "labels": {
+          "praetorium.io/cluster-id": "clu_01M552J5HCXXJAPCCPN480JSJN",
+          "praetorium.io/node-role": "management",
+          "node-role.kubernetes.io/control-plane": "true",
+          "node-role.kubernetes.io/etcd": "true"
+        },
+        "taints": [
+          {
+            "key": "praetorium.io/node-role",
+            "value": "management",
+            "effect": "NoSchedule"
+          }
+        ]
+      }
+    },
+    "runtimeAgent": {
+      "host": "runtime.praetorium.vm",
+      "address": "10.7.0.31",
+      "serverService": {
+        "active": false,
+        "enabled": false
+      },
+      "agentService": {
+        "name": "k3s-agent.service",
+        "path": "/etc/systemd/system/k3s-agent.service",
+        "active": true,
+        "enabled": true
+      },
+      "configuredServer": "https://10.7.0.33:6443",
+      "configuredDataDir": "/var/lib/praetorium/k3s-agent",
+      "node": {
+        "name": "runtime",
+        "uid": "0ceea32e-61eb-4f4d-87b1-65eb2e40cb06",
+        "createdAtUtc": "2026-10-20T14:02:22Z",
+        "ready": true,
+        "kubeletVersion": "v1.35.9+k3s1",
+        "labels": {
+          "praetorium.io/cluster-id": "clu_01M552J5HCXXJAPCCPN480JSJN",
+          "praetorium.io/node-role": "runtime"
+        },
+        "taints": []
+      },
+      "defaultK3sPathAfterAgentStartup": {
+        "path": "/var/lib/rancher/k3s",
+        "present": true,
+        "serverSubdirectoryPresent": false,
+        "serverDatabaseFileCount": 0,
+        "etcdSnapshotFileCount": 0,
+        "modifiedAfterAgentStartup": true,
+        "cleanupPerformed": false
+      }
+    }
+  },
+  "evidenceMethod": "Read-only SSH service checks and sanitized K3s node-list query on Management; no Secret values or private-key material were emitted."
+}

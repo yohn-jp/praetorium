@@ -22,6 +22,13 @@ export class EphemeralCodeDurableObject implements DurableObject {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/get") {
+      const { key } = (await request.json()) as { key: string };
+      if (!key.startsWith("oauth-client:")) return new Response("not found", { status: 404 });
+      const record = await this.state.storage.get(key);
+      return Response.json({ record: record ?? null });
+    }
+
     if (url.pathname === "/consume") {
       const { key } = (await request.json()) as { key: string };
       const record = await this.state.storage.transaction(async (transaction) => {

@@ -678,6 +678,25 @@ describe("ProvisionerIdleController", () => {
     expect(h.refreshIdentity).not.toHaveBeenCalled();
   });
 
+  it("rechecks the assignment after a stale status-credential conflict instead of retrying status", async () => {
+    const h = harness({ identityExpiry: now + 2 * 60 * 60_000, activityOffsetMs: 0 });
+    h.issueObservationCredential.mockImplementationOnce(async () => {
+      h.setCandidate(candidate({ desiredState: "stopped" }));
+      throw new OperationServiceHttpError("OBSERVATION_CREDENTIAL_DENIED", 409, false);
+    });
+
+    await h.controller.scanOnce();
+    expect(h.readIdleCandidate).toHaveBeenCalledOnce();
+    expect(h.issueObservationCredential).toHaveBeenCalledOnce();
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+
+    h.advance(10_000);
+    await h.controller.processDueOnce();
+    expect(h.issueObservationCredential).toHaveBeenCalledOnce();
+    expect(h.runtimeIdentityExpiresAt).toHaveBeenCalledOnce();
+  });
+
   it("does not track or renew a physical runtime whose epoch suffix mismatches", async () => {
     const legacyRuntimeEpoch = 1;
     const runtime = resolvedRuntime();

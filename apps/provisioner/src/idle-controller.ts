@@ -823,6 +823,7 @@ export class ProvisionerIdleController {
       (allowHealthProbe && !candidate.hasActiveOperation ? operationTrigger : undefined);
     const healthTrigger =
       trigger?.kind === "operation" && trigger.key !== operationTrigger?.key ? undefined : trigger;
+    let statusCredentialConflict = false;
     try {
       const runtimeObservation = await inspector.inspect(assignment, signal);
       const providerObservedAt = this.now();
@@ -875,7 +876,14 @@ export class ProvisionerIdleController {
           this.now,
         ),
       );
-      const status = await producer.status(assignment, signal);
+      let status: ProducerStatus;
+      try {
+        status = await producer.status(assignment, signal);
+      } catch (error) {
+        statusCredentialConflict =
+          error instanceof OperationServiceHttpError && error.status === 409;
+        throw error;
+      }
       const statusObservedAt = Date.parse(status.observedAt);
       const now = this.now();
       if (
@@ -1041,6 +1049,31 @@ export class ProvisionerIdleController {
       }
     } catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
+      if (statusCredentialConflict) {
+        try {
+          const current = await this.options.operations.readIdleCandidate({
+            workerId: this.options.workerId,
+            clusterId: this.options.clusterId,
+            instanceId: candidate.instanceId,
+            ...(signal === undefined ? {} : { signal }),
+          });
+          if (current === null || !isTrackableRuntimeCandidate(current, this.options.clusterId)) {
+            this.tracked.delete(candidate.instanceId);
+            if (this.journalReady) await this.journal.removeByInstance(candidate.instanceId);
+            return;
+          }
+          if (
+            current.instanceId === candidate.instanceId &&
+            current.desiredState === "stopped" &&
+            isRetainedWriterCandidate(current, this.options.clusterId)
+          ) {
+            await this.evaluateCandidate(current, assignmentOf(current), tracked.inspector, signal);
+            return;
+          }
+        } catch (refreshError) {
+          if (signal?.aborted) throw signal.reason ?? refreshError;
+        }
+      }
       this.metrics?.increment("idle_observation_unavailable");
       this.logger?.warn("idle_observation_unavailable", idleObservationErrorFields(error));
       this.scheduleRetry(tracked);

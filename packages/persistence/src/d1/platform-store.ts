@@ -1392,7 +1392,11 @@ export class D1PlatformStore implements OperationStore {
     readonly duplicate: boolean;
   } | null> {
     const observation = input.observation;
-    if ((input.terminal === "succeeded") !== (observation !== null)) return null;
+    if (input.terminal === "succeeded" && observation === null) return null;
+    if (input.terminal !== null && input.terminal !== "succeeded" && observation !== null)
+      return null;
+    if (input.terminal === null && observation !== null && observation.observedState !== "ready")
+      return null;
     const digest = await digestJson({ observation, terminal: input.terminal });
     const current = await this.db
       .prepare("SELECT * FROM operations WHERE operation_id = ?")
@@ -1451,8 +1455,9 @@ export class D1PlatformStore implements OperationStore {
              AND EXISTS (SELECT 1 FROM logical_instances i WHERE i.instance_id = operations.instance_id
                          AND i.generation = operations.generation AND i.runtime_epoch = operations.runtime_epoch)
              AND (
-               ? <> 'succeeded'
-               OR (operations.kind = 'stop' AND operations.phase = 'complete'
+               ((? IS NULL OR ? IN ('failed', 'blocked')) AND ? IS NULL)
+               OR (? = 'succeeded' AND (
+                 (operations.kind = 'stop' AND operations.phase = 'complete'
                    AND ? IN ('absent', 'stopped') AND ? IS NULL AND ? IS NULL
                    AND EXISTS (
                      SELECT 1 FROM operation_checkpoints old_writer_absent
@@ -1463,7 +1468,7 @@ export class D1PlatformStore implements OperationStore {
                    AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.instanceId') = operations.instance_id
                    AND CAST(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') AS INTEGER) = operations.repository_id
                    AND CAST(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') AS INTEGER) = operations.runtime_epoch)
-               OR (operations.kind <> 'stop' AND operations.phase = 'complete' AND ? = 'ready' AND EXISTS (
+                 OR (operations.kind <> 'stop' AND operations.phase = 'complete' AND ? = 'ready' AND EXISTS (
                  SELECT 1 FROM operation_checkpoints route_activated
                  WHERE route_activated.operation_id = operations.operation_id
                    AND route_activated.phase = 'route-activated'
@@ -1474,6 +1479,98 @@ export class D1PlatformStore implements OperationStore {
                    AND d.repository_id = operations.repository_id AND d.status = 'admitted'
                    AND d.revision_id = ? AND d.artifact_digest = ? AND a.status = 'admitted'
                ))
+               ))
+               OR (? IS NULL AND operations.kind <> 'stop' AND operations.phase = 'route-activated'
+                 AND ? = 'ready'
+                 AND EXISTS (
+                   SELECT 1 FROM operation_checkpoints route_activated
+                   WHERE route_activated.operation_id = operations.operation_id
+                     AND route_activated.phase = 'route-activated'
+                     AND route_activated.runtime_epoch = operations.runtime_epoch
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM logical_instances instance
+                   WHERE instance.instance_id = operations.instance_id
+                     AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.instanceId') = 'text'
+                     AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.instanceId') = operations.instance_id
+                     AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') = operations.repository_id
+                     AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') IN ('integer', 'null')
+                     AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.providerObservationId') = 'text'
+                     AND length(trim(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.providerObservationId'))) > 0
+                     AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.censusObservedAt') = 'text'
+                     AND length(trim(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.censusObservedAt'))) > 0
+                     AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.remainingWriters') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.remainingWriters') = 0
+                     AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.source') = 'runtime-provider-census'
+                     AND (
+                       (instance.observed_runtime_epoch < operations.runtime_epoch
+                         AND (instance.observed_state NOT IN ('stopped', 'absent') OR EXISTS (
+                           SELECT 1 FROM runtime_reservations old_reservation
+                           WHERE old_reservation.instance_id = operations.instance_id
+                             AND old_reservation.repository_id = operations.repository_id
+                             AND old_reservation.runtime_epoch < operations.runtime_epoch
+                             AND old_reservation.status IN ('reserved', 'allocated')
+                         ))
+                         AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'integer'
+                         AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = instance.observed_runtime_epoch)
+                       OR (instance.observed_runtime_epoch IS NULL
+                         AND NOT EXISTS (
+                           SELECT 1 FROM runtime_reservations old_reservation
+                           WHERE old_reservation.instance_id = operations.instance_id
+                             AND old_reservation.repository_id = operations.repository_id
+                             AND old_reservation.runtime_epoch < operations.runtime_epoch
+                             AND old_reservation.status IN ('reserved', 'allocated')
+                         )
+                         AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'null')
+                       OR (instance.observed_state IN ('stopped', 'absent')
+                         AND NOT EXISTS (
+                           SELECT 1 FROM runtime_reservations old_reservation
+                           WHERE old_reservation.instance_id = operations.instance_id
+                             AND old_reservation.repository_id = operations.repository_id
+                             AND old_reservation.runtime_epoch < operations.runtime_epoch
+                             AND old_reservation.status IN ('reserved', 'allocated')
+                         )
+                         AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'null')
+                       OR (instance.observed_runtime_epoch = operations.runtime_epoch
+                         AND (json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'null'
+                           OR (json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'integer'
+                             AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') < operations.runtime_epoch)))
+                     )
+                 )
+                 AND EXISTS (
+                   SELECT 1 FROM deployment_revisions d JOIN artifacts a ON a.artifact_digest = d.artifact_digest
+                   WHERE d.revision_id = operations.deployment_revision_id AND d.instance_id = operations.instance_id
+                     AND d.repository_id = operations.repository_id AND d.status = 'admitted'
+                     AND d.revision_id = ? AND d.artifact_digest = ? AND a.status = 'admitted'
+                     AND json_extract(operations.checkpoint_json, '$.schemaVersion') = 1
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.id') = operations.operation_id
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.phase') = 'route-activated'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.instanceId') = operations.instance_id
+                     AND json_type(operations.checkpoint_json, '$.lifecycle.repositoryId') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.repositoryId') = operations.repository_id
+                     AND json_type(operations.checkpoint_json, '$.lifecycle.generation') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.generation') = operations.generation
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.clusterId') = operations.cluster_id
+                     AND json_type(operations.checkpoint_json, '$.lifecycle.runtimeEpoch') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.runtimeEpoch') = operations.runtime_epoch
+                     AND json_type(operations.checkpoint_json, '$.lifecycle.targetEpoch') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.targetEpoch') = operations.runtime_epoch
+                     AND json_type(operations.checkpoint_json, '$.lifecycle.rollbackEpoch') = 'null'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.target.revisionId') = d.revision_id
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.target.imageDigest') = d.artifact_digest
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.instanceId') = operations.instance_id
+                     AND json_type(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.repositoryId') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.repositoryId') = operations.repository_id
+                     AND json_type(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.generation') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.generation') = operations.generation
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.clusterId') = operations.cluster_id
+                     AND json_type(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.runtimeEpoch') = 'integer'
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.runtimeEpoch') = operations.runtime_epoch
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.deployment.revisionId') = d.revision_id
+                     AND json_extract(operations.checkpoint_json, '$.lifecycle.readinessEvidence.assignment.deployment.imageDigest') = d.artifact_digest
+                 )
+               )
              )
            `,
         )
@@ -1490,10 +1587,17 @@ export class D1PlatformStore implements OperationStore {
           input.leaseEpoch,
           input.now,
           current.report_sequence,
-          input.terminal ?? "running",
+          input.terminal,
+          input.terminal,
+          observation?.observedState ?? null,
+          input.terminal,
           observation?.observedState ?? null,
           observation?.observedArtifactDigest ?? null,
           observation?.observedRevisionId ?? null,
+          observation?.observedState ?? null,
+          observation?.observedRevisionId ?? null,
+          observation?.observedArtifactDigest ?? null,
+          input.terminal,
           observation?.observedState ?? null,
           observation?.observedRevisionId ?? null,
           observation?.observedArtifactDigest ?? null,

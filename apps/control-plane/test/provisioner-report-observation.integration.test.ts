@@ -99,6 +99,32 @@ describe("Provisioner observation report wire compatibility", () => {
     expect(received()).not.toMatchObject({ observation: { reportedAt: CLIENT_REPORTED_AT } });
   });
 
+  it("forwards a nonterminal ready observation through the canonical report route", async () => {
+    const { app, received } = makeHarness();
+    const service = new OperationServiceHttpClient({
+      baseUrl: "https://control.example.test",
+      credential: "provisioner-service-secret",
+      fetch: async (_input, init) => app.request("/report", init),
+    });
+
+    const result = await service.report({
+      operationId: "op_report",
+      workerId: "worker-test",
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+      sequence: 10,
+      observation: observation(),
+    });
+
+    expect(result.applied).toBe(true);
+    expect(received()).toMatchObject({
+      operationId: "op_report",
+      sequence: 10,
+      terminal: null,
+      observation: { observedState: "ready", reportedAt: SERVER_NOW },
+    });
+  });
+
   it("continues rejecting unknown observation fields", async () => {
     const { app, received } = makeHarness();
     const response = await app.request("/report", {

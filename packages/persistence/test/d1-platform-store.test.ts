@@ -622,6 +622,226 @@ describe("D1PlatformStore with SQLite transactions", () => {
     ).resolves.toMatchObject({ duplicate: true, applied: false });
   });
 
+  it("persists route-activated target readiness before releasing the retired reservation", async () => {
+    const fixture = await prepareTargetRedeploy();
+    const { database, instances, operations, binding, operation, lease } = fixture;
+    const targetObservation = readyTargetObservation(operation, binding.instanceId, 1);
+
+    const progressed = await operations.report({
+      ...lease,
+      sequence: 1,
+      now: 103,
+      observation: targetObservation,
+    });
+    expect(progressed).toMatchObject({
+      applied: true,
+      operation: { status: "running", phase: "route-activated", reportSequence: 1 },
+    });
+    expect(await instances.getByInstanceId(binding.instanceId)).toMatchObject({
+      instance: {
+        generation: operation.generation,
+        runtimeEpoch: operation.runtimeEpoch,
+        observedGeneration: operation.generation,
+        observedRuntimeEpoch: operation.runtimeEpoch,
+        observedState: "ready",
+        observedRevisionId: "revision-1",
+        currentArtifactDigest: `sha256:${"a".repeat(64)}`,
+      },
+    });
+
+    await operations.releaseRuntime({
+      ...lease,
+      reservationId: "old-reservation",
+      expectedReservationRuntimeEpoch: 1,
+      now: 104,
+    });
+    expect(
+      database
+        .prepare("SELECT status FROM runtime_reservations WHERE reservation_id = 'old-reservation'")
+        .get(),
+    ).toMatchObject({ status: "released" });
+
+    const complete = lifecycleCheckpoint(operation, { phase: "complete" });
+    await operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 1,
+      phase: "complete",
+      checkpoint: complete,
+      now: 105,
+    });
+    await expect(
+      operations.report({
+        ...lease,
+        sequence: 2,
+        now: 106,
+        terminal: "succeeded",
+        observation: null,
+      }),
+    ).rejects.toBeInstanceOf(OperationFenceConflict);
+    await expect(
+      operations.report({
+        ...lease,
+        sequence: 2,
+        now: 106,
+        terminal: "succeeded",
+        observation: { ...targetObservation, sequence: 2 },
+      }),
+    ).resolves.toMatchObject({
+      applied: true,
+      operation: { status: "succeeded", phase: "complete", reportSequence: 2 },
+    });
+  });
+
+  it("accepts a stopped-to-running target with a fresh census and no retired epoch", async () => {
+    const { database, registry, instances, operations } = createPlatform();
+    const resolved = await registry.resolveOrCreate(registryInput("instance-a", "request-a"));
+    const { binding } = resolved;
+    seedDeployment(database, binding.instanceId);
+    database
+      .prepare(
+        `UPDATE logical_instances SET generation = 1, runtime_epoch = 1, desired_state = 'stopped',
+           observed_generation = 1, observed_runtime_epoch = 1, observed_sequence = 2,
+           observed_state = 'stopped', observed_revision_id = NULL, current_artifact_digest = NULL,
+           desired_revision_id = 'revision-1', reservation_state = 'released', reservation_id = NULL
+         WHERE instance_id = ?`,
+      )
+      .run(binding.instanceId);
+    const requested = await instances.requestDesiredState({
+      repositoryId: 71,
+      bindingEpoch: binding.bindingEpoch,
+      authorizationRevision: binding.authorizationRevision,
+      desiredState: "running",
+      actorId: "user-1",
+      idempotencyKey: "wake-1",
+      requestId: "wake-request",
+      now: 100,
+    });
+    if (!requested.operation) throw new Error("expected start operation");
+    const claimed = await operations.claimNext({
+      workerId: "provisioner-1",
+      clusterId: "cluster-a",
+      now: 101,
+    });
+    if (!claimed) throw new Error("expected admitted start claim");
+    const operation = claimed.operation;
+    const lease = {
+      operationId: operation.id,
+      workerId: operation.workerId!,
+      leaseToken: operation.leaseToken!,
+      leaseEpoch: operation.leaseEpoch,
+    } as const;
+    await operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 0,
+      phase: "route-activated",
+      checkpoint: lifecycleCheckpoint(operation, {
+        phase: "route-activated",
+        retiredRuntimeEpoch: null,
+      }),
+      now: 102,
+    });
+
+    await expect(
+      operations.report({
+        ...lease,
+        sequence: 1,
+        now: 103,
+        observation: readyTargetObservation(operation, binding.instanceId, 1),
+      }),
+    ).resolves.toMatchObject({
+      applied: true,
+      operation: { status: "running", phase: "route-activated", reportSequence: 1 },
+    });
+  });
+
+  it.each([
+    ["before route activation", { checkpointPhase: "starting-target" as const }],
+    ["when readiness is bound to another revision", { readinessRevisionId: "other-revision" }],
+    [
+      "when readiness is bound to another image",
+      { readinessImageDigest: `sha256:${"e".repeat(64)}` },
+    ],
+    ["when readiness is bound to another generation", { readinessGeneration: 1 }],
+    ["when the route is a rollback", { rollbackEpoch: 1 }],
+    ["when an existing writer lacks its retirement proof", { includeWriterAbsenceProof: false }],
+  ])("rejects nonterminal ready observations %s", async (_name, options) => {
+    const fixture = await prepareTargetRedeploy(options);
+    const { database, instances, operations, binding, operation, lease } = fixture;
+
+    await expect(
+      operations.report({
+        ...lease,
+        sequence: 1,
+        now: 103,
+        observation: readyTargetObservation(operation, binding.instanceId, 1),
+      }),
+    ).rejects.toBeInstanceOf(OperationFenceConflict);
+    expect(await operations.getById(operation.id)).toMatchObject({ reportSequence: 0 });
+    expect(await instances.getByInstanceId(binding.instanceId)).toMatchObject({
+      instance: { observedGeneration: 1, observedRuntimeEpoch: 1, observedState: "ready" },
+    });
+    expect(
+      database
+        .prepare("SELECT status FROM runtime_reservations WHERE reservation_id = 'old-reservation'")
+        .get(),
+    ).toMatchObject({ status: "reserved" });
+  });
+
+  it("keeps non-ready and failed or blocked terminal reports observation-free", async () => {
+    const nonReady = await prepareTargetRedeploy();
+    await expect(
+      nonReady.operations.report({
+        ...nonReady.lease,
+        sequence: 1,
+        now: 103,
+        observation: {
+          ...readyTargetObservation(nonReady.operation, nonReady.binding.instanceId, 1),
+          observedState: "starting",
+        },
+      }),
+    ).rejects.toBeInstanceOf(OperationFenceConflict);
+
+    const failed = await prepareTargetRedeploy();
+    await expect(
+      failed.operations.report({
+        ...failed.lease,
+        sequence: 1,
+        now: 103,
+        terminal: "failed",
+        observation: readyTargetObservation(failed.operation, failed.binding.instanceId, 1),
+      }),
+    ).rejects.toBeInstanceOf(OperationFenceConflict);
+    await expect(
+      failed.operations.report({
+        ...failed.lease,
+        sequence: 1,
+        now: 103,
+        terminal: "failed",
+        observation: null,
+      }),
+    ).resolves.toMatchObject({ operation: { status: "failed" } });
+
+    const blocked = await prepareTargetRedeploy();
+    await expect(
+      blocked.operations.report({
+        ...blocked.lease,
+        sequence: 1,
+        now: 103,
+        terminal: "blocked",
+        observation: readyTargetObservation(blocked.operation, blocked.binding.instanceId, 1),
+      }),
+    ).rejects.toBeInstanceOf(OperationFenceConflict);
+    await expect(
+      blocked.operations.report({
+        ...blocked.lease,
+        sequence: 1,
+        now: 103,
+        terminal: "blocked",
+        observation: null,
+      }),
+    ).resolves.toMatchObject({ operation: { status: "blocked" } });
+  });
+
   it("releases a runtime reservation only with the current lease and exact writer-absence proof", async () => {
     const { database, registry, instances, operations } = createPlatform();
     const resolved = await registry.resolveOrCreate(registryInput("instance-a", "request-a"));
@@ -830,7 +1050,10 @@ function createPlatform(options: { readonly maxCapacitySnapshotAgeMs?: number } 
   database.exec(
     readFileSync(
       fileURLToPath(
-        new URL("../../../apps/control-plane/migrations/0004_runtime_git_credentials.sql", import.meta.url),
+        new URL(
+          "../../../apps/control-plane/migrations/0004_runtime_git_credentials.sql",
+          import.meta.url,
+        ),
       ),
       "utf8",
     ),
@@ -945,6 +1168,149 @@ function seedCurrentReadyRuntime(database: DatabaseSync, instanceId: string): vo
        WHERE instance_id = ?`,
     )
     .run(`sha256:${"a".repeat(64)}`, `sha256:${"a".repeat(64)}`, instanceId);
+}
+
+type TargetCheckpointOptions = {
+  readonly checkpointPhase?: "starting-target" | "route-activated";
+  readonly readinessRevisionId?: string;
+  readonly readinessImageDigest?: string;
+  readonly readinessGeneration?: number;
+  readonly rollbackEpoch?: number;
+  readonly includeWriterAbsenceProof?: boolean;
+  readonly retiredRuntimeEpoch?: number | null;
+};
+
+async function prepareTargetRedeploy(options: TargetCheckpointOptions = {}) {
+  const platform = createPlatform();
+  const { database, registry, instances, operations } = platform;
+  const resolved = await registry.resolveOrCreate(registryInput("instance-a", "request-a"));
+  const { binding } = resolved;
+  seedDeployment(database, binding.instanceId);
+  seedCurrentReadyRuntime(database, binding.instanceId);
+  database
+    .prepare(
+      `INSERT INTO runtime_reservations (
+         reservation_id, instance_id, repository_id, runtime_epoch, generation, cluster_id, status,
+         capacity_snapshot_epoch, cpu_milli, memory_mib, ephemeral_storage_mib, created_at, updated_at
+       ) VALUES ('old-reservation', ?, 71, 1, 1, 'cluster-a', 'reserved', 1, 400, 256, 128, 10, 10)`,
+    )
+    .run(binding.instanceId);
+  database
+    .prepare(
+      "UPDATE logical_instances SET reservation_id = 'old-reservation', reservation_state = 'reserved' WHERE instance_id = ?",
+    )
+    .run(binding.instanceId);
+
+  await instances.requestDesiredState({
+    repositoryId: 71,
+    bindingEpoch: binding.bindingEpoch,
+    authorizationRevision: binding.authorizationRevision,
+    desiredState: "running",
+    forceNewRuntime: true,
+    actorId: "user-1",
+    idempotencyKey: "redeploy-1",
+    requestId: "redeploy-request",
+    now: 100,
+  });
+  const claimed = await operations.claimNext({
+    workerId: "provisioner-1",
+    clusterId: "cluster-a",
+    now: 101,
+  });
+  if (!claimed) throw new Error("expected admitted redeploy claim");
+  const operation = claimed.operation;
+  const lease = {
+    operationId: operation.id,
+    workerId: operation.workerId!,
+    leaseToken: operation.leaseToken!,
+    leaseEpoch: operation.leaseEpoch,
+  } as const;
+  const checkpointPhase = options.checkpointPhase ?? "route-activated";
+  await operations.checkpoint({
+    ...lease,
+    expectedCheckpointSequence: 0,
+    phase: checkpointPhase,
+    checkpoint: lifecycleCheckpoint(operation, { ...options, phase: checkpointPhase }),
+    now: 102,
+  });
+  return { ...platform, binding, operation, lease };
+}
+
+function lifecycleCheckpoint(
+  operation: {
+    readonly id: string;
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly generation: number;
+    readonly runtimeEpoch: number;
+  },
+  options: TargetCheckpointOptions & {
+    readonly phase?: "starting-target" | "route-activated" | "complete";
+  } = {},
+) {
+  const imageDigest = `sha256:${"a".repeat(64)}`;
+  const checkpoint: Record<string, unknown> = {
+    schemaVersion: 1,
+    lifecycle: {
+      id: operation.id,
+      instanceId: operation.instanceId,
+      repositoryId: operation.repositoryId,
+      clusterId: "cluster-a",
+      generation: operation.generation,
+      runtimeEpoch: operation.runtimeEpoch,
+      phase: options.phase ?? "route-activated",
+      targetEpoch: operation.runtimeEpoch,
+      target: { revisionId: "revision-1", imageDigest },
+      rollbackEpoch: options.rollbackEpoch ?? null,
+      readinessEvidence: {
+        assignment: {
+          instanceId: operation.instanceId,
+          repositoryId: operation.repositoryId,
+          generation: options.readinessGeneration ?? operation.generation,
+          clusterId: "cluster-a",
+          runtimeEpoch: operation.runtimeEpoch,
+          deployment: {
+            revisionId: options.readinessRevisionId ?? "revision-1",
+            imageDigest: options.readinessImageDigest ?? imageDigest,
+          },
+        },
+      },
+    },
+  };
+  if (options.includeWriterAbsenceProof !== false) {
+    checkpoint.writerAbsenceProof = {
+      instanceId: operation.instanceId,
+      repositoryId: operation.repositoryId,
+      retiredRuntimeEpoch:
+        options.retiredRuntimeEpoch === undefined ? 1 : options.retiredRuntimeEpoch,
+      providerObservationId: "runtime-list-resource-version-7",
+      censusObservedAt: "2026-10-20T12:00:00.000Z",
+      remainingWriters: 0,
+      source: "runtime-provider-census",
+    };
+  }
+  return checkpoint;
+}
+
+function readyTargetObservation(
+  operation: {
+    readonly generation: number;
+    readonly runtimeEpoch: number;
+  },
+  instanceId: string,
+  sequence: number,
+) {
+  return {
+    instanceId,
+    repositoryId: 71,
+    generation: operation.generation,
+    runtimeEpoch: operation.runtimeEpoch,
+    sequence,
+    observedState: "ready" as const,
+    observedArtifactDigest: `sha256:${"a".repeat(64)}`,
+    observedRevisionId: "revision-1",
+    reportedAt: 103,
+  };
 }
 
 function resources() {

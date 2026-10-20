@@ -119,6 +119,7 @@ export function renderWorkerTemplate(template, inventory, worker) {
     config.vars = variables;
   } else {
     config.vars = {
+      GATEWAY_ENVIRONMENT: inventory.environment === "deployment" ? "production" : "test",
       GATEWAY_SESSION_TTL_SECONDS: "43200",
       GATEWAY_HANDOFF_TTL_SECONDS: "60",
       GATEWAY_ACCESS_GRANT_TTL_SECONDS: "300",

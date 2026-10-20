@@ -5,6 +5,14 @@
   "compatibility_date": "2026-07-30",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
+  "ratelimits": [
+    { "name": "LOGIN_RATE_LIMIT", "namespace_id": "761101", "simple": { "limit": 10, "period": 60 } },
+    { "name": "MCP_SOURCE_RATE_LIMIT", "namespace_id": "761102", "simple": { "limit": 60, "period": 60 } },
+    { "name": "MCP_CREDENTIAL_RATE_LIMIT", "namespace_id": "761103", "simple": { "limit": 20, "period": 60 } },
+    { "name": "RUNTIME_GIT_RATE_LIMIT", "namespace_id": "761104", "simple": { "limit": 120, "period": 60 } },
+    { "name": "WAKE_RATE_LIMIT", "namespace_id": "761105", "simple": { "limit": 10, "period": 60 } },
+    { "name": "MUTATION_RECEIPT_RATE_LIMIT", "namespace_id": "761106", "simple": { "limit": 10, "period": 60 } }
+  ],
   "observability": { "enabled": true },
   "durable_objects": {
     "bindings": [

@@ -177,6 +177,7 @@ try {
   for (const [origin, endpoint] of [
     [inventory.domains.controlPlaneUrl, "/healthz"],
     [inventory.domains.gatewayOrigin, "/healthz"],
+    [inventory.domains.gatewayOrigin, "/auth/login"],
     [inventory.domains.gatewayOrigin, "/.well-known/jwks.json"],
   ]) {
     const response = await fetch(origin + endpoint, { signal: AbortSignal.timeout(20_000) });

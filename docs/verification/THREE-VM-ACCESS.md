@@ -31,7 +31,7 @@ status=404 verify=0
 ```
 
 Node TLS inspection returned the same publicly trusted Let's Encrypt
-certificate from `222.224.247.206:443` and `10.7.0.31:443` when using SNI
+certificate from `222.224.247.206:443` and the private Runtime TCP/443 endpoint when using SNI
 `1423923158.scriptorium.yohn.jp`:
 
 ```text
@@ -159,7 +159,7 @@ and inspected its live Caddy configuration read-only. The owner reports Caddy
 PID `57426` listening on TCP/443, with the Caddy Layer4 module installed. The
 sanitized adapted listener configuration matches `scriptorium.yohn.jp` and
 `*.scriptorium.yohn.jp` first in a Layer4 SNI route and proxies TCP to
-`10.7.0.31:443`; a TLS wrapper follows. The physical namespace has a separate
+the private Runtime TCP/443 endpoint; a TLS wrapper follows. The physical namespace has a separate
 equivalent route. The protected live Caddyfile and adapted JSON were saved in
 the owner's private backup area; no Caddy or firewall configuration was
 changed for this investigation.

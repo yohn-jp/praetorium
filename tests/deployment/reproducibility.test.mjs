@@ -98,6 +98,20 @@ test("provisioned Coordination binding survives canonical Worker rendering and r
   assert.ok(validateInventory(inventory).errors.some((e) => e.includes("coordinationVpcServiceId")));
 });
 
+test("Gateway deployment retains the authentication rate-limit bindings and environment", () => {
+  const inventory = json("infrastructure/test/disposable-inventory.json");
+  const template = readFileSync(path.join(root, "infrastructure/workers/gateway.template.json"), "utf8");
+  const rendered = JSON.parse(renderWorkerTemplate(template, inventory, "gateway"));
+  const canonical = readFileSync(path.join(root, "apps/gateway/wrangler.toml"), "utf8");
+  const required = [...canonical.matchAll(/\[\[ratelimits\]\]\s+name = "([A-Z_]+)"\s+namespace_id = "([0-9]+)"/gu)]
+    .map((match) => ({ name: match[1], namespace_id: match[2] }));
+  assert.equal(required.length, 6);
+  assert.deepEqual(rendered.ratelimits.map(({ name, namespace_id }) => ({ name, namespace_id })), required);
+  assert.equal(rendered.vars.GATEWAY_ENVIRONMENT, "test");
+  inventory.environment = "deployment";
+  assert.equal(JSON.parse(renderWorkerTemplate(template, inventory, "gateway")).vars.GATEWAY_ENVIRONMENT, "production");
+});
+
 test("work notification inventory requires dedicated secret refs and deployment render selects the gated overlay", () => {
   const baseline = json("infrastructure/test/disposable-inventory.json");
   baseline.network.kubernetesApiEndpoints = [{ address: "10.96.0.1", port: 6443 }];

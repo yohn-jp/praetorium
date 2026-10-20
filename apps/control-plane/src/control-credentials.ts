@@ -205,7 +205,11 @@ export function createControlCredentialIssuer(
           issuer,
           audience: AUDIENCE,
           subject: "praetorium-control-plane",
-          instanceId: physicalInstanceId(input.instanceId, input.runtimeEpoch, snapshot.instance.legacyRuntimeEpoch),
+          instanceId: physicalInstanceId(
+            input.instanceId,
+            input.runtimeEpoch,
+            snapshot.instance.legacyRuntimeEpoch,
+          ),
           repositoryId: input.repositoryId,
           runtimeEpoch: input.runtimeEpoch,
           operationId: input.operationId,
@@ -228,6 +232,22 @@ export function createControlCredentialIssuer(
       if (!config.hasActiveOperation) throw denied();
 
       const snapshot = await config.instances.getByInstanceId(input.instanceId);
+      const instance = snapshot?.instance;
+      const matchesObservedAssignment =
+        instance?.observedGeneration === input.expectedGeneration &&
+        instance.observedRuntimeEpoch === input.runtimeEpoch;
+      const matchesDesiredAssignment =
+        instance?.generation === input.expectedGeneration &&
+        instance.runtimeEpoch === input.runtimeEpoch &&
+        matchesObservedAssignment;
+      const matchesRetainedObservedAssignment =
+        matchesObservedAssignment &&
+        instance.generation >= input.expectedGeneration &&
+        instance.runtimeEpoch >= input.runtimeEpoch &&
+        (instance.generation > input.expectedGeneration ||
+          instance.runtimeEpoch > input.runtimeEpoch) &&
+        instance.observedRevisionId !== null &&
+        instance.currentArtifactDigest !== null;
       if (
         !snapshot ||
         snapshot.instance.instanceId !== input.instanceId ||
@@ -235,10 +255,7 @@ export function createControlCredentialIssuer(
         snapshot.binding.instanceId !== input.instanceId ||
         snapshot.binding.repositoryId !== input.repositoryId ||
         snapshot.binding.suspended ||
-        snapshot.instance.generation !== input.expectedGeneration ||
-        snapshot.instance.observedGeneration !== input.expectedGeneration ||
-        snapshot.instance.runtimeEpoch !== input.runtimeEpoch ||
-        snapshot.instance.observedRuntimeEpoch !== input.runtimeEpoch ||
+        (!matchesDesiredAssignment && !matchesRetainedObservedAssignment) ||
         snapshot.instance.observedState !== "ready" ||
         snapshot.instance.desiredState !== "running" ||
         snapshot.instance.clusterId !== input.clusterId ||
@@ -252,7 +269,11 @@ export function createControlCredentialIssuer(
           issuer,
           audience: AUDIENCE,
           subject: "praetorium-control-plane",
-          instanceId: physicalInstanceId(input.instanceId, input.runtimeEpoch, snapshot.instance.legacyRuntimeEpoch),
+          instanceId: physicalInstanceId(
+            input.instanceId,
+            input.runtimeEpoch,
+            snapshot.instance.legacyRuntimeEpoch,
+          ),
           repositoryId: input.repositoryId,
           runtimeEpoch: input.runtimeEpoch,
           operationId: input.operationId,

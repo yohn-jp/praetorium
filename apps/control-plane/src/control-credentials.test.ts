@@ -9,7 +9,7 @@ import {
 
 const NOW = Date.parse("2026-10-17T00:00:10.000Z");
 const ISSUER = "https://control.example.test";
-const INSTANCE_ID = "ins_01";
+const INSTANCE_ID = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const REPOSITORY_ID = 1001;
 const OPERATION_ID = "op_01";
 const WORKER_ID = "worker-a";
@@ -272,6 +272,93 @@ describe("Control Plane runtime-control credential issuer", () => {
     expect(issued.expiresAt).toBe(new Date((Math.floor(NOW / 1000) + 30) * 1000).toISOString());
   });
 
+  it("issues status-only access for the retained observed tuple after a newer target fails", async () => {
+    const h = await harness({
+      instance: {
+        generation: 3,
+        runtimeEpoch: 2,
+        observedGeneration: 2,
+        observedRuntimeEpoch: 1,
+        observedRevisionId: "retained-revision",
+        currentArtifactDigest: PAYLOAD_DIGEST,
+        legacyRuntimeEpoch: 1,
+      },
+    });
+    const issued = await h.issuer.issueObservation(
+      validObservationInput({ expectedGeneration: 2, runtimeEpoch: 1 }),
+    );
+    const payload = issued.token.split(".")[1]!;
+    const claims = JSON.parse(new TextDecoder().decode(decodeBase64Url(payload))) as Record<
+      string,
+      unknown
+    >;
+
+    expect(claims).toMatchObject({
+      instanceId: INSTANCE_ID,
+      repositoryId: REPOSITORY_ID,
+      runtimeEpoch: 1,
+      operationId: "op_observation_01",
+      action: "status",
+      payloadDigest: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      exp: Math.floor(NOW / 1000) + 30,
+    });
+    expect(claims).not.toHaveProperty("leaseToken");
+    expect(claims).not.toHaveProperty("leaseEpoch");
+    expect(issued.expiresAt).toBe(new Date((Math.floor(NOW / 1000) + 30) * 1000).toISOString());
+  });
+
+  it("fences retained-runtime status access to its observed assignment and current binding", async () => {
+    const h = await harness();
+    const retainedInstance = {
+      generation: 3,
+      runtimeEpoch: 2,
+      observedGeneration: 2,
+      observedRuntimeEpoch: 1,
+      observedRevisionId: "retained-revision",
+      currentArtifactDigest: PAYLOAD_DIGEST,
+      legacyRuntimeEpoch: 1,
+    } as const;
+    const staleCases: Array<{
+      readonly input?: Partial<IssueObservationCredentialInput>;
+      readonly instance?: Partial<RepositorySnapshot["instance"]>;
+      readonly binding?: Partial<RepositorySnapshot["binding"]>;
+      readonly activeOperation?: boolean;
+    }> = [
+      { input: { expectedGeneration: 3, runtimeEpoch: 2 } },
+      { input: { expectedGeneration: 1 } },
+      { input: { runtimeEpoch: 2 } },
+      { input: { repositoryId: REPOSITORY_ID + 1 } },
+      { input: { clusterId: "cluster-b" } },
+      { instance: { repositoryId: REPOSITORY_ID + 1 } },
+      { instance: { clusterId: "cluster-b" } },
+      { instance: { generation: 1 } },
+      { instance: { runtimeEpoch: 0 } },
+      { instance: { observedGeneration: 3 } },
+      { instance: { observedRuntimeEpoch: 2 } },
+      { instance: { observedRevisionId: null } },
+      { instance: { currentArtifactDigest: null } },
+      { binding: { suspended: true } },
+      { activeOperation: true },
+    ];
+
+    for (const stale of staleCases) {
+      const snapshot = repositorySnapshot({
+        instance: { ...retainedInstance, ...stale.instance },
+        ...(stale.binding ? { binding: stale.binding } : {}),
+      });
+      const issuer = createControlCredentialIssuer({
+        ...h.config,
+        instances: {
+          getByInstanceId: async (id) => (id === INSTANCE_ID ? snapshot : null),
+        },
+        hasActiveOperation: async () => stale.activeOperation ?? false,
+      });
+      await expect(
+        issuer.issueObservation(validObservationInput(stale.input)),
+      ).rejects.toMatchObject({ code: "CONTROL_CREDENTIAL_FENCED" });
+    }
+  });
+
   it("fails closed on stale observation state, suspended bindings, active operations, or missing guard", async () => {
     const h = await harness({ instance: { observedRuntimeEpoch: 5 } });
     const staleCases: Array<{
@@ -294,7 +381,7 @@ describe("Control Plane runtime-control credential issuer", () => {
 
     for (const stale of staleCases) {
       const snapshot = repositorySnapshot({
-        ...(stale.instance ? { instance: { observedRuntimeEpoch: 5, ...stale.instance } } : {}),
+        instance: { observedRuntimeEpoch: 5, ...stale.instance },
         ...(stale.binding ? { binding: stale.binding } : {}),
       });
       const issuer = createControlCredentialIssuer({

@@ -1,6 +1,6 @@
 {
   "schema": "praetorium.three-vm-fresh-deployment-evidence/v1",
-  "observedAtUtc": "2026-10-20T14:05:27Z",
+  "observedAtUtc": "2026-10-20T14:27:04Z",
   "deployment": {
     "sourceCommit": "b073dfb07cb8abe620d4966dc6905a2918482c27",
     "strategy": "owner-authorized destructive fresh bootstrap",
@@ -34,11 +34,21 @@
       "/etc/rancher/k3s",
       "/etc/systemd/system/k3s.service.env"
     ],
+    "removedAfterAgentReadyPaths": [
+      "/etc/systemd/system/k3s.service",
+      "/usr/local/bin/k3s-uninstall.sh"
+    ],
     "oldServerUnit": {
       "path": "/etc/systemd/system/k3s.service",
-      "active": false,
-      "enabled": false,
-      "retainedForAgentGate": true
+      "present": false,
+      "loadState": "not-found",
+      "removedAfterAgentReady": true
+    },
+    "oldServerUninstallHelper": {
+      "path": "/usr/local/bin/k3s-uninstall.sh",
+      "present": false,
+      "inspectedButNotExecuted": true,
+      "sha256BeforeRemoval": "c67ccddfa3e2a3f7b402a19a32beec318ff57e3a67d190413d0ddec31257061f"
     },
     "existingOffhostEncryptedBackup": {
       "path": "/data/praetorium/production/backups/20261020/k3s-embedded-etcd-full-restore-20261020T1125Z.tar.aesgcm",
@@ -48,7 +58,7 @@
     "retirementEvidence": {
       "path": "/data/praetorium/production/backups/20261020/runtime-retirement/runtime-retirement-evidence.json",
       "mode": "0600",
-      "sha256": "6739713b82a878933a2d850fd83c5609a6743f9b5dc0b4a6d8035a5e3a2654af"
+      "sha256": "f22188a7cd0290e4897d58c92a73c82d70d045731e022f4b8673554c01f9d136"
     }
   },
   "freshCluster": {
@@ -91,8 +101,8 @@
       "host": "runtime.praetorium.vm",
       "address": "10.7.0.31",
       "serverService": {
-        "active": false,
-        "enabled": false
+        "unitPresent": false,
+        "loadState": "not-found"
       },
       "agentService": {
         "name": "k3s-agent.service",
@@ -102,6 +112,11 @@
       },
       "configuredServer": "https://10.7.0.33:6443",
       "configuredDataDir": "/var/lib/praetorium/k3s-agent",
+      "agentMainPid": 48905,
+      "agentRestartedDuringOldServerCleanup": false,
+      "agentUnitSha256BeforeAndAfterCleanup": "2919818a565892dc4fab6ebb419be6db6252efd7c8497fd698a9d4813823524d",
+      "pinnedK3sBinarySha256": "897acb21cca57d477a211102251a6591450ce767344a9faaa121a1007ca9fa9a",
+      "killallScriptSha256": "6990bdded9a676934bf85bd55c30c4fa5d81805d9b44727427793a6a5f9068bb",
       "node": {
         "name": "runtime",
         "uid": "0ceea32e-61eb-4f4d-87b1-65eb2e40cb06",
@@ -123,6 +138,65 @@
         "modifiedAfterAgentStartup": true,
         "cleanupPerformed": false
       }
+    }
+  },
+  "managementRebootBaseline": {
+    "observedAtUtc": "2026-10-20T14:27:04Z",
+    "rebootTestStatus": "NOT_RUN",
+    "coordinationIndependenceStatus": "NOT_CHECKED",
+    "managementHost": {
+      "bootTimeUtc": "2026-10-20T10:44:25Z",
+      "bootId": "2f76f8c8-be4e-4784-a3b4-96c8367a31ad",
+      "k3sService": {
+        "active": true,
+        "subState": "running",
+        "enabled": true
+      },
+      "node": {
+        "name": "manage",
+        "uid": "0cb90590-c42c-4417-b6d0-c8b0ca75fcaf",
+        "createdAtUtc": "2026-10-20T14:02:05Z",
+        "ready": true,
+        "kubeletVersion": "v1.35.9+k3s1",
+        "clusterIdLabel": "clu_01M552J5HCXXJAPCCPN480JSJN"
+      },
+      "serverCaSha256": "82d28d5864eb2823e0af9855101f4925340687505b7248cd92958d2b5ae587b4",
+      "etcdServerCaSha256": "6f0fe12fb23b1a4bb41e6b5a9518e8d6207db2c392ad0a1dc5fd63e7ca4a1fec",
+      "readyNodeVersions": {
+        "manage": "v1.35.9+k3s1",
+        "runtime": "v1.35.9+k3s1"
+      }
+    },
+    "coordination": {
+      "serviceUser": "praetorium-coordination",
+      "serviceUid": 2001,
+      "unit": "praetorium-coordination.service",
+      "fragmentPath": "/run/user/2001/systemd/generator/praetorium-coordination.service",
+      "unitFileState": "generated",
+      "activeState": "active",
+      "subState": "running",
+      "mainPid": 22845,
+      "execMainStartTimestampUtc": "2026-10-20T11:57:43Z",
+      "controlGroup": "/user.slice/user-2001.slice/user@2001.service/app.slice/praetorium-coordination.service",
+      "systemdRequires": [
+        "basic.target",
+        "app.slice"
+      ],
+      "systemdWants": [
+        "podman-user-wait-network-online.service"
+      ],
+      "systemdBindsTo": [],
+      "hostListener": {
+        "address": "127.0.0.1",
+        "port": 8789,
+        "forwarder": "rootlessport"
+      },
+      "healthChecks": {
+        "GET /healthz": 200,
+        "GET /readyz": 200
+      },
+      "k3sStoppedIndependence": "NOT_CHECKED",
+      "postRebootHealth": "NOT_RUN"
     }
   },
   "evidenceMethod": "Read-only SSH service checks and sanitized K3s node-list query on Management; no Secret values or private-key material were emitted."

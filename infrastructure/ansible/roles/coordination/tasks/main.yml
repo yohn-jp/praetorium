@@ -8,3 +8,5 @@
 - name: Install the rootless Coordination Plane and private connector
   ansible.builtin.include_tasks: install.yml
   when: coordination_enabled | bool
+  tags:
+    - always

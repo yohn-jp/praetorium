@@ -5,7 +5,7 @@
   pre_tasks:
     - name: Enable Ubuntu Universe to discover the pinned Podman package version
       ansible.builtin.apt_repository:
-        repo: "deb {{ coordination_ubuntu_archive_mirror }} {{ ansible_distribution_release }} universe"
+        repo: "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] {{ coordination_ubuntu_archive_mirror }} {{ ansible_distribution_release }} universe"
         filename: praetorium-universe
         state: present
         update_cache: true

@@ -40,7 +40,7 @@ flowchart TB
         K3S["k3s Server: API / Scheduler / Datastore (host systemd)"]
         Coord["Coordination Plane (rootless Podman Quadlet / user systemd)"]
         Tunnel["Private connector / cloudflared (host-managed, proposed)"]
-        Coord -->|"Scoped Kubernetes API (private)"| K3S
+        Coord -->|"Scoped Kubernetes API / Provisioner boundary"| K3S
         Tunnel --> Coord
     end
 
@@ -61,7 +61,6 @@ flowchart TB
     K3S -->|"control-plane connection"| Agent1
     K3S -->|"control-plane connection"| Agent2
     Coord <-->|"private scoped execution messages"| BA
-    Coord -->|"Provisioner execution uses scoped Kubernetes API"| K3S
     User <-->|"direct application HTTPS / MCP"| App
     App -->|"scoped Git credential broker (Gateway)"| Cloud
 ~~~

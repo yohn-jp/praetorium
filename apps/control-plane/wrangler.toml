@@ -31,6 +31,14 @@ new_sqlite_classes = ["RepositoryCoordinator"]
 pattern = "control.praetorium.yohn.jp"
 custom_domain = true
 
+# Optional during the HTTPS-to-VPC rollout. After the Management Tunnel and
+# scoped VPC Service are provisioned, add its actual service ID here:
+# [[vpc_services]]
+# binding = "COORDINATION_SERVICE"
+# service_id = "<managed-workers-vpc-service-id>"
+# Keep the existing per-kind HTTPS URL/token variables configured until the
+# private service path has been accepted; the Worker falls back on VPC failure.
+
 [vars]
 GATEWAY_ORIGIN = "https://praetorium.yohn.jp"
 CONTROL_PLANE_ORIGIN = "https://control.praetorium.yohn.jp"

@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { notifyWorkAvailable } from "./work-notifications.js";
+import {
+  notifyWorkAvailable,
+  type WorkNotificationServiceBinding,
+} from "./work-notifications.js";
 
 describe("work availability delivery", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -17,6 +20,122 @@ describe("work availability delivery", () => {
     expect(request?.redirect).toBe("manual");
     expect(JSON.parse(request?.body as string)).toEqual({ version: 1, kind: "build" });
     expect(request?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("prefers the authenticated VPC coordinator binding when configured", async () => {
+    const service = {
+      fetch: vi
+        .fn<WorkNotificationServiceBinding["fetch"]>()
+        .mockResolvedValue(new Response(null, { status: 202 })),
+    };
+    const fallback = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 202 }));
+    expect(
+      await notifyWorkAvailable(
+        {
+          COORDINATION_SERVICE: service,
+          ...env,
+        },
+        "build",
+        fallback,
+      ),
+    ).toBe("notified");
+    expect(service.fetch).toHaveBeenCalledOnce();
+    const [url, request] = service.fetch.mock.calls[0]!;
+    expect(String(url)).toBe("http://coordination.internal/internal/work-available");
+    expect(request?.method).toBe("POST");
+    expect(request?.headers).toEqual({
+      Authorization: `Bearer ${env.BUILD_WORK_NOTIFICATION_TOKEN}`,
+      "Content-Type": "application/json",
+    });
+    expect(JSON.parse(request?.body as string)).toEqual({ version: 1, kind: "build" });
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("uses the existing Provisioner token for operation hints through VPC", async () => {
+    const provisionerToken = "dedicated-provisioner-notification-token";
+    const service = {
+      fetch: vi
+        .fn<WorkNotificationServiceBinding["fetch"]>()
+        .mockResolvedValue(new Response(null, { status: 202 })),
+    };
+    const fallback = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 202 }));
+    expect(
+      await notifyWorkAvailable(
+        {
+          COORDINATION_SERVICE: service,
+          PROVISIONER_WORK_NOTIFICATION_URL: "https://runtime.test/internal/work-available",
+          PROVISIONER_WORK_NOTIFICATION_TOKEN: provisionerToken,
+        },
+        "operation",
+        fallback,
+        "instance-1",
+      ),
+    ).toBe("notified");
+    const [url, request] = service.fetch.mock.calls[0]!;
+    expect(String(url)).toBe("http://coordination.internal/internal/work-available");
+    expect(new Headers(request?.headers).get("Authorization")).toBe(`Bearer ${provisionerToken}`);
+    expect(JSON.parse(request?.body as string)).toEqual({
+      version: 1,
+      kind: "operation",
+      instanceId: "instance-1",
+    });
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("uses the existing HTTPS notification path when the VPC hint fails", async () => {
+    const service = {
+      fetch: vi
+        .fn<WorkNotificationServiceBinding["fetch"]>()
+        .mockResolvedValue(new Response(null, { status: 503 })),
+    };
+    const fallback = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 202 }));
+    expect(
+      await notifyWorkAvailable(
+        {
+          COORDINATION_SERVICE: service,
+          ...env,
+        },
+        "build",
+        fallback,
+      ),
+    ).toBe("notified");
+    expect(service.fetch).toHaveBeenCalledOnce();
+    expect(fallback).toHaveBeenCalledOnce();
+    const [url, request] = fallback.mock.calls[0]!;
+    expect(String(url)).toBe(env.BUILD_WORK_NOTIFICATION_URL);
+    expect(new Headers(request?.headers).get("Authorization")).toBe(
+      `Bearer ${env.BUILD_WORK_NOTIFICATION_TOKEN}`,
+    );
+    expect(JSON.parse(request?.body as string)).toEqual({ version: 1, kind: "build" });
+  });
+
+  it("uses HTTPS fallback when the optional VPC binding cannot connect", async () => {
+    const service = {
+      fetch: vi
+        .fn<WorkNotificationServiceBinding["fetch"]>()
+        .mockRejectedValue(new Error("private network down")),
+    };
+    const fallback = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 202 }));
+    expect(
+      await notifyWorkAvailable(
+        {
+          COORDINATION_SERVICE: service,
+          PROVISIONER_WORK_NOTIFICATION_URL:
+            "https://runtime.test/internal/work-available",
+          PROVISIONER_WORK_NOTIFICATION_TOKEN: env.BUILD_WORK_NOTIFICATION_TOKEN,
+        },
+        "operation",
+        fallback,
+        "instance-1",
+      ),
+    ).toBe("notified");
+    expect(service.fetch).toHaveBeenCalledOnce();
+    expect(fallback).toHaveBeenCalledOnce();
+    expect(JSON.parse(fallback.mock.calls[0]![1]!.body as string)).toEqual({
+      version: 1,
+      kind: "operation",
+      instanceId: "instance-1",
+    });
   });
 
   it("does not follow a redirect and treats it as a dropped hint", async () => {

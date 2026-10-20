@@ -486,6 +486,7 @@
 
 - name: Check whether the exact Coordination image digest is already in rootless storage
   ansible.builtin.command:
+    chdir: "{{ coordination_service_home }}"
     argv:
       - runuser
       - --user
@@ -502,6 +503,7 @@
 
 - name: Pull the exact Coordination image digest into rootless storage
   ansible.builtin.command:
+    chdir: "{{ coordination_service_home }}"
     argv:
       - runuser
       - --user
@@ -653,6 +655,7 @@
 
 - name: Check Notification token readability as container UID 1000
   ansible.builtin.command:
+    chdir: "{{ coordination_service_home }}"
     argv:
       - runuser
       - --user

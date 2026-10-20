@@ -259,3 +259,61 @@ Ready writer. The existing Control Plane observed-writer issuer can renew after
 a matching resume and durable quiesce clear, subject to the current binding,
 reservation and nonretirement fences. A scheduler repair is in progress. Browser
 session expiry remains a separate unresolved acceptance gate.
+
+
+## Clean workspace and producer predicate false positive
+
+A subsequent read-only check of the live repository used the pinned producer's
+exact Git status predicate, including ignored files. It returned zero records.
+The branch is `main`, HEAD equals the observed remote commit, ahead/behind is
+0/0, there are no tags or additional remote branches, and no reflog commit lies
+outside the current history. The symbolic `refs/remotes/origin/HEAD` is present.
+Its target is `refs/remotes/origin/main` followed by a newline.
+
+In pinned producer `008d5c429ec279a424cafd5b8c4cbee70a613b8e`, the Git helper
+returns raw stdout, but `hasUnknownLocalDurabilityRefs` compares the symbolic
+reference target without trimming. The normal trailing newline therefore
+causes a false positive for this clean repository. No Git references or
+workspace files were deleted to bypass the producer predicate. This explains
+a concrete workspace-dirty contribution; it does not recover the historical
+quiesce receipt's complete reason list.
+
+The private read-only predicate evidence has SHA-256
+`a1ea13e5773814aaf1aa02aa1b0e6c96e519a1205c5b10f50ce2e146e961aad4`.
+
+A replacement producer alone does not prove safe retirement of the current
+writer: the current immutable producer must still satisfy the existing
+quiesce/writer-absence contract. Producer-source repair and a supported
+recovery path remain separate pending work.
+
+
+## Retained writer renewal and conditional browser repair — staged
+
+The retained-writer scheduler repair returns stopped, unsuspended bindings
+without active operations using their observed Ready generation and epoch.
+Running candidates still require desired/observed generation equality. The
+Provisioner keeps only the identity-expiry timer for a retained writer and
+removes idle/status/canary timers and the idle deadline. Renewal continues to
+use the existing observed-writer authority reader and issuer; no status-only
+credential guard or quiesce/retirement fence was relaxed.
+
+Instance Access also repairs the reproduced cross-tab race by leaving shared
+authentication cookies intact on reauth navigation. The existing Gateway entry
+requires a current Gateway session and fresh repository authorization before
+issuing a one-use handoff that replaces the cookies. Explicit logout continues
+to revoke and clear them. A successful refresh restores the deterministic CSRF
+cookie along with access and refresh cookies.
+
+An initial correlation-marker implementation was rejected during review:
+a reauth request carrying old cookies could still return its clearing response
+after a successful refresh had installed newer cookies. Avoiding cookie writes
+on reauth removes that response-order race without adding correlation state.
+
+Actual-handler tests cover reauth responses delivered after the winning
+refresh, multiple stale tabs, navigation guards and the existing logout/CSRF
+checks. Both repairs and the narrow stale-running-candidate 409 revalidation
+passed independent read-only review. On combined source `755b167`, root ran
+`corepack pnpm@11.18.0 install --frozen-lockfile` and
+`PATH=/tmp/praetorium-pnpm11-bin:$PATH corepack pnpm@11.18.0 check`; both passed.
+Deployment is pending. These checks do not certify authenticated hosted refresh
+or resolution of the owner's symptom.

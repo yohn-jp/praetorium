@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { physicalInstanceId } from "@praetorium/contracts";
 import type { ProducerStatus } from "@praetorium/application/lifecycle";
 import {
   parseRuntimeInstanceId,
@@ -348,6 +349,11 @@ function harness(
     runtimeNamespaceName("tenant", endpointId) +
     ".svc.cluster.local:3000";
   const refreshIdentity = vi.fn(async () => true);
+  const runtimeIdentityExpiresAt = vi.fn(async () =>
+    typeof options.identityExpiry === "function"
+      ? options.identityExpiry(currentNow)
+      : options.identityExpiry!,
+  );
   const inspector: IdleRuntimeInspector = {
     async listManagedInstances(cursor) {
       runtimeCursors.push(cursor);
@@ -370,11 +376,7 @@ function harness(
     ...(options.identityExpiry === undefined
       ? {}
       : {
-          async runtimeIdentityExpiresAt() {
-            return typeof options.identityExpiry === "function"
-              ? options.identityExpiry(currentNow)
-              : options.identityExpiry!;
-          },
+          runtimeIdentityExpiresAt,
           refreshRuntimeIdentity: refreshIdentity,
         }),
   };
@@ -426,6 +428,7 @@ function harness(
     journalPath,
     inspector,
     refreshIdentity,
+    runtimeIdentityExpiresAt,
     advance(ms: number) {
       currentNow += ms;
     },
@@ -535,6 +538,63 @@ describe("ProvisionerIdleController", () => {
 
     expect(h.refreshIdentity).toHaveBeenCalledOnce();
     expect(h.listIdleCandidates).toHaveBeenCalledTimes(1);
+  });
+
+  it("tracks a physical runtime ID with a legacy epoch and schedules identity renewal", async () => {
+    const legacyRuntimeEpoch = 1;
+    const runtime = resolvedRuntime();
+    const currentRuntime = {
+      ...runtime,
+      legacyRuntimeEpoch,
+      assignment: {
+        ...runtime.assignment,
+        instanceId: physicalInstanceId(instanceId, 9, legacyRuntimeEpoch),
+      },
+    };
+    const h = harness({
+      candidate: candidate({ currentRuntime }),
+      activityOffsetMs: 0,
+      identityExpiry: (currentNow) =>
+        currentNow < now + 100_000 ? now + 200_000 : currentNow + 300_000,
+    });
+
+    h.controller.notifyWorkAvailable(instanceId);
+    await h.controller.processDueOnce();
+
+    expect(h.runtimeIdentityExpiresAt).toHaveBeenCalledOnce();
+    expect(h.refreshIdentity).not.toHaveBeenCalled();
+
+    h.advance(110_000);
+    await h.controller.processDueOnce();
+
+    expect(h.refreshIdentity).toHaveBeenCalledOnce();
+    expect(h.runtimeIdentityExpiresAt).toHaveBeenCalledTimes(2);
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+  });
+
+  it("does not track or renew a physical runtime whose epoch suffix mismatches", async () => {
+    const legacyRuntimeEpoch = 1;
+    const runtime = resolvedRuntime();
+    const currentRuntime = {
+      ...runtime,
+      legacyRuntimeEpoch,
+      assignment: {
+        ...runtime.assignment,
+        instanceId: physicalInstanceId(instanceId, 8, legacyRuntimeEpoch),
+      },
+    };
+    const h = harness({
+      candidate: candidate({ currentRuntime }),
+      activityOffsetMs: 0,
+      identityExpiry: now + 200_000,
+    });
+
+    h.controller.notifyWorkAvailable(instanceId);
+    await h.controller.processDueOnce();
+
+    expect(h.runtimeIdentityExpiresAt).not.toHaveBeenCalled();
+    expect(h.refreshIdentity).not.toHaveBeenCalled();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
   });
 
   it("keeps idle retirement disabled when no durable journal is configured", async () => {

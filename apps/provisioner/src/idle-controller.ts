@@ -1,4 +1,5 @@
 import { WorkAvailability } from "@praetorium/application";
+import { physicalInstanceId } from "@praetorium/contracts";
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   IdleLifecycle,
@@ -107,7 +108,12 @@ function isCurrentRuntimeCandidate(
     candidate.clusterId === clusterId &&
     candidate.desiredState === "running" &&
     !candidate.bindingSuspended &&
-    candidate.currentRuntime.assignment.instanceId === candidate.instanceId &&
+    candidate.currentRuntime.assignment.instanceId ===
+      physicalInstanceId(
+        candidate.instanceId,
+        candidate.runtimeEpoch,
+        candidate.currentRuntime.legacyRuntimeEpoch,
+      ) &&
     candidate.currentRuntime.assignment.repositoryId === candidate.repositoryId &&
     candidate.currentRuntime.assignment.runtimeEpoch === candidate.runtimeEpoch
   );

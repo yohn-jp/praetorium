@@ -477,11 +477,19 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
       )
         throw new TypeError("producer status is bound to another runtime assignment");
 
+      // The producer reports its physical Pod identity. The lifecycle
+      // observation predicate is bound to the logical application identity,
+      // so normalize only after the physical binding above has been checked.
+      const normalizedStatus = { ...status, instanceId: assignment.instanceId };
       const isInFlightCensusPlaceholder =
         status.persistence?.state === "unknown" && status.lastConfirmedRemoteRevision === null;
-      const hasFreshRemoteEvidence = hasFreshRemoteObservation(assignment, status, this.now());
+      const hasFreshRemoteEvidence = hasFreshRemoteObservation(
+        assignment,
+        normalizedStatus,
+        this.now(),
+      );
       if (hasFreshRemoteEvidence || signal?.aborted === true)
-        return { ...status, instanceId: assignment.instanceId };
+        return normalizedStatus;
       if (isInFlightCensusPlaceholder && immediateRetries < this.unknownPersistenceRetries) {
         immediateRetries += 1;
         // An immediate, freshly credentialed read can join the producer's
@@ -489,7 +497,7 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
         continue;
       }
       if (delayedRetries >= this.unknownPersistenceDelayedRetries)
-        return { ...status, instanceId: assignment.instanceId };
+        return normalizedStatus;
       await this.options.beforeStatusRetry?.();
       await waitForStatusRetry(this.unknownPersistenceRetryDelayMs, signal);
       await this.options.beforeStatusRetry?.();

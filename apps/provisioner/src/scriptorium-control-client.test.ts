@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import type { RuntimeAssignment } from "@praetorium/application/lifecycle";
+import { assignmentInstanceId } from "@praetorium/contracts";
+import {
+  hasFreshRemoteObservation,
+  type ProducerStatus,
+  type RuntimeAssignment,
+} from "@praetorium/application/lifecycle";
 import {
   IdleObservationRuntimeControlCredentialProvider,
   ScriptoriumControlHttpClient,
@@ -284,6 +289,49 @@ describe("ScriptoriumControlHttpClient", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("accepts fresh status for a legacy physical identity without delayed retries", async () => {
+    const current = assignment();
+    const legacyAssignment: RuntimeAssignment = {
+      ...current,
+      deployment: { ...current.deployment, legacyRuntimeEpoch: 1 },
+    };
+    const now = Date.parse("2026-10-17T10:01:00.000Z");
+    const verifiedStatus = verifiedPersistenceStatus() as Record<string, unknown>;
+    const persistence = verifiedStatus.persistence as Record<string, unknown>;
+    const rawStatus = {
+      ...verifiedStatus,
+      instanceId: assignmentInstanceId(legacyAssignment),
+      persistence: { ...persistence, remoteObservedAt: "2026-10-17T10:00:59.500Z" },
+    };
+    expect(
+      hasFreshRemoteObservation(
+        legacyAssignment,
+        {
+          ...(rawStatus as unknown as ProducerStatus),
+          instanceId,
+        },
+        now,
+      ),
+    ).toBe(true);
+    let fetches = 0;
+    const control = client({
+      now: () => now,
+      unknownPersistenceDelayedRetries: 15,
+      unknownPersistenceRetryDelayMs: 1,
+      fetch: async () => {
+        fetches += 1;
+        return Response.json(rawStatus);
+      },
+    });
+    control.bindCurrent(legacyAssignment);
+
+    await expect(control.status(legacyAssignment)).resolves.toMatchObject({
+      instanceId,
+      persistence: { state: "verified", observedRemoteCommit: "a".repeat(40) },
+    });
+    expect(fetches).toBe(1);
   });
 
   it("retries a nonfresh unknown observation even when it retains an older confirmed revision", async () => {

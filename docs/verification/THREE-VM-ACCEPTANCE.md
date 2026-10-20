@@ -66,7 +66,7 @@ means no suitable current evidence yet; no fixture or CI result substitutes.
 | Full three-host inventory, CPU/memory/cgroups/OOM/cache baseline | IN PROGRESS | Sanitized per-host measurements and datastore/network/secret references |
 | K3s token/CA/datastore/PVC backup and independent recovery | VERIFIED datastore/journal/Git restore slices; workspace pending | Actual restored identities, resources and durable data; rollback rehearsal |
 | Management host-systemd K3s Server; Runtime Agent | NOT_CHECKED | Live node roles, CA/cluster continuity and systemd state |
-| Rootless independent Quadlet Coordination | NOT_CHECKED | Dedicated UID, digest, reboot recovery and health with K3s stopped |
+| Rootless independent Quadlet Coordination | VERIFIED running with K3s inactive; reboot pending | Dedicated UID, digest, reboot recovery and health with K3s stopped |
 | Management tenant exclusion and future Agent placement | NOT_CHECKED | Node taint/labels and rendered/observed tenant affinity |
 | Existing BuildKit/cache preserved and bounded | IN PROGRESS | Version/cache identity, actual build peak, GC and resource limits |
 | Authenticated private work delivery and recovery | NOT_CHECKED | Duplicate/lost hint, coordinator restart, D1 fencing and bounded recovery |
@@ -170,6 +170,43 @@ units without speculative conversion. Exact queries, scope, timestamps,
 measurement overhead and limitations are saved privately at
 `/data/praetorium/production/verification/three-vm-cost-20261020.json`.
 G8 remains unproved until suitable final-cut idle/active/outage windows pass.
+
+## Management bootstrap and diagnostic deployment, 11:50 UTC
+
+Source `9f9376314efc4bd63cb70d21df88d4bf6894d3b5` passed the required frozen
+install and full check (30 Turbo tasks, provider boundaries and contract schema).
+The retained-runtime observation issuer now permits a 30-second status-only
+credential for the exact retained observed tuple when no operation is active;
+mutation credentials and lifecycle fences are unchanged. Control Plane was
+deployed from the canonical rendered inventory as version
+`44ca3532-8ce9-45c6-a644-cbf9f535e704`, retaining the Coordination VPC binding.
+Producer status and pending-work disposition still require a successful live
+request; source tests alone do not establish those facts.
+
+Canonical Gateway rendering previously omitted production authentication rate
+limit bindings and environment configuration. The corrected renderer and
+deployment probe were integrated and tested. Gateway-only deployment version
+`ee5b55dc-9a5d-4d1f-809d-dd644f1e2272` returns HTTP 200 from `/auth/login` with
+strict TLS verification. This is login-page availability, not a completed
+GitHub OAuth or handoff journey.
+
+The Management Ansible bootstrap installed rootless Coordination at the
+verified `bf43bed8…` digest under dedicated UID 2001 and started its separate
+Cloudflare Tunnel system service. A direct readiness request returned
+`{"status":"ready"}` while Management's K3s service was inactive. The connector
+registered four QUIC connections. A complete repeat apply returned
+`ok=74 changed=0 failed=0`; the actual logs are protected under
+`/data/praetorium/production/verification/management-bootstrap-*.log`.
+The initial failed ACL and working-directory attempts remain recorded as failed
+attempts. They are superseded by the successful corrected apply, not counted
+as acceptance. Management reboot recovery and end-to-end VPC notification
+delivery remain NOT_CHECKED.
+
+The read-only recovery-artifact verifier also passed on the corrected encrypted
+K3s bundle and its protected manifest, checking ciphertext size/SHA-256 and key
+metadata without reading key contents. Full workspace preservation, quiesce,
+writer absence, a fresh cutover snapshot, and Runtime Server-to-Agent conversion
+remain pending. The retained writer has not been replaced.
 
 The real three-host Ansible `ansible.builtin.ping --become` preflight succeeded
 on all hosts with `changed=false`, using isolated ansible-core 2.20.10 and each

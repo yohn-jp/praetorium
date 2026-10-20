@@ -218,6 +218,79 @@ describe("Control Plane provisioner idle routes", () => {
     expect(wrongCluster.status).toBe(403);
   });
 
+  it("exposes only the retained observed writer for identity renewal after a blocked stop", async () => {
+    const h = createHarness();
+    await h.addReadyInstance("ins_retained", 770);
+    await h.addReadyInstance("ins_retained_suspended", 771, { suspended: true });
+    await h.addReadyInstance("ins_retained_active", 772);
+    await h.addReadyInstance("ins_retained_epoch_changed", 773);
+    for (const instanceId of [
+      "ins_retained",
+      "ins_retained_suspended",
+      "ins_retained_active",
+      "ins_retained_epoch_changed",
+    ]) {
+      h.database
+        .prepare(
+          `UPDATE logical_instances
+           SET generation = 2, desired_state = 'stopped'
+           WHERE instance_id = ?`,
+        )
+        .run(instanceId);
+    }
+    h.database
+      .prepare("UPDATE logical_instances SET runtime_epoch = 2 WHERE instance_id = ?")
+      .run("ins_retained_epoch_changed");
+    h.database
+      .prepare(
+        `INSERT INTO operations (
+           operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase,
+           idempotency_scope, idempotency_key, request_hash, actor_id, authorization_revision,
+           created_at, updated_at
+         ) VALUES ('op_retained_active', 'ins_retained_active', 772, 2, 1, 'stop', 'pending', 'accepted',
+                   'repository:772', 'retained-active', 'hash', 'worker-a', 3, ?, ?)`,
+      )
+      .run(NOW, NOW);
+    const schedule = vi.fn(async () => ({
+      healthOperationId: "should-not-be-read",
+      nextCheckAt: NOW + 10_000,
+      sampleDueAt: null,
+    }));
+
+    const retained = await h.request(
+      "/internal/provisioner/idle-candidate",
+      { workerId: WORKER_ID, clusterId: CLUSTER_ID, instanceId: "ins_retained" },
+      schedule,
+    );
+    expect(retained.status).toBe(200);
+    await expect(retained.json()).resolves.toMatchObject({
+      instanceId: "ins_retained",
+      repositoryId: 770,
+      generation: 1,
+      runtimeEpoch: 1,
+      desiredState: "stopped",
+      bindingSuspended: false,
+      hasActiveOperation: false,
+      activeCanaryHealth: false,
+      healthOperationId: null,
+      healthNextCheckAt: null,
+      currentRuntime: { instanceId: "ins_retained", repositoryId: 770, runtimeEpoch: 1 },
+    });
+    for (const instanceId of [
+      "ins_retained_suspended",
+      "ins_retained_active",
+      "ins_retained_epoch_changed",
+    ]) {
+      const excluded = await h.request("/internal/provisioner/idle-candidate", {
+        workerId: WORKER_ID,
+        clusterId: CLUSTER_ID,
+        instanceId,
+      });
+      await expect(excluded.json()).resolves.toBeNull();
+    }
+    expect(schedule).not.toHaveBeenCalled();
+  });
+
   it("advertises and revalidates a persisted canary health deadline by exact assignment", async () => {
     const h = createHarness();
     await h.addReadyInstance("ins_canary", 76);

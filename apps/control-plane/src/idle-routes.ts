@@ -53,8 +53,11 @@ const ObservationCredentialInputSchema = z.strictObject({
 interface IdleCandidateRow {
   readonly instance_id: string;
   readonly repository_id: number;
+  /** Generation and epoch of the writer that is still present. */
   readonly generation: number;
   readonly runtime_epoch: number;
+  readonly desired_generation: number;
+  readonly desired_state: "running" | "stopped";
   readonly cluster_id: string;
   readonly has_active_operation: number;
 }
@@ -130,38 +133,40 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
     } catch {
       return { kind: "unavailable" };
     }
-    if (currentRuntime === null || currentRuntime === undefined)
-      return { kind: "unavailable" };
-    const [healthOperation, canaryHealth] = await Promise.all([
-      deps.db
-        .prepare(
-          `SELECT operation_id FROM operations WHERE instance_id=? AND repository_id=?
-           AND runtime_epoch=? AND deployment_revision_id=? AND status='succeeded'
-           AND kind IN ('start','update','redeploy') ORDER BY updated_at DESC LIMIT 1`,
-        )
-        .bind(
-          snapshot.instance.instanceId,
-          snapshot.binding.repositoryId,
-          snapshot.instance.observedRuntimeEpoch,
-          revisionId,
-        )
-        .first<{ operation_id: string }>(),
-      deps.canaryHealthSchedule?.({
-        instanceId: snapshot.instance.instanceId,
-        repositoryId: snapshot.binding.repositoryId,
-        generation: snapshot.instance.generation,
-        runtimeEpoch: snapshot.instance.runtimeEpoch,
-        clusterId,
-        now: deps.now(),
-      }) ?? Promise.resolve(null),
-    ]);
+    if (currentRuntime === null || currentRuntime === undefined) return { kind: "unavailable" };
+    const [healthOperation, canaryHealth] =
+      snapshot.instance.desiredState === "running"
+        ? await Promise.all([
+            deps.db
+              .prepare(
+                `SELECT operation_id FROM operations WHERE instance_id=? AND repository_id=?
+                 AND runtime_epoch=? AND deployment_revision_id=? AND status='succeeded'
+                 AND kind IN ('start','update','redeploy') ORDER BY updated_at DESC LIMIT 1`,
+              )
+              .bind(
+                snapshot.instance.instanceId,
+                snapshot.binding.repositoryId,
+                snapshot.instance.observedRuntimeEpoch,
+                revisionId,
+              )
+              .first<{ operation_id: string }>(),
+            deps.canaryHealthSchedule?.({
+              instanceId: snapshot.instance.instanceId,
+              repositoryId: snapshot.binding.repositoryId,
+              generation: snapshot.instance.observedGeneration!,
+              runtimeEpoch: snapshot.instance.observedRuntimeEpoch!,
+              clusterId,
+              now: deps.now(),
+            }) ?? Promise.resolve(null),
+          ])
+        : ([null, null] as const);
     return {
       kind: "candidate",
       candidate: {
         instanceId: snapshot.instance.instanceId,
         repositoryId: snapshot.binding.repositoryId,
-        generation: snapshot.instance.generation,
-        runtimeEpoch: snapshot.instance.runtimeEpoch,
+        generation: snapshot.instance.observedGeneration!,
+        runtimeEpoch: snapshot.instance.observedRuntimeEpoch!,
         clusterId,
         desiredState: snapshot.instance.desiredState,
         bindingSuspended: snapshot.binding.suspended,
@@ -343,7 +348,12 @@ export function createProvisionerIdleRoutes(deps: ProvisionerIdleRoutesDependenc
     const result = await deps.store.requestDesiredStateWithFence(desiredState, [fence]);
     if (!result?.operation) return conflict(c);
     try {
-      scheduleWorkNotification(c.executionCtx, deps.notifyWorkAvailable, "operation", input.instanceId);
+      scheduleWorkNotification(
+        c.executionCtx,
+        deps.notifyWorkAvailable,
+        "operation",
+        input.instanceId,
+      );
     } catch {
       // The fenced idle-stop operation was durably accepted already.
     }
@@ -414,11 +424,14 @@ async function readIdleCandidateRows(
     readonly instanceId?: string;
   },
 ): Promise<readonly IdleCandidateRow[]> {
-  const instanceFilter = input.instanceId === undefined
-    ? "AND (? IS NULL OR i.instance_id > ?)"
-    : "AND i.instance_id = ?";
+  const instanceFilter =
+    input.instanceId === undefined
+      ? "AND (? IS NULL OR i.instance_id > ?)"
+      : "AND i.instance_id = ?";
   const statement = db.prepare(
-    `SELECT i.instance_id, i.repository_id, i.generation, i.runtime_epoch,
+    `SELECT i.instance_id, i.repository_id,
+            i.observed_generation AS generation, i.observed_runtime_epoch AS runtime_epoch,
+            i.generation AS desired_generation, i.desired_state,
             r.cluster_id,
             EXISTS (
               SELECT 1 FROM operations o
@@ -433,8 +446,18 @@ async function readIdleCandidateRows(
         AND r.status IN ('reserved', 'allocated')
        WHERE r.cluster_id = ?
          AND i.observed_state = 'ready'
-         AND i.observed_generation = i.generation
+         AND i.observed_generation IS NOT NULL
          AND i.observed_runtime_epoch = i.runtime_epoch
+         AND (
+           (i.desired_state = 'running' AND i.observed_generation = i.generation)
+           OR (i.desired_state = 'stopped' AND i.observed_generation < i.generation
+             AND b.suspended = 0
+             AND NOT EXISTS (
+               SELECT 1 FROM operations active
+               WHERE active.instance_id = i.instance_id
+                 AND active.status IN ('pending', 'claimed', 'running')
+             ))
+         )
          ${instanceFilter}
        ORDER BY i.instance_id
        LIMIT ?`,
@@ -444,9 +467,7 @@ async function readIdleCandidateRows(
       ? await statement
           .bind(input.clusterId, input.cursor ?? null, input.cursor ?? null, input.limit ?? 26)
           .all<IdleCandidateRow>()
-      : await statement
-          .bind(input.clusterId, input.instanceId, 1)
-          .all<IdleCandidateRow>();
+      : await statement.bind(input.clusterId, input.instanceId, 1).all<IdleCandidateRow>();
   return rows.results;
 }
 
@@ -459,12 +480,18 @@ function isCurrentCandidate(
     snapshot &&
       snapshot.binding.repositoryId === row.repository_id &&
       snapshot.binding.instanceId === row.instance_id &&
+      (row.desired_state !== "stopped" || !snapshot.binding.suspended) &&
       snapshot.instance.instanceId === row.instance_id &&
-      snapshot.instance.generation === row.generation &&
+      snapshot.instance.generation === row.desired_generation &&
+      snapshot.instance.desiredState === row.desired_state &&
       snapshot.instance.runtimeEpoch === row.runtime_epoch &&
       snapshot.instance.observedGeneration === row.generation &&
       snapshot.instance.observedRuntimeEpoch === row.runtime_epoch &&
       snapshot.instance.observedState === "ready" &&
+      (row.desired_state !== "running" ||
+        snapshot.instance.observedGeneration === row.desired_generation) &&
+      (row.desired_state !== "stopped" ||
+        (row.generation < row.desired_generation && row.has_active_operation === 0)) &&
       snapshot.instance.clusterId === clusterId &&
       row.cluster_id === clusterId,
   );

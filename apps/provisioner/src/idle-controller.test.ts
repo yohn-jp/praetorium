@@ -299,7 +299,7 @@ function harness(
   const journalDirectory = join(tmpdir(), `praetorium-idle-${randomUUID()}`);
   journalDirectories.push(journalDirectory);
   const journalPath = join(journalDirectory, "state.json");
-  const value = options.candidate ?? candidate();
+  let value = options.candidate ?? candidate();
   const createIdleStop = vi.fn(async () => "op_idle");
   const runtimeCursors: (string | undefined)[] = [];
   let runtimePageIndex = 0;
@@ -310,16 +310,14 @@ function harness(
       return { items: options.candidates?.() ?? [value], nextCursor: null };
     },
   );
-  const readIdleCandidate = vi.fn(
-    async (input: { readonly instanceId: string }) => {
-      if (options.readCandidate !== undefined) return options.readCandidate(input.instanceId);
-      const candidates = options.candidates?.();
-      if (candidates !== undefined) {
-        return candidates.find((item) => item.instanceId === input.instanceId) ?? null;
-      }
-      return input.instanceId === value.instanceId ? value : null;
-    },
-  );
+  const readIdleCandidate = vi.fn(async (input: { readonly instanceId: string }) => {
+    if (options.readCandidate !== undefined) return options.readCandidate(input.instanceId);
+    const candidates = options.candidates?.();
+    if (candidates !== undefined) {
+      return candidates.find((item) => item.instanceId === input.instanceId) ?? null;
+    }
+    return input.instanceId === value.instanceId ? value : null;
+  });
   const issueObservationCredential = vi.fn(async () => ({
     token: "signed-observation-token",
     expiresAt: new Date(currentNow + 30_000).toISOString(),
@@ -352,6 +350,9 @@ function harness(
     runtimeNamespaceName("tenant", endpointId) +
     ".svc.cluster.local:3000";
   const refreshIdentity = vi.fn(async () => true);
+  const inspectRuntime = vi.fn(
+    async () => options.runtimeObservation ?? providerObservation({}, currentNow),
+  );
   const runtimeIdentityExpiresAt = vi.fn(async () =>
     typeof options.identityExpiry === "function"
       ? options.identityExpiry(currentNow)
@@ -371,7 +372,7 @@ function harness(
       return { items: [options.managed ?? managedRuntime()], nextCursor: null };
     },
     async inspect() {
-      return options.runtimeObservation ?? providerObservation({}, currentNow);
+      return inspectRuntime();
     },
     async controlEndpoint() {
       return endpoint;
@@ -433,6 +434,10 @@ function harness(
     inspector,
     refreshIdentity,
     runtimeIdentityExpiresAt,
+    inspectRuntime,
+    setCandidate(next: ProvisionerIdleCandidate) {
+      value = next;
+    },
     advance(ms: number) {
       currentNow += ms;
     },
@@ -606,6 +611,71 @@ describe("ProvisionerIdleController", () => {
     expect(h.refreshIdentity).toHaveBeenCalledOnce();
     expect(h.runtimeIdentityExpiresAt).toHaveBeenCalledTimes(2);
     expect(h.createIdleStop).not.toHaveBeenCalled();
+  });
+
+  it("renews only the identity of a retained ready writer with stopped desired state", async () => {
+    const h = harness({
+      candidate: candidate({
+        desiredState: "stopped",
+        activeCanaryHealth: true,
+        healthNextCheckAt: now,
+      }),
+      identityExpiry: (currentNow) => currentNow + 200_000,
+    });
+
+    await h.controller.scanOnce();
+    expect(h.runtimeIdentityExpiresAt).toHaveBeenCalledOnce();
+    expect(h.inspectRuntime).not.toHaveBeenCalled();
+    expect(h.issueObservationCredential).not.toHaveBeenCalled();
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+
+    h.advance(120_000);
+    await h.controller.processDueOnce();
+
+    expect(h.refreshIdentity).toHaveBeenCalledOnce();
+    expect(h.runtimeIdentityExpiresAt).toHaveBeenCalledTimes(2);
+    expect(h.inspectRuntime).not.toHaveBeenCalled();
+    expect(h.issueObservationCredential).not.toHaveBeenCalled();
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+  });
+
+  it("clears cached idle and canary timers when the same writer becomes a retained stopped candidate", async () => {
+    const h = harness({
+      candidate: candidate({
+        activeCanaryHealth: true,
+        healthOperationId: "op_canary_before_stop",
+        healthNextCheckAt: now + 15 * 60_000,
+      }),
+      activityOffsetMs: 0,
+      identityExpiry: now + 2 * 60 * 60_000,
+    });
+    await h.controller.scanOnce();
+    expect(h.issueObservationCredential).toHaveBeenCalledOnce();
+
+    h.setCandidate(
+      candidate({
+        desiredState: "stopped",
+        activeCanaryHealth: false,
+        healthOperationId: null,
+        healthNextCheckAt: null,
+      }),
+    );
+    h.controller.notifyWorkAvailable(instanceId);
+    await h.controller.processDueOnce();
+    const journal = new IdleDeadlineJournal(h.journalPath);
+    await journal.load();
+    expect(
+      journal.get({ instanceId, repositoryId, generation: 7, runtimeEpoch: 9, clusterId }),
+    ).toBeUndefined();
+    h.advance(16 * 60_000);
+    await h.controller.processDueOnce();
+
+    expect(h.issueObservationCredential).toHaveBeenCalledOnce();
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+    expect(h.refreshIdentity).not.toHaveBeenCalled();
   });
 
   it("does not track or renew a physical runtime whose epoch suffix mismatches", async () => {
@@ -1058,7 +1128,28 @@ describe("ProvisionerIdleController", () => {
   it.each([
     ["suspended binding", { candidate: candidate({ bindingSuspended: true }) }],
     ["active operation", { candidate: candidate({ hasActiveOperation: true }) }],
-    ["desired stopped", { candidate: candidate({ desiredState: "stopped" }) }],
+    [
+      "suspended retained writer",
+      { candidate: candidate({ desiredState: "stopped", bindingSuspended: true }) },
+    ],
+    [
+      "active retained writer",
+      { candidate: candidate({ desiredState: "stopped", hasActiveOperation: true }) },
+    ],
+    [
+      "retained writer with a stale runtime generation",
+      {
+        candidate: candidate({ desiredState: "stopped" }),
+        managed: managedRuntime({ generation: 6 }),
+      },
+    ],
+    [
+      "retained writer with a stale runtime epoch",
+      {
+        candidate: candidate({ desiredState: "stopped" }),
+        managed: managedRuntime({ runtimeEpoch: 8 }),
+      },
+    ],
     ["wrong runtime generation", { managed: managedRuntime({ generation: 6 }) }],
     ["wrong runtime epoch", { managed: managedRuntime({ runtimeEpoch: 8 }) }],
     ["runtime not running", { managed: managedRuntime({ state: "stopped" }) }],

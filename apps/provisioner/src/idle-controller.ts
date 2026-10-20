@@ -104,14 +104,12 @@ interface PendingHealthProbeRetry {
   retryMs: number;
 }
 
-function isCurrentRuntimeCandidate(
+function matchesCurrentRuntimeAssignment(
   candidate: ProvisionerIdleCandidate,
   clusterId: string,
 ): boolean {
   return (
     candidate.clusterId === clusterId &&
-    candidate.desiredState === "running" &&
-    !candidate.bindingSuspended &&
     candidate.currentRuntime.assignment.instanceId ===
       physicalInstanceId(
         candidate.instanceId,
@@ -120,6 +118,39 @@ function isCurrentRuntimeCandidate(
       ) &&
     candidate.currentRuntime.assignment.repositoryId === candidate.repositoryId &&
     candidate.currentRuntime.assignment.runtimeEpoch === candidate.runtimeEpoch
+  );
+}
+
+function isCurrentRuntimeCandidate(
+  candidate: ProvisionerIdleCandidate,
+  clusterId: string,
+): boolean {
+  return (
+    candidate.desiredState === "running" &&
+    !candidate.bindingSuspended &&
+    matchesCurrentRuntimeAssignment(candidate, clusterId)
+  );
+}
+
+function isRetainedWriterCandidate(
+  candidate: ProvisionerIdleCandidate,
+  clusterId: string,
+): boolean {
+  return (
+    candidate.desiredState === "stopped" &&
+    !candidate.bindingSuspended &&
+    !candidate.hasActiveOperation &&
+    matchesCurrentRuntimeAssignment(candidate, clusterId)
+  );
+}
+
+function isTrackableRuntimeCandidate(
+  candidate: ProvisionerIdleCandidate,
+  clusterId: string,
+): boolean {
+  return (
+    isCurrentRuntimeCandidate(candidate, clusterId) ||
+    isRetainedWriterCandidate(candidate, clusterId)
   );
 }
 
@@ -466,12 +497,16 @@ export class ProvisionerIdleController {
       this.metrics?.increment("idle_candidate_absent");
       return;
     }
-    if (
-      candidate.instanceId !== instanceId ||
-      candidate.clusterId !== this.options.clusterId ||
-      !isCurrentRuntimeCandidate(candidate, this.options.clusterId)
-    ) {
+    if (candidate.instanceId !== instanceId || candidate.clusterId !== this.options.clusterId) {
       throw new TypeError("idle candidate point lookup returned an unrelated binding");
+    }
+    if (!isTrackableRuntimeCandidate(candidate, this.options.clusterId)) {
+      this.tracked.delete(instanceId);
+      if (this.journalReady && !(await this.journal.removeByInstance(instanceId))) {
+        throw new Error("idle_journal_unavailable");
+      }
+      this.metrics?.increment("idle_candidate_not_current");
+      return;
     }
     const assignment = assignmentOf(candidate);
     const inspector = this.createInspector(candidate);
@@ -496,6 +531,7 @@ export class ProvisionerIdleController {
   private async scanFullInventory(signal?: AbortSignal): Promise<void> {
     this.resetScanState();
     const bindings = new Map<string, RuntimeAssignment>();
+    const idleBindings = new Map<string, RuntimeAssignment>();
     let pages = 0;
     try {
       do {
@@ -503,7 +539,7 @@ export class ProvisionerIdleController {
           this.resetScanState();
           return;
         }
-        if (!(await this.scanOnceInternal(signal, bindings))) {
+        if (!(await this.scanOnceInternal(signal, bindings, idleBindings))) {
           throw new Error("idle_inventory_incomplete");
         }
         pages += 1;
@@ -512,7 +548,7 @@ export class ProvisionerIdleController {
         }
       } while (this.candidatePage !== null || this.controlCursor !== null);
       if (signal?.aborted) return;
-      if (this.journalReady) await this.journal.prune(bindings);
+      if (this.journalReady) await this.journal.prune(idleBindings);
       for (const [instanceId, tracked] of this.tracked) {
         const current = bindings.get(instanceId);
         if (current === undefined || !sameIdleBinding(tracked.assignment, current)) {
@@ -557,10 +593,7 @@ export class ProvisionerIdleController {
 
   private async processDue(signal: AbortSignal): Promise<void> {
     const now = this.now();
-    if (
-      this.startupDiscoveryRetryAt !== undefined &&
-      this.startupDiscoveryRetryAt <= now
-    ) {
+    if (this.startupDiscoveryRetryAt !== undefined && this.startupDiscoveryRetryAt <= now) {
       this.startupDiscoveryPending = true;
       this.startupDiscoveryRetryAt = undefined;
     }
@@ -661,6 +694,7 @@ export class ProvisionerIdleController {
   private async scanOnceInternal(
     signal?: AbortSignal,
     bindings?: Map<string, RuntimeAssignment>,
+    idleBindings?: Map<string, RuntimeAssignment>,
   ): Promise<boolean> {
     if (this.candidatePage === null) {
       this.candidatePage = await this.options.operations.listIdleCandidates({
@@ -682,11 +716,8 @@ export class ProvisionerIdleController {
     }
 
     const candidates = this.candidatePage.items.filter((candidate) =>
-      isCurrentRuntimeCandidate(candidate, this.options.clusterId),
+      isTrackableRuntimeCandidate(candidate, this.options.clusterId),
     );
-    for (const candidate of candidates) {
-      bindings?.set(candidate.instanceId, assignmentOf(candidate));
-    }
     if (candidates.length === 0) {
       this.finishCandidatePage();
       return true;
@@ -707,6 +738,8 @@ export class ProvisionerIdleController {
       if (!page.items.some((runtime) => matchesManagedRuntime(runtime, candidate, assignment))) {
         continue;
       }
+      bindings?.set(candidate.instanceId, assignment);
+      if (candidate.desiredState === "running") idleBindings?.set(candidate.instanceId, assignment);
       if (this.evaluatedCandidates.has(candidate.instanceId)) continue;
       this.evaluatedCandidates.add(candidate.instanceId);
       await this.evaluateCandidate(candidate, assignment, this.inspector, signal, true);
@@ -752,6 +785,22 @@ export class ProvisionerIdleController {
       tracked = { ...tracked, candidate, assignment, inspector };
     }
     this.tracked.set(candidate.instanceId, tracked);
+    if (candidate.desiredState === "stopped") {
+      // This exact observed assignment remains a writer while the stopped
+      // desired state is blocked. Keep only its identity-expiry timer; old
+      // idle/status/canary timers must not run against the retired desire.
+      tracked.idleCheckAt = undefined;
+      tracked.retryAt = undefined;
+      tracked.retryMs = INITIAL_RETRY_INTERVAL_MS;
+      tracked.canaryHealthCheckAt = undefined;
+      tracked.canaryHealthQueryRetryMs = INITIAL_RETRY_INTERVAL_MS;
+      tracked.healthProbeRetries.clear();
+      if (this.journalReady && !(await this.journal.remove(assignment))) {
+        this.metrics?.increment("idle_journal_unavailable");
+      }
+      await this.scheduleRetainedWriterIdentity(tracked, signal);
+      return;
+    }
     const operationTrigger = operationHealthProbeTrigger(candidate);
     for (const [key, retry] of tracked.healthProbeRetries) {
       if (retry.trigger.kind === "operation" && key !== operationTrigger?.key) {
@@ -945,7 +994,7 @@ export class ProvisionerIdleController {
           activity.activeMutations > 0 ||
           activity.pendingCheckpoints > 0 ||
           activity.uncertainPublication,
-        intendedStopped: candidate.desiredState === "stopped",
+        intendedStopped: false,
         runtimeState: "running",
         current: assignment,
       };
@@ -996,6 +1045,37 @@ export class ProvisionerIdleController {
       this.logger?.warn("idle_observation_unavailable", idleObservationErrorFields(error));
       this.scheduleRetry(tracked);
       if (healthTrigger !== undefined) this.scheduleHealthProbeRetry(tracked, healthTrigger);
+    }
+  }
+
+  private async scheduleRetainedWriterIdentity(
+    tracked: TrackedRuntime,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const inspector = tracked.inspector;
+    if (
+      inspector.refreshRuntimeIdentity === undefined ||
+      inspector.runtimeIdentityExpiresAt === undefined
+    ) {
+      tracked.identityRefreshAt = undefined;
+      return;
+    }
+    if (tracked.identityRefreshAt !== undefined) return;
+    try {
+      const expiresAt = await inspector.runtimeIdentityExpiresAt(tracked.assignment, signal);
+      if (!Number.isSafeInteger(expiresAt)) throw new Error("runtime_identity_expiry_invalid");
+      if (expiresAt - this.now() <= IDENTITY_REFRESH_MARGIN_MS) {
+        tracked.identityRefreshAt = this.now();
+        await this.refreshIdentity(tracked, signal ?? new AbortController().signal);
+        return;
+      }
+      tracked.identityRefreshAt = expiresAt - IDENTITY_REFRESH_MARGIN_MS;
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason ?? error;
+      this.metrics?.increment("runtime_identity_refresh_failed");
+      this.logger?.warn("runtime_identity_refresh_failed", { code: errorCode(error) });
+      tracked.identityRefreshAt = this.now() + tracked.retryMs;
+      tracked.retryMs = Math.min(MAX_RETRY_INTERVAL_MS, Math.ceil(tracked.retryMs * 1.8));
     }
   }
 

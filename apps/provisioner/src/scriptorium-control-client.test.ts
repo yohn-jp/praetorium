@@ -253,6 +253,39 @@ describe("ScriptoriumControlHttpClient", () => {
     expect(leaseChecks).toBe(6);
   });
 
+  it("retries adjacent census reads after each delayed status read", async () => {
+    vi.useFakeTimers();
+    try {
+      let fetches = 0;
+      const control = client({
+        now: () => Date.parse("2026-10-17T10:01:00.000Z"),
+        unknownPersistenceRetries: 2,
+        unknownPersistenceDelayedRetries: 1,
+        unknownPersistenceRetryDelayMs: 5_000,
+        fetch: async () => {
+          fetches += 1;
+          // The first three reads miss the in-flight scan. A scan finishes
+          // during the delayed gap, so the first immediate read still races
+          // the next census and the adjacent second read observes its result.
+          return Response.json(
+            fetches === 5 ? verifiedPersistenceStatus() : unknownPersistenceStatus(),
+          );
+        },
+      });
+
+      const status = control.status(assignment());
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(status).resolves.toMatchObject({
+        persistence: { state: "verified", observedRemoteCommit: "a".repeat(40) },
+        lastConfirmedRemoteRevision: "a".repeat(40),
+      });
+      expect(fetches).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries a nonfresh unknown observation even when it retains an older confirmed revision", async () => {
     let fetches = 0;
     const control = client({

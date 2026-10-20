@@ -494,6 +494,7 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
       await waitForStatusRetry(this.unknownPersistenceRetryDelayMs, signal);
       await this.options.beforeStatusRetry?.();
       delayedRetries += 1;
+      immediateRetries = 0;
     }
   }
 

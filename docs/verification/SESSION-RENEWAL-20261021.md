@@ -216,5 +216,46 @@ adjacent retry budget was spent before the renewed Secret reached the Pod,
 subsequent single reads separated by five seconds could repeatedly miss the
 completed census. Commit `c78f678` resets the adjacent-read budget after each
 bounded delayed wait. Its regression, frozen install, full check and independent
-review passed. Publication/deployment verification for this follow-up is pending.
+review passed. Publication 39461853805 and canonical deployment subsequently passed;
+the next normal attempt still failed freshness checking, as explained below.
 This timing repair does not certify authenticated browser session renewal.
+
+
+## Logical identity correction and actual safety block — 17:17 UTC
+
+The retry path compared the producer's physical instance ID with a predicate
+that expects the logical instance ID. Commit `a4cf009` keeps the strict wire
+physical-ID/repository/epoch check, then normalizes the status before checking
+freshness. A regression covers a nonlegacy physical epoch and an immediately
+verified response. Frozen install, full check and independent review passed.
+
+[Publication 39463844698](https://github.com/yohn-jp/praetorium/actions/runs/39463844698)
+passed verification and all four publication jobs. OCI index, amd64 manifest,
+config and SLSA source/subject were verified before the canonical deployment:
+
+- Source: `a4cf0096c008543b10e6cdc820c059d34d67f87a`.
+- Provisioner index: `sha256:4e3b9fb3723ad5657662c84a0edbc7755c32ec528f98e982d763a6a6f235c157`.
+- Linux/amd64 manifest: `sha256:7d15ec5b365d787465319f68ae58d6637d4bfdf4ebd8bca9efc6102533562222`.
+- Sole Ready Provisioner Pod UID: `47ef4419-41f7-4a15-9e61-6a38c79cdf55`.
+
+The normal worker's attempt 18 reached producer quiesce. At `17:17:17Z`, the
+operation was terminal `blocked`, with `producer_quiesce_blocked` at checkpoint
+23. The producer was resumed and the accepted checkpoint cleared the quiesce
+request before recording the block. There is no writer-absence proof. The
+instance remains desired stopped at generation 5, observed ready at generation
+4/epoch 3; the original tenant writer continues running. Stop/Wake has **not**
+passed.
+
+A bounded, fetch-only Core census on an owned scratch copy returned a fresh
+remote observation, zero pending checkpoints, zero pending proposals, and
+`localWorkspaceDirty: true`. The original workspace and locks were unchanged.
+This is current workspace evidence, not a recovery of the producer's historical
+quiesce reason array or its in-memory activity counters. The dirty category is
+under investigation; no user work has been discarded.
+
+A further defect was identified: the Provisioner drops desired-stopped
+candidates from identity renewal even when a blocked stop retains the observed
+Ready writer. The existing Control Plane observed-writer issuer can renew after
+a matching resume and durable quiesce clear, subject to the current binding,
+reservation and nonretirement fences. A scheduler repair is in progress. Browser
+session expiry remains a separate unresolved acceptance gate.

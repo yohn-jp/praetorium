@@ -464,6 +464,22 @@ export function createInstanceAccessHandler(
     }
 
     if (isHtmlNavigation(request)) return fallbackEntry(instance, config, true);
+    // MCP/API callers do not use the browser handoff. A bearer grant can
+    // authorize a wake through the Gateway without forwarding application
+    // headers, buffering the request body or minting an instance cookie.
+    const authorization = request.headers.get("Authorization");
+    if (authorization && /^Bearer [A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(authorization) &&
+        authorization.length <= 16_400 && !request.headers.has("Cookie")) {
+      const wake = await postGateway(config, "/internal/instance-access/wake", {
+        appIdentity: instance.appIdentity,
+        repositoryId: instance.repositoryId,
+        origin: instance.origin,
+        accessGrant: authorization.slice(7),
+      }, fetcher);
+      if (!wake.ok) return wake;
+    } else if (authorization) {
+      return problem(401, "ACCESS_GRANT_INVALID");
+    }
     if (request.method === "HEAD") return new Response(null, { status: 503, headers: { "Retry-After": String(RETRY_AFTER_SECONDS), "Cache-Control": "no-store" } });
     return problem(503, "INSTANCE_STARTING", true);
   });

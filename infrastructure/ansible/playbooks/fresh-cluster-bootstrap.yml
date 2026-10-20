@@ -1,0 +1,385 @@
+---
+# One-time replacement-cluster bootstrap. This deliberately does not use the
+# restore/migration roles or their ownership markers.
+- name: Create a fresh Management K3s server
+  hosts: management
+  become: true
+  gather_facts: true
+  vars:
+    fresh_k3s_version: "v1.35.9+k3s1"
+    fresh_k3s_binary_sha256: "897acb21cca57d477a211102251a6591450ce767344a9faaa121a1007ca9fa9a"
+    fresh_k3s_binary_src: "{{ praetorium_fresh_k3s_binary_src }}"
+    fresh_k3s_cluster_id: "{{ clusterId }}"
+    fresh_k3s_api_host: "{{ praetorium_fresh_management_api_host }}"
+    fresh_k3s_server_data_dir: /var/lib/rancher/k3s
+    fresh_k3s_server_config: /etc/rancher/k3s/config.yaml
+    fresh_k3s_server_unit: /etc/systemd/system/k3s.service
+    fresh_k3s_server_token: /var/lib/rancher/k3s/server/node-token
+  tasks:
+    - name: Require explicit authorization and the pinned fresh-cluster inputs
+      ansible.builtin.assert:
+        that:
+          - praetorium_fresh_k3s_confirm | default(false) | bool
+          - fresh_k3s_cluster_id is match('^clu_[0-9A-HJKMNP-TV-Z]{26}$')
+          - fresh_k3s_api_host is match('^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+          - fresh_k3s_binary_src | length > 0
+        fail_msg: "Set the fresh-cluster confirmation, production cluster ID, Management API address and pinned binary source."
+
+    - name: Verify the pinned K3s binary on the controller
+      ansible.builtin.stat:
+        path: "{{ fresh_k3s_binary_src }}"
+        follow: false
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      register: fresh_k3s_source
+
+    - name: Require the exact pinned K3s binary
+      ansible.builtin.assert:
+        that:
+          - fresh_k3s_source.stat.isreg
+          - fresh_k3s_source.stat.checksum | lower == fresh_k3s_binary_sha256
+        fail_msg: "The staged K3s binary must match the pinned v1.35.9+k3s1 SHA-256."
+
+    - name: Inspect Management's fresh-cluster paths
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop:
+        - /usr/local/bin/k3s
+        - "{{ fresh_k3s_server_unit }}"
+        - "{{ fresh_k3s_server_data_dir }}"
+      register: fresh_management_paths
+
+    - name: Refuse to initialize over existing Management K3s state
+      ansible.builtin.assert:
+        that:
+          - not fresh_management_paths.results[0].stat.exists
+          - not fresh_management_paths.results[1].stat.exists
+          - not fresh_management_paths.results[2].stat.exists
+        fail_msg: "Management already has K3s state; this fresh-cluster playbook will not adopt or erase it."
+
+    - name: Install the pinned K3s binary on Management
+      ansible.builtin.copy:
+        src: "{{ fresh_k3s_binary_src }}"
+        dest: /usr/local/bin/k3s
+        owner: root
+        group: root
+        mode: "0755"
+        force: false
+
+    - name: Verify the installed Management K3s version
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - --version
+      register: fresh_management_version
+      changed_when: false
+
+    - name: Require the exact Management K3s version
+      ansible.builtin.assert:
+        that:
+          - fresh_management_version.stdout is search(fresh_k3s_version | regex_escape)
+
+    - name: Create the K3s server configuration directory
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Configure the new single-server embedded-etcd cluster
+      ansible.builtin.copy:
+        dest: "{{ fresh_k3s_server_config }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          cluster-init: true
+          data-dir: {{ fresh_k3s_server_data_dir | to_json }}
+          tls-san:
+            - {{ fresh_k3s_api_host | to_json }}
+          node-label:
+            - {{ ('praetorium.io/cluster-id=' + fresh_k3s_cluster_id) | to_json }}
+            - praetorium.io/node-role=management
+          node-taint:
+            - praetorium.io/node-role=management:NoSchedule
+          disable:
+            - traefik
+      register: fresh_management_config
+
+    - name: Install the fresh Management K3s systemd unit
+      ansible.builtin.copy:
+        dest: "{{ fresh_k3s_server_unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Praetorium fresh K3s Management Server
+          Wants=network-online.target
+          After=network-online.target
+          ConditionPathExists={{ fresh_k3s_server_config }}
+
+          [Service]
+          Type=notify
+          User=root
+          Group=root
+          ExecStart=/usr/local/bin/k3s server --config {{ fresh_k3s_server_config }}
+          KillMode=process
+          Delegate=yes
+          Restart=always
+          RestartSec=5s
+          LimitNOFILE=1048576
+          LimitNPROC=infinity
+          LimitCORE=infinity
+          TasksMax=infinity
+          TimeoutStartSec=0
+
+          [Install]
+          WantedBy=multi-user.target
+      register: fresh_management_unit
+
+    - name: Reload systemd and start the new Management server
+      ansible.builtin.systemd_service:
+        name: k3s.service
+        daemon_reload: true
+        enabled: true
+        state: started
+
+    - name: Wait for the fresh Management API
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - nodes
+          - --request-timeout=5s
+      register: fresh_management_api
+      changed_when: false
+      retries: 60
+      delay: 5
+      until: fresh_management_api.rc == 0
+
+    - name: Read the fresh Management Node object
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - node
+          - "{{ ansible_facts.hostname }}"
+          - -o
+          - json
+      register: fresh_management_node_raw
+      changed_when: false
+      retries: 60
+      delay: 5
+      until: fresh_management_node_raw.rc == 0
+
+    - name: Verify Management role label and NoSchedule taint
+      ansible.builtin.assert:
+        that:
+          - (fresh_management_node_raw.stdout | from_json).metadata.labels['praetorium.io/cluster-id'] == fresh_k3s_cluster_id
+          - (fresh_management_node_raw.stdout | from_json).metadata.labels['praetorium.io/node-role'] == 'management'
+          - >-
+            ((fresh_management_node_raw.stdout | from_json).spec.taints | default([])
+            | selectattr('key', 'equalto', 'praetorium.io/node-role')
+            | selectattr('value', 'equalto', 'management')
+            | selectattr('effect', 'equalto', 'NoSchedule') | list | length) == 1
+
+    - name: Read the new cluster's agent token without logging it
+      ansible.builtin.slurp:
+        src: "{{ fresh_k3s_server_token }}"
+      register: fresh_k3s_token_slurp
+      no_log: true
+
+    - name: Retain the agent token for the next play without logging it
+      ansible.builtin.set_fact:
+        fresh_k3s_agent_token: "{{ fresh_k3s_token_slurp.content | b64decode | trim }}"
+      no_log: true
+
+- name: Join Runtime as an Agent in the fresh cluster
+  hosts: runtime
+  become: true
+  gather_facts: true
+  vars:
+    fresh_k3s_version: "v1.35.9+k3s1"
+    fresh_k3s_binary_sha256: "897acb21cca57d477a211102251a6591450ce767344a9faaa121a1007ca9fa9a"
+    fresh_k3s_binary_src: "{{ praetorium_fresh_k3s_binary_src }}"
+    fresh_k3s_cluster_id: "{{ clusterId }}"
+    fresh_k3s_api_host: "{{ praetorium_fresh_management_api_host }}"
+    fresh_k3s_agent_data_dir: /var/lib/praetorium/k3s-agent
+    fresh_k3s_agent_config: /etc/praetorium/k3s/agent.yaml
+    fresh_k3s_agent_token: /var/lib/praetorium/credentials/k3s-agent.token
+    fresh_k3s_agent_unit: /etc/systemd/system/k3s-agent.service
+  tasks:
+    - name: Require explicit authorization and the pinned fresh-cluster inputs
+      ansible.builtin.assert:
+        that:
+          - praetorium_fresh_k3s_confirm | default(false) | bool
+          - fresh_k3s_cluster_id is match('^clu_[0-9A-HJKMNP-TV-Z]{26}$')
+          - fresh_k3s_api_host is match('^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+          - hostvars[groups['management'][0]].fresh_k3s_agent_token | default('') | length > 0
+        fail_msg: "The Management server must be started and its protected Agent token must be available."
+      no_log: true
+
+    - name: Require the old K3s Server to be stopped and disabled
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - k3s.service
+      register: fresh_old_server_active
+      changed_when: false
+      failed_when: false
+
+    - name: Read the old K3s Server enablement state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - k3s.service
+      register: fresh_old_server_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: Verify the old Server is retired before joining the new cluster
+      ansible.builtin.assert:
+        that:
+          - fresh_old_server_active.stdout == 'inactive'
+          - fresh_old_server_enabled.stdout == 'disabled'
+        fail_msg: "Stop and disable the old K3s Server before starting the fresh Runtime Agent."
+
+    - name: Inspect Runtime's new Agent paths
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop:
+        - "{{ fresh_k3s_agent_data_dir }}"
+        - "{{ fresh_k3s_agent_unit }}"
+      register: fresh_runtime_paths
+
+    - name: Refuse to adopt pre-existing Runtime Agent data or a service unit
+      ansible.builtin.assert:
+        that:
+          - not fresh_runtime_paths.results[0].stat.exists
+          - not fresh_runtime_paths.results[1].stat.exists
+        fail_msg: "Runtime Agent paths already exist; this fresh-cluster playbook will not adopt them."
+
+    - name: Install the same pinned K3s binary on Runtime
+      ansible.builtin.copy:
+        src: "{{ fresh_k3s_binary_src }}"
+        dest: /usr/local/bin/k3s
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Verify the installed Runtime K3s version
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - --version
+      register: fresh_runtime_version
+      changed_when: false
+
+    - name: Require the exact Runtime K3s version
+      ansible.builtin.assert:
+        that:
+          - fresh_runtime_version.stdout is search(fresh_k3s_version | regex_escape)
+
+    - name: Create the Runtime Agent configuration and credential directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/praetorium/k3s
+        - /var/lib/praetorium/credentials
+
+    - name: Install the new Agent token without logging it
+      ansible.builtin.copy:
+        content: "{{ hostvars[groups['management'][0]].fresh_k3s_agent_token }}\n"
+        dest: "{{ fresh_k3s_agent_token }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Configure Runtime as the fresh-cluster Agent
+      ansible.builtin.copy:
+        dest: "{{ fresh_k3s_agent_config }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          server: {{ ('https://' + fresh_k3s_api_host + ':6443') | to_json }}
+          token-file: {{ fresh_k3s_agent_token | to_json }}
+          data-dir: {{ fresh_k3s_agent_data_dir | to_json }}
+          node-label:
+            - {{ ('praetorium.io/cluster-id=' + fresh_k3s_cluster_id) | to_json }}
+            - praetorium.io/node-role=runtime
+
+    - name: Install the fresh Runtime Agent systemd unit
+      ansible.builtin.copy:
+        dest: "{{ fresh_k3s_agent_unit }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Praetorium fresh K3s Runtime Agent
+          Wants=network-online.target
+          After=network-online.target
+          ConditionPathExists={{ fresh_k3s_agent_config }}
+
+          [Service]
+          Type=notify
+          ExecStart=/usr/local/bin/k3s agent --config {{ fresh_k3s_agent_config }}
+          KillMode=process
+          Delegate=yes
+          Restart=always
+          RestartSec=5s
+          LimitNOFILE=1048576
+          LimitNPROC=infinity
+          LimitCORE=infinity
+          TasksMax=infinity
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start the fresh Runtime Agent
+      ansible.builtin.systemd_service:
+        name: k3s-agent.service
+        daemon_reload: true
+        enabled: true
+        state: started
+
+    - name: Wait for Runtime to join the fresh Management cluster
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - node
+          - "{{ ansible_facts.hostname }}"
+          - -o
+          - json
+      delegate_to: "{{ groups['management'][0] }}"
+      become: true
+      register: fresh_runtime_node
+      changed_when: false
+      retries: 60
+      delay: 5
+      until:
+        - fresh_runtime_node.rc == 0
+        - (fresh_runtime_node.stdout | from_json).status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+
+    - name: Verify Runtime's cluster and role labels
+      ansible.builtin.assert:
+        that:
+          - (fresh_runtime_node.stdout | from_json).metadata.labels['praetorium.io/cluster-id'] == fresh_k3s_cluster_id
+          - (fresh_runtime_node.stdout | from_json).metadata.labels['praetorium.io/node-role'] == 'runtime'

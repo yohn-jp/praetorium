@@ -602,6 +602,52 @@ describe("observed runtime identity renewal", () => {
       },
     };
 
+    const mismatchedCheckpoint = structuredClone(claim.operation.checkpoint!);
+    const mismatchedLifecycle = mismatchedCheckpoint.lifecycle as Record<string, unknown>;
+    const mismatchedCurrent = mismatchedLifecycle.current as Record<string, unknown>;
+    const mismatchedDeployment = mismatchedCurrent.deployment as Record<string, unknown>;
+    mismatchedDeployment.legacyRuntimeEpoch = 1;
+    const mismatchedClaim = {
+      ...claim,
+      operation: { ...claim.operation, checkpoint: mismatchedCheckpoint },
+    } as ClaimedProvisionerOperation;
+    census.mockReset().mockResolvedValue({
+      complete: true,
+      providerObservationId: "provider-census-1",
+      observedAt: new Date(clock - 1).toISOString(),
+      matchedWriterCount: 1,
+      writers: [{ runtimeEpoch: 1, phase: "running", identities: ["pod-current"] }],
+    });
+    await expect(executor.execute(mismatchedClaim, context)).rejects.toThrow(
+      "persisted quiesce request does not match the admitted runtime assignment",
+    );
+    expect(census).not.toHaveBeenCalled();
+    expect(fetchControl).not.toHaveBeenCalled();
+
+    census
+      .mockReset()
+      .mockResolvedValueOnce({
+        complete: true,
+        providerObservationId: "provider-empty-census",
+        observedAt: new Date(clock - 1).toISOString(),
+        matchedWriterCount: 0,
+        writers: [],
+      })
+      .mockResolvedValueOnce({
+        complete: true,
+        providerObservationId: "provider-target-census",
+        observedAt: new Date(clock - 1).toISOString(),
+        matchedWriterCount: 1,
+        writers: [{ runtimeEpoch: 3, phase: "running", identities: ["pod-target"] }],
+      })
+      .mockResolvedValueOnce({
+        complete: true,
+        providerObservationId: "provider-census-1",
+        observedAt: new Date(clock - 1).toISOString(),
+        matchedWriterCount: 1,
+        writers: [{ runtimeEpoch: 1, phase: "running", identities: ["pod-current"] }],
+      });
+
     await expect(executor.execute(claim, context)).rejects.toThrow(
       "persisted quiesce recovery requires the exact sole running writer",
     );

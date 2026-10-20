@@ -45,9 +45,9 @@ describe("known credential retirement barrier", () => {
         },
       },
     });
-    await expect(barrier(operation)).rejects.toThrow("remain pending");
+    await expect(barrier(operation)).resolves.toBe(false);
     remaining = 0;
-    await expect(barrier(operation)).resolves.toBeUndefined();
+    await expect(barrier(operation)).resolves.toBe(true);
   });
   it("does not follow redirects from the private retirement callback", async () => {
     const barrier = createCredentialRetirementBarrier({
@@ -63,7 +63,7 @@ describe("known credential retirement barrier", () => {
         },
       },
     });
-    await expect(barrier(operation)).rejects.toThrow("remain pending");
+    await expect(barrier(operation)).rejects.toThrow("service unavailable");
   });
   it("requires the retirement service for unexpired known credentials", async () => {
     const barrier = createCredentialRetirementBarrier({ db: database(() => ({ remaining: 1 })) });
@@ -85,7 +85,7 @@ describe("known credential retirement barrier", () => {
         },
       },
     });
-    await expect(barrier(operation)).resolves.toBeUndefined();
+    await expect(barrier(operation)).resolves.toBe(true);
   });
   it("holds an already-absent old writer's credentials until durable revocation", async () => {
     let remaining = 1;
@@ -112,9 +112,9 @@ describe("known credential retirement barrier", () => {
         },
       },
     });
-    await expect(barrier(absent)).rejects.toThrow("remain pending");
+    await expect(barrier(absent)).resolves.toBe(false);
     remaining = 0;
-    await expect(barrier(absent)).resolves.toBeUndefined();
+    await expect(barrier(absent)).resolves.toBe(true);
   });
   it("does not retire credentials for a null retired epoch", async () => {
     const barrier = createCredentialRetirementBarrier({
@@ -136,49 +136,79 @@ describe("known credential retirement barrier", () => {
           },
         },
       } as unknown as OperationRecord),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(true);
   });
   it("the provisioner checkpoint route does not acknowledge absent-writer retirement before its barrier", async () => {
-    const absent = { ...operation, phase: "old-writer-absent" } as OperationRecord;
-    let persisted = false;
-    let pending = true;
+    const workerId = "worker-test";
+    const leaseToken = "l".repeat(32);
+    const input = {
+      operationId: operation.id,
+      workerId,
+      leaseToken,
+      leaseEpoch: 1,
+      expectedCheckpointSequence: 0,
+      phase: "old-writer-absent" as const,
+      checkpoint: { writerAbsenceProof: { remainingWriters: 0 } },
+    };
+    let persisted: OperationRecord | null = null;
+    let checkpointCalls = 0;
+    let barrierCalls = 0;
     const app = createProvisionerRoutes({
       operations: {
+        async getById() {
+          return persisted;
+        },
         async checkpoint() {
-          persisted = true;
-          return absent;
+          checkpointCalls += 1;
+          persisted = {
+            ...operation,
+            status: "running",
+            workerId,
+            leaseToken,
+            leaseEpoch: 1,
+            leaseExpiresAt: 10_000,
+            checkpointSequence: 1,
+            phase: input.phase,
+            checkpoint: input.checkpoint,
+          } as unknown as OperationRecord;
+          return persisted;
         },
       } as unknown as OperationService,
       workerId: "worker-test",
       clusterId: "cluster-test",
-      now: () => 1,
+      now: () => 100,
       resolveRuntimeContext: async () => ({}),
       retireCredentials: async (saved) => {
-        expect(persisted).toBe(true);
-        expect(saved).toBe(absent);
-        if (pending) throw new Error("pending retirement");
+        expect(persisted).not.toBeNull();
+        expect(saved).toBe(persisted);
+        barrierCalls += 1;
+        return barrierCalls > 2;
       },
     });
-    app.onError(() => Response.json({ error: "retirement unavailable" }, { status: 503 }));
-    const request = () =>
+    const request = (overrides: Partial<typeof input> = {}) =>
       app.request("/checkpoint", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          operationId: operation.id,
-          workerId: "worker-test",
-          leaseToken: "l".repeat(32),
-          leaseEpoch: 1,
-          expectedCheckpointSequence: 0,
-          phase: "old-writer-absent",
-          checkpoint: {},
-        }),
+        body: JSON.stringify({ ...input, ...overrides }),
       });
-    expect((await request()).status).toBe(503);
-    pending = false;
+    const pending = await request();
+    expect(pending.status).toBe(202);
+    expect(await pending.json()).toMatchObject({
+      operation: { checkpointSequence: 1, phase: "old-writer-absent" },
+      credentialRetirementPending: true,
+    });
+    const stillPending = await request();
+    expect(stillPending.status).toBe(202);
     const response = await request();
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ operation: absent });
+    expect(await response.json()).toEqual({ operation: persisted });
+    expect(checkpointCalls).toBe(1);
+    expect(barrierCalls).toBe(3);
+    const changedPayload = await request({
+      checkpoint: { unsafe: true } as unknown as typeof input.checkpoint,
+    });
+    expect(changedPayload.status).toBe(200);
+    expect(checkpointCalls).toBe(2);
   });
 
   it("returns the recovered operation in the provisioner client's operation envelope", async () => {

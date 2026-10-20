@@ -153,6 +153,84 @@ function client(fetch: typeof globalThis.fetch) {
 }
 
 describe("OperationServiceHttpClient", () => {
+  it("replays one exact durable retirement checkpoint until bounded batches finish", async () => {
+    const checkpoint = { schemaVersion: 1, lifecycle: { phase: "quiescing-old" } };
+    const operation = {
+      ...claimBody().operation,
+      status: "running",
+      phase: "quiescing-old",
+      checkpointSequence: 1,
+      checkpoint,
+    };
+    const requests: Record<string, unknown>[] = [];
+    let pending = 3;
+    let leaseChecks = 0;
+    const service = client(async (input, init) => {
+      expect(new URL(String(input)).pathname).toBe("/internal/provisioner/checkpoint");
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (pending > 0) {
+        pending -= 1;
+        return Response.json({ operation, credentialRetirementPending: true }, { status: 202 });
+      }
+      return Response.json({ operation });
+    });
+
+    const result = await service.checkpoint({
+      operationId: "op_01",
+      workerId: "worker-a",
+      leaseToken: "opaque-lease-token",
+      leaseEpoch: 1,
+      expectedCheckpointSequence: 0,
+      phase: "quiescing-old",
+      checkpoint,
+      beforeRetry: async () => {
+        leaseChecks += 1;
+      },
+    });
+
+    expect(result.operation.checkpointSequence).toBe(1);
+    expect(requests).toHaveLength(4);
+    expect(leaseChecks).toBe(4);
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests[1]).toEqual(requests[2]);
+    expect(requests[2]).toEqual(requests[3]);
+  });
+
+  it("stops retirement replay immediately when the lease check fails", async () => {
+    const checkpoint = { schemaVersion: 1, lifecycle: { phase: "quiescing-old" } };
+    const operation = {
+      ...claimBody().operation,
+      status: "running",
+      phase: "quiescing-old",
+      checkpointSequence: 1,
+      checkpoint,
+    };
+    let requests = 0;
+    let leaseChecks = 0;
+    const service = client(async () => {
+      requests += 1;
+      return Response.json({ operation, credentialRetirementPending: true }, { status: 202 });
+    });
+
+    await expect(
+      service.checkpoint({
+        operationId: "op_01",
+        workerId: "worker-a",
+        leaseToken: "opaque-lease-token",
+        leaseEpoch: 1,
+        expectedCheckpointSequence: 0,
+        phase: "quiescing-old",
+        checkpoint,
+        beforeRetry: async () => {
+          leaseChecks += 1;
+          if (leaseChecks === 2) throw new Error("lease lost");
+        },
+      }),
+    ).rejects.toThrow("lease lost");
+    expect(requests).toBe(1);
+    expect(leaseChecks).toBe(2);
+  });
+
   it("uses bounded idle candidate and generation-fenced stop/observation routes", async () => {
     const requests: { path: string; body: Record<string, unknown> }[] = [];
     const service = client(async (input, init) => {

@@ -59,10 +59,12 @@ describe("private Gateway credential retirement route", () => {
     expect(await response.json()).toEqual({ complete: true });
     expect(retire).toHaveBeenCalledWith({ repositoryId: 17, runtimeEpoch: 4 });
   });
-  it("keeps pending or failed revocation unavailable without exposing failure details", async () => {
+  it("returns bounded-batch progress and keeps registry failures private", async () => {
     const retire = vi.fn(async (): Promise<{ complete: boolean }> => ({ complete: false }));
     const { app } = setup(retire);
-    expect((await app.fetch(request())).status).toBe(503);
+    const partial = await app.fetch(request());
+    expect(partial.status).toBe(200);
+    expect(await partial.json()).toEqual({ complete: false });
     retire.mockRejectedValueOnce(new Error("opaque-secret-token"));
     const response = await app.fetch(request());
     expect(response.status).toBe(503);

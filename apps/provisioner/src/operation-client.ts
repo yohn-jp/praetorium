@@ -375,6 +375,8 @@ export interface ProvisionerOperationService {
     readonly expectedCheckpointSequence: number;
     readonly phase: LifecyclePhase;
     readonly checkpoint: Readonly<Record<string, unknown>>;
+    /** Called between idempotent retirement-batch attempts to renew the lease fence. */
+    readonly beforeRetry?: () => Promise<void>;
     readonly signal?: AbortSignal;
   }): Promise<{ readonly operation: ProvisionerOperationRecord }>;
   advanceRuntimeEpochForRecovery(input: {
@@ -448,6 +450,7 @@ export class OperationServiceHttpError extends Error {
 
 const SERVICE_PATH = "/internal/provisioner";
 const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_CREDENTIAL_RETIREMENT_BATCHES = 64;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 function object(value: unknown, message: string): Record<string, unknown> {
@@ -981,6 +984,20 @@ function parseOperationEnvelope(input: unknown): {
   return { operation: parseOperation(value.operation) };
 }
 
+function sameJson(left: unknown, right: unknown): boolean {
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+    if (typeof value === "object" && value !== null) {
+      return `{${Object.entries(value)
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+        .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "undefined";
+  };
+  return canonical(left) === canonical(right);
+}
+
 function assertOperationResponse(
   operation: ProvisionerOperationRecord,
   expected: {
@@ -1412,13 +1429,32 @@ export class OperationServiceHttpClient
     readonly expectedCheckpointSequence: number;
     readonly phase: LifecyclePhase;
     readonly checkpoint: Readonly<Record<string, unknown>>;
+    readonly beforeRetry?: () => Promise<void>;
     readonly signal?: AbortSignal;
   }): Promise<{ readonly operation: ProvisionerOperationRecord }> {
-    return this.post("/checkpoint", withoutSignal(input), input.signal).then((result) => {
-      const parsed = parseOperationEnvelope(result);
-      assertOperationResponse(parsed.operation, input);
-      return parsed;
-    });
+    const { beforeRetry, signal, ...body } = input;
+    return (async () => {
+      for (let batch = 0; batch < MAX_CREDENTIAL_RETIREMENT_BATCHES; batch += 1) {
+        await beforeRetry?.();
+        const result = await this.post("/checkpoint", body, signal);
+        const value = object(result, "invalid checkpoint response");
+        const operation = parseOperation(value.operation);
+        assertOperationResponse(operation, input);
+        if (value.credentialRetirementPending !== true) {
+          if (value.credentialRetirementPending !== undefined)
+            throw new TypeError("Control Plane returned an invalid credential retirement status");
+          return { operation };
+        }
+        if (
+          (input.phase !== "quiescing-old" && input.phase !== "old-writer-absent") ||
+          operation.phase !== input.phase ||
+          operation.checkpointSequence !== input.expectedCheckpointSequence + 1 ||
+          !sameJson(operation.checkpoint, input.checkpoint)
+        )
+          throw new TypeError("Control Plane returned a mismatched pending checkpoint");
+      }
+      throw new OperationServiceHttpError("credential_retirement_pending", 503, true);
+    })();
   }
 
   advanceRuntimeEpochForRecovery(input: {

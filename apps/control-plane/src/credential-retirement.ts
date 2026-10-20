@@ -15,7 +15,7 @@ export function createCredentialRetirementBarrier(config: {
   now?: () => number;
 }) {
   const now = config.now ?? Date.now;
-  return async (operation: OperationRecord): Promise<void> => {
+  return async (operation: OperationRecord): Promise<boolean> => {
     let runtimeEpoch: number;
     if (operation.phase === "old-writer-absent") {
       const proof = z
@@ -27,7 +27,7 @@ export function createCredentialRetirementBarrier(config: {
           source: z.literal("runtime-provider-census"),
         })
         .parse(operation.checkpoint?.writerAbsenceProof);
-      if (proof.retiredRuntimeEpoch === null) return;
+      if (proof.retiredRuntimeEpoch === null) return true;
       runtimeEpoch = proof.retiredRuntimeEpoch;
     } else {
       const lifecycle = operation.checkpoint?.lifecycle as Record<string, unknown> | undefined;
@@ -58,7 +58,7 @@ export function createCredentialRetirementBarrier(config: {
         throw new Error("Credential retirement state unavailable");
       return row.remaining;
     };
-    if ((await remaining()) === 0) return;
+    if ((await remaining()) === 0) return true;
     if (
       !config.gateway ||
       !config.serviceSecret ||
@@ -95,8 +95,8 @@ export function createCredentialRetirementBarrier(config: {
       ]);
       // The authoritative D1 status, not a caller's echoed success, clears this barrier.
       void response.body?.cancel().catch(() => undefined);
-      if (!response.ok || (await remaining()) !== 0)
-        throw new Error("Known GitHub credentials remain pending retirement");
+      if (!response.ok) throw new Error("Credential retirement service unavailable");
+      return (await remaining()) === 0;
     } finally {
       clearTimeout(timer);
     }

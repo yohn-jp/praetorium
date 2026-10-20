@@ -107,7 +107,7 @@ export interface ProvisionerRoutesDependencies {
   prepareClaim?: () => Promise<void> | void;
   retireCredentials?: (
     operation: Awaited<ReturnType<OperationService["checkpoint"]>>,
-  ) => Promise<void>;
+  ) => Promise<boolean | void>;
   issueControlCredential?: (input: unknown) => Promise<unknown>;
   resolveRuntimeContext: (claim: ClaimedOperation) => Promise<unknown>;
 }
@@ -176,11 +176,39 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
   app.post("/checkpoint", async (c) => {
     const input = SaveCheckpoint.parse(await boundedJson(c.req.raw));
     scoped(input);
-    const operation = await deps.operations.checkpoint({ ...input, now: deps.now() });
+    const now = deps.now();
+    let operation: Awaited<ReturnType<OperationService["checkpoint"]>>;
+    const isRetirementCheckpoint =
+      input.phase === "quiescing-old" || input.phase === "old-writer-absent";
+    const existing = isRetirementCheckpoint
+      ? await deps.operations.getById(input.operationId)
+      : null;
+    const replay =
+      existing !== null &&
+      existing.checkpointSequence === input.expectedCheckpointSequence + 1 &&
+      existing.phase === input.phase &&
+      existing.workerId === input.workerId &&
+      existing.leaseToken === input.leaseToken &&
+      existing.leaseEpoch === input.leaseEpoch &&
+      (existing.status === "claimed" || existing.status === "running") &&
+      existing.leaseExpiresAt !== null &&
+      existing.leaseExpiresAt > now &&
+      sameJson(existing.checkpoint, input.checkpoint);
+    if (replay) {
+      // The first call durably appended this exact checkpoint, but its bounded
+      // credential-revocation batch was incomplete. Reuse the same sequence
+      // only for the live lease and byte-equivalent persisted payload; never
+      // append a duplicate checkpoint or accept a different effect payload.
+      operation = existing;
+    } else {
+      operation = await deps.operations.checkpoint({ ...input, now });
+    }
     if (input.phase === "quiescing-old" || input.phase === "old-writer-absent") {
       if (!deps.retireCredentials)
         return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
-      await deps.retireCredentials(operation);
+      const complete = await deps.retireCredentials(operation);
+      if (complete === false)
+        return c.json({ operation, credentialRetirementPending: true }, 202);
     }
     return c.json({ operation });
   });
@@ -222,4 +250,18 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
     });
   });
   return app;
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+    if (typeof value === "object" && value !== null) {
+      return `{${Object.entries(value)
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+        .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "undefined";
+  };
+  return canonical(left) === canonical(right);
 }

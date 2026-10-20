@@ -1006,7 +1006,10 @@ export function createGatewayRouter(context: GatewayContext): Hono {
     if (!input.success) return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
     try {
       const result = await context.runtimeCredentialRegistry.retire(input.data);
-      return result.complete ? c.json(result) : c.json({ error: { code: "CREDENTIAL_RETIREMENT_PENDING" } }, 503);
+      // A partial bounded batch is progress, not an unavailable registry. The
+      // Control Plane rechecks its authoritative pending-row count and repeats
+      // this request under the same operation lease until it reaches zero.
+      return c.json(result);
     } catch {
       return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
     }

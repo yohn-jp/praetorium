@@ -253,6 +253,7 @@ export interface OperationBackedLifecycleJournalOptions {
   readonly claim: ClaimedProvisionerOperation;
   readonly operations: ProvisionerOperationService;
   readonly workerId: string;
+  readonly assertLease?: () => Promise<void>;
 }
 
 /** Persists the state machine's complete recovery point in T03's fenced journal. */
@@ -272,11 +273,9 @@ export class OperationBackedLifecycleJournal implements LifecycleJournal {
   async load(operationId: string, signal?: AbortSignal): Promise<LifecycleOperation | null> {
     if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
     if (operationId !== this.options.claim.operation.id) return null;
-    const recovered = persistedOperation(
-      this.options.claim.operation.checkpoint,
-      this.options.claim,
-    );
-    if (recovered !== null) this.current = recovered;
+    // The constructor already validated the claimed checkpoint. Re-reading the
+    // immutable claim here would roll back checkpoints accepted earlier in this
+    // lease (notably resume/clear recovery before identity renewal).
     return this.current;
   }
 
@@ -300,6 +299,9 @@ export class OperationBackedLifecycleJournal implements LifecycleJournal {
       expectedCheckpointSequence: this.remoteCheckpointSequence,
       phase: next.phase,
       checkpoint: checkpointEnvelope(next),
+      ...(this.options.assertLease === undefined
+        ? {}
+        : { beforeRetry: this.options.assertLease }),
       ...(signal === undefined ? {} : { signal }),
     });
     this.assertReturnedCheckpoint(response.operation, next);

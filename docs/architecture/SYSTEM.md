@@ -4,6 +4,7 @@
 > **照合時点:** `yohn-jp/praetorium@ecabf265693e395c40bfcf9be8279c1baf4740ff`（2026-10-18）  
 > **製品要件の正本:** [初期 Epic #1](https://github.com/yohn-jp/praetorium/issues/1) と、その後の明示的なオーナー指示。初期設計案・移行タスク・既存コードは正本ではない。**CIの利用は最新指示で許可された**。製品インフラへの適用・リリース公開・既存データの削除はこの文書によって許可されない。  
 > **読む順番:** 本文 → [動作経路・トリガー](EXECUTION.md) → [設計上の不整合と未決定事項](REVIEW.md) → 必要な[実装・証拠文書](../README.md)。
+> **重要:** ここで説明するRuntime VM上のk3s Serverなどは**現行実装**。2026-10-20オーナー合意の**将来3VM構成**は[Management Plane Architecture](MANAGEMENT-PLANE.md)、[移行ゲート](MANAGEMENT-PLANE-MIGRATION.md)に独立して記載。どちらも現行運用と混同しない。
 
 ## 1. 製品が提供するもの
 

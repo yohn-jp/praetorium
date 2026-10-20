@@ -1,5 +1,7 @@
 # Reproducible Praetorium deployment
 
+> **Current 2-VM runbook (not the target 3-VM procedure).** The 2026-10-20 accepted Management VM + rootless Podman Quadlet + Runtime k3s Agent + Builder VM topology is documented in [MANAGEMENT-PLANE.md](../architecture/MANAGEMENT-PLANE.md); migration gates are [MANAGEMENT-PLANE-MIGRATION.md](../architecture/MANAGEMENT-PLANE-MIGRATION.md). Existing bootstrap scripts still deploy the old topology. Do not apply this runbook as if it implemented the new topology.
+>
 > **Runbook for operator-authorized deployment.** System ownership and the split between D1, DO, K3s, Build Worker and BuildKit are mapped in [SYSTEM.md](../architecture/SYSTEM.md). Passing a host preflight or this static deploy does not certify end-to-end Hosted login/edit/save/recovery. Historical architectural assumptions in this runbook are under review in [REVIEW.md](../architecture/REVIEW.md).
 
 This is the operator runbook for **NixOS or dedicated Ubuntu 24.04 / 26.04 guest roles**, the Cloudflare Workers and the K3s application plane. It does not use SOPS, require Proxmox host modifications, install a new GitHub App, or deploy from locally edited source files. Every deploy is tied to a checked-out Git commit, a complete owner-supplied nonsecret inventory and private file-backed credentials. Use [SECRETS.md](SECRETS.md) for canonical private file names, source authority, provider-managed Worker values, cross-plane synchronization, and recovery/rotation handling.

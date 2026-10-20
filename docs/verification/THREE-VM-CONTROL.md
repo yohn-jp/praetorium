@@ -22,20 +22,29 @@ These source checks show that the code has bounded missed-hint recovery and even
 
 ## VPC binding setup and rollout state
 
-Cloudflare's current Workers VPC documentation configures a service binding with `[[vpc_services]]`, `binding`, and a provisioned `service_id`. VPC binding `fetch()` requires an absolute URL; the URL host becomes the request Host (and SNI for HTTPS), while the configured VPC Service fixes the actual destination. The Worker uses an absolute internal HTTP URL because the coordinator listener is a private Management-host service; the service ID and port remain infrastructure-owned.
+Cloudflare's current Workers VPC documentation configures a service binding with `[[vpc_services]]`, `binding`, and a provisioned `service_id`. VPC binding `fetch()` requires an absolute URL; the URL host becomes the request Host (and SNI for HTTPS), while the configured VPC Service fixes the actual destination. The Worker uses an absolute internal HTTP URL because the coordinator listener is a private Management-host service.
 
-Read-only Cloudflare API inventory on 2026-10-20 found one existing VPC Service, `majiwari-gateway` (`01a02e7e-7491-7421-a124-0ac59c1b6851`), using HTTP `127.0.0.1:8787` through local-config tunnel `64ab5a69-8db1-4637-b9b8-8ec0cf9e94e5`; that tunnel reports `down`. The other healthy account tunnels serve unrelated Arcadia and Stardomain origins. The existing Praetorium tunnel config points `*.instances.praetorium.yohn.jp` to `https://10.7.0.31:443` and is separate. The deployed `praetorium-control-plane` Worker settings contain no VPC binding. No Management coordinator VPC Service or Tunnel is present.
+The initial read-only Cloudflare API inventory on 2026-10-20 found one existing VPC Service, `majiwari-gateway` (`01a02e7e-7491-7421-a124-0ac59c1b6851`), using HTTP `127.0.0.1:8787` through local-config tunnel `64ab5a69-8db1-4637-b9b8-8ec0cf9e94e5`; that tunnel reports `down`. The other healthy account tunnels serve unrelated Arcadia and Stardomain origins. The existing Praetorium tunnel config points `*.instances.praetorium.yohn.jp` to `https://10.7.0.31:443` and is separate. The deployed `praetorium-control-plane` Worker settings contain no VPC binding.
 
-The Wrangler file therefore documents the optional binding without reusing an unrelated service or inventing an ID. HTTPS fallback remains available during rollout. The following gates remain unverified:
+After an explicit infrastructure authorization, a dedicated remotely managed Tunnel and Workers VPC Service were created through the Cloudflare API on 2026-10-20:
 
-- Dedicated Management VPC Service and Tunnel creation/configuration: **NOT_CHECKED**.
-- Cloudflare binding deployment and authenticated request to the rootless coordinator: **NOT_CHECKED**.
+- Tunnel: `praetorium-management`, ID `37e42176-7e62-4da5-8e99-2bd4b7831cee`, `config_src=cloudflare`.
+- VPC Service: `praetorium-management`, ID `01a158fc-ef0d-7d11-8976-af6247908574`, type `http`, target `127.0.0.1:8789`, bound to the dedicated tunnel above.
+- Tunnel configuration readback had no ingress rules or hostname routes. No DNS route or public hostname was created.
+- The tunnel token is stored only at `/data/praetorium/production/secrets/coordination-tunnel/tunnel-token`, with directory mode 0700 and file mode 0600. Infra's Ansible interface consumes it as `coordination_tunnel_token_src` and installs it at `/var/lib/praetorium/credentials/coordination-tunnel.token` for `cloudflared --token-file`; the credential value is deliberately absent from repository files and logs.
+- Readback after creation showed tunnel status `inactive` and zero connectors. The host-side connector has not yet been installed or started.
+- Cloudflare OAuth preflight showed `account:read` and `connectivity:admin` scopes; reads confirmed no existing resource with either dedicated name before creation. The tunnel and service create calls both succeeded.
+
+The Wrangler file remains comment-only pending final wiring by the integration owner; no Worker binding has been deployed. HTTPS fallback remains available during rollout. The following gates remain unverified:
+
+- Host-side tunnel connector installation/start and private HTTP reachability: **NOT_CHECKED**.
+- Cloudflare Worker VPC binding deployment and authenticated request to the rootless coordinator: **NOT_CHECKED**.
 - Coordinator-to-build/Provisioner fanout and restart recovery: **NOT_CHECKED**.
 - Deployed HTTPS fallback configuration and measured notification-loss recovery: **NOT_CHECKED**.
 - Idle/active Worker, D1, and notification counts: **NOT_CHECKED**.
 - Three-VM deployment and production E2E: **NOT_CHECKED**.
 
-Cloudflare references checked 2026-10-20: [Workers VPC Services](https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/) and [Workers VPC Binding API](https://developers.cloudflare.com/workers-vpc/api/).
+Cloudflare references checked 2026-10-20: [Workers VPC Services](https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/), [Workers VPC Binding API](https://developers.cloudflare.com/workers-vpc/api/), [Create a Cloudflare Tunnel](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/methods/create/), [Get a Cloudflare Tunnel token](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/token/methods/get/), and [Create a Workers VPC Service](https://developers.cloudflare.com/api/resources/connectivity/subresources/directory/subresources/services/methods/create/).
 
 ## Local verification
 

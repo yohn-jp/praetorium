@@ -7,6 +7,7 @@
 | 分類 | 代表ファイル | 読み方 |
 | --- | --- | --- |
 | **Ubuntuホスト** | [UBUNTU-2604-20261017.md](UBUNTU-2604-20261017.md) | Runtime/Buildゲスト、rootless mTLS BuildKit、汎用OCI、再起動。**HostedアプリのE2Eではない** |
+| **Builder実ビルド** | [THREE-VM-BUILD.md](THREE-VM-BUILD.md) | 実Composition、同一入力のCache再利用、GC、cgroup Memory計測。CP/D1 admission・Runtime反映とは区別 |
 | **Hosted統合** | [HOSTED-ACCEPTANCE-a669f5c.json](HOSTED-ACCEPTANCE-a669f5c.json)、[HOSTED-INTEGRATION-RUNBOOK.md](HOSTED-INTEGRATION-RUNBOOK.md)、[HOSTED-CAMPAIGN-2026-10-17.md](HOSTED-CAMPAIGN-2026-10-17.md) | 実行済みとBLOCKEDの分類、環境準備、Producer切り出し |
 | **Producer/OCI** | [HOSTED-ARTIFACTS-008d5c4.json](HOSTED-ARTIFACTS-008d5c4.json)、[PLATFORM-SERVICE-IMAGES.md](PLATFORM-SERVICE-IMAGES.md)、`PRODUCER-*.md` | Image/Artifactの実物検証、署名Admission・実製品テストの不足を区別 |
 | **K8s/Network/Isolation** | [OWNED-KUBERNETES.md](OWNED-KUBERNETES.md)、[KUBERNETES-ISOLATION.md](KUBERNETES-ISOLATION.md)、[RUNTIME-NETWORK-ADMISSION.md](RUNTIME-NETWORK-ADMISSION.md)、[TRAEFIK-RUNTIME-WATCH.md](TRAEFIK-RUNTIME-WATCH.md) | 実リソースか静的renderか、テスト専用clusterか本番かを区別 |

@@ -1,18 +1,20 @@
 # Public access verification for the three-VM migration
 
-Observed 2026-10-20 from 10:52 to 11:06 UTC against Praetorium source
+Observed 2026-10-20 from 10:52 to 11:11 UTC against Praetorium source
 `59449ffd65a9210435b882504933cbaf57db1418`. This is sanitized, read-only
 evidence for [Issue #24](https://github.com/yohn-jp/praetorium/issues/24).
+The deployed Instance Access image was built from source head
+`36574d1e16ec37a2d341dff42d6077e9c7a0954d`.
 The integration owner applied the public-host Certificate/TLSStore/fallback
-changes during this observation window. The latest public and direct Runtime
-TLS sample is 11:04 UTC, and the latest HTTP sample is 11:05 UTC. This worker
+changes during this observation window, then deployed the current Instance
+Access image. The latest public navigation sample is 11:10 UTC. This worker
 made no production changes.
 
 **Issue #24 remains open.** Public HTTPS now presents a trusted certificate
-for the application Host, and the public edge forwards TLS to Runtime. The
-deployed Instance Access service still returns `INSTANCE_NOT_FOUND` for that
-valid public Host. No authenticated browser session or GitHub write was
-verified.
+for the application Host, the deployed Instance Access service recognizes
+that Host, and unauthenticated browser navigation redirects to Gateway's
+login page. A successful handoff, Ready application route, authenticated
+browser session, and GitHub write remain unverified.
 
 ## Public TLS and routing
 
@@ -21,7 +23,7 @@ verified.
 DNS-only wildcard CNAME. Name resolution alone does not verify TLS or routing.
 
 Strict TLS verification now succeeds for the public address and direct Runtime
-address. The latest curl result was:
+address. An earlier strict curl check returned:
 
 ```text
 curl --max-time 12 -sS -I -w 'status=%{http_code} verify=%{ssl_verify_result}\n' https://1423923158.scriptorium.yohn.jp/ -o /dev/null
@@ -47,8 +49,9 @@ older certificate without the public SAN and the Certificate reported
 re-read after the new certificate appeared on both endpoints.
 
 The owner confirms `TLSStore/default` references `praetorium-instance-tls`.
-All requests below used normal certificate verification. Public and direct
-Runtime responses were identical at 11:05 UTC:
+All requests below used normal certificate verification. Before the current
+Instance Access image was deployed, public and direct Runtime responses were
+identical at 11:05 UTC:
 
 ```text
 GET  /                                                       -> 404 {"error":{"code":"INSTANCE_NOT_FOUND"}}
@@ -60,13 +63,13 @@ POST /_platform/handoff (empty form, correct Gateway Origin) -> 404 {"error":{"c
 The server Date header was `Tue, 20 Oct 2026 11:05:54 GMT`. The empty POST
 sent only `Origin: https://praetorium.yohn.jp` and an empty
 `application/x-www-form-urlencoded` body. No cookie, handoff code,
-authorization header, or query parameter was sent. The response shows that
-the currently deployed Instance Access path still does not recognize the
-public Host; the current source would reject this empty form as
-`HANDOFF_REQUEST_INVALID` after accepting that Host. The matching certificate
-fingerprint and identical responses confirm that the public path preserves
-SNI and Host through to Runtime Traefik/Instance Access. No firewall or NAT
-change is indicated.
+authorization header, or query parameter was sent. During the short Recreate
+rollout window, the edge also returned `503 no available server`; after the
+new pod became Ready, the empty form returned the expected
+`HANDOFF_REQUEST_INVALID` response. The matching certificate fingerprint and
+identical pre-rollout responses confirm that the public path preserves SNI
+and Host through to Runtime Traefik/Instance Access. No firewall or NAT change
+is indicated.
 
 The screenshot path `/platform/handoff` is not emitted by the current Gateway
 renderer. Current source renders a form POST to
@@ -78,8 +81,8 @@ bookmark, or another redirect.
 
 ## Read-only Runtime inspection
 
-The 11:00 UTC snapshot through `runtime.praetorium.vm` showed `k3s` active and the sole
-Node was Ready on Kubernetes `v1.35.9+k3s1`, with `control-plane,etcd` roles.
+The 11:00 UTC snapshot through `runtime.praetorium.vm` showed `k3s` active and
+the sole Node was Ready on Kubernetes `v1.35.9+k3s1`, with `control-plane,etcd` roles.
 Traefik had two Ready replicas; Instance Access had one Ready replica and its
 ClusterIP Service had one endpoint.
 
@@ -91,30 +94,56 @@ ClusterIP Service had one endpoint.
 | Ready application route for repository `1423923158` | Still matches `ins-01m56estantnhv8ba5j1pcnnqj.instances.praetorium.yohn.jp` at priority 10 |
 | Instance Access Service | Ready deployment; one live endpoint |
 
-The public fallback is now present and wins ahead of the lower-priority
-application route. The Ready application route itself has not been moved to
-the stable repository Host, so ordinary traffic for
-`1423923158.scriptorium.yohn.jp` is not yet demonstrated to reach the Ready
+In the 11:00 snapshot, the public fallback was present and won ahead of the
+lower-priority application route. The Ready application route matched the
+physical host rather than the stable repository Host, so ordinary traffic for
+`1423923158.scriptorium.yohn.jp` was not demonstrated to reach the Ready
 Scriptorium service.
 
 At 11:00, the Instance Access ConfigMap contained
 `INSTANCE_ACCESS_INSTANCE_HOSTNAME_SUFFIX=instances.praetorium.yohn.jp` and
-`GATEWAY_ORIGIN=https://praetorium.yohn.jp`. The live Instance Access image is
-still
+`GATEWAY_ORIGIN=https://praetorium.yohn.jp`. The live Instance Access image was
 `ghcr.io/yohn-jp/praetorium/instance-access@sha256:6a3f9a01431c713c25c1797b6ba0d23cb709dda7d318d387d6bdb8a5241c29a4`.
-At 11:05, the safe public and direct probes still returned
-`INSTANCE_NOT_FOUND` for the valid public application Host, while current
-source parses `repository_id.scriptorium.yohn.jp` through
-`applicationFromHostname`. Workflow run
+Workflow run
 [39412075129](https://github.com/yohn-jp/praetorium/actions/runs/39412075129)
 completed successfully at 11:05 UTC, including the Instance Access image
-publication job. That run published an image; it did not deploy it. The live
-deployment digest could not be independently re-read at 11:05 because the
-configured Runtime `k3s kubectl` context returned connection refused for
-`127.0.0.1:16443`. The Ready application workload uses
+publication job. The integration owner then deployed the current image with a
+guarded old-digest check and server-side dry-run. At 11:09 UTC the deployment
+reported generation 4 observed, one desired/updated/ready replica, using
+`ghcr.io/yohn-jp/praetorium/instance-access@sha256:68914e8dffccee11a6ad9cbb9a7b30b7eddfdf6aab6d66c7391f4fd6fc68c8b5`.
+The previous image returned `INSTANCE_NOT_FOUND` for the public Host; the new
+image accepts it and validates the empty handoff form. At 11:00, the Ready
+application workload used
 `ghcr.io/yohn-jp/praetorium/candidates@sha256:446a6a8a6703ebe54cc2ef924f71a885eabccf35b0397be6177cebb2f776ce99`;
 no source-revision label tying that producer image to the current Scriptorium
 contract was verified.
+
+## Post-rollout access checks
+
+At 11:09–11:10 UTC, the following checks used the public host and strict TLS.
+The empty form POST to `/_platform/handoff` returned HTTP 400
+`HANDOFF_REQUEST_INVALID`, confirming that Instance Access recognized the
+public Host. A separate POST with a deliberately fake code and
+`returnPath=/` returned HTTP 401 `GATEWAY_REJECTED_REQUEST`; no real code,
+cookie, or authorization header was sent. This confirms denial but does not
+verify one-use redemption.
+
+An API-style unauthenticated GET `/` with the default `Accept: */*` returned
+HTTP 503 `INSTANCE_STARTING`. The browser-navigation GET used
+`Accept: text/html`, `Sec-Fetch-Mode: navigate`, and
+`Sec-Fetch-Dest: document`; it returned HTTP 302 to
+`https://praetorium.yohn.jp/entry/scriptorium/1423923158`. That Gateway entry
+returned HTTP 302 to `/auth/login`; `/auth/login` returned HTTP 200
+`text/html`. The responses had `Cache-Control: no-store`; no `Set-Cookie`
+header was present. Redirects were not followed to GitHub, and no browser
+session or user credentials were used.
+
+The integration owner reports that Gateway and Control Plane remain on the
+legacy schema and an active operation blocks migration `0006`. The current
+IA Host validation and unauthenticated login path are now live, but successful
+handoff and the Ready application route are not expected until that migration
+gate is cleared. No claim is made about app readiness or stopped-instance
+wake/reconnect from these requests.
 
 The `instances.praetorium.yohn.jp` suffix identifies physical Runtime hosts
 (`id.instances.praetorium.yohn.jp`). It is intentionally distinct from the
@@ -143,12 +172,12 @@ firewall mutation is indicated.
 
 ## Remaining acceptance gates
 
-Public HTTPS certificate verification is now **PASSING** for the tested
-repository Host. Hosted entry remains **BLOCKED** until the current Instance
-Access image is deployed and accepts the public Host, and the Ready
-application route is verified on the repository Host. The Instance Access
-deployment digest and Certificate API status need a read-only verification
-after the owner's rollout.
+Public HTTPS certificate verification, Instance Access public-Host
+recognition, and the unauthenticated Gateway login redirect are now
+**PASSING** for the tested repository Host. Authenticated handoff and Ready
+application routing remain **BLOCKED** pending the Gateway/Control Plane
+schema migration and an application route on the stable repository Host.
+The Certificate API status after issuance has not been read back.
 
 Issue #24 browser acceptance also requires an explicitly owned disposable
 GitHub repository and current producer support. The current

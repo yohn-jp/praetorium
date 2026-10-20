@@ -208,6 +208,35 @@ metadata without reading key contents. Full workspace preservation, quiesce,
 writer absence, a fresh cutover snapshot, and Runtime Server-to-Agent conversion
 remain pending. The retained writer has not been replaced.
 
+## Verified service publication and startup guards
+
+[Explicit publication run 39417919238](https://github.com/yohn-jp/praetorium/actions/runs/39417919238)
+passed verification and published all four services from exact source
+`9f9376314efc4bd63cb70d21df88d4bf6894d3b5`. Independent GHCR manifest reads
+verified each returned digest against the downloaded manifest bytes and found
+one Linux/amd64 platform. These are available artifacts; they have not all
+replaced their running predecessors:
+
+| Service under `ghcr.io/yohn-jp/praetorium/` | Published digest |
+| --- | --- |
+| `provisioner` | `sha256:c221dca4f68d934d477c5f56c392f0e67032b363b6a2a7e48b957fcfa66a3c44` |
+| `instance-access` | `sha256:0138b58afa09d4655863a5f9fa980269c6808d2287ba292be9211f1136a2e029` |
+| `build-worker` | `sha256:5cd11ee8ed64c7c10f3f77ebc2e16d67bdd8c5d00d66211478b9326b8a3407bf` |
+| `coordination` | `sha256:c17af652ba65336168c2bfa65aaed4e1169fcf7b021effecaf318ea8d99b5a64` |
+
+The integrated Management/Runtime Ansible roles were strengthened at
+`6b2553b`: complete steady-state config allowlists, complete unit-template
+comparison, rejection of systemd drop-ins, and no-follow regular-file checks
+for the Agent config. Independent focused review confirmed the reported startup
+findings resolved. The required frozen install and full check passed on the
+integrated slice. Startup evidence gates remain false; no host K3s conversion
+or Server startup was performed.
+
+The strengthened read-only Builder audit also checked effective systemd
+identity and cgroup-v2 CPU, memory and PID limits. Its actual recap was
+`ok=25 changed=0 failed=0`; the log is protected at
+`/data/praetorium/production/verification/builder-effective-cgroup-audit-20261020.log`.
+
 The real three-host Ansible `ansible.builtin.ping --become` preflight succeeded
 on all hosts with `changed=false`, using isolated ansible-core 2.20.10 and each
 host's `/usr/bin/python3.14`. Canonical Cloudflare deployment `--check` with the

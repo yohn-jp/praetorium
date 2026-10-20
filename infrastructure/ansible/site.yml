@@ -1,0 +1,25 @@
+---
+- name: Converge common host prerequisites
+  hosts: praetorium
+  become: true
+  roles:
+    - common
+
+- name: Configure Management host services
+  hosts: management
+  become: true
+  roles:
+    - management
+    - coordination
+
+- name: Configure Runtime host membership
+  hosts: runtime
+  become: true
+  roles:
+    - runtime
+
+- name: Audit existing Builder host
+  hosts: builder
+  become: true
+  roles:
+    - builder

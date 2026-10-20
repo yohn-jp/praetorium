@@ -1,0 +1,10 @@
+---
+- name: Validate the Runtime host boundary
+  ansible.builtin.assert:
+    that:
+      - praetorium_host_role == 'runtime'
+    fail_msg: "The Runtime Agent role may only run on a Runtime host."
+
+- name: Join the Runtime host only when the evidence-gated migration is explicitly enabled
+  ansible.builtin.include_tasks: agent.yml
+  when: runtime_agent_apply | bool

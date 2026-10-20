@@ -1,0 +1,426 @@
+---
+- name: Require pinned K3s artifacts and complete restored-cluster inputs
+  ansible.builtin.assert:
+    that:
+      - management_cluster_id is match('^clu_[0-9A-HJKMNP-TV-Z]{26}$')
+      - management_api_bind_address | length > 0
+      - management_api_bind_address is match('^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+      - management_k3s_version == 'v1.35.9+k3s1'
+      - management_k3s_binary_src | length > 0
+      - management_k3s_binary_sha256 is match('^[a-fA-F0-9]{64}$')
+      - management_k3s_installer_src | length > 0
+      - management_k3s_installer_sha256 is match('^[a-fA-F0-9]{64}$')
+      - management_restore_evidence_file | length > 0
+      - not praetorium_management_server_start or management_server_token_src | default('') | length > 0
+      - management_k3s_server_config is mapping
+      - management_k3s_server_config['data-dir'] | default('') == management_server_data_dir
+      - management_k3s_server_config['token-file'] | default('') == management_server_token_file
+      - "'praetorium.io/node-role=management' in (management_k3s_server_config['node-label'] | default([]))"
+      - "'praetorium.io/node-role=management:NoSchedule' in (management_k3s_server_config['node-taint'] | default([]))"
+      - ('praetorium.io/cluster-id=' + management_cluster_id) in (management_k3s_server_config['node-label'] | default([]))
+      - "'traefik' in (management_k3s_server_config['disable'] | default([]))"
+      - (management_k3s_server_config['tls-san'] | default([])) | length > 0
+      - management_api_bind_address in (management_k3s_server_config['tls-san'] | default([]))
+    fail_msg: "Management K3s configuration must be pinned and match the reviewed cluster identity, API SAN, token-file reference, and scheduling fence."
+
+- name: Inspect the operator-owned Management restore evidence file
+  ansible.builtin.stat:
+    path: "{{ management_restore_evidence_file }}"
+    follow: false
+  delegate_to: localhost
+  become: false
+  register: management_restore_evidence_stat
+
+- name: Require a regular external Management restore evidence file
+  ansible.builtin.assert:
+    that:
+      - management_restore_evidence_stat.stat.isreg
+    fail_msg: "Management Server preparation requires a regular operator-owned restore evidence file."
+
+- name: Load Management restore evidence without disclosing its contents
+  ansible.builtin.set_fact:
+    management_restore_evidence: "{{ lookup('ansible.builtin.file', management_restore_evidence_file) | from_json }}"
+  no_log: true
+
+- name: Verify the backup, isolated restore, exact cluster identity, and Runtime retirement gates
+  ansible.builtin.assert:
+    that:
+      - management_restore_evidence.schema == 'praetorium.three-vm-infra-evidence/v1'
+      - management_restore_evidence.source.clusterId == management_cluster_id
+      - management_restore_evidence.source.host | length > 0
+      - management_restore_evidence.source.datastore == 'embedded-etcd'
+      - management_restore_evidence.source.k3sVersion == management_k3s_version
+      - management_restore_evidence.snapshotArtifact | length > 0
+      - management_restore_evidence.snapshotCompare.status == 'PASS'
+      - management_restore_evidence.snapshotCompare.evidenceRef | length > 0
+      - management_restore_evidence.isolatedRestore.status == 'PASS'
+      - management_restore_evidence.isolatedRestore.evidenceRef | length > 0
+      - management_restore_evidence.isolatedRestore.restoredApiReady | bool
+      - management_restore_evidence.isolatedRestore.restoredServerCaMatch | bool
+      - management_restore_evidence.isolatedRestore.clusterId == management_cluster_id
+      - management_restore_evidence.isolatedRestore.pvcRestoreMatch | bool
+      - management_restore_evidence.snapshotArtifactSha256 is match('^[a-fA-F0-9]{64}$')
+      - management_restore_evidence.secretComparison.snapshotCount | int == management_restore_evidence.secretComparison.identicalCount | int + management_restore_evidence.secretComparison.changed | length + management_restore_evidence.secretComparison.snapshotOnly | length
+      - management_restore_evidence.secretComparison.liveCount | int == management_restore_evidence.secretComparison.identicalCount | int + management_restore_evidence.secretComparison.changed | length + management_restore_evidence.secretComparison.liveOnly | length
+      - management_restore_evidence.pvcArchive.status == 'PASS'
+      - management_restore_evidence.pvcArchive.artifact | length > 0
+      - management_restore_evidence.pvcArchive.bytes | int > 0
+      - management_restore_evidence.pvcArchive.namespace | length > 0
+      - management_restore_evidence.pvcArchive.pvcName | length > 0
+      - management_restore_evidence.pvcArchive.contentHashMatch | bool
+      - management_restore_evidence.workspaceGitBundle.status == 'PASS'
+      - management_restore_evidence.workspaceGitBundle.headCommit is match('^[a-fA-F0-9]{40}$')
+      - management_restore_evidence.workspaceGitBundle.refsVerified | int > 0
+      - management_restore_evidence.workspaceGitBundle.exactHeadRestoreMatch | bool
+      - management_restore_evidence.workspaceGitBundle.unpushedCommitPreserved | bool
+      - management_restore_evidence.runtime.evidenceRef | length > 0
+      - management_restore_evidence.runtime.writerQuiesced | bool
+      - management_restore_evidence.runtime.writerAbsent | bool
+      - management_restore_evidence.runtime.runtimeServerRetired | bool
+      - management_restore_evidence.runtime.runtimeAgentTransitionAllowed | bool
+    fail_msg: "Management K3s startup is blocked until the same cluster's embedded-etcd backup, isolated restore, PVC/CA identity, Writer absence, and old-Server retirement are evidenced."
+  no_log: true
+  when: praetorium_management_server_start | bool
+
+- name: Require the current backup to include all live Secret and resource state before Management Server startup
+  ansible.builtin.assert:
+    that:
+      - management_restore_evidence.secretComparison.changed | length == 0
+      - management_restore_evidence.secretComparison.snapshotOnly | length == 0
+      - management_restore_evidence.secretComparison.liveOnly | length == 0
+      - management_restore_evidence.workspaceGitBundle.fullWorkspaceCopyStatus == 'PASS'
+    fail_msg: "Management Server startup is blocked until the restore includes every current Secret/resource change and the full Runtime workspace copy is verified."
+  no_log: true
+  when: praetorium_management_server_start | bool
+
+- name: Inspect the staged K3s binary and installer sources on the controller
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    follow: false
+    checksum_algorithm: sha256
+  delegate_to: localhost
+  become: false
+  loop:
+    - path: "{{ management_k3s_binary_src }}"
+      checksum: "{{ management_k3s_binary_sha256 }}"
+    - path: "{{ management_k3s_installer_src }}"
+      checksum: "{{ management_k3s_installer_sha256 }}"
+  register: management_k3s_source_artifacts
+
+- name: Verify staged K3s artifact digests
+  ansible.builtin.assert:
+    that:
+      - item.stat.isreg
+      - item.stat.checksum | lower == item.item.checksum | lower
+    fail_msg: "Staged K3s artifacts must be regular files matching the independently verified inventory digests."
+  loop: "{{ management_k3s_source_artifacts.results }}"
+
+- name: Inspect the existing K3s binary and systemd unit
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    checksum_algorithm: sha256
+  loop:
+    - /usr/local/bin/k3s
+    - /etc/systemd/system/k3s.service
+    - "{{ management_k3s_marker_path }}"
+  register: management_k3s_existing_paths
+
+- name: Refuse to adopt an unowned existing K3s Server unit
+  ansible.builtin.assert:
+    that:
+      - not management_k3s_existing_paths.results[1].stat.exists or management_k3s_existing_paths.results[2].stat.exists
+    fail_msg: "An existing K3s Server unit has no Praetorium ownership marker; inspect it before Ansible adoption."
+
+- name: Refuse unsafe existing Management Server unit or ownership marker paths
+  ansible.builtin.assert:
+    that:
+      - not management_k3s_existing_paths.results[1].stat.exists or (management_k3s_existing_paths.results[1].stat.isreg and not management_k3s_existing_paths.results[1].stat.islnk)
+      - not management_k3s_existing_paths.results[2].stat.exists or (management_k3s_existing_paths.results[2].stat.isreg and not management_k3s_existing_paths.results[2].stat.islnk)
+    fail_msg: "Existing K3s Server unit and ownership marker must be regular non-symlink files."
+
+- name: Verify an existing K3s binary instead of replacing it
+  ansible.builtin.assert:
+    that:
+      - management_k3s_existing_paths.results[0].stat.checksum | lower == management_k3s_binary_sha256 | lower
+    fail_msg: "An existing K3s binary differs from the pinned artifact; Ansible will not replace it in place."
+  when: management_k3s_existing_paths.results[0].stat.exists
+
+- name: Read the existing Management Server ownership marker
+  ansible.builtin.slurp:
+    src: "{{ management_k3s_marker_path }}"
+  register: management_k3s_marker_contents
+  no_log: true
+  when: management_k3s_existing_paths.results[2].stat.exists
+
+- name: Verify an existing Management Server marker matches the pinned cluster
+  ansible.builtin.assert:
+    that:
+      - (management_k3s_marker_contents.content | b64decode | from_json).clusterId == management_cluster_id
+      - (management_k3s_marker_contents.content | b64decode | from_json).k3sVersion == management_k3s_version
+      - (management_k3s_marker_contents.content | b64decode | from_json).binarySha256 | lower == management_k3s_binary_sha256 | lower
+      - (management_k3s_marker_contents.content | b64decode | from_json).configPath == management_server_config_path
+    fail_msg: "The existing Management Server ownership marker identifies a different cluster, version, binary, or config."
+  no_log: true
+  when: management_k3s_existing_paths.results[2].stat.exists
+
+- name: Read an existing Management Server systemd unit without logging its contents
+  ansible.builtin.slurp:
+    src: /etc/systemd/system/k3s.service
+  register: management_k3s_unit_contents
+  no_log: true
+  when: management_k3s_existing_paths.results[1].stat.exists
+
+- name: Verify an existing Management unit still runs K3s Server
+  ansible.builtin.assert:
+    that:
+      - (management_k3s_unit_contents.content | b64decode) is search('ExecStart=/usr/local/bin/k3s server')
+    fail_msg: "The existing Management systemd unit no longer runs the pinned K3s Server executable."
+  no_log: true
+  when: management_k3s_existing_paths.results[1].stat.exists
+
+- name: Create the private K3s staging directory
+  ansible.builtin.file:
+    path: "{{ management_k3s_stage_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the pinned K3s binary only when no binary exists
+  ansible.builtin.copy:
+    src: "{{ management_k3s_binary_src }}"
+    dest: /usr/local/bin/k3s
+    owner: root
+    group: root
+    mode: "0755"
+    force: false
+  when: not management_k3s_existing_paths.results[0].stat.exists
+
+- name: Read the installed K3s version
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - --version
+  register: management_k3s_version_result
+  changed_when: false
+  check_mode: false
+  when:
+    - management_k3s_existing_paths.results[0].stat.exists or not ansible_check_mode
+
+- name: Ensure the installed K3s binary reports the exact pin
+  ansible.builtin.assert:
+    that:
+      - management_k3s_version_result.stdout is search(management_k3s_version | regex_escape)
+    fail_msg: "The installed K3s binary does not report the configured exact version."
+  when:
+    - management_k3s_existing_paths.results[0].stat.exists or not ansible_check_mode
+
+- name: Inspect the existing server token source only before explicit startup
+  ansible.builtin.stat:
+    path: "{{ management_server_token_src }}"
+    follow: false
+    checksum_algorithm: sha256
+  delegate_to: localhost
+  become: false
+  register: management_server_token_source
+  no_log: true
+  when: praetorium_management_server_start | bool
+
+- name: Require a protected source for the restored K3s server token
+  ansible.builtin.assert:
+    that:
+      - management_server_token_source.stat.isreg
+      - management_server_token_source.stat.mode == '0600'
+    fail_msg: "The restored K3s server token source must be a regular local 0600 file."
+  no_log: true
+  when: praetorium_management_server_start | bool
+
+- name: Inspect the Management server token target
+  ansible.builtin.stat:
+    path: "{{ management_server_token_file }}"
+    follow: false
+    checksum_algorithm: sha256
+  register: management_server_token_target
+  no_log: true
+  when: praetorium_management_server_start | bool
+
+- name: Inspect the restored Management server data directory before startup
+  ansible.builtin.stat:
+    path: "{{ management_server_data_dir }}"
+    follow: false
+  register: management_restored_data_dir
+  when: praetorium_management_server_start | bool
+
+- name: Require a real restored Management server data directory
+  ansible.builtin.assert:
+    that:
+      - management_restored_data_dir.stat.exists
+      - management_restored_data_dir.stat.isdir
+      - not management_restored_data_dir.stat.islnk
+    fail_msg: "Management Server startup requires the existing restored data directory; Ansible will not create a new server datastore."
+  when: praetorium_management_server_start | bool
+
+- name: Inspect the restored embedded-etcd member on Management before startup
+  ansible.builtin.stat:
+    path: "{{ management_restored_etcd_member_path }}"
+    follow: false
+  register: management_restored_etcd_member
+  when: praetorium_management_server_start | bool
+
+- name: Refuse to initialize a new or redirected Management datastore
+  ansible.builtin.assert:
+    that:
+      - management_restored_etcd_member.stat.exists
+      - management_restored_etcd_member.stat.isreg
+      - not management_restored_etcd_member.stat.islnk
+    fail_msg: "Management Server startup requires the verified restored embedded-etcd member database on the host; Ansible will not initialize an empty cluster."
+  when: praetorium_management_server_start | bool
+
+- name: Inspect the existing K3s server token parent directory
+  ansible.builtin.stat:
+    path: "{{ management_server_token_file | dirname }}"
+    follow: false
+  register: management_server_token_parent
+  when: praetorium_management_server_start | bool
+
+- name: Refuse to create a missing server data/token directory during migration
+  ansible.builtin.assert:
+    that:
+      - management_server_token_parent.stat.isdir
+      - not management_server_token_parent.stat.islnk
+    fail_msg: "The restored K3s token parent must already exist; startup will not create a fresh server datastore tree."
+  when: praetorium_management_server_start | bool
+
+- name: Refuse implicit Management server-token replacement
+  ansible.builtin.assert:
+    that:
+      - not management_server_token_target.stat.exists or
+        (management_server_token_target.stat.isreg and management_server_token_target.stat.mode == '0600' and
+         management_server_token_target.stat.pw_name == 'root' and management_server_token_target.stat.gr_name == 'root' and
+         management_server_token_target.stat.checksum == management_server_token_source.stat.checksum)
+    fail_msg: "An existing Management K3s server token differs from its protected source."
+  no_log: true
+  when: praetorium_management_server_start | bool
+
+- name: Install only a missing restored Management server token
+  ansible.builtin.copy:
+    src: "{{ management_server_token_src }}"
+    dest: "{{ management_server_token_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+  no_log: true
+  when: praetorium_management_server_start | bool
+
+- name: Create only the K3s configuration directory
+  ansible.builtin.file:
+    path: "{{ management_server_config_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Inspect the existing K3s Server configuration
+  ansible.builtin.stat:
+    path: "{{ management_server_config_path }}"
+    follow: false
+  register: management_server_config_stat
+
+- name: Refuse an unsafe existing K3s configuration path
+  ansible.builtin.assert:
+    that:
+      - not management_server_config_stat.stat.exists or (management_server_config_stat.stat.isreg and not management_server_config_stat.stat.islnk)
+    fail_msg: "The existing K3s config must be a regular file, not a symlink or special file."
+
+- name: Load the existing K3s Server configuration without logging credential fields
+  ansible.builtin.slurp:
+    src: "{{ management_server_config_path }}"
+  register: management_server_config_existing
+  no_log: true
+  when: management_server_config_stat.stat.exists
+
+- name: Verify existing K3s configuration identity and management scheduling fences
+  ansible.builtin.assert:
+    that:
+      - (management_server_config_existing.content | b64decode | from_yaml)['data-dir'] == management_server_data_dir
+      - (management_server_config_existing.content | b64decode | from_yaml)['token-file'] == management_server_token_file
+      - "'praetorium.io/node-role=management' in ((management_server_config_existing.content | b64decode | from_yaml)['node-label'] | default([]))"
+      - "'praetorium.io/node-role=management:NoSchedule' in ((management_server_config_existing.content | b64decode | from_yaml)['node-taint'] | default([]))"
+      - ('praetorium.io/cluster-id=' + management_cluster_id) in ((management_server_config_existing.content | b64decode | from_yaml)['node-label'] | default([]))
+      - management_api_bind_address in ((management_server_config_existing.content | b64decode | from_yaml)['tls-san'] | default([]))
+      - "'traefik' in ((management_server_config_existing.content | b64decode | from_yaml)['disable'] | default([]))"
+    fail_msg: "Existing K3s server configuration does not match the restored identity or Management scheduling boundary."
+  no_log: true
+  when: management_server_config_stat.stat.exists
+
+- name: Install a missing Management K3s configuration without replacing restored configuration
+  ansible.builtin.template:
+    src: k3s-server-config.yaml.j2
+    dest: "{{ management_server_config_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+  when: not management_server_config_stat.stat.exists
+
+- name: Inspect the staged K3s installer before unit generation
+  ansible.builtin.stat:
+    path: "{{ management_k3s_stage_dir }}/k3s-install.sh"
+    follow: false
+    checksum_algorithm: sha256
+  register: management_k3s_staged_installer
+
+- name: Refuse a staged K3s installer that differs from the pinned source
+  ansible.builtin.assert:
+    that:
+      - not management_k3s_staged_installer.stat.exists or
+        (management_k3s_staged_installer.stat.isreg and management_k3s_staged_installer.stat.checksum | lower == management_k3s_installer_sha256 | lower)
+    fail_msg: "The staged K3s installer differs from its pinned source; inspect the partial installation before continuing."
+  when: not management_k3s_existing_paths.results[1].stat.exists
+
+- name: Stage the pinned K3s installer only when absent
+  ansible.builtin.copy:
+    src: "{{ management_k3s_installer_src }}"
+    dest: "{{ management_k3s_stage_dir }}/k3s-install.sh"
+    owner: root
+    group: root
+    mode: "0700"
+    force: false
+  when: not management_k3s_existing_paths.results[1].stat.exists
+
+- name: Create the K3s Server systemd unit without enabling or starting it
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - "{{ management_k3s_stage_dir }}/k3s-install.sh"
+  environment:
+    INSTALL_K3S_SKIP_DOWNLOAD: "true"
+    INSTALL_K3S_SKIP_START: "true"
+    INSTALL_K3S_SKIP_ENABLE: "true"
+    INSTALL_K3S_EXEC: server
+    INSTALL_K3S_SYMLINK: skip
+  register: management_k3s_install_unit
+  changed_when: true
+  when: not management_k3s_existing_paths.results[1].stat.exists
+
+- name: Record ownership of the generated K3s Server unit
+  ansible.builtin.copy:
+    dest: "{{ management_k3s_marker_path }}"
+    content: "{{ {'clusterId': management_cluster_id, 'k3sVersion': management_k3s_version, 'binarySha256': management_k3s_binary_sha256, 'configPath': management_server_config_path} | to_nice_json }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+  when: not management_k3s_existing_paths.results[2].stat.exists
+
+- name: Enable and start the restored Management Server only after all gates pass
+  ansible.builtin.systemd_service:
+    name: k3s.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - praetorium_management_server_start | bool
+    - not ansible_check_mode

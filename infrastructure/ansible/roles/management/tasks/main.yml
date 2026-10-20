@@ -1,0 +1,11 @@
+---
+- name: Validate the Management host boundary
+  ansible.builtin.assert:
+    that:
+      - praetorium_host_role == 'management'
+      - not praetorium_management_server_start or praetorium_management_server_prepare
+    fail_msg: "K3s Server preparation and startup are Management-only explicit operations."
+
+- name: Prepare the restored Management K3s Server only when explicitly requested
+  ansible.builtin.include_tasks: server.yml
+  when: praetorium_management_server_prepare | bool

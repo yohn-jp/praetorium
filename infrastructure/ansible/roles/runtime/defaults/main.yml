@@ -1,0 +1,15 @@
+---
+runtime_agent_apply: false
+runtime_agent_migration_evidence_file: ""
+runtime_cluster_id: ""
+runtime_k3s_version: v1.35.9+k3s1
+runtime_k3s_binary_src: ""
+runtime_k3s_binary_sha256: ""
+runtime_k3s_server_address: ""
+runtime_management_api_host: ""
+runtime_agent_token_src: ""
+runtime_agent_token_file: /var/lib/praetorium/credentials/k3s-agent.token
+runtime_agent_data_dir: /var/lib/praetorium/k3s-agent
+runtime_agent_config_path: /etc/praetorium/k3s/agent.yaml
+runtime_agent_unit_path: /etc/systemd/system/k3s-agent.service
+runtime_agent_marker_path: /etc/praetorium/runtime-k3s-agent.json

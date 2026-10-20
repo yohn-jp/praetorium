@@ -1,0 +1,173 @@
+---
+- name: Validate the Builder host boundary and preserved resource profile
+  ansible.builtin.assert:
+    that:
+      - praetorium_host_role == 'builder'
+      - builder_cache_path == '/var/lib/praetorium-buildkit'
+      - builder_expected_version == 'v0.34.0'
+      - builder_expected_cpu_quota == '200%'
+      - builder_expected_memory_max == '4G'
+      - builder_expected_tasks_max | int == 4096
+    fail_msg: "Builder audit is pinned to the existing rootless BuildKit and observed cgroup profile."
+
+- name: Inspect the existing BuildKit cache without changing it
+  ansible.builtin.stat:
+    path: "{{ builder_cache_path }}"
+    follow: false
+  register: builder_cache_stat
+
+- name: Require the existing dedicated BuildKit cache directory
+  ansible.builtin.assert:
+    that:
+      - builder_cache_stat.stat.exists
+      - builder_cache_stat.stat.isdir
+      - not builder_cache_stat.stat.islnk
+      - builder_cache_stat.stat.pw_name == 'buildkit'
+      - builder_cache_stat.stat.gr_name == 'buildkit'
+      - builder_cache_stat.stat.mode == builder_cache_mode
+    fail_msg: "Builder audit will not create, reformat, move, or replace a missing or redirected cache path."
+
+- name: Inspect the configured BuildKit state directory without changing it
+  ansible.builtin.stat:
+    path: "{{ builder_state_path }}"
+    follow: false
+  register: builder_state_stat
+
+- name: Require the existing rootless BuildKit state directory
+  ansible.builtin.assert:
+    that:
+      - builder_state_stat.stat.exists
+      - builder_state_stat.stat.isdir
+      - not builder_state_stat.stat.islnk
+      - builder_state_stat.stat.pw_name == 'buildkit'
+      - builder_state_stat.stat.gr_name == 'buildkit'
+      - builder_state_stat.stat.mode == builder_state_mode
+    fail_msg: "Builder audit will not recreate, redirect, or change the mode of the existing BuildKit state directory."
+
+- name: Read the BuildKit service state and effective unit definition
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - cat
+      - "{{ builder_service_name }}"
+  register: builder_service_unit
+  changed_when: false
+  check_mode: false
+
+- name: Verify the existing service stays rootless and retains measured limits
+  ansible.builtin.assert:
+    that:
+      - builder_service_unit.stdout is search('User=buildkit')
+      - builder_service_unit.stdout is search('Group=buildkit')
+      - builder_service_unit.stdout is search('CPUQuota=' + builder_expected_cpu_quota | regex_escape)
+      - builder_service_unit.stdout is search('MemoryMax=' + builder_expected_memory_max | regex_escape)
+      - builder_service_unit.stdout is search('TasksMax=' + (builder_expected_tasks_max | string))
+    fail_msg: "The existing BuildKit systemd unit differs from its measured rootless CPU, memory, or task limits."
+
+- name: Read the BuildKit daemon configuration without modifying it
+  ansible.builtin.slurp:
+    src: "{{ builder_config_path }}"
+  register: builder_config_file
+  no_log: true
+
+- name: Verify rootless BuildKit, cache location, parallelism, and GC settings
+  ansible.builtin.assert:
+    that:
+      - (builder_config_file.content | b64decode) is search('root\s*=\s*["\']' + (builder_cache_path + '/state') | regex_escape)
+      - (builder_config_file.content | b64decode) is search('rootless\s*=\s*true')
+      - (builder_config_file.content | b64decode) is search('max-parallelism\s*=\s*1')
+      - (builder_config_file.content | b64decode) is search('maxUsedSpace\s*=\s*' + (builder_expected_gc_max_used_bytes | string))
+      - (builder_config_file.content | b64decode) is search('minFreeSpace\s*=\s*' + (builder_expected_gc_min_free_bytes | string))
+      - (builder_config_file.content | b64decode) is search('reservedSpace\s*=\s*["\']' + (builder_expected_gc_reserved_space | regex_escape) + '["\']')
+      - (builder_config_file.content | b64decode) is search('gc\s*=\s*true')
+    fail_msg: "BuildKit config no longer points to the existing cache with rootless single-worker GC behavior."
+  no_log: true
+
+- name: Read the installed BuildKit daemon version
+  ansible.builtin.command:
+    argv:
+      - "{{ builder_buildkitd_binary }}"
+      - --version
+  register: builder_version_result
+  changed_when: false
+  check_mode: false
+
+- name: Require the observed BuildKit version
+  ansible.builtin.assert:
+    that:
+      - builder_version_result.stdout is search(builder_expected_version | regex_escape)
+    fail_msg: "The existing BuildKit binary differs from the expected v0.34.0 pin."
+
+- name: Inspect the existing Builder service without restarting it
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - "{{ builder_service_name }}"
+  register: builder_service_state
+  changed_when: false
+  check_mode: false
+
+- name: Require the current BuildKit service to remain active
+  ansible.builtin.assert:
+    that:
+      - builder_service_state.stdout == 'active'
+    fail_msg: "The existing BuildKit service is not active; this audit role will not recreate it or its cache."
+
+- name: Ensure Builder has no K3s membership
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - k3s-agent.service
+  register: builder_k3s_agent_state
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Read Builder K3s Server enablement state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-enabled
+      - k3s.service
+  register: builder_k3s_server_enablement
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Read Builder K3s Agent enablement state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-enabled
+      - k3s-agent.service
+  register: builder_k3s_agent_enablement
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Refuse any Builder K3s Server or Agent membership
+  ansible.builtin.assert:
+    that:
+      - builder_k3s_agent_state.rc != 0
+      - builder_k3s_server_enablement.stdout not in ['enabled', 'enabled-runtime']
+      - builder_k3s_agent_enablement.stdout not in ['enabled', 'enabled-runtime']
+    fail_msg: "Builder must remain outside the K3s cluster."
+
+- name: Read Builder K3s Server active state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - k3s.service
+  register: builder_k3s_server_state
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Refuse an active K3s Server on Builder
+  ansible.builtin.assert:
+    that:
+      - builder_k3s_server_state.rc != 0
+    fail_msg: "Builder must not run a K3s Server."

@@ -1,0 +1,7 @@
+---
+- name: Prepare or start the restored Management K3s Server
+  hosts: management
+  become: true
+  roles:
+    - common
+    - management

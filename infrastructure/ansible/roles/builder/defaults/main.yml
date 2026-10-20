@@ -1,0 +1,15 @@
+---
+builder_cache_path: /var/lib/praetorium-buildkit
+builder_state_path: /var/lib/praetorium-buildkit/state
+builder_cache_mode: "0750"
+builder_state_mode: "0700"
+builder_config_path: /etc/praetorium/buildkitd.toml
+builder_service_name: praetorium-buildkit.service
+builder_expected_version: v0.34.0
+builder_expected_cpu_quota: 200%
+builder_expected_memory_max: 4G
+builder_expected_tasks_max: 4096
+builder_expected_gc_max_used_bytes: 8589934592
+builder_expected_gc_min_free_bytes: 2147483648
+builder_expected_gc_reserved_space: 5%
+builder_buildkitd_binary: /usr/local/bin/buildkitd

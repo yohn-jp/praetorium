@@ -1,0 +1,6 @@
+---
+praetorium_host_role: runtime
+runtime_agent_apply: false
+runtime_agent_migration_evidence_file: ""
+runtime_management_api_host: 192.0.2.33
+runtime_k3s_server_address: https://192.0.2.33:6443

@@ -1,0 +1,20 @@
+[Unit]
+Description=Praetorium K3s Runtime Agent
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists={{ runtime_agent_config_path }}
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/k3s agent --config {{ runtime_agent_config_path }}
+KillMode=process
+Delegate=yes
+Restart=always
+RestartSec=5s
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target

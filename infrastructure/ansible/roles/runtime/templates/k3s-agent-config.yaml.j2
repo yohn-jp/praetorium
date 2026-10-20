@@ -1,0 +1,6 @@
+server: {{ runtime_k3s_server_address }}
+token-file: {{ runtime_agent_token_file }}
+data-dir: {{ runtime_agent_data_dir }}
+node-label:
+  - praetorium.io/cluster-id={{ runtime_cluster_id }}
+  - praetorium.io/node-role=runtime

@@ -1,0 +1,6 @@
+---
+- name: Read-only audit of the existing rootless BuildKit host
+  hosts: builder
+  become: true
+  roles:
+    - builder

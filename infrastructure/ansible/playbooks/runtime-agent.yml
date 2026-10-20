@@ -1,0 +1,7 @@
+---
+- name: Join the Runtime host to the verified Management cluster
+  hosts: runtime
+  become: true
+  roles:
+    - common
+    - runtime

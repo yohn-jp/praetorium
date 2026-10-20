@@ -1,0 +1,11 @@
+---
+praetorium_host_role: builder
+builder_cache_path: /var/lib/praetorium-buildkit
+builder_config_path: /etc/praetorium/buildkitd.toml
+builder_service_name: praetorium-buildkit.service
+builder_expected_version: v0.34.0
+builder_expected_cpu_quota: 200%
+builder_expected_memory_max: 4G
+builder_expected_tasks_max: 4096
+builder_expected_gc_max_used_bytes: 8589934592
+builder_expected_gc_min_free_bytes: 2147483648

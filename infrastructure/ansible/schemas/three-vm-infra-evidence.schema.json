@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://praetorium.invalid/schemas/three-vm-infra-evidence.schema.json",
+  "title": "Praetorium three VM migration evidence",
+  "type": "object",
+  "required": ["schema", "source", "snapshotArtifact", "snapshotArtifactSha256", "snapshotCompare", "isolatedRestore", "secretComparison", "pvcArchive", "workspaceGitBundle", "runtime"],
+  "properties": {
+    "schema": { "const": "praetorium.three-vm-infra-evidence/v1" },
+    "source": {
+      "type": "object",
+      "required": ["host", "clusterId", "datastore", "k3sVersion"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1 },
+        "clusterId": { "type": "string", "pattern": "^clu_[0-9A-HJKMNP-TV-Z]{26}$" },
+        "datastore": { "const": "embedded-etcd" },
+        "k3sVersion": { "const": "v1.35.9+k3s1" }
+      },
+      "additionalProperties": true
+    },
+    "snapshotArtifact": { "type": "string", "minLength": 1 },
+    "snapshotArtifactSha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "snapshotTimestampUtc": { "type": "string", "format": "date-time" },
+    "snapshotCompare": {
+      "type": "object",
+      "required": ["status", "evidenceRef"],
+      "properties": {
+        "status": { "const": "PASS" },
+        "evidenceRef": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "isolatedRestore": {
+      "type": "object",
+      "required": ["status", "evidenceRef", "restoredApiReady", "restoredServerCaMatch", "clusterId", "pvcRestoreMatch"],
+      "properties": {
+        "status": { "const": "PASS" },
+        "evidenceRef": { "type": "string", "minLength": 1 },
+        "restoredApiReady": { "type": "boolean" },
+        "restoredServerCaMatch": { "type": "boolean" },
+        "clusterId": { "type": "string", "pattern": "^clu_[0-9A-HJKMNP-TV-Z]{26}$" },
+        "pvcRestoreMatch": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "secretComparison": {
+      "type": "object",
+      "required": ["snapshotCount", "liveCount", "identicalCount", "changed", "snapshotOnly", "liveOnly"],
+      "properties": {
+        "snapshotCount": { "type": "integer", "minimum": 0 },
+        "liveCount": { "type": "integer", "minimum": 0 },
+        "identicalCount": { "type": "integer", "minimum": 0 },
+        "changed": { "type": "array" },
+        "snapshotOnly": { "type": "array" },
+        "liveOnly": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "pvcArchive": {
+      "type": "object",
+      "required": ["artifact", "status", "pvcName", "namespace", "bytes", "contentHashMatch"],
+      "properties": {
+        "artifact": { "type": "string", "minLength": 1 },
+        "status": { "const": "PASS" },
+        "pvcName": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string", "minLength": 1 },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "contentHashMatch": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "workspaceGitBundle": {
+      "type": "object",
+      "required": ["artifact", "status", "branch", "headCommit", "refsVerified", "exactHeadRestoreMatch", "unpushedCommitPreserved", "fullWorkspaceCopyStatus"],
+      "properties": {
+        "artifact": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["PASS", "PARTIAL"] },
+        "branch": { "type": "string", "minLength": 1 },
+        "headCommit": { "type": "string", "pattern": "^[a-fA-F0-9]{40}$" },
+        "refsVerified": { "type": "integer", "minimum": 0 },
+        "exactHeadRestoreMatch": { "type": "boolean" },
+        "unpushedCommitPreserved": { "type": "boolean" },
+        "fullWorkspaceCopyStatus": { "enum": ["PASS", "BLOCKED_UNTIL_WRITER_QUIESCE"] }
+      },
+      "additionalProperties": true
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["writerQuiesced", "writerAbsent", "runtimeServerRetired", "runtimeAgentTransitionAllowed", "evidenceRef"],
+      "properties": {
+        "writerQuiesced": { "type": "boolean" },
+        "writerAbsent": { "type": "boolean" },
+        "runtimeServerRetired": { "type": "boolean" },
+        "runtimeAgentTransitionAllowed": { "type": "boolean" },
+        "evidenceRef": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "managementServer": {
+      "type": "object",
+      "required": ["active", "clusterId", "evidenceRef"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "clusterId": { "type": ["string", "null"], "pattern": "^clu_[0-9A-HJKMNP-TV-Z]{26}$" },
+        "evidenceRef": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

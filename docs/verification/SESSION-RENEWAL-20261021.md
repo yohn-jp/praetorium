@@ -402,4 +402,33 @@ plus symbolic-HEAD regression patch. It was checked and applied only in an
 owned disposable fixture containing the exact pinned source files. The
 separately coordinated Scriptorium checkout was not changed; its build/tests,
 publication and admission for a corrected producer remain **NOT_CHECKED**.
-Fresh clones still require that source correction in a future admitted producer.
+Workspaces containing this valid optional alias, including imported or restored
+checkouts, still require the source correction or explicit maintenance.
+
+
+## Permanent correction validated in isolation
+
+The verification derivative patch has SHA-256
+`f8a1e6bc2406b3b68a1f54a222466883d80cb34420207a90d95cc4c8277eae0f`.
+It was tested in an owned `git archive` snapshot of exact producer `008d5c4`;
+no producer branch/worktree or existing checkout was changed. The original
+assertion-only fixture lacked `origin/HEAD`, so the derivative explicitly creates
+that valid alias before testing the census. With this same fixture, unpatched
+source reports dirty and fails; the one-line `target.trim()` correction passes.
+Frozen install with the producer's pnpm 12.10.1 contract, Core build, typecheck
+and all 70 Core tests passed. Full producer workspace checks, image publication,
+admission and hosted acceptance were not run. Source integration remains with
+the separately coordinated Scriptorium owner; a handoff decision is pending.
+
+The [main CI run for `371684a`](https://github.com/yohn-jp/praetorium/actions/runs/39471719454)
+completed successfully, including source verification, four candidate image
+builds and Kubernetes admission. Its publication job was skipped as expected
+for a push; production images remain the explicitly published `fb81de5` cut.
+
+A read-only release-path audit found no safe operator-only shortcut around the
+current lifecycle state. The same admitted artifact deduplicates to the old
+terminal blocked candidate. Operator retry covers only pristine pre-runtime
+canary build failures; this workflow already has a prior runtime and operation.
+Canary health also requires a running assignment with a matching current tuple.
+The normal authenticated lifecycle recovery/wake prerequisite remains pending;
+no private Gateway retry route was called with a fabricated principal.

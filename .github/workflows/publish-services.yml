@@ -62,6 +62,9 @@ jobs:
           - service: build-worker
             package: '@praetorium/build-worker'
             dockerfile: infrastructure/docker/build-worker.Dockerfile
+          - service: coordination
+            package: '@praetorium/coordination'
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
     steps:
       - uses: actions/checkout@v4
         with:
@@ -155,6 +158,9 @@ jobs:
           - service: build-worker
             package: '@praetorium/build-worker'
             dockerfile: infrastructure/docker/build-worker.Dockerfile
+          - service: coordination
+            package: '@praetorium/coordination'
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
     steps:
       - uses: actions/checkout@v4
         with:

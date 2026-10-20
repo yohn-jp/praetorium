@@ -1536,7 +1536,7 @@ export class OperationServiceHttpClient
     readonly expectedReservationRuntimeEpoch: number;
     readonly signal?: AbortSignal;
   }): Promise<void> {
-    await this.post("/reservations/release", withoutSignal(input), input.signal);
+    await this.post("/release", withoutSignal(input), input.signal);
   }
 
   report(input: {

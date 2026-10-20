@@ -182,6 +182,10 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
         namespacePrefix: this.options.runtime.namespacePrefix,
         resolveEndpoint: (assignment, signal) => runtime.controlEndpoint(assignment, signal),
         now: this.now,
+        // A status request can time out while the producer's shared remote
+        // census is still running. Immediate retries can join that census;
+        // idle observation deliberately keeps the default one-shot behavior.
+        unknownPersistenceRetries: 2,
       },
       new OperationBackedRuntimeControlCredentialProvider(
         this.options.operations,

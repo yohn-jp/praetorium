@@ -85,6 +85,30 @@ function responseStatus(): unknown {
   };
 }
 
+function unknownPersistenceStatus(): unknown {
+  return {
+    ...(responseStatus() as object),
+    lastConfirmedRemoteRevision: null,
+    persistence: {
+      state: "unknown",
+      observedRemoteCommit: null,
+      formats: [],
+    },
+  };
+}
+
+function verifiedPersistenceStatus(): unknown {
+  return {
+    ...(responseStatus() as object),
+    persistence: {
+      state: "verified",
+      remoteObservedAt: "2026-10-17T10:00:30.000Z",
+      observedRemoteCommit: "a".repeat(40),
+      formats: [{ formatId: "scriptorium.core", version: 1 }],
+    },
+  };
+}
+
 function quiesceResponse(request: Record<string, unknown>, observedAt: string): unknown {
   return {
     contractVersion: "scriptorium-platform/v1",
@@ -108,6 +132,7 @@ function client(options: {
   now?: () => number;
   fetch?: typeof globalThis.fetch;
   onCredential?: (value: RuntimeControlCredentialRequest) => void;
+  unknownPersistenceRetries?: number;
 }) {
   const current = assignment();
   const control = new ScriptoriumControlHttpClient(
@@ -122,6 +147,9 @@ function client(options: {
       },
       ...(options.now === undefined ? {} : { now: options.now }),
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+      ...(options.unknownPersistenceRetries === undefined
+        ? {}
+        : { unknownPersistenceRetries: options.unknownPersistenceRetries }),
     },
     {
       available: true,
@@ -136,6 +164,73 @@ function client(options: {
 }
 
 describe("ScriptoriumControlHttpClient", () => {
+  it("retries an in-flight unknown persistence census and accepts only the bound verified result", async () => {
+    let fetches = 0;
+    let credentials = 0;
+    const control = client({
+      unknownPersistenceRetries: 2,
+      onCredential: () => {
+        credentials += 1;
+      },
+      fetch: async () => {
+        fetches += 1;
+        return Response.json(
+          fetches < 3 ? unknownPersistenceStatus() : verifiedPersistenceStatus(),
+        );
+      },
+    });
+
+    await expect(control.status(assignment())).resolves.toMatchObject({
+      instanceId,
+      repositoryId: 123456,
+      runtimeEpoch: 9,
+      lastConfirmedRemoteRevision: "a".repeat(40),
+      persistence: {
+        state: "verified",
+        observedRemoteCommit: "a".repeat(40),
+        formats: [{ formatId: "scriptorium.core", version: 1 }],
+      },
+    });
+    expect(fetches).toBe(3);
+    expect(credentials).toBe(3);
+  });
+
+  it("returns unknown after the bounded retry window without inventing confirmation", async () => {
+    let fetches = 0;
+    const control = client({
+      unknownPersistenceRetries: 2,
+      fetch: async () => {
+        fetches += 1;
+        return Response.json(unknownPersistenceStatus());
+      },
+    });
+
+    await expect(control.status(assignment())).resolves.toMatchObject({
+      lastConfirmedRemoteRevision: null,
+      persistence: {
+        state: "unknown",
+        observedRemoteCommit: null,
+      },
+    });
+    expect(fetches).toBe(3);
+  });
+
+  it("rejects a mismatched assignment response instead of retrying it", async () => {
+    let fetches = 0;
+    const control = client({
+      unknownPersistenceRetries: 2,
+      fetch: async () => {
+        fetches += 1;
+        return Response.json({ ...unknownPersistenceStatus() as object, runtimeEpoch: 8 });
+      },
+    });
+
+    await expect(control.status(assignment())).rejects.toThrow(
+      "producer status is bound to another runtime assignment",
+    );
+    expect(fetches).toBe(1);
+  });
+
   it("limits idle observation credentials to a generation-fenced status-only call", async () => {
     const issueObservationCredential = vi.fn(async () => ({
       token: "signed-observation-token",

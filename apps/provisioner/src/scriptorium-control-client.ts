@@ -146,6 +146,10 @@ export interface ScriptoriumControlClientOptions {
   readonly fetch?: typeof fetch;
   readonly now?: () => number;
   readonly timeoutMs?: number;
+  /** Retry only the producer's uncancelled, in-flight census placeholder.
+   * Defaults to one request; lifecycle callers may opt into a short bounded
+   * retry window so adjacent requests can join the same remote observation. */
+  readonly unknownPersistenceRetries?: number;
 }
 
 function object(value: unknown, message: string): Record<string, unknown> {
@@ -383,6 +387,7 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
   private readonly fetchImplementation: typeof fetch;
   private readonly now: () => number;
   private readonly timeoutMs: number;
+  private readonly unknownPersistenceRetries: number;
 
   constructor(
     private readonly options: ScriptoriumControlClientOptions,
@@ -391,8 +396,16 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
     this.fetchImplementation = options.fetch ?? globalThis.fetch;
     this.now = options.now ?? Date.now;
     this.timeoutMs = options.timeoutMs ?? CONTROL_TIMEOUT_MS;
+    this.unknownPersistenceRetries = options.unknownPersistenceRetries ?? 0;
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 60_000) {
       throw new RangeError("runtime control request timeout is invalid");
+    }
+    if (
+      !Number.isSafeInteger(this.unknownPersistenceRetries) ||
+      this.unknownPersistenceRetries < 0 ||
+      this.unknownPersistenceRetries > 2
+    ) {
+      throw new RangeError("unknown persistence status retry count is invalid");
     }
   }
 
@@ -401,14 +414,28 @@ export class ScriptoriumControlHttpClient implements LifecycleProducerProvider {
   }
 
   async status(assignment: RuntimeAssignment, signal?: AbortSignal): Promise<ProducerStatus> {
-    const status = parseStatus(await this.request(assignment, "status", "GET", undefined, signal));
-    if (
-      status.instanceId !== assignmentInstanceId(assignment) ||
-      status.repositoryId !== assignment.repositoryId ||
-      status.runtimeEpoch !== assignment.runtimeEpoch
-    )
-      throw new TypeError("producer status is bound to another runtime assignment");
-    return { ...status, instanceId: assignment.instanceId };
+    for (let attempt = 0; ; attempt += 1) {
+      const status = parseStatus(await this.request(assignment, "status", "GET", undefined, signal));
+      if (
+        status.instanceId !== assignmentInstanceId(assignment) ||
+        status.repositoryId !== assignment.repositoryId ||
+        status.runtimeEpoch !== assignment.runtimeEpoch
+      )
+        throw new TypeError("producer status is bound to another runtime assignment");
+
+      const isInFlightCensusPlaceholder =
+        status.persistence?.state === "unknown" && status.lastConfirmedRemoteRevision === null;
+      if (
+        !isInFlightCensusPlaceholder ||
+        attempt >= this.unknownPersistenceRetries ||
+        signal?.aborted === true
+      ) {
+        return { ...status, instanceId: assignment.instanceId };
+      }
+      // The producer's short status timeout can return an unknown placeholder
+      // while its shared census continues. An immediate, freshly credentialed
+      // read can join that census; delay would start a new one after it clears.
+    }
   }
 
   async quiesce(

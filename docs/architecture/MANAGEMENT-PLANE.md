@@ -61,8 +61,9 @@ flowchart TB
     K3S -->|"control-plane connection"| Agent1
     K3S -->|"control-plane connection"| Agent2
     Coord <-->|"private scoped execution messages"| BA
-    Coord <-->|"private scoped Provisioner operations"| K3S
-    App <-->|"user work / Git credential broker"| User
+    Coord -->|"Provisioner execution uses scoped Kubernetes API"| K3S
+    User <-->|"direct application HTTPS / MCP"| App
+    App -->|"scoped Git credential broker (Gateway)"| Cloud
 ~~~
 
 概念図であり、`Agent #2`は将来の増設例で**設置済みではない**。`Coordination`は**独立したOSサービス**で、k3s APIが止まってもsystemd/Podmanは起動できる。ただしk3s APIに対する操作が可能とは限らない。Build execution agentの移設時期・実装方式は未確定。

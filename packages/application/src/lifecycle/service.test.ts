@@ -854,7 +854,10 @@ describe("LifecycleService", () => {
     expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([4]);
   });
 
-  it("still lets quiesce reject work that appears after a successful preflight", async () => {
+  it.each([
+    ["ACTIVE_MUTATION"],
+    Array.from({ length: 64 }, (_, index) => `REASON_${index}_${"X".repeat(54)}`),
+  ])("retains bounded quiesce diagnostics after resuming rejected work (%j)", async (...reasonCodes) => {
     const h = harness({
       quiesceTimeoutMs: 10_000,
       quiesce(request) {
@@ -872,7 +875,7 @@ describe("LifecycleService", () => {
             pendingCheckpoints: 0,
             uncertainPublication: false,
             lastConfirmedRemoteRevision: "a".repeat(40),
-            reasonCodes: ["ACTIVE_MUTATION"],
+            reasonCodes,
             observedAt: new Date().toISOString(),
           },
         };
@@ -882,6 +885,11 @@ describe("LifecycleService", () => {
     const result = await h.service.execute("op-01", h.context);
 
     expect(result).toMatchObject({ status: "blocked", code: "producer_quiesce_blocked" });
+    expect(h.journal.value.failureReason).toContain(reasonCodes[0]);
+    expect(h.journal.value.failureReason!.length).toBeLessThanOrEqual(512);
+    if (reasonCodes.length > 4) expect(h.journal.value.failureReason).toContain(",+60]");
+    expect(h.journal.value.quiesceRequest).toBeNull();
+    expect(h.journal.value.quiesceReceipt).toBeNull();
     expect(h.timeline.indexOf("status:4")).toBeLessThan(h.timeline.indexOf("fence:4"));
     expect(h.counters.quiesces).toHaveLength(1);
     expect(h.counters.resumes).toContain("op-01");

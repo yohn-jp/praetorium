@@ -1287,6 +1287,9 @@ export class LifecycleService {
       if (resumed)
         await checkpoint({ phase: "accepted", quiesceRequest: null, quiesceReceipt: null });
       const disposition = receipt.disposition === "blocked" ? "blocked" : "unknown";
+      const reasons = receipt.reasonCodes.length === 0
+        ? ""
+        : ` [${receipt.reasonCodes.slice(0, 4).join(",")}${receipt.reasonCodes.length > 4 ? `,+${receipt.reasonCodes.length - 4}` : ""}]`;
       return {
         status: "blocked",
         result: await this.saveOutcome(
@@ -1297,8 +1300,8 @@ export class LifecycleService {
             ? "producer_quiesce_blocked"
             : "producer_quiesce_unknown",
           resumed
-            ? `producer quiesce ${receipt.disposition}; unpublished work, active work, or unknown durability blocks retirement`
-            : `producer quiesce ${receipt.disposition}; matching resume could not be confirmed`,
+            ? `producer quiesce ${receipt.disposition}${reasons}; unpublished work, active work, or unknown durability blocks retirement`
+            : `producer quiesce ${receipt.disposition}${reasons}; matching resume could not be confirmed`,
         ),
       };
     }

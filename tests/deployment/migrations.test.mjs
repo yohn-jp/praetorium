@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import {
+  applyMigrationsWithPreflight,
+  assertCompatibleMigrationHistory,
   assertMigrationReadback,
   compareMigrationNames,
   orderedMigrationFiles,
@@ -57,4 +61,61 @@ test("migration readback rejects missing, extra, duplicate, malformed and prereq
   assert.throws(() => parseAppliedMigrationReadback(JSON.stringify([{ success: false, results: [] }])), /successful query/u);
   assert.throws(() => parseAppliedMigrationReadback(JSON.stringify([{ success: true, results: [{ name: "0001_ok.sql" }, { name: "0001_ok.sql" }] }])), /duplicate migration/u);
   assert.throws(() => parseAppliedMigrationReadback(JSON.stringify([{ success: true, results: [{ name: "unexpected" }] }])), /invalid migration/u);
+});
+
+test("remote preflight accepts pending known migrations and the historical late source 0004", () => {
+  const expected = orderedMigrationFiles(migrationDirectory);
+  assert.equal(assertCompatibleMigrationHistory(expected, []), true);
+  assert.equal(assertCompatibleMigrationHistory(expected, expected.slice(0, 4)), true);
+  assert.equal(assertCompatibleMigrationHistory(expected, [
+    "0001_repository_platform.sql",
+    "0002_stable_release_rollouts.sql",
+    "0003_staged_configurations.sql",
+    "0004_runtime_git_credentials.sql",
+    "0005_runtime_health_observations.sql",
+    "0006_application_origins.sql",
+    "0004_source_release_builds.sql",
+  ]), true);
+  assert.throws(() => assertCompatibleMigrationHistory(expected, [
+    ...expected.slice(0, 4), "0009_unknown.sql",
+  ]), /unknown migrations/u);
+  assert.throws(() => assertCompatibleMigrationHistory(expected, [
+    "0001_repository_platform.sql",
+    "0002_stable_release_rollouts.sql",
+    "0003_staged_configurations.sql",
+    "0004_source_release_builds.sql",
+  ]), /missing or precedes prerequisite 0004_runtime_git_credentials/u);
+  assert.throws(() => assertCompatibleMigrationHistory(expected, [
+    ...expected.slice(0, 4), "0007_source_release_recovery.sql",
+  ]), /missing or precedes prerequisite/u);
+});
+
+test("migration apply never runs when the initial remote history is unknown", () => {
+  const expected = orderedMigrationFiles(migrationDirectory);
+  let applies = 0;
+  assert.throws(() => applyMigrationsWithPreflight(
+    expected,
+    () => ["0001_repository_platform.sql", "0008_unrecognized.sql"],
+    () => { applies += 1; },
+  ), /unknown migrations/u);
+  assert.equal(applies, 0);
+});
+
+test("0007 adds recovery defaults while preserving rows written with the 0004 schema", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(readFileSync(path.join(migrationDirectory, "0004_source_release_builds.sql"), "utf8"));
+  db.exec(readFileSync(path.join(migrationDirectory, "0007_source_release_recovery.sql"), "utf8"));
+  db.prepare(`INSERT INTO source_release_builds (
+    job_id, source_id, github_release_id, source_repository, source_tag, source_revision,
+    release_version, actor_id, state, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "sr_11111111-1111-4111-8111-111111111111", "scriptorium", 416422590,
+    "yohn-jp/scriptorium", "v0.2.1", "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
+    "0.2.1", "213253858", "queued", 1, 1,
+  );
+  assert.deepEqual(
+    { ...db.prepare("SELECT revision, admission_attempt, next_attempt_at FROM source_release_builds").get() },
+    { revision: 0, admission_attempt: 0, next_attempt_at: null },
+  );
+  db.close();
 });

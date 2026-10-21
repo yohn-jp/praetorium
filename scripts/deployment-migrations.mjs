@@ -89,3 +89,70 @@ export function assertMigrationReadback(expectedFiles, appliedFiles) {
   }
   return true;
 }
+
+/**
+ * Validate an existing remote history before applying anything. A database can
+ * be behind this checkout, and older deployments may have recorded the second
+ * 0004 migration after 0005/0006. Every other migration must form a valid
+ * ordered prefix; the recovery migration is only compatible after all of its
+ * prerequisites are already recorded.
+ */
+export function assertCompatibleMigrationHistory(expectedFiles, appliedFiles) {
+  const expected = [...expectedFiles];
+  const applied = [...appliedFiles];
+  const missingKnown = expected.filter((name) => !applied.includes(name));
+  const unexpected = applied.filter((name) => !expected.includes(name));
+  if (unexpected.length) {
+    throw new Error("D1 migration history has unknown migrations: " + unexpected.join(", "));
+  }
+  if (new Set(applied).size !== applied.length) {
+    throw new Error("D1 migration history contains duplicate migrations");
+  }
+  const sourceMigration = "0004_source_release_builds.sql";
+  const recoveryMigration = "0007_source_release_recovery.sql";
+  const coreExpected = expected.filter((name) => name !== sourceMigration && name !== recoveryMigration);
+  const coreApplied = applied.filter((name) => name !== sourceMigration && name !== recoveryMigration);
+  if (coreExpected.slice(0, coreApplied.length).join("\0") !== coreApplied.join("\0")) {
+    throw new Error("D1 migration history is not a compatible ordered prefix");
+  }
+  if (applied.includes(sourceMigration)) {
+    const requiredBeforeSource = coreExpected.slice(0, 4);
+    const sourcePosition = applied.indexOf(sourceMigration);
+    const missingPrerequisite = requiredBeforeSource.find((name) => !applied.includes(name));
+    const latePrerequisite = requiredBeforeSource.find((name) => applied.indexOf(name) > sourcePosition);
+    if (missingPrerequisite || latePrerequisite) {
+      throw new Error(
+        "D1 migration " + sourceMigration + " is missing or precedes prerequisite " +
+        (missingPrerequisite ?? latePrerequisite),
+      );
+    }
+  }
+  if (applied.includes(recoveryMigration)) {
+    const recoveryPosition = applied.indexOf(recoveryMigration);
+    const prerequisite = expected.find((name) =>
+      name !== recoveryMigration && !applied.includes(name),
+    );
+    const laterPrerequisite = expected.find((name) =>
+      name !== recoveryMigration && applied.indexOf(name) > recoveryPosition,
+    );
+    if (prerequisite || laterPrerequisite) {
+      throw new Error(
+        "D1 migration " + recoveryMigration + " is missing or precedes prerequisite " +
+        (prerequisite ?? laterPrerequisite),
+      );
+    }
+  }
+  // Force a read of all known names, including pending migrations, so malformed
+  // expected sets cannot silently pass this pre-mutation gate.
+  if (missingKnown.some((name) => !MIGRATION_NAME.test(name))) {
+    throw new Error("D1 migration checkout contains an invalid migration name");
+  }
+  return true;
+}
+
+/** Read, validate, mutate, and verify as one ordered deployment operation. */
+export function applyMigrationsWithPreflight(expectedFiles, readApplied, apply) {
+  assertCompatibleMigrationHistory(expectedFiles, readApplied());
+  apply();
+  assertMigrationReadback(expectedFiles, readApplied());
+}

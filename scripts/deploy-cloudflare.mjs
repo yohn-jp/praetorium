@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { renderWorkerTemplate } from "../infrastructure/scripts/worker-config.mjs";
 import {
+  applyMigrationsWithPreflight,
+  assertCompatibleMigrationHistory,
   assertMigrationReadback,
   orderedMigrationFiles,
   parseAppliedMigrationReadback,
@@ -149,26 +151,39 @@ try {
   }
   const migrationDirectory = path.join(root, "apps/control-plane/migrations");
   const expectedMigrations = orderedMigrationFiles(migrationDirectory);
-  const migrationReadback = () => {
+  const readAppliedMigrations = () => {
     const output = wrangler([
       "d1", "execute", "praetorium-platform", "--remote",
       "--command", "SELECT name FROM d1_migrations ORDER BY id",
       "--json", "--config", conf.control,
     ]);
-    const appliedMigrations = parseAppliedMigrationReadback(output);
+    return parseAppliedMigrationReadback(output);
+  };
+  const migrationReadback = () => {
+    const appliedMigrations = readAppliedMigrations();
     assertMigrationReadback(expectedMigrations, appliedMigrations);
     console.log("Remote D1 migration history matches this checkout: " + expectedMigrations.join(", "));
   };
+  const compatibleMigrationPreflight = () => {
+    const appliedMigrations = readAppliedMigrations();
+    assertCompatibleMigrationHistory(expectedMigrations, appliedMigrations);
+    console.log("Remote D1 migration history is a compatible subset of this checkout.");
+  };
   const applyMigrations = () => {
-    wrangler(["d1", "migrations", "apply", "praetorium-platform", "--remote",
-      "--config", conf.control], { capture: false });
-    migrationReadback();
+    applyMigrationsWithPreflight(
+      expectedMigrations,
+      readAppliedMigrations,
+      () => wrangler(["d1", "migrations", "apply", "praetorium-platform", "--remote",
+        "--config", conf.control], { capture: false }),
+    );
+    console.log("Remote D1 migration history matches this checkout: " + expectedMigrations.join(", "));
   };
   if (mode === "--check") {
     migrationReadback();
     console.log("No Cloudflare resource mutated.");
   } else if (mode === "--preflight") {
-    console.log("Cloudflare resource/secret preflight passed; migration state was not changed or read.");
+    compatibleMigrationPreflight();
+    console.log("Cloudflare resource/secret and D1 migration preflight passed; no resource changed.");
   } else {
     if (mode === "--workers") migrationReadback();
     run("corepack", ["pnpm@11.18.0", "install", "--frozen-lockfile"], { capture: false });

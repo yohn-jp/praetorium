@@ -78,6 +78,7 @@ export function composeReleaseServices(input: {
     throw new TypeError("Separate release operator credential required");
   const sourceProofVerifier = new SourceProducerProofVerifier(
     input.db, input.builds.registry, input.builds.sourceBuilderKeys,
+    undefined, input.builds.sourceProducerRepository,
   );
   const signatureVerifier = new SigstoreProvenanceVerifier({
     signerIdentityAllowlist: policy.signerIdentityAllowlist.map(

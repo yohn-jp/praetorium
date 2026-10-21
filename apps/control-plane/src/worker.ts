@@ -103,24 +103,35 @@ function composeServices(env: ControlPlaneEnv) {
           notifyWorkAvailable: notifyWork,
         })
       : undefined;
-  const sourceBuilds = releases && env.BUILD_WORKER_AUTH_TOKEN
+  const sourceBuilds = releases && env.BUILD_WORKER_AUTH_TOKEN && buildServices?.sourceProducerRepository
     ? new D1SourceReleaseBuildQueue(env.CONTROL_PLANE_DB) : undefined;
   const progressProduced = async () => {
     if(!sourceBuilds || !releases)return;
-    for(const job of await sourceBuilds.listProduced()){
-      try {
-        const result=SourceProducerResultSchema.parse(JSON.parse(job.result_json));
-        const decision=await releases.admitSourceRelease(job,result);
-        if(decision.kind==="admitted"){
-          await sourceBuilds.markAdmitted(job.job_id,decision.candidate.id);
-          await releases.progressAdmittedSourceRelease();
-        }else if(decision.kind==="denied"){
-          await sourceBuilds.rejectProduced(job.job_id,"ADMISSION_DENIED");
+    for(let page=0;page<5;page++){
+      const jobs=await sourceBuilds.claimProduced(5);
+      if(jobs.length===0)break;
+      for(const job of jobs){
+        const attempt=job.admission_attempt;
+        let result;
+        try {
+          result=SourceProducerResultSchema.parse(JSON.parse(job.result_json));
+        } catch {
+          await sourceBuilds.rejectProduced(job.job_id,"SOURCE_RESULT_INVALID",attempt);
+          continue;
         }
-        // A retryable registry/provider outage leaves this durable row as
-        // 'produced'; the existing Control Plane recovery cron can retry.
-      }catch{
-        // Do not manufacture an admitted candidate if evidence is unavailable.
+        try {
+          const decision=await releases.admitSourceRelease(job,result);
+          if(decision.kind==="admitted"){
+            if(await sourceBuilds.markAdmitted(job.job_id,decision.candidate.id,attempt))
+              await releases.progressAdmittedSourceRelease();
+          }else if(decision.kind==="denied"){
+            await sourceBuilds.rejectProduced(job.job_id,"ADMISSION_DENIED",attempt);
+          }else{
+            await sourceBuilds.deferProduced(job.job_id,attempt);
+          }
+        }catch{
+          await sourceBuilds.deferProduced(job.job_id,attempt);
+        }
       }
     }
   };

@@ -2,8 +2,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { D1Database } from "@praetorium/persistence/d1";
 import { SourceProofVerificationError } from "./source-producer-verifier.js";
+import { metadataFailureReason } from "./http-failure.js";
 import {
   SourceProducerResultSchema,
+  readBoundedJson,
+  RequestTooLargeError,
   canonicalSourceProof,
   sourceProofDigest,
   type SourceProducerResult,
@@ -494,7 +497,7 @@ export function createSourceReleaseOperatorRoutes(input:{
     return job?c.json({job:publicSourceJob(job)}):c.json({error:{code:"SOURCE_BUILD_NOT_FOUND"}},404);
   });
   app.post("/",async(c)=>{
-    const body=NewJob.parse(await c.req.json());
+    const body=NewJob.parse(await readBoundedJson(c.req.raw,2048));
     try {
       const {job,duplicate}=await input.queue.enqueue(body,input.operatorActorId);
       // A hint is never the durable admission receipt; worker polls on loss.
@@ -507,7 +510,7 @@ export function createSourceReleaseOperatorRoutes(input:{
     }
   });
   app.post("/:jobId/retry",async(c)=>{
-    const body=RetryRequest.parse(await c.req.json());
+    const body=RetryRequest.parse(await readBoundedJson(c.req.raw,2048));
     try {
       const {job,duplicate}=await input.queue.retry(c.req.param("jobId"),body,input.operatorActorId);
       if(!duplicate)try{c.executionCtx.waitUntil(input.notifyBuild?.()??Promise.resolve());}catch{ /* Polling recovers a missed hint. */ }
@@ -522,9 +525,11 @@ export function createSourceReleaseOperatorRoutes(input:{
       throw e;
     }
   });
-  app.onError((e,c)=>e instanceof z.ZodError||e instanceof SyntaxError||e instanceof TypeError
+  app.onError((e,c)=>e instanceof RequestTooLargeError
+    ?c.json({error:{code:"REQUEST_TOO_LARGE"}},413)
+    :e instanceof z.ZodError||e instanceof SyntaxError||e instanceof TypeError
     ?c.json({error:{code:"INVALID_REQUEST"}},400)
-    :c.json({error:{code:"SOURCE_RELEASE_UNAVAILABLE"}},503));
+    :c.json({error:{code:"SOURCE_RELEASE_UNAVAILABLE",reason:metadataFailureReason(e)}},503));
   return app;
 }
 
@@ -546,13 +551,13 @@ export function createSourceReleaseWorkerRoutes(input:{
     await next();
   });
   app.post("/claim",async c=>{
-    const body=LeaseRequest.parse(await c.req.json());
+    const body=LeaseRequest.parse(await readBoundedJson(c.req.raw,1024));
     if(body.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
     const job=await input.queue.claim(body.workerId,body.leaseSeconds);
     return job?c.json({job}):c.body(null,204);
   });
   app.post("/:jobId/heartbeat",async c=>{
-    const data=HeartbeatRequest.parse(await c.req.json());
+    const data=HeartbeatRequest.parse(await readBoundedJson(c.req.raw,1024));
     if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
     const accepted=await input.queue.heartbeat(c.req.param("jobId"),data);
     return c.json({accepted});
@@ -563,7 +568,7 @@ export function createSourceReleaseWorkerRoutes(input:{
       workerId:z.string().regex(WORKER),leaseToken:z.string().uuid(),
       leaseEpoch:z.number().int().positive().safe(),
       result:SourceProducerResultSchema,
-    }).parse(await c.req.json());
+    }).parse(await readBoundedJson(c.req.raw,70*1024));
     if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
     const current=await input.queue.byId(c.req.param("jobId"));
     if(!current)return c.json({error:{code:"SOURCE_BUILD_LEASE_CONFLICT"}},409);
@@ -601,13 +606,15 @@ export function createSourceReleaseWorkerRoutes(input:{
     return c.json({accepted});
   });
   app.post("/:jobId/fail",async c=>{
-    const data=FailureRequest.parse(await c.req.json());
+    const data=FailureRequest.parse(await readBoundedJson(c.req.raw,1024));
     if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
     const accepted=await input.queue.fail(c.req.param("jobId"),data);
     return c.json({accepted});
   });
-  app.onError((e,c)=>e instanceof z.ZodError||e instanceof SyntaxError||e instanceof TypeError
+  app.onError((e,c)=>e instanceof RequestTooLargeError
+    ?c.json({error:{code:"REQUEST_TOO_LARGE"}},413)
+    :e instanceof z.ZodError||e instanceof SyntaxError||e instanceof TypeError
     ?c.json({error:{code:"INVALID_REQUEST"}},400)
-    :c.json({error:{code:"SOURCE_RELEASE_UNAVAILABLE"}},503));
+    :c.json({error:{code:"SOURCE_RELEASE_UNAVAILABLE",reason:metadataFailureReason(e)}},503));
   return app;
 }

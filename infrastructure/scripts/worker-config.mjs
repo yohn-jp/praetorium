@@ -19,7 +19,8 @@ export function buildPolicy(inventory) {
   const outputRepository = repository.slice("ghcr.io/".length);
   return {
     registryUrl: inventory.buildPolicy.registryUrl,
-    sourceProducerRepository: inventory.buildkit.frontendRepository,
+    ...(inventory.buildkit.frontendRepository
+      ? { sourceProducerRepository: inventory.buildkit.frontendRepository } : {}),
     allowedRepositories: [
       ...new Set(
         [

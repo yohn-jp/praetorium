@@ -68,8 +68,11 @@ if (process.argv.includes("--write")) {
     if (expected && received && typeof expected === "object" && typeof received === "object") {
       const expectedKeys = Object.keys(expected);
       const receivedKeys = Object.keys(received);
-      if (JSON.stringify(expectedKeys) !== JSON.stringify(receivedKeys))
-        return { location, expectedKeys, receivedKeys };
+      if (JSON.stringify(expectedKeys) !== JSON.stringify(receivedKeys)) {
+        const at = expectedKeys.findIndex((key, index) => key !== receivedKeys[index]);
+        return { location, at, expected: expectedKeys.slice(Math.max(0,at-3),at+4),
+          received: receivedKeys.slice(Math.max(0,at-3),at+4) };
+      }
       for (const key of expectedKeys) {
         const difference = firstDifference(expected[key], received[key], location + "." + key);
         if (difference) return difference;

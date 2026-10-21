@@ -194,7 +194,7 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
 
   if (request.method === "POST") {
     const isSourceDeploy = url.pathname === "/source-releases/deploy";
-    const retryMatch = /^\\/releases\\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\\/retry$/u.exec(url.pathname);
+    const retryMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/retry$/u.exec(url.pathname);
     if (!isSourceDeploy && !retryMatch) return response(404, "Not found");
     const form = await boundedForm(request);
     if (!form || !(await adminFormCsrf(request, context, session, form))) return response(403, "CSRF rejected");

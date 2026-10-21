@@ -517,6 +517,7 @@ export function createPortalHandler(
     const route = repositoryRoute(new URL(request.url).pathname);
     const response = await handle(request, {
       mode: selection.mode,
+      offerModeChoice: selection.offerModeChoice,
       ...(route ? { repositoryId: route.repositoryId } : {}),
     });
     if (!selection.cookie) return response;

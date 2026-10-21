@@ -76,7 +76,7 @@ async function boundedForm(request: Request): Promise<URLSearchParams | null> {
     const body = new Uint8Array(count);
     let offset = 0;
     for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.length; }
-    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(body);
+    const decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(body);
     decodeURIComponent(decoded.replace(/\+/g, " "));
     return new URLSearchParams(decoded);
   } catch { return null; }
@@ -195,7 +195,7 @@ export async function registerOAuthClient(request: Request, context: GatewayCont
     const bytes = new Uint8Array(length);
     let at = 0;
     for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.length; }
-    const input: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const input: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes));
     if (!input || typeof input !== "object" || Array.isArray(input)) return oauthError("invalid_client_metadata");
     const data = input as Record<string, unknown>;
     const name = data.client_name;

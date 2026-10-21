@@ -25,6 +25,14 @@ function redirect(uri: string): Response {
     Location: uri, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
   } });
 }
+function hasControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
 function htmlEscape(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
@@ -201,7 +209,7 @@ export async function registerOAuthClient(request: Request, context: GatewayCont
     const name = data.client_name;
     const redirects = data.redirect_uris;
     if (typeof name !== "string" || name.length < 1 || name.length > 80 ||
-        /[\u0000-\u001f\u007f]/.test(name) || !Array.isArray(redirects) ||
+        hasControlCharacters(name) || !Array.isArray(redirects) ||
         redirects.length < 1 || redirects.length > 5 ||
         redirects.some((uri) => typeof uri !== "string" || !allowedRedirectUri(uri)) ||
         new Set(redirects).size !== redirects.length ||

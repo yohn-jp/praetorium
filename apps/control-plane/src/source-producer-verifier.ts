@@ -6,7 +6,7 @@ import type { GhcrRegistryClient } from "@praetorium/ghcr/registry";
 export type SourceProofKey = {
   keyId: string;
   publicKeyBase64: string;
-  revoked?: boolean;
+  revoked?: boolean | undefined;
   validFrom?: string;
   validUntil?: string;
 };

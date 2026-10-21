@@ -107,6 +107,13 @@ function json(body: unknown, status = 200, headers: HeadersInit = {}): Response 
   return Response.json(body, { status, headers: result });
 }
 
+function mcpUnauthorized(instance: Instance): Response {
+  const response = problem(401, "ACCESS_GRANT_REQUIRED");
+  response.headers.set("WWW-Authenticate",
+    `Bearer resource_metadata="${instance.origin}/.well-known/oauth-protected-resource", scope="read"`);
+  return response;
+}
+
 function problem(status: number, code: string, retryAfter = false): Response {
   return json(
     { error: { code } },
@@ -463,11 +470,21 @@ export function createInstanceAccessHandler(
       return fallbackEntry(instance, config);
     }
 
+    if (url.pathname === "/.well-known/oauth-protected-resource" && request.method === "GET") {
+      return json({
+        resource: instance.origin,
+        authorization_servers: [config.gatewayOrigin],
+        scopes_supported: ["read", "write"],
+      });
+    }
     if (isHtmlNavigation(request)) return fallbackEntry(instance, config, true);
     // MCP/API callers do not use the browser handoff. A bearer grant can
     // authorize a wake through the Gateway without forwarding application
     // headers, buffering the request body or minting an instance cookie.
     const authorization = request.headers.get("Authorization");
+    if (url.pathname === "/mcp" && !authorization) {
+      return mcpUnauthorized(instance);
+    }
     if (authorization && /^Bearer [A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(authorization) &&
         authorization.length <= 16_400 && !request.headers.has("Cookie")) {
       const wake = await postGateway(config, "/internal/instance-access/wake", {
@@ -476,9 +493,12 @@ export function createInstanceAccessHandler(
         origin: instance.origin,
         accessGrant: authorization.slice(7),
       }, fetcher);
-      if (!wake.ok) return wake;
+      if (!wake.ok) {
+        if (wake.status === 401 && url.pathname === "/mcp") return mcpUnauthorized(instance);
+        return wake;
+      }
     } else if (authorization) {
-      return problem(401, "ACCESS_GRANT_INVALID");
+      return url.pathname === "/mcp" ? mcpUnauthorized(instance) : problem(401, "ACCESS_GRANT_INVALID");
     }
     if (request.method === "HEAD") return new Response(null, { status: 503, headers: { "Retry-After": String(RETRY_AFTER_SECONDS), "Cache-Control": "no-store" } });
     return problem(503, "INSTANCE_STARTING", true);

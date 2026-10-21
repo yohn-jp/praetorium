@@ -12,6 +12,7 @@ async function call<T>(
     method: "POST",
     body: JSON.stringify(body),
   });
+  if (!response.ok) throw new Error("user auth state store unavailable");
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
 
@@ -21,8 +22,31 @@ export function createDurableObjectSessionStore(
 ): SessionStore {
   return {
     async create(digest, record) {
-      await digestIndex.set(digest, record.userId);
       await call(namespace, record.userId, "/sessions/create", { digest, record });
+      try {
+        await digestIndex.set(digest, record.userId, record.expiresAt);
+      } catch (error) {
+        await call(namespace, record.userId, "/sessions/revoke", {
+          digest, revokedAt: record.createdAt,
+        });
+        throw error;
+      }
+    },
+    async createWithinLimit(digest, record, concurrentSessionLimit, now) {
+      const { created } = await call<{ created: boolean }>(
+        namespace,
+        record.userId,
+        "/sessions/create-within-limit",
+        { digest, record, concurrentSessionLimit, now },
+      );
+      if (!created) return false;
+      try {
+        await digestIndex.set(digest, record.userId, record.expiresAt);
+      } catch (error) {
+        await call(namespace, record.userId, "/sessions/revoke", { digest, revokedAt: now });
+        throw error;
+      }
+      return true;
     },
     async get(digest) {
       const userId = await digestIndex.get(digest);
@@ -35,6 +59,7 @@ export function createDurableObjectSessionStore(
         "/sessions/get",
         { digest },
       );
+      if (!record) await digestIndex.delete(digest);
       return record;
     },
     async touch(digest, lastActivityBucket, expiresAt) {
@@ -42,6 +67,7 @@ export function createDurableObjectSessionStore(
       if (!userId) {
         return;
       }
+      await digestIndex.set(digest, userId, expiresAt);
       await call(namespace, userId, "/sessions/touch", { digest, lastActivityBucket, expiresAt });
     },
     async revoke(digest, revokedAt) {
@@ -67,8 +93,15 @@ export function createDurableObjectMcpCredentialStore(
 ): McpCredentialStore {
   return {
     async create(digest, record) {
-      await digestIndex.set(digest, record.userId);
       await call(namespace, record.userId, "/credentials/create", { digest, record });
+      try {
+        await digestIndex.set(digest, record.userId, record.expiresAt);
+      } catch (error) {
+        await call(namespace, record.userId, "/credentials/revoke", {
+          digest, revokedAt: record.createdAt,
+        });
+        throw error;
+      }
     },
     async get(digest) {
       const userId = await digestIndex.get(digest);
@@ -81,16 +114,17 @@ export function createDurableObjectMcpCredentialStore(
         "/credentials/get",
         { digest },
       );
+      if (!record) await digestIndex.delete(digest);
       return record;
     },
-    async listForUser(userId) {
-      const { items } = await call<{ items: Awaited<ReturnType<McpCredentialStore["listForUser"]>> }>(
+    async listForUser(userId, cursor) {
+      const page = await call<Awaited<ReturnType<McpCredentialStore["listForUser"]>>>(
         namespace,
         userId,
         "/credentials/list",
-        {},
+        cursor ? { cursor } : {},
       );
-      return items;
+      return page;
     },
     async touchLastUsed(digest, lastUsedAt) {
       const userId = await digestIndex.get(digest);
@@ -105,6 +139,15 @@ export function createDurableObjectMcpCredentialStore(
         return;
       }
       await call(namespace, userId, "/credentials/revoke", { digest, revokedAt });
+    },
+    async revokeById(userId, id, revokedAt) {
+      const { revoked } = await call<{ revoked: boolean }>(
+        namespace,
+        userId,
+        "/credentials/revoke-by-id",
+        { id, revokedAt },
+      );
+      return revoked;
     },
     async revokeAllForUser(userId, revokedAt) {
       await call(namespace, userId, "/credentials/revoke-all", { revokedAt });

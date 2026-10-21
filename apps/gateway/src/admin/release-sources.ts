@@ -27,13 +27,23 @@ export interface SourceBuildStatus {
   readonly version: string;
   readonly state: "queued"|"building"|"produced"|"admitted"|"failed";
   readonly attempt: number;
+  readonly revision: number;
+  readonly retryable: boolean;
   readonly error: string|null;
   readonly admittedReleaseId: string|null;
 }
+
+export type SourceRetryIdentityResult =
+  | { readonly kind: "matched"; readonly sourceId: string; readonly githubReleaseId: number;
+      readonly sourceTag: string; readonly sourceRevision: string; readonly releaseVersion: string }
+  | { readonly kind: "conflict" | "forbidden" | "unavailable" };
 export interface SourceReleaseView {
   readonly source: RegisteredReleaseSource;
   readonly releases: readonly PublishedSourceRelease[];
   readonly error: string | null;
+  readonly endpoint: string;
+  readonly status: number | null;
+  readonly code: string | null;
 }
 
 const SHA = /^[0-9a-f]{40}$/u;
@@ -144,6 +154,48 @@ export async function fetchSelectedRelease(
   return {release,commit};
 }
 
+/** Re-fetch the published Release and resolved tag before an explicit Source retry. */
+export async function revalidateSourceRetryIdentity(
+  context: GatewayContext,
+  userId: string,
+  job: SourceBuildStatus,
+): Promise<SourceRetryIdentityResult> {
+  if (job.state !== "failed") return { kind: "conflict" };
+  const source = configuredReleaseSources(context.env.PRAETORIUM_RELEASE_SOURCES_JSON)
+    .find((value) => value.id === job.sourceId);
+  if (!source) return { kind: "forbidden" };
+  let token: string | null;
+  try {
+    token = await context.githubUserTokens.accessTokenFor(userId, context.requestNow);
+  } catch {
+    return { kind: "unavailable" };
+  }
+  if (!token) return { kind: "forbidden" };
+  try {
+    const selected = await fetchSelectedRelease(
+      source, job.releaseId, createGitHubRestClient({ requestTimeoutMs: 8000 }), token,
+    );
+    if (selected.release.tag !== job.tag || selected.release.version !== job.version ||
+        selected.commit !== job.commit) return { kind: "conflict" };
+    return {
+      kind: "matched", sourceId: source.id, githubReleaseId: selected.release.id,
+      sourceTag: selected.release.tag, sourceRevision: selected.commit,
+      releaseVersion: selected.release.version!,
+    };
+  } catch (error) {
+    if (error instanceof GitHubApiError) {
+      if (error.status === 401 || error.status === 403) return { kind: "forbidden" };
+      if (error.status === 404 || error.status === 400 || error.status === 422) return { kind: "conflict" };
+    }
+    if (error instanceof TypeError && [
+      "Selected GitHub Release is unpublished or is not a deployable SemVer",
+      "Unsupported GitHub release tag",
+      "Published tag does not resolve to a unique commit",
+    ].includes(error.message)) return { kind: "conflict" };
+    return { kind: "unavailable" };
+  }
+}
+
 
 export type DispatchReleaseResult =
   | { readonly kind: "queued"; readonly job: SourceBuildStatus; readonly duplicate: boolean }
@@ -193,7 +245,8 @@ export async function dispatchPublishedRelease(
   try { body = await response.json(); } catch { return { kind: "unavailable" }; }
   const data = object(body), job = object(data?.job);
   if (!job || typeof job.id !== "string" || typeof job.state !== "string" ||
-      job.releaseId !== selected.release.id || job.commit !== selected.commit) {
+      job.releaseId !== selected.release.id || job.commit !== selected.commit ||
+      typeof job.retryable !== "boolean") {
     return { kind: "unavailable" };
   }
   return { kind: "queued", job: job as unknown as SourceBuildStatus, duplicate: data?.duplicate === true };
@@ -205,16 +258,23 @@ export async function listRegisteredSources(
   const sources=configuredReleaseSources(context.env.PRAETORIUM_RELEASE_SOURCES_JSON);
   if(!sources.length)return [];
   const token=await context.githubUserTokens.accessTokenFor(userId,context.requestNow);
-  if(!token)return sources.map(source=>({source,releases:[],error:"GitHub authorization unavailable"}));
+  if(!token)return sources.map(source=>({
+    source,releases:[],error:"GitHub authorization unavailable",
+    endpoint:`GET /repos/${source.githubRepository}/releases`,status:null,code:"GITHUB_AUTH_UNAVAILABLE",
+  }));
   const client=createGitHubRestClient({requestTimeoutMs:8000});
   return Promise.all(sources.map(async source=>{
     try{
       const result=await fetchSourceReleases(source,client,token);
-      return {source,...result,error:null};
+      return {source,...result,error:null,endpoint:`GET /repos/${source.githubRepository}/releases`,status:200,code:null};
     }catch(e){
-      const err=e instanceof GitHubApiError && (e.status===401||e.status===403)
+      const githubError=e instanceof GitHubApiError;
+      const status=githubError?e.status:null;
+      const err=githubError && (e.status===401||e.status===403)
         ? "GitHub App access to this repository is missing" : "GitHub Releases are temporarily unavailable";
-      return {source,releases:[],error:err};
+      const code=githubError && (e.status===401||e.status===403)
+        ? "GITHUB_ACCESS_MISSING" : githubError ? "GITHUB_RELEASES_UNAVAILABLE" : "GITHUB_API_UNAVAILABLE";
+      return {source,releases:[],error:err,endpoint:`GET /repos/${source.githubRepository}/releases`,status,code};
     }
   }));
 }
@@ -222,8 +282,11 @@ export async function listRegisteredSources(
 /** Markup is escaped even when Release titles and notes contain arbitrary Markdown/HTML. */
 export function sourceReleaseCards(views:readonly SourceReleaseView[],csrf:string,builds:readonly SourceBuildStatus[]=[]):string {
   if(!views.length)return '<p class="admin-empty">No release sources registered. Configure trusted service sources in Wrangler.</p>';
-  return views.map(({source,releases,error})=>{
-    const entries=error?'<p class="alert" role="status">'+escapeHtml(error)+'</p>':
+  return views.map(({source,releases,error,endpoint,status,code})=>{
+    const entries=error?'<p class="alert" role="status">'+escapeHtml(error)+
+      ' Endpoint: <code>'+escapeHtml(endpoint)+'</code>; HTTP status: <code>'+
+      escapeHtml(status===null?"unavailable":String(status))+'</code>; code: <code>'+
+      escapeHtml(code??"GITHUB_RELEASES_UNAVAILABLE")+'</code>.</p>':
       releases.length===0?'<p class="admin-empty">No published GitHub Releases were found.</p>':
       releases.map(release=>{
         const build = builds.find(x => x.sourceId === source.id && x.releaseId === release.id);

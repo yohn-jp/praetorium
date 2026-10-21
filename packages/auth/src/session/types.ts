@@ -23,6 +23,13 @@ export interface SessionRecord {
 
 export interface SessionStore {
   create(digest: string, record: SessionRecord): Promise<void>;
+  /** Atomically enforces the per-user active-session limit and inserts the session. */
+  createWithinLimit(
+    digest: string,
+    record: SessionRecord,
+    concurrentSessionLimit: number,
+    now: string,
+  ): Promise<boolean>;
   get(digest: string): Promise<SessionRecord | null>;
   /** Debounced sliding-expiry update: only `lastActivityBucket` and `expiresAt` change. */
   touch(digest: string, lastActivityBucket: string, expiresAt: string): Promise<void>;

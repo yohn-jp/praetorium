@@ -45,7 +45,10 @@ authority or default identity provider is used.
 - `POST /api/credentials`, `GET /api/credentials`,
   `POST /api/credentials/:id/revoke`, `POST /api/credentials/revoke-all`, and
   `POST /api/token` implement bounded repository scoped MCP credentials and
-  access token exchange.
+  access token exchange. Credential listing returns at most 100 entries; pass
+  its optional `nextCursor` as `?cursor=` to retrieve later pages. Individual
+  revocation routes directly by credential ID, and revoke-all invalidates the
+  user's current credential generation atomically.
 - `GET /.well-known/jwks.json` publishes only the active public signing key.
 - Authenticated `POST /internal/instance-access/handoff`, `/refresh`, and
   `/revoke` routes are reserved for the Instance Access service binding.

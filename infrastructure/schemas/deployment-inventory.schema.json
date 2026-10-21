@@ -471,6 +471,54 @@
             "null"
           ],
           "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "adminOrigin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri",
+          "description": "Distinct exact HTTPS Admin origin; absent/null disables Admin."
+        },
+        "adminGithubUserIds": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "releaseSources": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "githubRepository",
+              "adapter"
+            ],
+            "properties": {
+              "id": {
+                "const": "scriptorium"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "githubRepository": {
+                "const": "yohn-jp/scriptorium"
+              },
+              "adapter": {
+                "const": "scriptorium-v1"
+              }
+            }
+          }
         }
       }
     },

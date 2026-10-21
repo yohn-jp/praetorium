@@ -52,6 +52,19 @@ describe("Build worker startup configuration", () => {
     });
   });
 
+  it("supports the 15-second lease minimum when heartbeats remain shorter", () => {
+    expect(readBuildWorkerConfig({
+      ...environment,
+      PRAETORIUM_BUILD_LEASE_SECONDS: "15",
+      PRAETORIUM_BUILD_HEARTBEAT_MS: "1000",
+    })).toMatchObject({ leaseSeconds: 15, heartbeatIntervalMs: 1000 });
+    expect(() => readBuildWorkerConfig({
+      ...environment,
+      PRAETORIUM_BUILD_LEASE_SECONDS: "14",
+      PRAETORIUM_BUILD_HEARTBEAT_MS: "1000",
+    })).toThrow();
+  });
+
   it("bounds fallback reconciliation and enables notifications only with a dedicated token", () => {
     expect(
       readBuildWorkerConfig({

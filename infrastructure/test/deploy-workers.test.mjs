@@ -7,10 +7,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { validateInventory } from "../scripts/inventory.mjs";
 import { buildPolicy } from "../scripts/worker-config.mjs";
+import { orderedMigrationFiles } from "../../scripts/deployment-migrations.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const inventoryPath = path.join(repoRoot, "infrastructure/test/disposable-inventory.json");
 const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+const expectedMigrations = orderedMigrationFiles(path.join(repoRoot, "apps/control-plane/migrations"));
 
 function planForInventory(value) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "praetorium-worker-plan-"));
@@ -139,15 +141,10 @@ test("Worker plan reports exact secret surfaces and producer-blocked release gat
       plan.inventoryBlockers.includes(`buildPolicy.cacheRetention.${field} has not been supplied`),
     );
   }
-  assert.deepEqual(plan.migrations, [
-    "0001_repository_platform.sql",
-    "0002_stable_release_rollouts.sql",
-    "0003_staged_configurations.sql",
-    "0004_runtime_git_credentials.sql",
-    "0005_runtime_health_observations.sql",
-    "0006_application_origins.sql",
-  ]);
+  assert.deepEqual(plan.migrations, expectedMigrations);
   assert.ok(plan.discoveredMigrations.includes("0004_runtime_git_credentials.sql"));
+  assert.ok(plan.discoveredMigrations.includes("0004_source_release_builds.sql"));
+  assert.ok(plan.discoveredMigrations.includes("0007_source_release_recovery.sql"));
   assert.deepEqual(plan.serviceBindings, [
     "Control Plane GATEWAY_SERVICE -> praetorium-gateway",
     "Gateway CONTROL_PLANE -> praetorium-control-plane",
@@ -226,14 +223,7 @@ test("Worker preflight recognizes credential retirement wiring without inspectin
   assert.equal(result.status, 2, result.stderr);
   const preflight = JSON.parse(result.stdout);
 
-  assert.deepEqual(preflight.expectedMigrations, [
-    "0001_repository_platform.sql",
-    "0002_stable_release_rollouts.sql",
-    "0003_staged_configurations.sql",
-    "0004_runtime_git_credentials.sql",
-    "0005_runtime_health_observations.sql",
-    "0006_application_origins.sql",
-  ]);
+  assert.deepEqual(preflight.expectedMigrations, expectedMigrations);
   assert.ok(preflight.discoveredMigrations.includes("0004_runtime_git_credentials.sql"));
   assert.deepEqual(preflight.serviceBindings, [
     "Control Plane GATEWAY_SERVICE -> praetorium-gateway",

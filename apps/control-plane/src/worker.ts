@@ -1,11 +1,11 @@
-import { createScriptoriumCatalogResolver } from "@praetorium/scriptorium";
+import { createScriptoriumCatalogResolverRegistry } from "@praetorium/scriptorium";
 import { BuildInputSchema } from "@praetorium/contracts";
 import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js";
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
 import { D1SourceReleaseBuildQueue, createSourceReleaseOperatorRoutes, createSourceReleaseWorkerRoutes } from "./source-release-builds.js";
-import { SourceProducerResultSchema } from "@praetorium/contracts";
+import { progressProducedSourceReleases } from "./source-release-progression.js";
 import { createScheduledHandler } from "./scheduled.js";
 import type { ExecutionContext } from "hono";
 import { notifyWorkAvailable, type WorkNotificationEnv } from "./work-notifications.js";
@@ -71,7 +71,7 @@ function composeServices(env: ControlPlaneEnv) {
         env.CONTROL_PLANE_DB,
         env.BUILD_POLICY_JSON,
         env.REGISTRY_PULL_CREDENTIAL,
-        createScriptoriumCatalogResolver(),
+        createScriptoriumCatalogResolverRegistry(),
       )
     : undefined;
   const controlIssuer = env.RUNTIME_CONTROL_SIGNING_KEY
@@ -103,26 +103,16 @@ function composeServices(env: ControlPlaneEnv) {
           notifyWorkAvailable: notifyWork,
         })
       : undefined;
-  const sourceBuilds = releases && env.BUILD_WORKER_AUTH_TOKEN
+  const sourceBuilds = releases && env.BUILD_WORKER_AUTH_TOKEN && buildServices?.sourceProducerRepository
     ? new D1SourceReleaseBuildQueue(env.CONTROL_PLANE_DB) : undefined;
   const progressProduced = async () => {
     if(!sourceBuilds || !releases)return;
-    for(const job of await sourceBuilds.listProduced()){
-      try {
-        const result=SourceProducerResultSchema.parse(JSON.parse(job.result_json));
-        const decision=await releases.admitSourceRelease(job,result);
-        if(decision.kind==="admitted"){
-          await sourceBuilds.markAdmitted(job.job_id,decision.candidate.id);
-          await releases.progressAdmittedSourceRelease();
-        }else if(decision.kind==="denied"){
-          await sourceBuilds.rejectProduced(job.job_id,"ADMISSION_DENIED");
-        }
-        // A retryable registry/provider outage leaves this durable row as
-        // 'produced'; the existing Control Plane recovery cron can retry.
-      }catch{
-        // Do not manufacture an admitted candidate if evidence is unavailable.
-      }
-    }
+    await progressProducedSourceReleases({
+      queue: sourceBuilds,
+      admissionLeaseMs: buildServices!.sourceAdmissionLeaseMs,
+      admit: releases.admitSourceRelease,
+      progressAdmitted: releases.progressAdmittedSourceRelease,
+    });
   };
   const app = createControlPlaneApp({
     notifyWorkAvailable: notifyWork,

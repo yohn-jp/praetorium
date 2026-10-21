@@ -20,7 +20,6 @@ import {
   revokeAccessRefreshCredential,
   revokeAllMcpCredentialsForUser,
   revokeAllSessionsForUser,
-  revokeMcpCredential,
   revokeSession,
   startGithubLogin,
   touchSession,
@@ -643,8 +642,16 @@ async function handleListMcpCredentials(request: Request, context: GatewayContex
   const session = await requireSession(request, context, now);
   if (!session.ok) return session.response;
   try {
-    const entries = await listMcpCredentialsForUser(context.mcpCredentialStore, session.session.actor.userId as UserId);
-    return json({ credentials: entries.map(({ record }) => ({
+    const query = new URL(request.url).searchParams.getAll("cursor");
+    if (query.length > 1 || (query[0] !== undefined && query[0].length > 256)) {
+      return errorResponse(request, "INVALID_REQUEST", "credential page cursor is invalid", context.requestId);
+    }
+    const page = await listMcpCredentialsForUser(
+      context.mcpCredentialStore,
+      session.session.actor.userId as UserId,
+      query[0],
+    );
+    return json({ credentials: page.items.map(({ record }) => ({
       id: record.id,
       repositoryId: record.repositoryId,
       instanceId: record.instanceId,
@@ -655,7 +662,7 @@ async function handleListMcpCredentials(request: Request, context: GatewayContex
       expiresAt: record.expiresAt,
       lastUsedAt: record.lastUsedAt,
       revokedAt: record.revokedAt,
-    })) });
+    })), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) });
   } catch {
     return unavailable(request, context);
   }
@@ -672,10 +679,12 @@ async function handleRevokeMcpCredential(request: Request, context: GatewayConte
       await revokeAllMcpCredentialsForUser(context.mcpCredentialStore, session.session.actor.userId as UserId, now);
       return json({ revoked: true });
     }
-    const entries = await listMcpCredentialsForUser(context.mcpCredentialStore, session.session.actor.userId as UserId);
-    const entry = entries.find(({ record }) => record.id === id);
-    if (!entry) return errorResponse(request, "NOT_FOUND", "credential not found", context.requestId);
-    await revokeMcpCredential(context.mcpCredentialStore, entry.digest, now);
+    const revoked = await context.mcpCredentialStore.revokeById(
+      session.session.actor.userId as UserId,
+      id as McpCredentialId,
+      now,
+    );
+    if (!revoked) return errorResponse(request, "NOT_FOUND", "credential not found", context.requestId);
     return json({ revoked: true });
   } catch {
     return unavailable(request, context);

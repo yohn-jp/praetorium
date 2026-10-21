@@ -1,27 +1,17 @@
-name: Publish Praetorium service images
+name: Verify Praetorium service images (disposable)
 
 on:
-  workflow_dispatch:
-    inputs:
-      expected_revision:
-        description: Exact main commit to verify and publish
-        required: true
-        type: string
   pull_request:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
 
 permissions:
   contents: read
 
 concurrency:
-  # PR/main checks are superseded. Explicit release/tag runs have unique,
-  # immutable groups and cannot cancel a release still publishing to GHCR.
-  group: praetorium-oci-${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+  group: praetorium-verification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -29,10 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.22.0'
+          node-version: "24.22.0"
       - name: Install and verify monorepo
         run: |
           corepack enable
@@ -40,12 +31,51 @@ jobs:
           corepack pnpm@11.18.0 check
           node --test tests/deployment/reproducibility.test.mjs
           node --test tests/deployment/headlamp-admin.test.mjs
-          node --test tests/deployment/release-selection.test.mjs
-          bash -n scripts/ci/checkout-selected-release.sh scripts/ci/hosted-producer-verification.sh
-          node --check scripts/ci/admit-produced-release.mjs
-          node --check scripts/ci/validate-producer-attestation.mjs
-          node --check scripts/ci/publish-producer-inputs.mjs
+          node --test tests/deployment/deployment-order.test.mjs tests/deployment/migrations.test.mjs tests/deployment/worker-projection.test.mjs
+          node --test tests/deployment/actions-verification.test.mjs
+          node --test tests/deployment/fixture-process.test.mjs
+          node --check scripts/deployment-migrations.mjs scripts/deployment-plan.mjs
+          node --check scripts/deploy-cloudflare.mjs scripts/deploy-platform.mjs scripts/deploy-k3s.mjs
+          node --check scripts/ci/source-stable-fixture.mjs
           node scripts/ci/verify-workerd-runtime-identity.mjs
+
+  source-stable-fixture:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.0"
+      - name: Build workspace packages for the isolated Source to Stable fixture
+        run: |
+          corepack enable
+          corepack pnpm@11.18.0 install --frozen-lockfile
+          corepack pnpm@11.18.0 build
+      - name: Verify built fixture imports
+        run: node scripts/ci/source-stable-fixture.mjs --check-imports
+      - name: Exercise Source queue, BuildKit producer, OCI verification and Stable CAS
+        env:
+          NODE_ENV: test
+          PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/praetorium-source-stable-evidence
+        run: node scripts/ci/source-stable-fixture.mjs
+      - name: Upload bounded Source fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-stable-fixture-evidence
+          path: |
+            ${{ runner.temp }}/praetorium-source-stable-evidence/source-stable-fixture-result.json
+            ${{ runner.temp }}/praetorium-source-stable-evidence/buildkitd.log
+          if-no-files-found: warn
+          retention-days: 7
 
   candidate-images:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
@@ -59,20 +89,21 @@ jobs:
       matrix:
         include:
           - service: provisioner
-            package: '@praetorium/provisioner'
+            package: "@praetorium/provisioner"
             dockerfile: infrastructure/docker/service-runtime.Dockerfile
           - service: instance-access
-            package: '@praetorium/instance-access'
+            package: "@praetorium/instance-access"
             dockerfile: infrastructure/docker/service-runtime.Dockerfile
           - service: build-worker
-            package: '@praetorium/build-worker'
+            package: "@praetorium/build-worker"
             dockerfile: infrastructure/docker/build-worker.Dockerfile
           - service: coordination
-            package: '@praetorium/coordination'
+            package: "@praetorium/coordination"
             dockerfile: infrastructure/docker/service-runtime.Dockerfile
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: docker/setup-buildx-action@v3
       - name: Build real service image without publishing
@@ -84,18 +115,18 @@ jobs:
           push: false
           load: true
           provenance: false
-          tags: praetorium-ci/${{ matrix.service }}:${{ github.sha }}
+          tags: praetorium-ci/${{ matrix.service }}:${{ github.event.pull_request.head.sha || github.sha }}
           cache-from: type=gha,scope=service-${{ matrix.service }}
           cache-to: type=gha,scope=service-${{ matrix.service }},mode=max
           build-args: |
             NODE_BUILD_IMAGE=docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
             NODE_RUNTIME_IMAGE=docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
-            BUILDKIT_CLIENT_IMAGE=docker.io/moby/buildkit@sha256:c1d0a1bc930a427f99f72220d1b263d6986d4592b21507fbc7f8bf7ecdaed004
+            BUILDKIT_CLIENT_IMAGE=docker.io/moby/buildkit@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
             BUILDKIT_CLIENT_BUILDCTL_PATH=/usr/bin/buildctl
             PRAETORIUM_BUILDKIT_BUILDCTL_PATH=/usr/local/bin/buildctl
             SERVICE_PACKAGE=${{ matrix.package }}
       - name: Assert image exists locally
-        run: docker image inspect "praetorium-ci/${{ matrix.service }}:${{ github.sha }}" >/dev/null
+        run: docker image inspect "praetorium-ci/${{ matrix.service }}:${{ github.event.pull_request.head.sha || github.sha }}" >/dev/null
 
   kubernetes-admission:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
@@ -107,10 +138,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.22.0'
+          node-version: "24.22.0"
       - name: Build real tenant resource renderer
         run: |
           corepack enable
@@ -142,78 +174,3 @@ jobs:
             --values /tmp/headlamp-values.yaml > /tmp/headlamp.yaml
           kubectl create namespace praetorium-admin
           kubectl apply --dry-run=server --validate=strict -f /tmp/headlamp.yaml
-
-  publish:
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    needs: verify
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: provisioner
-            package: '@praetorium/provisioner'
-            dockerfile: infrastructure/docker/service-runtime.Dockerfile
-          - service: instance-access
-            package: '@praetorium/instance-access'
-            dockerfile: infrastructure/docker/service-runtime.Dockerfile
-          - service: build-worker
-            package: '@praetorium/build-worker'
-            dockerfile: infrastructure/docker/build-worker.Dockerfile
-          - service: coordination
-            package: '@praetorium/coordination'
-            dockerfile: infrastructure/docker/service-runtime.Dockerfile
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@v3
-      - name: Select immutable publication reference
-        id: publication
-        env:
-          TAG: ${{ github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_REVISION: ${{ inputs.expected_revision }}
-        shell: bash
-        run: |
-          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
-            [[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ && "$EXPECTED_REVISION" == "$GITHUB_SHA" ]] ||
-              { echo "Requested revision differs from the checked-out main commit" >&2; exit 1; }
-            echo "tag=source-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-          else
-            [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
-              { echo "Invalid semver tag" >&2; exit 1; }
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish pinned service
-        id: image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
-          push: true
-          provenance: mode=max
-          tags: |
-            ghcr.io/yohn-jp/praetorium/${{ matrix.service }}:${{ steps.publication.outputs.tag }}
-          build-args: |
-            NODE_BUILD_IMAGE=docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
-            NODE_RUNTIME_IMAGE=docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
-            BUILDKIT_CLIENT_IMAGE=docker.io/moby/buildkit@sha256:c1d0a1bc930a427f99f72220d1b263d6986d4592b21507fbc7f8bf7ecdaed004
-            BUILDKIT_CLIENT_BUILDCTL_PATH=/usr/bin/buildctl
-            PRAETORIUM_BUILDKIT_BUILDCTL_PATH=/usr/local/bin/buildctl
-            SERVICE_PACKAGE=${{ matrix.package }}
-      - name: Record digest for deployment inventory
-        env:
-          SERVICE: ${{ matrix.service }}
-          DIGEST: ${{ steps.image.outputs.digest }}
-        run: |
-          echo "ghcr.io/yohn-jp/praetorium/$SERVICE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"

@@ -196,6 +196,15 @@ const summary = { cluster: inventory.ownership.clusterName, context: inventory.o
   deployments: ["praetorium-instance-access", "praetorium-provisioner",
     "praetorium-build-worker", "praetorium-prometheus"] };
 console.log(JSON.stringify(summary, null, 2));
+if (options.mode === "--apply") {
+  console.log("Verifying the canonical remote D1 migration history before changing any K3s objects...");
+  run(process.execPath, [
+    path.join(root, "scripts/deploy-cloudflare.mjs"),
+    "--inventory", options["--inventory"],
+    "--secret-files", options["--secret-files"],
+    "--check",
+  ], { timeout: 15 * 60_000 });
+}
 if (options.mode === "--check") {
   console.log("Preflight passed. No Kubernetes objects changed.");
   process.exit(0);

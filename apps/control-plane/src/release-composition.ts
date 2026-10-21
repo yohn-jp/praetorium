@@ -5,7 +5,7 @@ import { verifyReleaseProducerMetadata } from "./release-producer-metadata.js";
 import { createReleaseCanaryObservationReader } from "./release-canary-observations.js";
 import { SourceProducerProofVerifier } from "./source-producer-verifier.js";
 import { createRegistryBackedReleaseVerifier, ingestReleaseCandidate, ReleaseCandidateManifestSchema, type ReleaseCandidateManifest } from "@praetorium/application/releases";
-import type { SourceProducerResult } from "@praetorium/contracts";
+import { repositoryPathForHost, type SourceProducerResult } from "@praetorium/contracts";
 import { runStableReleaseWork } from "./scheduled.js";
 import { equalSecret } from "./app.js";
 import type { composeBuildServices } from "./build-composition.js";
@@ -77,7 +77,8 @@ export function composeReleaseServices(input: {
   if (!/^[\x21-\x7e]{32,4096}$/u.test(input.operatorToken))
     throw new TypeError("Separate release operator credential required");
   const sourceProofVerifier = new SourceProducerProofVerifier(
-    input.db, input.builds.registry, input.builds.sourceBuilderKeys,
+    input.db, input.builds.sourceRegistry, input.builds.sourceBuilderKeys,
+    undefined, input.builds.sourceProducerRepository,
   );
   const signatureVerifier = new SigstoreProvenanceVerifier({
     signerIdentityAllowlist: policy.signerIdentityAllowlist.map(
@@ -132,7 +133,9 @@ export function composeReleaseServices(input: {
       const url = `https://control.praetorium.yohn.jp/internal/source-proofs/${job.job_id}`;
       const manifest: ReleaseCandidateManifest = ReleaseCandidateManifestSchema.parse({
         schemaVersion: 1, version: job.release_version,
-        imageRepository: result.statement.imageRepository,
+        imageRepository: repositoryPathForHost(
+          result.statement.imageRepository, input.builds.sourceRegistry.registryHost,
+        ),
         catalog: result.catalog, runtimeMetadata: result.runtimeMetadata,
         signatureRef: url, provenanceRef: url,
       });

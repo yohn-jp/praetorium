@@ -16,6 +16,15 @@ export function createInMemorySessionStore(): SessionStore {
     async create(digest, record) {
       records.set(digest, record);
     },
+    async createWithinLimit(digest, record, concurrentSessionLimit, now) {
+      let active = 0;
+      for (const existing of records.values()) {
+        if (existing.userId === record.userId && isActive(existing, now)) active += 1;
+        if (active >= concurrentSessionLimit) return false;
+      }
+      records.set(digest, record);
+      return true;
+    },
     async get(digest) {
       return records.get(digest) ?? null;
     },

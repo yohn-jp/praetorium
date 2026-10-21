@@ -14,12 +14,13 @@ import {
 } from "@praetorium/persistence/d1";
 import { GhcrRegistryClient, RegistryError } from "@praetorium/ghcr/registry";
 import { OperatorBuilderSignatureVerifier } from "@praetorium/ghcr/builder-signature";
-import { normalizeComposition, type ProducerCatalogResolver } from "@praetorium/scriptorium";
+import { normalizeComposition, type ProducerCatalogResolver, type ProducerCatalogResolverRegistry } from "@praetorium/scriptorium";
 
 const Policy = z.strictObject({
   registryUrl: z.url().startsWith("https://"),
   allowedRepositories: z.array(z.string().min(1)).min(1).max(64),
   outputRepository: z.string().min(1),
+  sourceProducerRepository: z.string().max(255).regex(/^ghcr\.io\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u).optional(),
   maxImageLayerBytes: z.number().int().positive().safe(),
   maxImageVerificationMs: z.number().int().positive().max(120000),
   maxRegistryRequestMs: z.number().int().positive().max(60000),
@@ -103,12 +104,20 @@ export function composeBuildServices(
   db: D1Database,
   policyJson: string,
   pullCredentialJson?: string,
-  producerResolver?: ProducerCatalogResolver,
+  producerResolver?: ProducerCatalogResolver | ProducerCatalogResolverRegistry,
+  dependencies: { readonly registry?: GhcrRegistryClient } = {},
 ) {
   const policy = Policy.parse(JSON.parse(policyJson));
   if (!policy.allowedRepositories.includes(policy.outputRepository))
     throw new TypeError("Output repository must be explicitly approved");
-  const registry = new GhcrRegistryClient({
+  const logicalRegistryHost = new URL(policy.registryUrl).host;
+  if (policy.sourceProducerRepository &&
+      !policy.sourceProducerRepository.startsWith(logicalRegistryHost + "/"))
+    throw new TypeError("Source Producer repository must belong to the configured Registry");
+  if (dependencies.registry &&
+      !["127.0.0.1", "localhost", "[::1]"].includes(new URL("http://" + dependencies.registry.registryHost).hostname))
+    throw new TypeError("Disposable Registry injection requires an explicit loopback client");
+  const registry = dependencies.registry ?? new GhcrRegistryClient({
     registryUrl: policy.registryUrl,
     allowedRepositories: policy.allowedRepositories,
     maxImageLayerBytes: policy.maxImageLayerBytes,
@@ -118,6 +127,10 @@ export function composeBuildServices(
       ? { pullCredential: PullCredential.parse(JSON.parse(pullCredentialJson)) }
       : {}),
   });
+  const sourceRegistry: Pick<GhcrRegistryClient, "registryHost" | "verifyImage"> = dependencies.registry ? {
+    registryHost: logicalRegistryHost,
+    verifyImage: registry.verifyImage.bind(registry),
+  } : registry;
   const signer = new OperatorBuilderSignatureVerifier(
     policy.builderKeys.map((key) => ({
       keyId: key.keyId,
@@ -155,7 +168,9 @@ export function composeBuildServices(
             targetPlatform: policy.targetPlatform,
             resourceProfileId: selection.resourceProfileId,
           },
-          producerResolver,
+          "contractVersion" in producerResolver
+            ? producerResolver
+            : producerResolver.resolve(release.catalog.producerRevision).resolver,
         );
         const requested = composition.selectedResourceProfile;
         const caps = policy.runtimeResourceLimits;
@@ -193,6 +208,10 @@ export function composeBuildServices(
     registry,
     admission,
     sourceBuilderKeys: policy.builderKeys,
+    sourceProducerRepository: policy.sourceProducerRepository,
+    sourceRegistry,
+    // Two supported Linux platform checks, then the parallel Source provenance checks.
+    sourceAdmissionLeaseMs: Math.max(30_000, 3 * policy.maxImageVerificationMs + 30_000),
     resourceLimits: policy.runtimeResourceLimits,
     cache,
     cacheStore,

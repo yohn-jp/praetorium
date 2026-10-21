@@ -27,18 +27,6 @@ export function activityBucket(now: string, bucketSeconds: number): string {
   return roundToBucket(now, bucketSeconds);
 }
 
-async function guardedCount(
-  store: SessionStore,
-  userId: UserId,
-  now: string,
-): Promise<Result<number, SessionError>> {
-  try {
-    return ok(await store.countActiveForUser(userId, now));
-  } catch {
-    return err({ code: "STORAGE_UNAVAILABLE", message: "session store unavailable" });
-  }
-}
-
 export interface CreatedSession {
   readonly rawSessionId: string;
   readonly digest: string;
@@ -61,15 +49,8 @@ export async function createSession(
   store: SessionStore,
   input: CreateSessionInput,
 ): Promise<Result<CreatedSession, SessionError>> {
-  const activeCount = await guardedCount(store, input.userId, input.now);
-  if (!activeCount.ok) {
-    return activeCount;
-  }
-  if (activeCount.value >= input.concurrentSessionLimit) {
-    return err({
-      code: "CONCURRENT_SESSION_LIMIT_EXCEEDED",
-      message: "user has reached the concurrent session limit",
-    });
+  if (!Number.isSafeInteger(input.concurrentSessionLimit) || input.concurrentSessionLimit < 1) {
+    throw new TypeError("concurrentSessionLimit must be a positive integer");
   }
 
   const rawSessionId = generateToken(SESSION_ID_ENTROPY_BITS);
@@ -90,7 +71,18 @@ export async function createSession(
   };
 
   try {
-    await store.create(digest, record);
+    const admitted = await store.createWithinLimit(
+      digest,
+      record,
+      input.concurrentSessionLimit,
+      input.now,
+    );
+    if (!admitted) {
+      return err({
+        code: "CONCURRENT_SESSION_LIMIT_EXCEEDED",
+        message: "user has reached the concurrent session limit",
+      });
+    }
   } catch {
     return err({ code: "STORAGE_UNAVAILABLE", message: "session store unavailable" });
   }

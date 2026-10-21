@@ -38,6 +38,7 @@ type HttpClientOptions = {
   baseUrl: string;
   serviceToken: string;
   requestTimeoutMs: number;
+  sourceReportTimeoutMs?: number;
   maxResponseBytes: number;
   leaseSeconds: number;
   fetch?: typeof fetch;
@@ -64,6 +65,10 @@ export class BuildQueueHttpClient implements BuildQueuePort {
       !Number.isSafeInteger(options.requestTimeoutMs) ||
       options.requestTimeoutMs < 100 ||
       options.requestTimeoutMs > 60_000 ||
+      (options.sourceReportTimeoutMs !== undefined &&
+        (!Number.isSafeInteger(options.sourceReportTimeoutMs) ||
+          options.sourceReportTimeoutMs < options.requestTimeoutMs ||
+          options.sourceReportTimeoutMs > 20 * 60_000)) ||
       !Number.isSafeInteger(options.maxResponseBytes) ||
       options.maxResponseBytes < 1024 ||
       options.maxResponseBytes > 1_048_576 ||
@@ -150,10 +155,11 @@ export class BuildQueueHttpClient implements BuildQueuePort {
       "/internal/builds/source/"+encodeURIComponent(job.job_id)+"/produced",
       {workerId:job.lease_worker,leaseToken:job.lease_token,
         leaseEpoch:job.lease_epoch,result},
+      this.options.sourceReportTimeoutMs,
     );
     return z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
   }
-  async failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"):Promise<boolean>{
+  async failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"|"SOURCE_CHANGED"):Promise<boolean>{
     const response=await this.post(
       "/internal/builds/source/"+encodeURIComponent(job.job_id)+"/fail",
       {workerId:job.lease_worker,leaseToken:job.lease_token,
@@ -162,9 +168,13 @@ export class BuildQueueHttpClient implements BuildQueuePort {
     return z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
   }
 
-  private async post(path: string, body: unknown): Promise<{ status: number; value: unknown }> {
+  private async post(
+    path: string,
+    body: unknown,
+    timeoutMs=this.options.requestTimeoutMs,
+  ): Promise<{ status: number; value: unknown }> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     timeout.unref();
     let response: Response;
     try {

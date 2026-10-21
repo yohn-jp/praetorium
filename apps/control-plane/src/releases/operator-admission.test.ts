@@ -386,9 +386,11 @@ it("lists bounded canonical operator release summaries and existing audit data w
     createdAt: "2026-01-01T00:00:00.000Z",
   });
   const nextCursor = "%5B%222026-01-01T00%3A00%3A00.000Z%22%2C%22rel_canonical%22%5D";
-  const listCandidates = vi.fn(async (_cursor: string | null, _limit: number) => ({
-    items: [candidate], nextCursor,
-  }));
+  const listCandidates = vi.fn(async (cursor: string | null, limit: number) => {
+    void cursor;
+    void limit;
+    return { items: [candidate], nextCursor };
+  });
   const status = vi.fn(async () => null);
   const listAudit = vi.fn(async () => [{
     actorId: "operator", action: "release.candidate.admit", outcome: "accepted", occurredAt: 1,

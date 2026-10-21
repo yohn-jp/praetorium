@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, createPrivateKey, sign as edSign } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile, lstat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, lstat } from "node:fs/promises";
 import path from "node:path";
 import { createBuildctlRunner } from "@praetorium/buildkit";
 import {

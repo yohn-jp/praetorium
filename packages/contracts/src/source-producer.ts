@@ -29,6 +29,7 @@ export const SourceResolverDescriptorSchema = z.strictObject({
 });
 export const SourceProducerStatementSchemaV2 = SourceProducerStatementSchemaV1.extend({
   schemaVersion: z.literal(2),
+  imageRepository: z.string().max(255).regex(/^ghcr\.io\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u),
   resolverDigest: ResolverRevisionSchema,
 });
 export const SourceProducerStatementSchema = z.union([

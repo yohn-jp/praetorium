@@ -7435,7 +7435,8 @@
               },
               "imageRepository": {
                 "type": "string",
-                "const": "ghcr.io/yohn-jp/praetorium/scriptorium-producer"
+                "maxLength": 255,
+                "pattern": "^ghcr\\.io\\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
               },
               "runtimeBaseDigest": {
                 "type": "string",
@@ -8010,7 +8011,8 @@
           },
           "imageRepository": {
             "type": "string",
-            "const": "ghcr.io/yohn-jp/praetorium/scriptorium-producer"
+            "maxLength": 255,
+            "pattern": "^ghcr\\.io\\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
           },
           "runtimeBaseDigest": {
             "type": "string",

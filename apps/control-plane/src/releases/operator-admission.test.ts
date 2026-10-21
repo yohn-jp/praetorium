@@ -374,3 +374,62 @@ it("identifies D1 expression limits without returning SQL or error payloads", as
     code: "RELEASE_RETRY_UNAVAILABLE", stage: "commit", reason: "query_limit",
   } });
 });
+
+it("lists bounded canonical operator release summaries and existing audit data without mutation", async () => {
+  const candidate = ReleaseCandidateSchema.parse({
+    ...manifest(),
+    id: "rel_canonical", imageDigest: digest, status: "candidate",
+    admission: {
+      registryConfirmed: true, provenanceVerified: true, runtimeMetadataVerified: true,
+      evidence: ["provenance"], verifiedAt: "2026-01-01T00:00:00.000Z",
+    },
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+  const nextCursor = "%5B%222026-01-01T00%3A00%3A00.000Z%22%2C%22rel_canonical%22%5D";
+  const listCandidates = vi.fn(async (_cursor: string | null, _limit: number) => ({
+    items: [candidate], nextCursor,
+  }));
+  const status = vi.fn(async () => null);
+  const listAudit = vi.fn(async () => [{
+    actorId: "operator", action: "release.candidate.admit", outcome: "accepted", occurredAt: 1,
+  }]);
+  const baseline = deps();
+  const route = createOperatorReleaseAdmissionRoutes(deps({
+    releases: { ...baseline.releases, listCandidates },
+    retry: {
+      status, replay: async () => null,
+      execute: async () => ({ kind: "not_found" as const }),
+    },
+    listAudit,
+  }));
+  const catalog = await route.request("/?cursor=" + encodeURIComponent(nextCursor));
+  expect(catalog.status).toBe(200);
+  expect(await catalog.json()).toMatchObject({
+    items: [{ release: { id: "rel_canonical", version: "1.2.3", status: "candidate" }, workflow: null }],
+    nextCursor,
+  });
+  expect(listCandidates).toHaveBeenCalledWith(nextCursor, 25);
+  expect(status).toHaveBeenCalledWith("rel_canonical");
+  const audit = await route.request("/audit");
+  expect(audit.status).toBe(200);
+  expect(await audit.json()).toEqual({ events: [{
+    actorId: "operator", action: "release.candidate.admit", outcome: "accepted", occurredAt: 1,
+  }] });
+  expect(listAudit).toHaveBeenCalledOnce();
+  expect(baseline.producerMetadata.verify).not.toHaveBeenCalled();
+});
+
+it("rejects unauthorized catalog and audit reads before contacting D1", async () => {
+  const baseline = deps();
+  const listCandidates = vi.fn(baseline.releases.listCandidates);
+  const listAudit = vi.fn(async () => []);
+  const route = createOperatorReleaseAdmissionRoutes(deps({
+    authorize: async () => null,
+    releases: { ...baseline.releases, listCandidates },
+    listAudit,
+  }));
+  expect((await route.request("/")).status).toBe(403);
+  expect((await route.request("/audit")).status).toBe(403);
+  expect(listCandidates).not.toHaveBeenCalled();
+  expect(listAudit).not.toHaveBeenCalled();
+});

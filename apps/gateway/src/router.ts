@@ -50,6 +50,7 @@ import { createPortalHandler } from "./ui/index.js";
 import type { PortalActor, PortalSession } from "./ui/index.js";
 import { createPortalService } from "./services/portal-service.js";
 import { requestAuthorizedServiceWake } from "./services/service-wake.js";
+import { authorizationServerMetadata, registerOAuthClient, authorizeOAuth, exchangeOAuthToken } from "./services/oauth-service.js";
 import { errorResponse } from "./middleware/error-response.js";
 import {
   CSRF_COOKIE_NAME,
@@ -1069,6 +1070,11 @@ export function createGatewayRouter(context: GatewayContext): Hono {
     return json({ status: "ready" });
   });
   app.get("/.well-known/jwks.json", async () => publicJwks(await context.getKeyRegistry()));
+  app.get("/.well-known/oauth-authorization-server", () => authorizationServerMetadata(context));
+  app.post("/oauth/register", (c) => registerOAuthClient(c.req.raw, context));
+  app.get("/oauth/authorize", (c) => authorizeOAuth(c.req.raw, context));
+  app.post("/oauth/authorize", (c) => authorizeOAuth(c.req.raw, context));
+  app.post("/oauth/token", (c) => exchangeOAuthToken(c.req.raw, context));
   app.get("/auth/login", (c) => loginPage(c.req.raw));
   app.get("/auth/github/start", (c) => handleGithubStart(c.req.raw, context, context.requestNow));
   app.get("/auth/github/callback", (c) => handleGithubCallback(c.req.raw, context, context.requestNow));

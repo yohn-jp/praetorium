@@ -77,8 +77,12 @@ function releaseRow(input: Summary, csrf: string): string {
   const workflow = input.workflow?.workflow;
   const state = workflow?.state ?? r.status;
   const revision = workflow?.revision;
+  // Canonical retry only accepts a failed pre-runtime canary build. Other
+  // blocked states require investigation, not an ineligible retry button.
+  const preRuntimeFailure = (state === "blocked" && workflow?.failureCode === "canary_build_failed") ||
+    (state === "canary_building" && workflow?.failureCode === null);
   const retryable = revision !== undefined && Number.isSafeInteger(revision) &&
-    (state === "blocked" || input.workflow?.build?.status === "failed");
+    preRuntimeFailure && input.workflow?.build?.status === "failed";
   const retry = retryable
     ? '<form method="post" action="/releases/' + encodeURIComponent(r.id) + '/retry">' +
       csrfInput(csrf) +

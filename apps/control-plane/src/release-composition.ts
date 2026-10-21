@@ -5,7 +5,7 @@ import { verifyReleaseProducerMetadata } from "./release-producer-metadata.js";
 import { createReleaseCanaryObservationReader } from "./release-canary-observations.js";
 import { SourceProducerProofVerifier } from "./source-producer-verifier.js";
 import { createRegistryBackedReleaseVerifier, ingestReleaseCandidate, ReleaseCandidateManifestSchema, type ReleaseCandidateManifest } from "@praetorium/application/releases";
-import type { SourceProducerResult } from "@praetorium/contracts";
+import { repositoryPathForHost, type SourceProducerResult } from "@praetorium/contracts";
 import { runStableReleaseWork } from "./scheduled.js";
 import { equalSecret } from "./app.js";
 import type { composeBuildServices } from "./build-composition.js";
@@ -132,7 +132,9 @@ export function composeReleaseServices(input: {
       const url = `https://control.praetorium.yohn.jp/internal/source-proofs/${job.job_id}`;
       const manifest: ReleaseCandidateManifest = ReleaseCandidateManifestSchema.parse({
         schemaVersion: 1, version: job.release_version,
-        imageRepository: result.statement.imageRepository,
+        imageRepository: repositoryPathForHost(
+          result.statement.imageRepository, input.builds.registry.registryHost,
+        ),
         catalog: result.catalog, runtimeMetadata: result.runtimeMetadata,
         signatureRef: url, provenanceRef: url,
       });

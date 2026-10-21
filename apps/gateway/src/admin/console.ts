@@ -101,14 +101,16 @@ function releaseRow(input: Summary, csrf: string): string {
 }
 function auditRows(events: readonly Audit[]): string {
   if (events.length === 0) return '<p class="admin-empty">No release operator events recorded.</p>';
-  return '<ol class="admin-audit-list">' + events.map(event =>
-    '<li><span class="admin-audit-time">' +
-    escapeHtml(new Date(event.occurredAt).toISOString() === "Invalid Date" ? "" :
-      new Date(event.occurredAt).toLocaleString("en-GB", { timeZone: "UTC" })) +
-    ' UTC</span><strong>' + escapeHtml(event.action) + '</strong>' +
-    '<span class="status-badge ' + statusTone(event.outcome) + '">' +
-    escapeHtml(event.outcome) + '</span></li>',
-  ).join("") + '</ol>';
+  return '<ol class="admin-audit-list">' + events.map(event => {
+    const when = new Date(event.occurredAt);
+    const timestamp = Number.isFinite(when.getTime())
+      ? when.toISOString().slice(0, 19).replace("T", " ") + " UTC"
+      : "Time unavailable";
+    return '<li><span class="admin-audit-time">' + timestamp +
+      '</span><strong>' + escapeHtml(event.action) + '</strong>' +
+      '<span class="status-badge ' + statusTone(event.outcome) + '">' +
+      escapeHtml(event.outcome) + '</span></li>';
+  }).join("") + '</ol>';
 }
 function adminPage(title: string, content: string, csrf: string): Response {
   const body = '<div class="admin-console">' +

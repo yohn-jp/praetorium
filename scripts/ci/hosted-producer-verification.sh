@@ -48,7 +48,10 @@ buildkitd --version | grep -F 'v0.34.0'
 buildctl --version | grep -F 'v0.34.0'
 
 SCRIPTORIUM_DOCKERFILE_SHA256="$(sha256sum "$SCRIPTORIUM_ROOT/Dockerfile" | awk '{print $1}')"
-test "$SCRIPTORIUM_DOCKERFILE_SHA256" = "005b540188d5337e103bb4e5aba17c0ae4be3439c17d02b170a6b3d9a28ce350"
+# Source Dockerfile digest is calculated from the selected immutable commit,
+# not pinned to a historical Scriptorium revision. The build and signer independently
+# verify this exact digest against the signed producer report.
+[[ "$SCRIPTORIUM_DOCKERFILE_SHA256" =~ ^[0-9a-f]{64}$ ]]
 
 corepack enable --install-directory "$BIN" pnpm
 (

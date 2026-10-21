@@ -21,6 +21,8 @@ body:has(.admin-console) .page-shell{padding:0;max-width:none;min-height:100vh}
 .admin-metrics>div{display:flex;flex-direction:column;gap:4px;padding:22px 24px;background:#fff}
 .admin-metrics strong{font-size:30px;line-height:1.15;letter-spacing:-.04em;color:#153c2f}
 .admin-metrics span{font-size:12px;color:#647c6c}
+.admin-stable{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:17px 24px;margin-top:12px;border:1px solid #c8dbcd;background:#e8f2e9}
+.admin-stable strong{font:650 14px ui-monospace,SFMono-Regular,monospace;color:#153c2f;overflow-wrap:anywhere;text-align:right}
 .admin-section{margin-top:38px;min-width:0}
 .admin-section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;padding-bottom:16px;border-bottom:1px solid #d6e1da}
 .admin-section-head h2{font-size:22px;font-weight:690;letter-spacing:-.035em;color:#173f30;margin:8px 0 0}
@@ -56,6 +58,8 @@ body:has(.admin-console) .page-shell{padding:0;max-width:none;min-height:100vh}
 .admin-bar nav{order:3;width:100%;margin-left:0;padding-top:8px}
 .admin-main{padding:28px 16px 60px}
 .admin-metrics>div{padding:16px}
+.admin-stable{padding:14px 16px;align-items:flex-start;flex-direction:column;gap:7px}
+.admin-stable strong{text-align:left}
 .admin-release{grid-template-columns:minmax(0,1fr) minmax(0,.75fr);gap:12px;padding:20px 0}
 .admin-release>div:nth-child(3){grid-column:1/-1}
 .admin-actions{justify-content:flex-start}

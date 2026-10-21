@@ -90,7 +90,7 @@ export class SourceProducerProofVerifier {
       evidence:["Ed25519 source provenance and immutable GitHub Release verified"],
       attestation:{
         bundleRef:input.signatureRef,
-        predicateType:"https://slsa.dev/provenance/v1",
+        predicateType:"https://praetorium.yohn.jp/attestation/source-build/v1",
         subjects:[
           {name:proof.statement.imageRepository,sha256:proof.statement.runtimeBaseDigest.slice(7)},
           {name:"scriptorium-build/v1/catalog.json",sha256:proof.statement.catalogDigest.slice(7)},

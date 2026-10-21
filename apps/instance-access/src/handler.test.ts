@@ -192,6 +192,71 @@ describe("Instance Access production handler", () => {
     expect(request.bodyUsed).toBe(false);
   });
 
+  it("triggers generic bearer-authenticated service wake without reading or replaying the MCP body", async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const handler = createInstanceAccessHandler(environment(async (request) => {
+      calls.push({ path: new URL(request.url).pathname, body: await request.json() as Record<string, unknown> });
+      return Response.json({ status: "starting" }, { status: 202 });
+    }));
+    const token = `${"a".repeat(43)}.${"b".repeat(43)}.${"c".repeat(43)}`;
+    const request = new Request(`${origin}/mcp`, {
+      method: "POST",
+      headers: { Host: host, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: '{"jsonrpc":"2.0","method":"tools/list","id":1}',
+    });
+    const response = await handler(request);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBe("5");
+    expect(calls).toEqual([{
+      path: "/internal/instance-access/wake",
+      body: { appIdentity: "scriptorium", repositoryId: 482901, origin, accessGrant: token },
+    }]);
+    expect(request.bodyUsed).toBe(false);
+    expect(response.headers.getSetCookie()).toHaveLength(0);
+  });
+
+  it("serves OAuth discovery and unauthenticated MCP challenge without waking the instance", async () => {
+    let gatewayCalls = 0;
+    const handler = createInstanceAccessHandler(environment(async () => {
+      gatewayCalls += 1;
+      return Response.json({ status: "starting" }, { status: 202 });
+    }));
+    const discovery = await handler(new Request(`${origin}/.well-known/oauth-protected-resource`, {
+      headers: { Host: host },
+    }));
+    expect(discovery.status).toBe(200);
+    expect(await discovery.json()).toEqual({
+      resource: origin, authorization_servers: ["https://gateway.service.test"],
+      scopes_supported: ["read", "write"],
+    });
+    const unauth = await handler(new Request(`${origin}/mcp`, {
+      method: "POST", headers: { Host: host },
+      body: '{"jsonrpc":"2.0","method":"initialize","id":1}',
+    }));
+    expect(unauth.status).toBe(401);
+    expect(unauth.headers.get("WWW-Authenticate")).toContain(
+      `resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+    );
+    expect(gatewayCalls).toBe(0);
+  });
+
+  it("fails closed for rejected or ambiguous bearer wake credentials", async () => {
+    let calls = 0;
+    const handler = createInstanceAccessHandler(environment(async () => {
+      calls += 1;
+      return Response.json({ error: { code: "UNAUTHENTICATED" } }, { status: 401 });
+    }));
+    const token = `${"a".repeat(43)}.${"b".repeat(43)}.${"c".repeat(43)}`;
+    const request = (authorization: string, extra: Record<string, string> = {}) =>
+      handler(new Request(`${origin}/api/mcp`, {
+        headers: { Host: host, Authorization: authorization, ...extra },
+      }));
+    expect((await request(`Bearer ${token}`)).status).toBe(401);
+    expect((await request("Bearer invalid")).status).toBe(401);
+    expect((await request(`Bearer ${token}`, { Cookie: "session=browser" })).status).toBe(401);
+    expect(calls).toBe(1);
+  });
+
   it("requires the configured exact Gateway origin and one field value", async () => {
     let gatewayCalls = 0;
     const handler = createInstanceAccessHandler(environment(async () => {

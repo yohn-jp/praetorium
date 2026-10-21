@@ -1,4 +1,4 @@
-import { applicationHostname, publicRuntimeIdentity, physicalInstanceId } from "@praetorium/contracts";
+import { applicationHostname, publicRuntimeIdentity, physicalInstanceId, AppIdentitySchema } from "@praetorium/contracts";
 import { createRuntimeAuthProbeRoutes } from "./runtime-auth-probes.js";
 import {
   buildExpiredSessionCookie,
@@ -49,6 +49,8 @@ import { page } from "./ui/views/document.js";
 import { createPortalHandler } from "./ui/index.js";
 import type { PortalActor, PortalSession } from "./ui/index.js";
 import { createPortalService } from "./services/portal-service.js";
+import { requestAuthorizedServiceWake } from "./services/service-wake.js";
+import { authorizationServerMetadata, registerOAuthClient, authorizeOAuth, exchangeOAuthToken } from "./services/oauth-service.js";
 import { errorResponse } from "./middleware/error-response.js";
 import {
   CSRF_COOKIE_NAME,
@@ -85,6 +87,12 @@ const RUNTIME_GIT_BROKER_REASONS = new Set([
   "installation_credential_unavailable",
   "installation_not_active",
 ]);
+const ServiceWakeRequestSchema = z.strictObject({
+  appIdentity: AppIdentitySchema,
+  repositoryId: z.number().int().positive().safe(),
+  origin: z.string().url().max(300),
+  accessGrant: z.string().min(32).max(16_384),
+});
 const MutationReceiptRequestSchema = z.strictObject({
   operationId: z.string().min(1).max(128).refine((value) => !hasControlCharacters(value)),
   payloadDigest: DigestSchema,
@@ -896,6 +904,26 @@ async function handleInstanceAccessRevoke(request: Request, context: GatewayCont
   return json({ contractVersion: "instance-access/v2", revoked: true });
 }
 
+/** Internal, service-authenticated bearer wake for any registered application origin. */
+async function handleServiceWake(request: Request, context: GatewayContext): Promise<Response> {
+  if (!serviceAuthenticated(request, context))
+    return errorResponse(request, "UNAUTHENTICATED", "instance access service authentication failed", context.requestId);
+  const body = await readBoundedJson(request);
+  const parsed = ServiceWakeRequestSchema.safeParse(body);
+  if (!parsed.success) return errorResponse(request, "INVALID_REQUEST", "service wake request is invalid", context.requestId);
+  try {
+    const result = await requestAuthorizedServiceWake(context, parsed.data);
+    if (result.status === "starting") return json({ status: "starting" }, 202);
+    if (result.status === "unauthorized") return errorResponse(request, "UNAUTHENTICATED", "service access grant is invalid", context.requestId);
+    if (result.status === "not_found") return errorResponse(request, "NOT_FOUND", "application not found", context.requestId);
+    if (result.status === "rate_limited") return errorResponse(request, "RATE_LIMITED", "wake is temporarily rate limited", context.requestId);
+    if (result.status === "route_unavailable") return errorResponse(request, "INSTANCE_STARTING", "ready runtime route unavailable", context.requestId);
+    return unavailable(request, context);
+  } catch {
+    return unavailable(request, context);
+  }
+}
+
 async function handleDirectEntry(request: Request, context: GatewayContext, rawRepositoryId: string): Promise<Response> {
   if (
     request.method !== "GET" ||
@@ -1042,6 +1070,11 @@ export function createGatewayRouter(context: GatewayContext): Hono {
     return json({ status: "ready" });
   });
   app.get("/.well-known/jwks.json", async () => publicJwks(await context.getKeyRegistry()));
+  app.get("/.well-known/oauth-authorization-server", () => authorizationServerMetadata(context));
+  app.post("/oauth/register", (c) => registerOAuthClient(c.req.raw, context));
+  app.get("/oauth/authorize", (c) => authorizeOAuth(c.req.raw, context));
+  app.post("/oauth/authorize", (c) => authorizeOAuth(c.req.raw, context));
+  app.post("/oauth/token", (c) => exchangeOAuthToken(c.req.raw, context));
   app.get("/auth/login", (c) => loginPage(c.req.raw));
   app.get("/auth/github/start", (c) => handleGithubStart(c.req.raw, context, context.requestNow));
   app.get("/auth/github/callback", (c) => handleGithubCallback(c.req.raw, context, context.requestNow));
@@ -1052,6 +1085,7 @@ export function createGatewayRouter(context: GatewayContext): Hono {
   app.post("/internal/instance-access/handoff", (c) => handleInstanceAccessHandoff(c.req.raw, context, context.requestNow));
   app.post("/internal/instance-access/refresh", (c) => handleInstanceAccessRefresh(c.req.raw, context, context.requestNow));
   app.post("/internal/instance-access/revoke", (c) => handleInstanceAccessRevoke(c.req.raw, context, context.requestNow));
+  app.post("/internal/instance-access/wake", (c) => handleServiceWake(c.req.raw, context));
 
   app.post("/api/credentials", (c) => handleCreateMcpCredential(c.req.raw, context, context.requestNow));
   app.get("/api/credentials", (c) => handleListMcpCredentials(c.req.raw, context, context.requestNow));

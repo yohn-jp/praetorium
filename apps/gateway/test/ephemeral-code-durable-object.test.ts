@@ -45,15 +45,26 @@ describe("EphemeralCodeDurableObject", () => {
         record: { expiresAt: "2020-01-01T00:00:00.000Z" },
       }));
     }
+    state.testMetrics.listCalls = 0;
+    state.testMetrics.rowsReturned = 0;
     state.testMetrics.maxRowsPerList = 0;
 
     await object.alarm();
     expect(state.testMetrics.maxRowsPerList).toBeLessThanOrEqual(100);
+    expect(state.testMetrics.listCalls).toBe(2);
+    expect(state.testMetrics.rowsReturned).toBe(101);
+    expect(state.testMetrics.maxRowsPerList).toBe(100);
     expect((await state.storage.list({ prefix: "login:" })).size).toBe(20);
     const permanent = await object.fetch(post("/get", { key: "oauth-client:client-1" }));
     expect(await permanent.json()).toMatchObject({ record: { clientId: "client-1" } });
 
+    state.testMetrics.listCalls = 0;
+    state.testMetrics.rowsReturned = 0;
+    state.testMetrics.maxRowsPerList = 0;
     await object.alarm();
+    expect(state.testMetrics.listCalls).toBe(2);
+    expect(state.testMetrics.rowsReturned).toBe(20);
+    expect(state.testMetrics.maxRowsPerList).toBe(20);
     expect((await state.storage.list({ prefix: "login:" })).size).toBe(0);
     expect((await (await object.fetch(post("/get", { key: "oauth-client:client-1" }))).json()))
       .toMatchObject({ record: { clientId: "client-1" } });

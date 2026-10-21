@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { UserAuthStateDurableObject } from "../src/adapters/durable-objects/user-auth-state-durable-object.js";
 import { createDurableObjectSessionStore } from "../src/adapters/durable-objects/user-auth-state-client.js";
 import { createFakeDurableObjectState } from "./testing/fake-durable-object-state.js";
@@ -139,8 +139,41 @@ describe("UserAuthStateDurableObject sessions", () => {
     const object = new UserAuthStateDurableObject(state);
     const response = await object.fetch(post("/sessions/count-active", { now: NOW }));
     expect(await response.json()).toEqual({ count: 1 });
+    expect(state.testMetrics.listCalls).toBe(1);
     expect(state.testMetrics.rowsReturned).toBe(1);
     expect(state.testMetrics.maxRowsPerList).toBe(1);
+  });
+
+  it("backfills legacy auth rows in bounded pages before counting active sessions", async () => {
+    const state = createFakeDurableObjectState();
+    const expired = {
+      userId: "usr_1", createdAt: NOW, expiresAt: "2020-01-01T00:00:00.000Z",
+      lastActivityBucket: NOW, revokedAt: null,
+    };
+    for (let index = 0; index < 1_000; index += 1) {
+      await state.storage.put(`session:legacy-${String(index).padStart(4, "0")}`, expired);
+    }
+    await state.storage.put("session:active", { ...expired, expiresAt: "2099-01-01T00:00:00.000Z" });
+    const object = new UserAuthStateDurableObject(state);
+    state.testMetrics.listCalls = 0;
+    state.testMetrics.rowsReturned = 0;
+    state.testMetrics.maxRowsPerList = 0;
+
+    let attempts = 0;
+    let response: Response | undefined;
+    while (attempts < 20) {
+      attempts += 1;
+      response = await object.fetch(post("/sessions/count-active", { now: NOW }));
+      if (response.status === 200) break;
+      expect(response.status).toBe(503);
+    }
+
+    expect(attempts).toBe(11);
+    expect(await response?.json()).toEqual({ count: 1 });
+    expect(state.testMetrics.listCalls).toBe(12);
+    expect(state.testMetrics.rowsReturned).toBe(1_002);
+    expect(state.testMetrics.maxRowsPerList).toBe(100);
+    expect((await state.storage.list({ prefix: "session:" })).size).toBe(1);
   });
 
   it("garbage-collects expired session records in bounded alarm batches", async () => {
@@ -161,8 +194,17 @@ describe("UserAuthStateDurableObject sessions", () => {
 
     await object.alarm();
     expect(state.testMetrics.maxRowsPerList).toBeLessThanOrEqual(100);
+    expect(state.testMetrics.listCalls).toBe(2);
+    expect(state.testMetrics.rowsReturned).toBe(101);
+    expect(state.testMetrics.maxRowsPerList).toBe(100);
     expect((await state.storage.list({ prefix: "session:" })).size).toBe(20);
+    state.testMetrics.listCalls = 0;
+    state.testMetrics.rowsReturned = 0;
+    state.testMetrics.maxRowsPerList = 0;
     await object.alarm();
+    expect(state.testMetrics.listCalls).toBe(2);
+    expect(state.testMetrics.rowsReturned).toBe(20);
+    expect(state.testMetrics.maxRowsPerList).toBe(20);
     expect((await state.storage.list({ prefix: "session:" })).size).toBe(0);
     expect(await state.storage.getAlarm()).toBeNull();
   });
@@ -173,24 +215,43 @@ describe("UserAuthStateDurableObject sessions", () => {
     expect(response.status).toBe(204);
   });
 
-  it("preserves a future revocation grace window through indexed cleanup", async () => {
+  it("retains a session until future revocation grace closes, then collects it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T00:00:00.000Z"));
     const state = createFakeDurableObjectState();
     const object = new UserAuthStateDurableObject(state);
     const now = new Date().toISOString();
-    const graceEnd = new Date(Date.now() + 60_000).toISOString();
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const graceEnd = new Date(Date.now() + 120_000).toISOString();
     const record = {
       userId: "usr_1", createdAt: now,
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      expiresAt,
       lastActivityBucket: now, revokedAt: null,
     };
-    await object.fetch(post("/sessions/create", { digest: "grace", record }));
-    await object.fetch(post("/sessions/revoke", { digest: "grace", revokedAt: graceEnd }));
-    const stored = await (await object.fetch(post("/sessions/get", { digest: "grace" }))).json() as {
-      record: { revokedAt: string | null };
-    };
-    expect(stored.record.revokedAt).toBe(graceEnd);
-    const count = await object.fetch(post("/sessions/count-active", { now }));
-    expect(await count.json()).toEqual({ count: 1 });
+    try {
+      await object.fetch(post("/sessions/create", { digest: "grace", record }));
+      await object.fetch(post("/sessions/revoke", { digest: "grace", revokedAt: graceEnd }));
+      const count = await object.fetch(post("/sessions/count-active", { now }));
+      expect(await count.json()).toEqual({ count: 1 });
+
+      vi.setSystemTime(Date.parse(expiresAt) + 1);
+      await state.storage.deleteAlarm();
+      await object.alarm();
+      const retained = await (await object.fetch(post("/sessions/get", { digest: "grace" }))).json() as {
+        record: { expiresAt: string; revokedAt: string | null };
+      };
+      expect(retained.record).toMatchObject({ expiresAt, revokedAt: graceEnd });
+      expect(await state.storage.getAlarm()).toBe(Date.parse(graceEnd));
+
+      vi.setSystemTime(Date.parse(graceEnd) + 1);
+      await state.storage.deleteAlarm();
+      await object.alarm();
+      expect(await (await object.fetch(post("/sessions/get", { digest: "grace" }))).json())
+        .toEqual({ record: null });
+      expect(await state.storage.getAlarm()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -21,6 +21,7 @@ export type ReleaseProducerMetadataInput = {
 };
 
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
+const PRAETORIUM_SOURCE_BUILD_V1 = "https://praetorium.yohn.jp/attestation/source-build/v1";
 const CATALOG_SUBJECT = "scriptorium-build/v1/catalog.json";
 const RUNTIME_METADATA_SUBJECT = "scriptorium-platform/v1/runtime-metadata.json";
 

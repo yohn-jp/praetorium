@@ -76,7 +76,7 @@ export class SourceProducerProofVerifier {
       return {verified:false,evidence:["Source proof reference invalid"]};
     const job=await this.db.prepare(
       "SELECT job_id,github_release_id,source_id,source_tag,source_revision,release_version,result_json FROM source_release_builds WHERE job_id=? AND state IN ('produced','admitted')"
-    ).bind(match[1]).first<{
+    ).bind(match[1]!).first<{
       job_id:string;github_release_id:number;source_id:string;source_tag:string;
       source_revision:string;release_version:string;result_json:string|null;
     }>();

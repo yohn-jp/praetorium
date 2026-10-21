@@ -179,6 +179,10 @@ describe("operator-only admin origin", () => {
     });
     const logout = await handleAdminHost(post("/logout", cookies, {}), f.context);
     expect(logout.status).toBe(303);
+    expect(logout.headers.get("Location")).toBe("/signed-out");
+    const signedOut = await handleAdminHost(new Request(ADMIN + "/signed-out"), f.context);
+    expect(signedOut.status).toBe(200);
+    expect(await signedOut.text()).toContain("Signed out of Admin");
     expect((await handleAdminHost(new Request(ADMIN, {
       headers: { Cookie: cookies.raw },
     }), f.context)).status).toBe(303);

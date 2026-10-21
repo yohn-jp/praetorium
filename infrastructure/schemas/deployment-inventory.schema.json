@@ -25,15 +25,27 @@
       "const": "praetorium.io/deployment-inventory/v1"
     },
     "environment": {
-      "enum": ["disposable-test", "deployment"]
+      "enum": [
+        "disposable-test",
+        "deployment"
+      ]
     },
     "ownership": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "clusterName", "context", "disposable", "confirmation"],
+      "required": [
+        "provider",
+        "clusterName",
+        "context",
+        "disposable",
+        "confirmation"
+      ],
       "properties": {
         "provider": {
-          "enum": ["kind", "k3s"]
+          "enum": [
+            "kind",
+            "k3s"
+          ]
         },
         "clusterName": {
           "type": "string",
@@ -52,77 +64,99 @@
         }
       },
       "$defs": {
-        "digestOrMissing": {
-          "type": ["string", "null"],
-          "pattern": "^([a-z0-9.-]+/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$"
+    "digestOrMissing": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^([a-z0-9.-]+/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$"
+    },
+    "secretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "key"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$"
         },
-        "secretRef": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["name", "key"],
-          "properties": {
-            "name": {
-              "type": "string",
-              "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$"
-            },
-            "key": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9._-]+$"
-            }
-          }
-        },
-        "runtimeResourceLimits": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["cpuMilli", "memoryMiB", "ephemeralStorageMiB"],
-          "properties": {
-            "cpuMilli": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "memoryMiB": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "ephemeralStorageMiB": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            }
-          }
-        },
-        "builderKey": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["keyId", "publicKeyBase64", "revoked", "validFrom", "validUntil"],
-          "properties": {
-            "keyId": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9._:-]{1,128}$"
-            },
-            "publicKeyBase64": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9+/]{43}=$"
-            },
-            "revoked": {
-              "type": "boolean"
-            },
-            "validFrom": {
-              "type": ["string", "null"],
-              "format": "date-time",
-              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
-            },
-            "validUntil": {
-              "type": ["string", "null"],
-              "format": "date-time",
-              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
-            }
-          }
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$"
         }
-      },
-      "allOf": [
+      }
+    },
+    "runtimeResourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpuMilli",
+        "memoryMiB",
+        "ephemeralStorageMiB"
+      ],
+      "properties": {
+        "cpuMilli": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "memoryMiB": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "ephemeralStorageMiB": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "builderKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyId",
+        "publicKeyBase64",
+        "revoked",
+        "validFrom",
+        "validUntil"
+      ],
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "publicKeyBase64": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]{43}=$"
+        },
+        "revoked": {
+          "type": "boolean"
+        },
+        "validFrom": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+        },
+        "validUntil": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+        }
+      }
+    }
+  },
+  "allOf": [
         {
           "if": {
             "properties": {
@@ -130,7 +164,9 @@
                 "const": "kind"
               }
             },
-            "required": ["provider"]
+            "required": [
+              "provider"
+            ]
           },
           "then": {
             "properties": {
@@ -141,7 +177,10 @@
                 "pattern": "^kind-"
               }
             },
-            "required": ["clusterName", "context"]
+            "required": [
+              "clusterName",
+              "context"
+            ]
           }
         },
         {
@@ -151,7 +190,9 @@
                 "const": "k3s"
               }
             },
-            "required": ["provider"]
+            "required": [
+              "provider"
+            ]
           },
           "then": {
             "properties": {
@@ -170,13 +211,25 @@
     "cloudflare": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "accountId", "controlPlaneDatabaseId", "gatewayKvNamespaceId"],
+      "required": [
+        "mode",
+        "accountId",
+        "controlPlaneDatabaseId",
+        "gatewayKvNamespaceId"
+      ],
       "properties": {
         "mode": {
-          "enum": ["local", "remote-disposable", "remote"]
+          "enum": [
+            "local",
+            "remote-disposable",
+            "remote"
+          ]
         },
         "accountId": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "controlPlaneDatabaseId": {
           "type": "string",
@@ -196,7 +249,9 @@
                 "const": "local"
               }
             },
-            "required": ["mode"]
+            "required": [
+              "mode"
+            ]
           },
           "then": {
             "properties": {
@@ -219,7 +274,9 @@
                 "const": "remote-disposable"
               }
             },
-            "required": ["mode"]
+            "required": [
+              "mode"
+            ]
           },
           "then": {
             "properties": {
@@ -250,7 +307,9 @@
                 "const": "remote"
               }
             },
-            "required": ["mode"]
+            "required": [
+              "mode"
+            ]
           },
           "then": {
             "properties": {
@@ -288,15 +347,24 @@
       ],
       "properties": {
         "gatewayOrigin": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "uri"
         },
         "gatewayServiceUrl": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "uri"
         },
         "controlPlaneUrl": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "uri"
         },
         "instanceHostnameSuffix": {
@@ -312,17 +380,27 @@
     "network": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kubernetesApiEndpoints", "controlPlaneCidrs", "gatewayServiceCidrs"],
+      "required": [
+        "kubernetesApiEndpoints",
+        "controlPlaneCidrs",
+        "gatewayServiceCidrs"
+      ],
       "properties": {
         "kubernetesApiEndpoints": {
-          "type": ["array", "null"],
+          "type": [
+            "array",
+            "null"
+          ],
           "minItems": 0,
           "maxItems": 16,
           "uniqueItems": true,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["address", "port"],
+            "required": [
+              "address",
+              "port"
+            ],
             "properties": {
               "address": {
                 "type": "string",
@@ -367,23 +445,38 @@
       ],
       "properties": {
         "allowedRepositoryOwner": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
         },
         "githubAppId": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1
         },
         "githubOauthClientId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 256
         },
         "tokenEncryptionKeyId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[A-Za-z0-9_-]{1,64}$"
         },
         "adminOrigin": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "uri",
           "description": "Distinct exact HTTPS Admin origin; absent/null disables Admin."
         },
@@ -403,7 +496,12 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "label", "githubRepository", "adapter"],
+            "required": [
+              "id",
+              "label",
+              "githubRepository",
+              "adapter"
+            ],
             "properties": {
               "id": {
                 "const": "scriptorium"
@@ -436,7 +534,10 @@
       ],
       "properties": {
         "endpoint": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "uri"
         },
         "tlsSecretName": {
@@ -451,26 +552,45 @@
           }
         },
         "frontendRepository": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "outputRepository": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
     "buildWorker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["signingKeyId", "compositionRepository", "buildctlPath"],
+      "required": [
+        "signingKeyId",
+        "compositionRepository",
+        "buildctlPath"
+      ],
       "properties": {
         "signingKeyId": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "compositionRepository": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "buildctlPath": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -480,11 +600,7 @@
       "required": ["enabled"],
       "dependentSchemas": {
         "coordinationVpcServiceId": {
-          "properties": {
-            "enabled": {
-              "const": true
-            }
-          }
+          "properties": { "enabled": { "const": true } }
         }
       },
       "properties": {
@@ -530,7 +646,11 @@
           "maximum": 60000
         },
         "targetPlatform": {
-          "enum": ["linux/amd64", "linux/arm64", null]
+          "enum": [
+            "linux/amd64",
+            "linux/arm64",
+            null
+          ]
         },
         "runtimeResourceLimits": {
           "$ref": "#/$defs/runtimeResourceLimits"
@@ -538,25 +658,42 @@
         "cacheRetention": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["maxBytes", "maxEntries", "minAgeMs", "maxEvictions"],
+          "required": [
+            "maxBytes",
+            "maxEntries",
+            "minAgeMs",
+            "maxEvictions"
+          ],
           "properties": {
             "maxBytes": {
-              "type": ["integer", "null"],
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 0,
               "maximum": 9007199254740991
             },
             "maxEntries": {
-              "type": ["integer", "null"],
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 1,
               "maximum": 9007199254740991
             },
             "minAgeMs": {
-              "type": ["integer", "null"],
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 0,
               "maximum": 9007199254740991
             },
             "maxEvictions": {
-              "type": ["integer", "null"],
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 1,
               "maximum": 32
             }
@@ -583,11 +720,17 @@
       ],
       "properties": {
         "workerId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
         },
         "operatorActorId": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1,
           "maxLength": 128
         },
@@ -601,7 +744,9 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["subjectAlternativeName"],
+            "required": [
+              "subjectAlternativeName"
+            ],
             "properties": {
               "subjectAlternativeName": {
                 "type": "string",
@@ -632,7 +777,10 @@
           ],
           "properties": {
             "owner": {
-              "type": ["string", "null"],
+              "type": [
+                "string",
+                "null"
+              ],
               "minLength": 1,
               "maxLength": 128
             },
@@ -643,23 +791,38 @@
               "const": false
             },
             "repositoryId": {
-              "type": ["integer", "null"],
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 1
             },
             "instanceId": {
-              "type": ["string", "null"],
+              "type": [
+                "string",
+                "null"
+              ],
               "pattern": "^ins_[0-9A-HJKMNP-TV-Z]{26}$"
             },
             "bindingEpoch": {
-              "type": ["integer", "null"],
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 0
             },
             "authorizationRevision": {
-              "type": ["integer", "null"],
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 0
             },
             "requestedModules": {
-              "type": ["array", "null"],
+              "type": [
+                "array",
+                "null"
+              ],
               "maxItems": 128,
               "items": {
                 "type": "string",
@@ -668,7 +831,10 @@
               }
             },
             "resourceProfileId": {
-              "type": ["string", "null"],
+              "type": [
+                "string",
+                "null"
+              ],
               "minLength": 1,
               "maxLength": 128
             }
@@ -679,7 +845,12 @@
     "images": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provisioner", "instanceAccess", "buildWorker", "prometheus"],
+      "required": [
+        "provisioner",
+        "instanceAccess",
+        "buildWorker",
+        "prometheus"
+      ],
       "properties": {
         "provisioner": {
           "$ref": "#/$defs/digestOrMissing"
@@ -748,7 +919,12 @@
         "buildkitClient": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["name", "caKey", "certKey", "privateKey"],
+          "required": [
+            "name",
+            "caKey",
+            "certKey",
+            "privateKey"
+          ],
           "properties": {
             "name": {
               "type": "string",
@@ -799,7 +975,10 @@
       "then": {
         "properties": {
           "secretRefs": {
-            "required": ["provisionerWorkNotificationToken", "buildWorkerWorkNotificationToken"]
+            "required": [
+              "provisionerWorkNotificationToken",
+              "buildWorkerWorkNotificationToken"
+            ]
           }
         },
         "required": ["secretRefs"]
@@ -812,7 +991,9 @@
             "const": "deployment"
           }
         },
-        "required": ["environment"]
+        "required": [
+          "environment"
+        ]
       },
       "then": {
         "properties": {
@@ -839,10 +1020,15 @@
                 "const": true
               }
             },
-            "required": ["enabled", "coordinationVpcServiceId"]
+            "required": [
+              "enabled",
+              "coordinationVpcServiceId"
+            ]
           }
         },
-        "required": ["workNotifications"]
+        "required": [
+          "workNotifications"
+        ]
       }
     },
     {
@@ -852,7 +1038,9 @@
             "const": "disposable-test"
           }
         },
-        "required": ["environment"]
+        "required": [
+          "environment"
+        ]
       },
       "then": {
         "properties": {

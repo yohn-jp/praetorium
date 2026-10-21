@@ -696,7 +696,7 @@ async function createRuntimeFixture(root, kit) {
 async function runSourceToStable(root, kit) {
   const fixture = await createRuntimeFixture(root, kit);
   const response = await fixture.fetch(
-    new URL("/v1/operator/source-builds/", "https://control.praetorium.fixture"),
+    new URL("/v1/operator/source-builds", "https://control.praetorium.fixture"),
     {
       method: "POST",
       headers: {
@@ -713,7 +713,12 @@ async function runSourceToStable(root, kit) {
       }),
     },
   );
-  assert.equal(response.status, 202, `Source queue returned HTTP ${response.status}`);
+  if (response.status !== 202) {
+    // Keep the failure bound to the canonical route/status; never conflate
+    // a mount mismatch (404) with a Source build or Registry failure.
+    const diagnostic = (await response.text()).slice(0, 1024);
+    throw new Error(`Source queue POST /v1/operator/source-builds returned HTTP ${response.status}: ${diagnostic}`);
+  }
   const queued = await response.json();
   const jobId = queued.job?.id;
   assert.match(jobId ?? "", /^sr_[0-9a-f-]{36}$/u, "canonical Source queue generated job identity");

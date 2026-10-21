@@ -46,7 +46,7 @@ export class EphemeralCodeDurableObject implements DurableObject {
       const { key, claimId, now } = (await request.json()) as {
         key: string; claimId: string; now: number;
       };
-      if (!/^release-dispatch:[a-f0-9]{64}$/u.test(key) ||
+      if (!/^release-dispatch:[A-Za-z0-9_-]{43}$/u.test(key) ||
           !/^[0-9a-f-]{36}$/u.test(claimId) ||
           !Number.isSafeInteger(now) || Math.abs(now-Date.now()) > 120_000)
         return new Response("invalid dispatch claim", { status: 400 });

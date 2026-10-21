@@ -67,6 +67,7 @@ export async function requestAuthorizedServiceWake(
       access.runtimeEpoch !== epoch ||
       access.installationId !== snapshot.binding.installationId ||
       access.authorizationRevision !== snapshot.binding.authorizationRevision ||
+      access.origin !== expectedOrigin ||
       verified.value.authorizationRevision !== access.authorizationRevision ||
       access.expiresAt <= Date.parse(context.requestNow) ||
       !access.permissions.includes("read")) return { status: "unauthorized" };

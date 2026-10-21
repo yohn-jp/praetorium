@@ -3,6 +3,10 @@ import { SigstoreProvenanceVerifier } from "@praetorium/ghcr/provenance";
 import { createT11RolloutComposition } from "./rollout-composition.js";
 import { verifyReleaseProducerMetadata } from "./release-producer-metadata.js";
 import { createReleaseCanaryObservationReader } from "./release-canary-observations.js";
+import { SourceProducerProofVerifier } from "./source-producer-verifier.js";
+import { createRegistryBackedReleaseVerifier, ingestReleaseCandidate, ReleaseCandidateManifestSchema, type ReleaseCandidateManifest } from "@praetorium/application/releases";
+import type { SourceProducerResult } from "@praetorium/contracts";
+import { runStableReleaseWork } from "./scheduled.js";
 import { equalSecret } from "./app.js";
 import type { composeBuildServices } from "./build-composition.js";
 import type { D1Database } from "@praetorium/persistence/d1";
@@ -72,6 +76,24 @@ export function composeReleaseServices(input: {
   const policy = Policy.parse(JSON.parse(input.policyJson));
   if (!/^[\x21-\x7e]{32,4096}$/u.test(input.operatorToken))
     throw new TypeError("Separate release operator credential required");
+  const sourceProofVerifier = new SourceProducerProofVerifier(
+    input.db, input.builds.registry, input.builds.sourceBuilderKeys,
+  );
+  const signatureVerifier = new SigstoreProvenanceVerifier({
+    signerIdentityAllowlist: policy.signerIdentityAllowlist.map(
+      ({ subjectAlternativeName, issuer }) => ({
+        subjectAlternativeName,
+        ...(issuer === undefined ? {} : { issuer }),
+      }),
+    ),
+  });
+  const provenance = {
+    verify: (proof: { readonly imageDigest: string; readonly signatureRef: string; readonly provenanceRef: string }) =>
+      proof.signatureRef.startsWith("https://control.praetorium.yohn.jp/internal/source-proofs/")
+        ? sourceProofVerifier.provenance(proof)
+        : signatureVerifier.verify(proof),
+  };
+  const producerMetadata = { verify: verifyReleaseProducerMetadata };
   const services = createT11RolloutComposition({
     db: input.db,
     configurations: input.builds.configurations,
@@ -93,18 +115,33 @@ export function composeReleaseServices(input: {
       operatorActorId: policy.operatorActorId,
     }),
     registry: input.builds.registry,
-    provenance: new SigstoreProvenanceVerifier({
-      signerIdentityAllowlist: policy.signerIdentityAllowlist.map(
-        ({ subjectAlternativeName, issuer }) => ({
-          subjectAlternativeName,
-          ...(issuer === undefined ? {} : { issuer }),
-        }),
-      ),
-    }),
-    producerMetadata: { verify: verifyReleaseProducerMetadata },
+    provenance,
+    producerMetadata,
   });
+  const sourceAdmissionVerifier = createRegistryBackedReleaseVerifier({
+    registry: input.builds.registry, provenance, producerMetadata,
+  });
+  const sourceClock = { nowMs: Date.now, now: () => new Date().toISOString() };
   return {
     ...services,
+    sourceProofVerifier,
+    /** Reuse the same immutable catalog and Canary release authority. */
+    admitSourceRelease: async (job: {
+      readonly job_id: string; readonly actor_id: string; readonly release_version: string;
+    }, result: SourceProducerResult) => {
+      const url = `https://control.praetorium.yohn.jp/internal/source-proofs/${job.job_id}`;
+      const manifest: ReleaseCandidateManifest = ReleaseCandidateManifestSchema.parse({
+        schemaVersion: 1, version: job.release_version,
+        imageRepository: result.statement.imageRepository,
+        catalog: result.catalog, runtimeMetadata: result.runtimeMetadata,
+        signatureRef: url, provenanceRef: url,
+      });
+      return ingestReleaseCandidate({
+        releases: services.releases, verifier: sourceAdmissionVerifier,
+        clock: sourceClock, ids: { newReleaseId: () => `rel_${crypto.randomUUID()}` },
+      }, manifest, job.actor_id, job.job_id);
+    },
+    progressAdmittedSourceRelease: async () => runStableReleaseWork(services.scheduled, {promotionPasses:2}),
     canaryProbeActor: {
       repositoryId: policy.canary.repositoryId,
       actorId: String(policy.canaryProbeActorId),

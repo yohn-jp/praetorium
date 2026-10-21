@@ -64,7 +64,7 @@ async function fixture() {
   });
   if (!created.ok) throw new Error("test session failed");
   const ephemeral = ephemeralStore();
-  const key = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const key = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
   const checkBoundAccess = vi.fn(async () => ({
     status: "allowed", repositoryId: 482901, instanceId: INSTANCE, runtimeEpoch: 7,
     installationId: 31, authorizationRevision: 9, origin: RESOURCE,

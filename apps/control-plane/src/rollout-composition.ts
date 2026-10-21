@@ -176,6 +176,7 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     clock: deps.clock,
     ids: deps.ids,
     authorize: deps.authorizeOperator,
+    stableChannel: () => releases.getStableChannel(),
     listAudit: async () => {
       // Report existing D1 operator release events; never duplicate audit state.
       const rows = await deps.db.prepare(

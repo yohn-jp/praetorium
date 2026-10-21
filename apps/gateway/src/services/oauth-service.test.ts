@@ -67,7 +67,7 @@ async function fixture() {
   const key = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const checkBoundAccess = vi.fn(async () => ({
     status: "allowed", repositoryId: 482901, instanceId: INSTANCE, runtimeEpoch: 7,
-    installationId: 31, authorizationRevision: 9,
+    installationId: 31, authorizationRevision: 9, origin: RESOURCE,
     expiresAt: Date.parse(NOW) + 120_000, permissions: ["read", "write"],
   }));
   const context = {
@@ -132,7 +132,7 @@ describe("generic service MCP OAuth", () => {
       method: "POST",
       headers: { Cookie: f.cookie, Origin: GATEWAY, "Sec-Fetch-Site": "same-origin",
         "Content-Type": "application/x-www-form-urlencoded",
-        "__test_unused": "unused" },
+        "X-OAuth-Test": "1" },
       body: submitted,
     }), f.context);
     expect(approved.status).toBe(302);

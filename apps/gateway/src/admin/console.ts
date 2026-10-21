@@ -130,7 +130,7 @@ function overview(
   const waiting = items.filter(item => item.release.status !== "available").length;
   const rows = items.length ? items.map(item => releaseRow(item, csrf)).join("")
     : '<div class="admin-empty">No admitted releases. Register a signed producer manifest below to begin.</div>';
-  const next = cursor && /^[A-Za-z0-9_.:-]{1,256}$/u.test(cursor)
+  const next = cursor && cursor.length <= 512 && /^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(cursor)
     ? '<a class="button button-secondary" href="/?cursor=' + encodeURIComponent(cursor) +
       '">Older releases</a>' : "";
   return adminPage("Release administration",
@@ -266,7 +266,8 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
   }
   if (url.pathname !== "/") return response(404, "Not found");
   const cursor = url.searchParams.get("cursor");
-  if (cursor && (!RELEASE_ID.test(cursor) || cursor.length > 256)) return response(400, "Invalid cursor");
+  if (cursor && (cursor.length > 512 || !/^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(cursor)))
+    return response(400, "Invalid cursor");
   try {
     const [catalog, audit] = await Promise.all([
       controlPlane(context, session.actor.userId, "GET",

@@ -10,7 +10,7 @@ const INSTANCE = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
 async function setup(options: { ready?: boolean; denied?: boolean; noArtifact?: boolean; rateLimited?: boolean } = {}) {
   const key = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"],
-  );
+  ) as CryptoKeyPair;
   const token = await issueAccessGrant({ kid: "test-key", privateKey: key.privateKey }, {
     id: AccessGrantId.parse("agr_01JATJ2BW7D5SE60Z9RFF3DSK6"),
     issuer: "https://gateway.service.test",

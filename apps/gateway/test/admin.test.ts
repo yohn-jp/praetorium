@@ -34,7 +34,7 @@ async function fixture(userId = "213253858") {
       if (request.method === "GET") return Response.json({items:[]});
       const value = gatewayCalls[gatewayCalls.length-1]?.body as {sourceId:string;githubReleaseId:number;sourceTag:string;sourceRevision:string;releaseVersion:string};
       return Response.json({job:{id:"sr_00000000-0000-4000-a000-000000000001",sourceId:value.sourceId,releaseId:value.githubReleaseId,
-        tag:value.sourceTag,commit:value.sourceRevision,version:value.releaseVersion,state:"queued",attempt:0,error:null,admittedReleaseId:null},
+        tag:value.sourceTag,commit:value.sourceRevision,version:value.releaseVersion,state:"queued",attempt:0,revision:0,error:null,admittedReleaseId:null},
         duplicate:gatewayCalls.filter(x=>x.path==="/v1/operator/source-builds"&&x.method==="POST").length>1},
         {status:202});
     }
@@ -172,6 +172,59 @@ describe("operator-only admin origin", () => {
     }), f.context)).status).toBe(404);
   });
 
+  it("keeps Admin sections independent and reports the failed endpoint, status, and code", async () => {
+    const f = await fixture();
+    const { complete } = await login(f);
+    const cookies = cookiesFrom(await complete());
+    const healthyCatalog = { items: [{
+      release: { id: "rel_healthy", version: "2.3.4", imageDigest: "sha256:" + "b".repeat(64),
+        status: "available", createdAt: NOW },
+      workflow: null,
+    }], nextCursor: null, stableChannel: { currentReleaseId: "rel_healthy", revision: 2 } };
+    const healthyAudit = { events: [{ actorId: "213253858", action: "healthy-audit-event",
+      outcome: "accepted", occurredAt: Date.parse(NOW) }] };
+    const healthySources = { items: [{ id: "sr_00000000-0000-4000-a000-000000000001",
+      sourceId: "scriptorium", releaseId: 416422590, tag: "v0.2.1", commit: "c".repeat(40),
+      version: "0.2.1", state: "queued", attempt: 1, revision: 0,
+      error: null, admittedReleaseId: null }] };
+    let failedPath = "";
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      if (path === failedPath) return Response.json({ error: {
+        code: "SECTION_FAILED",
+        reason: path === "/v1/operator/source-builds" ? "schema_missing" : "internal database secret",
+      } }, { status: 503 });
+      if (path === "/v1/operator/releases") return Response.json(healthyCatalog);
+      if (path === "/v1/operator/releases/audit") return Response.json(healthyAudit);
+      if (path === "/v1/operator/source-builds") return Response.json(healthySources);
+      return Response.json({ error: { code: "NOT_FOUND" } }, { status: 404 });
+    });
+    Object.assign(f.context.env, { CONTROL_PLANE: { fetch: fetcher } });
+
+    for (const path of [
+      "/v1/operator/releases",
+      "/v1/operator/releases/audit",
+      "/v1/operator/source-builds",
+    ]) {
+      failedPath = path;
+      const page = await handleAdminHost(new Request(ADMIN, { headers: { Cookie: cookies.raw } }), f.context);
+      expect(page.status).toBe(200);
+      const html = await page.text();
+      expect(html).toContain("GET " + path);
+      expect(html).toContain("HTTP status: <code>503</code>");
+      expect(html).toContain("<code>SECTION_FAILED</code>");
+      expect(html).toContain("Release administration");
+      if (path === "/v1/operator/source-builds") {
+        expect(html).toContain("Required D1 schema is missing; check applied migrations.");
+      } else {
+        expect(html).not.toContain("internal database secret");
+      }
+      if (path !== "/v1/operator/releases") expect(html).toContain("2.3.4");
+      if (path !== "/v1/operator/releases/audit") expect(html).toContain("healthy-audit-event");
+      if (path !== "/v1/operator/source-builds") expect(html).toContain("queued");
+    }
+  });
+
   it("lists published Releases and dispatches exact SHA from GitHub rather than trusting browser ref", async () => {
     const f = await fixture();
     const { complete } = await login(f);
@@ -231,6 +284,94 @@ describe("operator-only admin origin", () => {
     expect(duplicate.headers.get("Location")).toContain("already%20accepted");
     expect(githubRequests.some(x=>x.url.includes("/actions/"))).toBe(false);
     expect(f.gatewayCalls.filter(x=>x.path==="/v1/operator/source-builds"&&x.method==="POST")).toHaveLength(2);
+  });
+
+  it("revalidates failed Source identity before sending the canonical retry command", async () => {
+    const f = await fixture();
+    const { complete } = await login(f);
+    const cookies = cookiesFrom(await complete());
+    const jobId = "sr_00000000-0000-4000-a000-000000000001";
+    const job = {
+      id: jobId, sourceId: "scriptorium", releaseId: 416422590, tag: "v0.2.1",
+      commit: "a".repeat(40), version: "0.2.1", state: "failed", attempt: 3,
+      revision: 4, error: "SOURCE_BUILD_FAILED", admittedReleaseId: null,
+    };
+    let resolvedCommit = job.commit;
+    const calls: Array<{ path: string; method: string; body: unknown }> = [];
+    const controlPlane = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      const body = request.method === "POST" ? await request.json() : null;
+      calls.push({ path, method: request.method, body });
+      if (path === "/v1/operator/releases") return Response.json({ items: [], nextCursor: null });
+      if (path === "/v1/operator/releases/audit") return Response.json({ events: [] });
+      if (path === "/v1/operator/source-builds") return Response.json({ items: [job] });
+      if (path === "/v1/operator/source-builds/" + jobId && request.method === "GET")
+        return Response.json({ job });
+      if (path === "/v1/operator/source-builds/" + jobId + "/retry")
+        return Response.json({ job: { ...job, state: "queued", attempt: 0, revision: 5 }, duplicate: false },
+          { status: 202 });
+      return Response.json({ error: { code: "NOT_FOUND" } }, { status: 404 });
+    });
+    Object.assign(f.context.env, {
+      CONTROL_PLANE: { fetch: controlPlane },
+      PRAETORIUM_RELEASE_SOURCES_JSON: JSON.stringify([{
+        id: "scriptorium", label: "Scriptorium", githubRepository: "yohn-jp/scriptorium",
+        adapter: "scriptorium-v1",
+      }]),
+    });
+    Object.assign(f.context, { githubUserTokens: { accessTokenFor: async () => "operator-oauth-token" } });
+    const github = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/repos/yohn-jp/scriptorium/releases" ||
+          url.pathname === "/repos/yohn-jp/scriptorium/releases/416422590") {
+        const release = { id: 416422590, tag_name: "v0.2.1", name: "v0.2.1",
+          body: "", draft: false, prerelease: false, published_at: NOW };
+        if (url.pathname.endsWith("/releases")) return Response.json([release]);
+        return Response.json({ id: 416422590, tag_name: "v0.2.1", name: "v0.2.1",
+          body: "", draft: false, prerelease: false, published_at: NOW });
+      }
+      if (url.pathname === "/repos/yohn-jp/scriptorium/git/ref/tags/v0.2.1") {
+        return Response.json({ object: { type: "commit", sha: resolvedCommit } });
+      }
+      return Response.json({ message: "not found" }, { status: 404 });
+    });
+    vi.stubGlobal("fetch", github);
+
+    const page = await handleAdminHost(new Request(ADMIN, { headers: { Cookie: cookies.raw } }), f.context);
+    const html = await page.text();
+    const form = new RegExp(`<form method="post" action="/source-builds/${jobId}/retry">([\\s\\S]*?)</form>`)
+      .exec(html)?.[1] ?? "";
+    expect(form).toContain('name="expectedRevision" value="4"');
+    expect(form).toContain('name="idempotencyKey"');
+    expect(form).not.toContain('name="sourceTag"');
+    expect(form).not.toContain('name="sourceRevision"');
+
+    const injected = await handleAdminHost(post(`/source-builds/${jobId}/retry`, cookies, {
+      expectedRevision: "4", idempotencyKey: "retry-operation-1", sourceTag: "v0.2.1",
+    }), f.context);
+    expect(injected.status).toBe(400);
+    expect(calls.filter(call => call.path.endsWith("/retry"))).toHaveLength(0);
+
+    const accepted = await handleAdminHost(post(`/source-builds/${jobId}/retry`, cookies, {
+      expectedRevision: "4", idempotencyKey: "retry-operation-1",
+    }), f.context);
+    expect(accepted.status).toBe(303);
+    const retry = calls.find(call => call.path.endsWith("/retry"));
+    expect(retry?.body).toEqual({
+      sourceId: "scriptorium", githubReleaseId: 416422590,
+      sourceTag: "v0.2.1", sourceRevision: job.commit, releaseVersion: "0.2.1",
+      expectedRevision: 4, idempotencyKey: "retry-operation-1",
+    });
+    expect(github).toHaveBeenCalledTimes(3);
+
+    resolvedCommit = "b".repeat(40);
+    const moved = await handleAdminHost(post(`/source-builds/${jobId}/retry`, cookies, {
+      expectedRevision: "4", idempotencyKey: "retry-operation-2",
+    }), f.context);
+    expect(moved.status).toBe(409);
+    expect(calls.filter(call => call.path.endsWith("/retry"))).toHaveLength(1);
+    expect(github).toHaveBeenCalledTimes(5);
   });
 
   it("offers retry only for the canonical failed pre-runtime Canary build", async () => {

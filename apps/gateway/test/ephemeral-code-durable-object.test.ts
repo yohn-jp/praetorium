@@ -13,10 +13,14 @@ describe("EphemeralCodeDurableObject", () => {
   it("saves and consumes a record exactly once", async () => {
     const object = new EphemeralCodeDurableObject(createFakeDurableObjectState());
 
-    await object.fetch(post("/save", { key: "login:state-1", record: { foo: "bar" } }));
+    await object.fetch(post("/save", {
+      key: "login:state-1", record: { foo: "bar", expiresAt: "2099-01-01T00:00:00.000Z" },
+    }));
 
     const first = await object.fetch(post("/consume", { key: "login:state-1" }));
-    expect(await first.json()).toEqual({ record: { foo: "bar" } });
+    expect(await first.json()).toEqual({
+      record: { foo: "bar", expiresAt: "2099-01-01T00:00:00.000Z" },
+    });
 
     const second = await object.fetch(post("/consume", { key: "login:state-1" }));
     expect(await second.json()).toEqual({ record: null });
@@ -28,9 +32,41 @@ describe("EphemeralCodeDurableObject", () => {
     expect(await response.json()).toEqual({ record: null });
   });
 
+  it("garbage-collects expiring rows in bounded batches and preserves OAuth clients", async () => {
+    const state = createFakeDurableObjectState();
+    const object = new EphemeralCodeDurableObject(state);
+    await object.fetch(post("/save", {
+      key: "oauth-client:client-1",
+      record: { clientId: "client-1", redirectUris: ["https://client.example/callback"] },
+    }));
+    for (let index = 0; index < 120; index += 1) {
+      await object.fetch(post("/save", {
+        key: `login:old-${index}`,
+        record: { expiresAt: "2020-01-01T00:00:00.000Z" },
+      }));
+    }
+    state.testMetrics.maxRowsPerList = 0;
+
+    await object.alarm();
+    expect(state.testMetrics.maxRowsPerList).toBeLessThanOrEqual(100);
+    expect((await state.storage.list({ prefix: "login:" })).size).toBe(20);
+    const permanent = await object.fetch(post("/get", { key: "oauth-client:client-1" }));
+    expect(await permanent.json()).toMatchObject({ record: { clientId: "client-1" } });
+
+    await object.alarm();
+    expect((await state.storage.list({ prefix: "login:" })).size).toBe(0);
+    expect((await (await object.fetch(post("/get", { key: "oauth-client:client-1" }))).json()))
+      .toMatchObject({ record: { clientId: "client-1" } });
+    expect(await state.storage.getAlarm()).toBeNull();
+  });
+
   it("uses a storage transaction so concurrent consumes produce one winner", async () => {
     const object = new EphemeralCodeDurableObject(createFakeDurableObjectState());
-    await object.fetch(post("/save", { key: "handoff:code-1", record: { instanceId: "ins_1" } }));
+    await object.fetch(post("/save", {
+      key: "handoff:code-1", record: {
+        instanceId: "ins_1", expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    }));
 
     const responses = await Promise.all([
       object.fetch(post("/consume", { key: "handoff:code-1" })),

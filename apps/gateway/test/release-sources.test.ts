@@ -56,6 +56,7 @@ describe("trusted GitHub Release selection", () => {
   it("escapes untrusted Release notes/title and excludes non-SemVer deployment", () => {
     const cards = sourceReleaseCards([{
       source, error:null,
+      endpoint:"GET /repos/yohn-jp/scriptorium/releases",status:200,code:null,
       releases:publishedReleases([
         release({id:5,tag_name:"perf-wave1",name:"<script>alert(1)</script>",body:"<img src=x onerror=x>" }),
         release(),
@@ -114,10 +115,11 @@ describe("trusted GitHub Release selection", () => {
     const selected=await fetchSourceReleases(source,client,"operator-oauth-token");
     expect(selected.releases).toHaveLength(1);
     expect(client.request.mock.calls).toHaveLength(1);
-    const html=sourceReleaseCards([{source,...selected,error:null}],"csrf",[{
+    const html=sourceReleaseCards([{source,...selected,error:null,
+      endpoint:"GET /repos/yohn-jp/scriptorium/releases",status:200,code:null}],"csrf",[{
       id:"sr_00000000-0000-4000-a000-000000000001",
       sourceId:"scriptorium",releaseId:416422590,tag:"v0.2.1",commit:A,
-      version:"0.2.1",state:"building",attempt:1,error:null,admittedReleaseId:null,
+      version:"0.2.1",state:"building",attempt:1,revision:0,error:null,admittedReleaseId:null,
     }]);
     expect(html).toContain("Build Worker: building");
     expect(html).not.toContain("/actions/");

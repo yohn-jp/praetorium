@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { UserAuthStateDurableObject } from "../src/adapters/durable-objects/user-auth-state-durable-object.js";
+import { createDurableObjectSessionStore } from "../src/adapters/durable-objects/user-auth-state-client.js";
 import { createFakeDurableObjectState } from "./testing/fake-durable-object-state.js";
+import { createSession, type UserId } from "@praetorium/auth";
 
 function post(path: string, body: unknown): Request {
   return new Request(`https://user-auth-state${path}`, { method: "POST", body: JSON.stringify(body) });
@@ -9,6 +11,40 @@ function post(path: string, body: unknown): Request {
 const NOW = "2026-08-01T00:00:00.000Z";
 
 describe("UserAuthStateDurableObject sessions", () => {
+  it("atomically admits only one of two concurrent sessions at limit one", async () => {
+    const object = new UserAuthStateDurableObject(createFakeDurableObjectState());
+    const namespace = {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: (input: RequestInfo | URL, init?: RequestInit) => object.fetch(new Request(input, init)),
+      }),
+    } as unknown as DurableObjectNamespace;
+    const digestUser = new Map<string, UserId>();
+    const expirations = new Map<string, string | undefined>();
+    const store = createDurableObjectSessionStore(namespace, {
+      async set(digest, userId, expiresAt) {
+        digestUser.set(digest, userId);
+        expirations.set(digest, expiresAt);
+      },
+      async get(digest) { return digestUser.get(digest) ?? null; },
+      async delete(digest) { digestUser.delete(digest); expirations.delete(digest); },
+    });
+    const create = () => createSession(store, {
+      userId: "213253858" as UserId,
+      authenticationContext: "github-oauth",
+      now: NOW,
+      ttlSeconds: 3600,
+      pepper: new Uint8Array(32).fill(9),
+      concurrentSessionLimit: 1,
+    });
+
+    const results = await Promise.all([create(), create()]);
+    expect(results.filter(result => result.ok)).toHaveLength(1);
+    expect(results.filter(result => !result.ok &&
+      result.error.code === "CONCURRENT_SESSION_LIMIT_EXCEEDED")).toHaveLength(1);
+    await expect(store.countActiveForUser("213253858" as UserId, NOW)).resolves.toBe(1);
+  });
+
   it("creates, touches, and revokes a session", async () => {
     const object = new UserAuthStateDurableObject(createFakeDurableObjectState());
     const record = { userId: "usr_1", createdAt: NOW, expiresAt: "2026-08-02T00:00:00.000Z", lastActivityBucket: NOW, revokedAt: null };
@@ -23,6 +59,44 @@ describe("UserAuthStateDurableObject sessions", () => {
     await object.fetch(post("/sessions/revoke", { digest: "d1", revokedAt: NOW }));
     const revoked = (await (await object.fetch(post("/sessions/get", { digest: "d1" }))).json()) as { record: typeof record };
     expect(revoked.record.revokedAt).toBe(NOW);
+  });
+
+  it("extends the routing index TTL on sliding touches and removes stale routes", async () => {
+    const state = createFakeDurableObjectState();
+    const object = new UserAuthStateDurableObject(state);
+    const namespace = {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: (input: RequestInfo | URL, init?: RequestInit) => object.fetch(new Request(input, init)),
+      }),
+    } as unknown as DurableObjectNamespace;
+    const routes = new Map<string, UserId>();
+    const expiry = new Map<string, string | undefined>();
+    const store = createDurableObjectSessionStore(namespace, {
+      async set(digest, userId, expiresAt) {
+        routes.set(digest, userId);
+        expiry.set(digest, expiresAt);
+      },
+      async get(digest) { return routes.get(digest) ?? null; },
+      async delete(digest) { routes.delete(digest); expiry.delete(digest); },
+    });
+    const record = {
+      userId: "213253858" as UserId,
+      sessionRevision: 0,
+      createdAt: NOW,
+      expiresAt: "2026-08-02T00:00:00.000Z",
+      lastActivityBucket: NOW,
+      authenticationContext: "github-oauth" as const,
+      rotatedFromDigest: null,
+      revokedAt: null,
+    };
+    await store.create("sliding", record);
+    await store.touch("sliding", "2026-08-01T01:00:00.000Z", "2026-08-03T00:00:00.000Z");
+    expect(expiry.get("sliding")).toBe("2026-08-03T00:00:00.000Z");
+
+    await state.storage.delete("session:sliding");
+    await expect(store.get("sliding")).resolves.toBeNull();
+    expect(routes.has("sliding")).toBe(false);
   });
 
   it("counts only active sessions and revoke-all clears every one", async () => {
@@ -42,10 +116,81 @@ describe("UserAuthStateDurableObject sessions", () => {
     expect(await afterRevoke.json()).toEqual({ count: 0 });
   });
 
+  it("counts from the active index after one-time legacy backfill", async () => {
+    const state = createFakeDurableObjectState();
+    await state.storage.put("session-index:v1:ready", true);
+    await state.storage.put("credential-index:v1:ready", true);
+    const expired = {
+      userId: "usr_1", createdAt: NOW, expiresAt: "2020-01-01T00:00:00.000Z",
+      lastActivityBucket: NOW, revokedAt: null,
+    };
+    for (let index = 0; index < 1_000; index += 1) {
+      await state.storage.put(`session:legacy-${String(index).padStart(4, "0")}`, expired);
+    }
+    const active = { ...expired, expiresAt: "2099-01-01T00:00:00.000Z" };
+    await state.storage.put("session:active", active);
+    await state.storage.put("session-active:active", {
+      expiresAt: active.expiresAt, revokedAt: null,
+    });
+    state.testMetrics.listCalls = 0;
+    state.testMetrics.rowsReturned = 0;
+    state.testMetrics.maxRowsPerList = 0;
+
+    const object = new UserAuthStateDurableObject(state);
+    const response = await object.fetch(post("/sessions/count-active", { now: NOW }));
+    expect(await response.json()).toEqual({ count: 1 });
+    expect(state.testMetrics.rowsReturned).toBe(1);
+    expect(state.testMetrics.maxRowsPerList).toBe(1);
+  });
+
+  it("garbage-collects expired session records in bounded alarm batches", async () => {
+    const state = createFakeDurableObjectState();
+    await state.storage.put("session-index:v1:ready", true);
+    await state.storage.put("credential-index:v1:ready", true);
+    const object = new UserAuthStateDurableObject(state);
+    const expired = {
+      userId: "usr_1", createdAt: NOW, expiresAt: "2020-01-01T00:00:00.000Z",
+      lastActivityBucket: NOW, revokedAt: null,
+    };
+    for (let index = 0; index < 120; index += 1) {
+      await object.fetch(post("/sessions/create", { digest: `old-${index}`, record: expired }));
+    }
+    state.testMetrics.listCalls = 0;
+    state.testMetrics.rowsReturned = 0;
+    state.testMetrics.maxRowsPerList = 0;
+
+    await object.alarm();
+    expect(state.testMetrics.maxRowsPerList).toBeLessThanOrEqual(100);
+    expect((await state.storage.list({ prefix: "session:" })).size).toBe(20);
+    await object.alarm();
+    expect((await state.storage.list({ prefix: "session:" })).size).toBe(0);
+    expect(await state.storage.getAlarm()).toBeNull();
+  });
+
   it("touch/revoke on an unknown digest is a safe no-op", async () => {
     const object = new UserAuthStateDurableObject(createFakeDurableObjectState());
     const response = await object.fetch(post("/sessions/touch", { digest: "missing", lastActivityBucket: NOW, expiresAt: NOW }));
     expect(response.status).toBe(204);
+  });
+
+  it("preserves a future revocation grace window through indexed cleanup", async () => {
+    const state = createFakeDurableObjectState();
+    const object = new UserAuthStateDurableObject(state);
+    const now = new Date().toISOString();
+    const graceEnd = new Date(Date.now() + 60_000).toISOString();
+    const record = {
+      userId: "usr_1", createdAt: now,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      lastActivityBucket: now, revokedAt: null,
+    };
+    await object.fetch(post("/sessions/create", { digest: "grace", record }));
+    await object.fetch(post("/sessions/revoke", { digest: "grace", revokedAt: graceEnd }));
+    const stored = await (await object.fetch(post("/sessions/get", { digest: "grace" }))).json() as {
+      record: { revokedAt: string | null };
+    };
+    expect(stored.record.revokedAt).toBe(graceEnd);
+    const count = await object.fetch(post("/sessions/count-active", { now }));
+    expect(await count.json()).toEqual({ count: 1 });
   });
 });
 

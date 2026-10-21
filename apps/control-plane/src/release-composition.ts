@@ -44,7 +44,7 @@ const Policy = z.strictObject({
  */
 export async function authorizeConfiguredReleaseOperator(
   headers: Headers,
-  input: { operatorToken: string; gatewayServiceSecret?: string; operatorActorId: string },
+  input: { operatorToken: string; gatewayServiceSecret: string | undefined; operatorActorId: string },
 ): Promise<{ actorId: string } | null> {
   if (await equalSecret(
     headers.get("Authorization")?.replace(/^Bearer /u, "") ?? "", input.operatorToken,

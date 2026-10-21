@@ -1,10 +1,17 @@
 import { spawn } from "node:child_process";
+import { lstat, realpath } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 export const FIXTURE_CHILD_OUTPUT_MAX_BYTES = 64 * 1024;
 export const FIXTURE_EVIDENCE_MAX_BYTES = 16 * 1024;
 export const FIXTURE_CHILD_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
+const FIXTURE_ROOT_PREFIX = "praetorium-source-stable-fixture-";
+
+function fixtureRootName(value) {
+  return new RegExp(`^${FIXTURE_ROOT_PREFIX}[A-Za-z0-9_-]+$`, "u").test(value);
+}
 
 function pause(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -104,6 +111,83 @@ export async function stopProcessGroup(
   const finalDeadline = Date.now() + finalWaitMs;
   while (processGroupExists(pid) && Date.now() < finalDeadline) await pause(pollMs);
   return !processGroupExists(pid);
+}
+
+async function privilegedProcessGroupExists(pid, runCommand) {
+  try {
+    await runCommand("sudo", ["-n", "kill", "-0", "--", `-${pid}`], { timeoutMs: 2_000 });
+    return true;
+  } catch (error) {
+    if (error?.exitCode === 1 && /no such process/iu.test(error.outputTail ?? error.message))
+      return false;
+    throw error;
+  }
+}
+
+/** Stop a root-owned detached fixture process group using bounded sudo commands. */
+export async function stopPrivilegedProcessGroup(
+  pid,
+  {
+    runCommand = run,
+    graceMs = DEFAULT_TERMINATION_GRACE_MS,
+    pollMs = 50,
+    finalWaitMs = 1_000,
+  } = {},
+) {
+  if (!Number.isSafeInteger(pid) || pid < 2) return true;
+  if (!(await privilegedProcessGroupExists(pid, runCommand))) return true;
+
+  const sendSignal = async (signal) => {
+    try {
+      await runCommand("sudo", ["-n", "kill", `-${signal}`, "--", `-${pid}`], {
+        timeoutMs: 2_000,
+      });
+    } catch (error) {
+      if (await privilegedProcessGroupExists(pid, runCommand)) throw error;
+    }
+  };
+
+  await sendSignal("TERM");
+  const graceDeadline = Date.now() + graceMs;
+  while (Date.now() < graceDeadline && (await privilegedProcessGroupExists(pid, runCommand)))
+    await pause(pollMs);
+  if (await privilegedProcessGroupExists(pid, runCommand)) await sendSignal("KILL");
+  const finalDeadline = Date.now() + finalWaitMs;
+  while (Date.now() < finalDeadline && (await privilegedProcessGroupExists(pid, runCommand)))
+    await pause(pollMs);
+  return !(await privilegedProcessGroupExists(pid, runCommand));
+}
+
+/** Remove only the BuildKit root under this task's private temporary directory. */
+export async function removeOwnedBuildKitRoot(root, runCommand = run) {
+  const tempRoot = await realpath(os.tmpdir());
+  const rootInfo = await lstat(root);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory())
+    throw new TypeError("fixture temporary root is not an owned directory");
+  const realRoot = await realpath(root);
+  if (
+    path.dirname(realRoot) !== tempRoot ||
+    !fixtureRootName(path.basename(realRoot)) ||
+    (typeof process.getuid === "function" && rootInfo.uid !== process.getuid()) ||
+    (rootInfo.mode & 0o077) !== 0
+  )
+    throw new TypeError("fixture temporary root is outside the owned task directory");
+
+  const buildKitRoot = path.join(realRoot, "buildkit-root");
+  let targetInfo;
+  try {
+    targetInfo = await lstat(buildKitRoot);
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+  if (targetInfo.isSymbolicLink() || !targetInfo.isDirectory())
+    throw new TypeError("BuildKit root is not a real directory");
+
+  await runCommand("sudo", ["-n", "rm", "--recursive", "--force", "--", buildKitRoot], {
+    timeoutMs: 30_000,
+  });
+  return true;
 }
 
 export class FixtureChildProcessError extends Error {

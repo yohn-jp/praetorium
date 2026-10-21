@@ -5,7 +5,17 @@ import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { spawn } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,9 +32,10 @@ import {
   BoundedOutputTail,
   FIXTURE_CHILD_OUTPUT_MAX_BYTES,
   FIXTURE_EVIDENCE_MAX_BYTES,
+  removeOwnedBuildKitRoot,
   run as runOwnedCommand,
   sanitizeFixtureDiagnostic,
-  stopProcessGroup,
+  stopPrivilegedProcessGroup,
 } from "./fixture-process.mjs";
 import {
   BuildQueueHttpClient,
@@ -268,32 +279,46 @@ async function startOwnedBuildKit(root, daemonOutput) {
     `[grpc]\n  address = ["${buildkitAddress}"]\n[grpc.tls]\n  cert = "${path.join(pki, "server.crt")}"\n  key = "${path.join(pki, "server.key")}"\n  ca = "${path.join(pki, "ca.crt")}"\n[registry."127.0.0.1:5000"]\n  http = true\n  insecure = true\n`,
     { mode: 0o600 },
   );
-  const daemon = spawn(
-    "sudo",
-    [
-      "-n",
-      buildkitd,
-      "--addr",
-      buildkitAddress,
-      "--config",
-      configPath,
-      "--root",
-      path.join(root, "buildkit-root"),
-    ],
-    {
-      cwd: ROOT,
-      env: { ...process.env, NODE_USE_ENV_PROXY: "1" },
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  const daemonPidFile = path.join(root, "daemon.pid");
+  const daemonLaunchMarker = path.join(root, "daemon.launching");
+  await writeFile(daemonLaunchMarker, "launching\n", { mode: 0o600 });
+  let daemon;
+  try {
+    daemon = spawn(
+      "sudo",
+      [
+        "-n",
+        buildkitd,
+        "--addr",
+        buildkitAddress,
+        "--config",
+        configPath,
+        "--root",
+        path.join(root, "buildkit-root"),
+      ],
+      {
+        cwd: ROOT,
+        env: { ...process.env, NODE_USE_ENV_PROXY: "1" },
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  } catch (error) {
+    await unlink(daemonLaunchMarker).catch(() => {});
+    throw error;
+  }
+  if (!Number.isSafeInteger(daemon.pid) || daemon.pid < 2) {
+    await unlink(daemonLaunchMarker).catch(() => {});
+    throw new Error("BuildKit daemon did not provide a process ID");
+  }
   daemon.stdout?.on("data", (chunk) => daemonOutput.append(chunk));
   daemon.stderr?.on("data", (chunk) => daemonOutput.append(chunk));
   daemon.once("error", (error) => daemonOutput.append(`buildkitd spawn error: ${error.message}\n`));
   daemon.once("close", (code, signal) =>
     daemonOutput.append(`buildkitd exited ${code ?? signal ?? "unknown"}\n`),
   );
-  await writeFile(path.join(root, "daemon.pid"), `${daemon.pid}\n`, { mode: 0o600 });
+  await writeFile(daemonPidFile, `${daemon.pid}\n`, { mode: 0o600 });
+  await unlink(daemonLaunchMarker);
   await waitFor(
     async () => {
       try {
@@ -884,11 +909,55 @@ async function writeFixtureEvidence(directory, report, daemonOutput) {
   );
 }
 
+async function readOwnedBuildKitPid(root) {
+  const pidFile = path.join(root, "daemon.pid");
+  let info;
+  try {
+    info = await lstat(pidFile);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      try {
+        await lstat(path.join(root, "daemon.launching"));
+      } catch (markerError) {
+        if (markerError?.code === "ENOENT") return null;
+        throw markerError;
+      }
+      throw new Error("BuildKit daemon launch did not persist a trusted PID");
+    }
+    throw error;
+  }
+  if (
+    info.isSymbolicLink() ||
+    !info.isFile() ||
+    (typeof process.getuid === "function" && info.uid !== process.getuid()) ||
+    (info.mode & 0o077) !== 0
+  )
+    throw new TypeError("BuildKit daemon PID file is not a private fixture-owned file");
+  const value = (await readFile(pidFile, "utf8")).trim();
+  if (!/^[1-9][0-9]*$/u.test(value)) throw new TypeError("BuildKit daemon PID file is malformed");
+  const pid = Number(value);
+  if (!Number.isSafeInteger(pid) || pid < 2)
+    throw new TypeError("BuildKit daemon PID is outside the valid range");
+  return pid;
+}
+
+function withCleanupFailure(report, error) {
+  const result = report ?? failureReport(new Error("fixture ended without a result"));
+  return {
+    ...result,
+    status: "FAIL",
+    reason: "FIXTURE_CLEANUP_FAILED",
+    cleanupFailure: sanitizeFixtureDiagnostic(error?.message ?? String(error)),
+  };
+}
+
 async function main() {
   let root;
   let report;
   let failure;
   let cleanupFailure;
+  let daemonStopped = true;
+  let buildKitRootRemoved = false;
   const daemonOutput = new BoundedOutputTail();
   const artifactDirectory = process.env.PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR;
   try {
@@ -925,21 +994,22 @@ async function main() {
   } finally {
     if (root) {
       try {
-        const pid = Number((await readFile(path.join(root, "daemon.pid"), "utf8")).trim());
-        if (Number.isSafeInteger(pid) && pid > 1) {
-          const stopped = await stopProcessGroup(pid);
-          if (!stopped) throw new Error("BuildKit daemon process group did not stop");
+        const pid = await readOwnedBuildKitPid(root);
+        if (pid !== null) {
+          daemonStopped = await stopPrivilegedProcessGroup(pid);
+          if (!daemonStopped) throw new Error("BuildKit daemon process group did not stop");
         }
       } catch (error) {
-        if (error?.code !== "ENOENT") cleanupFailure = error;
+        daemonStopped = false;
+        cleanupFailure ??= error;
       }
       await run("docker", ["rm", "--force", `praetorium-source-fixture-${process.pid}`], {
         timeoutMs: 30_000,
       }).catch(() => {});
     }
-    if (cleanupFailure && report?.status === "PASS") {
+    if (cleanupFailure) {
       failure ??= cleanupFailure;
-      report = failureReport(cleanupFailure);
+      report = withCleanupFailure(report, cleanupFailure);
     }
     try {
       await writeFixtureEvidence(
@@ -949,8 +1019,33 @@ async function main() {
       );
     } catch (error) {
       failure ??= error;
+      cleanupFailure ??= error;
+      report = withCleanupFailure(report, error);
     }
-    if (root) await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
+    if (root && daemonStopped) {
+      try {
+        await removeOwnedBuildKitRoot(root);
+        buildKitRootRemoved = true;
+      } catch (error) {
+        cleanupFailure ??= error;
+      }
+    }
+    if (root && daemonStopped && buildKitRootRemoved) {
+      try {
+        await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
+      } catch (error) {
+        cleanupFailure ??= error;
+      }
+    }
+    if (cleanupFailure) {
+      failure ??= cleanupFailure;
+      report = withCleanupFailure(report, cleanupFailure);
+      try {
+        await writeFixtureEvidence(artifactDirectory, report, daemonOutput);
+      } catch (error) {
+        failure ??= error;
+      }
+    }
   }
   if (failure) {
     process.stderr.write(

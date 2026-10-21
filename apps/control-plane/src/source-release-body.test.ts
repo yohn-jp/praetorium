@@ -18,6 +18,25 @@ function request(path: string, bytes: Uint8Array, headers: Record<string, string
 }
 
 describe("Source HTTP body admission", () => {
+  it("accepts the canonical Source operator POST through the complete Control Plane route", async () => {
+    // Source mounts are strict about trailing slashes. Exercise the same public
+    // route as Gateway and the disposable Source→Stable CI fixture.
+    const operator = new Hono();
+    operator.post("/", c => c.json({ job: { id: jobId }, duplicate: false }, 202));
+    const app = createControlPlaneApp({
+      registry: null as unknown as ControlPlaneDependencies["registry"],
+      instances: null as unknown as ControlPlaneDependencies["instances"],
+      gatewaySecret: "g".repeat(40),
+      sourceReleaseOperator: operator,
+    });
+    const response = await app.request("/v1/operator/source-builds", {
+      method: "POST",
+      headers: { "X-Control-Plane-Gateway-Auth": "g".repeat(40) },
+    });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({job:{id:jobId}});
+  });
+
   it("leaves internal Source body enforcement to its mounted route instead of the Gateway cap", async () => {
     const source = new Hono();
     source.post("/:jobId/produced", async c => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));

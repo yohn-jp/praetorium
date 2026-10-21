@@ -11,12 +11,18 @@ import {
   resolveBuildCatalogSelection,
 } from "../vendor/build-catalog.mjs";
 import provenance from "../vendor/provenance.json" with { type: "json" };
-import type { BuildCatalog } from "@praetorium/contracts";
 import type { ProducerCatalogResolver } from "./composition.js";
 
 const LEGACY_PRODUCER_REVISION="008d5c429ec279a424cafd5b8c4cbee70a613b8e";
 const LEGACY_RESOLVER_REVISION="sha256:2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18";
 const LEGACY_PROVENANCE_DIGEST="sha256:c81b71fff985aaf542d8fd6e2d76c0740ff9390f53f642d00da2fc6bd975db88";
+
+if(provenance.schemaVersion!=="scriptorium-build-catalog-resolver-provenance/v1"||
+   provenance.sourceTreeClean!==true||
+   provenance.producerRevision!==LEGACY_PRODUCER_REVISION||
+   provenance.bundlePath!=="build-catalog.mjs"||
+   provenance.bundleDigest!==LEGACY_RESOLVER_REVISION)
+  throw new Error("The legacy Scriptorium resolver provenance is not approved");
 
 export type RevisionBoundProducerCatalogResolver = ProducerCatalogResolver & {
   readonly resolverRevision: ResolverRevision;

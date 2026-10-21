@@ -15,6 +15,7 @@ import type { BuildCatalog } from "@praetorium/contracts";
 import type { ProducerCatalogResolver } from "./composition.js";
 
 const LEGACY_PRODUCER_REVISION="008d5c429ec279a424cafd5b8c4cbee70a613b8e";
+const LEGACY_RESOLVER_REVISION="sha256:2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18";
 const LEGACY_PROVENANCE_DIGEST="sha256:c81b71fff985aaf542d8fd6e2d76c0740ff9390f53f642d00da2fc6bd975db88";
 
 export type RevisionBoundProducerCatalogResolver = ProducerCatalogResolver & {
@@ -34,7 +35,7 @@ export interface ProducerCatalogResolverRegistry {
 
 const legacyDescriptor=SourceResolverDescriptorSchema.parse({
   producerRevision:LEGACY_PRODUCER_REVISION,
-  resolverRevision:provenance.bundleDigest,
+  resolverRevision:LEGACY_RESOLVER_REVISION,
   contractVersion:"scriptorium-build/v1",
   provenanceDigest:LEGACY_PROVENANCE_DIGEST,
 });

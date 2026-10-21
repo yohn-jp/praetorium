@@ -292,8 +292,16 @@ async function cleanRevokedCredentialIndexes(
       const digest = typeof locator?.digest === 'string'
         ? locator.digest
         : key.slice(prefix.length);
-      // Retained rows remain listable and directly revocable until expiry GC.
-      // Only the active authorization index is invalidated by the epoch fence.
+      const recordKey = CREDENTIAL_PREFIX + digest;
+      const record = await transaction.get<Record<string, unknown>>(recordKey);
+      const revokedAt = await transaction.get<string>(credentialRevocationTimeKey(epoch + 1));
+      if (record && record["revokedAt"] == null && timestamp(revokedAt) !== null) {
+        const updated = { ...record, revokedAt } as AuthRecord;
+        await writeExpiryIndex(transaction, "credential", digest, record as AuthRecord, updated);
+        await transaction.put(recordKey, updated);
+      }
+      // Keep retained rows and routes until expiry GC, while writing the
+      // revocation into the record for readers that do not understand epochs.
       await transaction.delete(CREDENTIAL_ACTIVE_PREFIX + digest);
       processed += 1;
     }

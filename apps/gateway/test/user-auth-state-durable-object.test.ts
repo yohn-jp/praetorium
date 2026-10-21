@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { UserAuthStateDurableObject } from "../src/adapters/durable-objects/user-auth-state-durable-object.js";
 import { createDurableObjectSessionStore } from "../src/adapters/durable-objects/user-auth-state-client.js";
 import { createFakeDurableObjectState } from "./testing/fake-durable-object-state.js";
-import { createSession, type McpCredentialRecord, type UserId } from "@praetorium/auth";
+import {
+  createSession,
+  keyedDigest,
+  verifyMcpCredential,
+  type McpCredentialRecord,
+  type UserId,
+} from "@praetorium/auth";
 import { createInMemoryMcpCredentialStore } from "@praetorium/auth/testing";
 
 function post(path: string, body: unknown): Request {
@@ -11,6 +17,18 @@ function post(path: string, body: unknown): Request {
 
 const NOW = "2026-08-01T00:00:00.000Z";
 const FUTURE = "2099-01-01T00:00:00.000Z";
+const ROLLBACK_PEPPER = new Uint8Array(32).fill(17);
+const ROLLBACK_PLAINTEXT = "arcadia_mcp_v1_" + "a".repeat(64);
+
+async function verifyWithPreEpochReader(
+  record: Record<string, unknown>,
+  now: string,
+) {
+  const store = createInMemoryMcpCredentialStore();
+  const digest = await keyedDigest(ROLLBACK_PEPPER, ROLLBACK_PLAINTEXT);
+  await store.create(digest, record as unknown as McpCredentialRecord);
+  return verifyMcpCredential(store, ROLLBACK_PEPPER, ROLLBACK_PLAINTEXT, now);
+}
 
 async function seedCredentialRows(state: ReturnType<typeof createFakeDurableObjectState>, count: number): Promise<void> {
   await state.storage.put("session-index:v1:ready", true);
@@ -401,6 +419,168 @@ describe("UserAuthStateDurableObject credentials", () => {
         .toBeNull();
       expect(await (await object.fetch(post("/credentials/get", { digest: "digest-future-grace" }))).json())
         .toEqual({ record: { ...entries[2]![1], revokedAt: futureGraceAt } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("materializes revocation for pre-epoch readers in bounded alarm pages", async () => {
+    vi.useFakeTimers();
+    const nowMs = Date.parse(NOW);
+    vi.setSystemTime(nowMs);
+    try {
+      const state = createFakeDurableObjectState();
+      await seedCredentialRows(state, 100);
+      const object = new UserAuthStateDurableObject(state);
+      const bulkGraceAt = new Date(nowMs + 60_000).toISOString();
+      const individualGraceAt = new Date(nowMs + 120_000).toISOString();
+      const earlyExpiry = new Date(nowMs + 30_000).toISOString();
+      const individualGraceRecord: McpCredentialRecord = {
+        id: "compat-individual-grace" as McpCredentialRecord["id"],
+        userId: "usr_1" as UserId,
+        sessionRevision: 0,
+        repositoryId: 91,
+        instanceId: "instance_credential_rollback",
+        runtimeEpoch: 1,
+        name: "individual grace",
+        permissions: ["read"],
+        createdAt: NOW,
+        expiresAt: FUTURE,
+        lastUsedAt: null,
+        revokedAt: individualGraceAt,
+      };
+      const bulkGraceRecord: McpCredentialRecord = {
+        ...individualGraceRecord,
+        id: "compat-bulk-grace" as McpCredentialRecord["id"],
+        name: "bulk grace",
+        expiresAt: earlyExpiry,
+        revokedAt: null,
+      };
+      expect((await object.fetch(post("/credentials/create", {
+        digest: "zz-individual-grace", record: individualGraceRecord,
+      }))).status).toBe(204);
+      expect((await object.fetch(post("/credentials/create", {
+        digest: "zzz-bulk-grace", record: bulkGraceRecord,
+      }))).status).toBe(204);
+
+      state.testMetrics.listCalls = 0;
+      state.testMetrics.rowsReturned = 0;
+      state.testMetrics.maxRowsPerList = 0;
+      expect((await object.fetch(post("/credentials/revoke-all", { revokedAt: bulkGraceAt }))).status).toBe(204);
+      expect(state.testMetrics.listCalls).toBe(0);
+
+      const rollbackRecord: McpCredentialRecord = {
+        ...individualGraceRecord,
+        id: "compat-rollback-row" as McpCredentialRecord["id"],
+        name: "rollback compatibility",
+        expiresAt: FUTURE,
+        revokedAt: null,
+      };
+      expect((await object.fetch(post("/credentials/create", {
+        digest: "rollback-immediate", record: rollbackRecord,
+      }))).status).toBe(204);
+      expect((await object.fetch(post("/credentials/revoke-all", { revokedAt: NOW }))).status).toBe(204);
+      expect(state.testMetrics.listCalls).toBe(0);
+
+      const beforeDrain = await state.storage.get<Record<string, unknown>>(
+        "credential:rollback-immediate",
+      );
+      expect(beforeDrain?.["revokedAt"]).toBeNull();
+      expect((await verifyWithPreEpochReader(beforeDrain!, NOW)).ok).toBe(true);
+
+      await object.alarm();
+      expect(state.testMetrics.maxRowsPerList).toBeLessThanOrEqual(100);
+      expect(await state.storage.get<number>("credential-generation:v1:cleanup-epoch") ?? 0).toBe(0);
+      expect(await state.storage.get("credential-generation:v1:cleanup-cursor")).toBe(
+        "credential-generation-index:0000000000000000:digest-0099",
+      );
+      const partial = await state.storage.get<Record<string, unknown>>(
+        "credential:rollback-immediate",
+      );
+      expect(partial?.["revokedAt"]).toBeNull();
+      // A pre-epoch reader would still accept the unmaterialized last row.
+      expect((await verifyWithPreEpochReader(partial!, NOW)).ok).toBe(true);
+
+      await object.alarm();
+      expect(await state.storage.get("credential-generation:v1:cleanup-epoch")).toBe(2);
+      expect(await state.storage.get("credential-generation:v1:cleanup-cursor")).toBeUndefined();
+      const materialized = await state.storage.get<Record<string, unknown>>(
+        "credential:rollback-immediate",
+      );
+      expect(materialized?.["revokedAt"]).toBe(NOW);
+      expect(await verifyWithPreEpochReader(materialized!, NOW)).toMatchObject({
+        ok: false,
+        error: { code: "REVOKED" },
+      });
+
+      const individualGrace = await state.storage.get<Record<string, unknown>>(
+        "credential:zz-individual-grace",
+      );
+      expect(individualGrace?.["revokedAt"]).toBe(individualGraceAt);
+      expect((await verifyWithPreEpochReader(individualGrace!, NOW)).ok).toBe(true);
+      expect(await verifyWithPreEpochReader(individualGrace!, individualGraceAt)).toMatchObject({
+        ok: false,
+        error: { code: "REVOKED" },
+      });
+
+      const bulkGrace = await state.storage.get<Record<string, unknown>>("credential:zzz-bulk-grace");
+      expect(bulkGrace?.["revokedAt"]).toBe(bulkGraceAt);
+      expect((await verifyWithPreEpochReader(bulkGrace!, NOW)).ok).toBe(true);
+      expect(await verifyWithPreEpochReader(bulkGrace!, bulkGraceAt)).toMatchObject({
+        ok: false,
+        error: { code: "REVOKED" },
+      });
+      const oldExpiryIndex = `auth-expiry:${String(Date.parse(earlyExpiry)).padStart(16, "0")}:credential:zzz-bulk-grace`;
+      const graceExpiryIndex = `auth-expiry:${String(Date.parse(bulkGraceAt)).padStart(16, "0")}:credential:zzz-bulk-grace`;
+      expect(await state.storage.get(oldExpiryIndex)).toBeUndefined();
+      expect(await state.storage.get(graceExpiryIndex)).toEqual({
+        kind: "credential", digest: "zzz-bulk-grace",
+      });
+      expect(await state.storage.get("credential-fence-next-at:v1")).toBe(Date.parse(bulkGraceAt));
+      expect(state.testMetrics.maxRowsPerList).toBeLessThanOrEqual(100);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a pending future fence visibly unsafe for pre-epoch readers", async () => {
+    vi.useFakeTimers();
+    const nowMs = Date.parse(NOW);
+    vi.setSystemTime(nowMs);
+    try {
+      const state = createFakeDurableObjectState();
+      const object = new UserAuthStateDurableObject(state);
+      const record: McpCredentialRecord = {
+        id: "future-fence-row" as McpCredentialRecord["id"],
+        userId: "usr_1" as UserId,
+        sessionRevision: 0,
+        repositoryId: 91,
+        instanceId: "instance_rollback_compat",
+        runtimeEpoch: 1,
+        name: "future fence",
+        permissions: ["read"],
+        createdAt: NOW,
+        expiresAt: FUTURE,
+        lastUsedAt: null,
+        revokedAt: null,
+      };
+      await object.fetch(post("/credentials/create", { digest: "future-fence-digest", record }));
+      const revokedAt = new Date(nowMs + 60_000).toISOString();
+      state.testMetrics.listCalls = 0;
+      expect((await object.fetch(post("/credentials/revoke-all", { revokedAt }))).status).toBe(204);
+      expect(state.testMetrics.listCalls).toBe(0);
+      await object.alarm();
+
+      expect(await state.storage.get("credential-fence-next-at:v1")).toBe(Date.parse(revokedAt));
+      expect(await state.storage.get("credential-generation:v1:cleanup-cursor")).toBeUndefined();
+      const pending = await state.storage.get<Record<string, unknown>>(
+        "credential:future-fence-digest",
+      );
+      expect(pending?.["revokedAt"]).toBeNull();
+      // The old reader has no epoch or pending-fence check, so it keeps
+      // accepting the credential even after the scheduled revocation time.
+      expect((await verifyWithPreEpochReader(pending!, NOW)).ok).toBe(true);
+      expect((await verifyWithPreEpochReader(pending!, revokedAt)).ok).toBe(true);
     } finally {
       vi.useRealTimers();
     }

@@ -14,6 +14,9 @@ const ClaimSchema=z.strictObject({
   actor_id:z.string().min(1).max(128),
   state:z.literal("building"),
   attempt:z.number().int().positive().safe(),
+  revision:z.number().int().nonnegative().safe(),
+  admission_attempt:z.number().int().nonnegative().safe(),
+  next_attempt_at:z.number().int().nullable(),
   lease_worker:z.string().min(1),
   lease_token:z.string().uuid(),
   lease_epoch:z.number().int().positive().safe(),
@@ -48,17 +51,28 @@ export class SourceReleaseBuildWorker {
     shutdown?.addEventListener("abort",abort,{once:true});
     let lost=false;
     let inflight=false;
+    let executing=true;
+    let reportAccepted=false;
     let heartbeat:Promise<void>=Promise.resolve();
+    const sendHeartbeat=async()=>{
+      try{
+        const accepted=await this.client.heartbeatSource(job,this.config.leaseSeconds);
+        if(!accepted&&!reportAccepted){lost=true;if(executing)controller.abort();}
+      }catch{
+        if(!reportAccepted){lost=true;if(executing)controller.abort();}
+      }
+    };
     const tick=()=>{
-      if(inflight||controller.signal.aborted)return;
+      if(inflight||controller.signal.aborted||reportAccepted)return;
       inflight=true;
-      heartbeat=heartbeat.then(async()=>{
-        try{
-          const accepted=await this.client.heartbeatSource(job,this.config.leaseSeconds);
-          if(!accepted){lost=true;controller.abort();}
-        }catch{lost=true;controller.abort();}
-        finally{inflight=false;}
-      });
+      heartbeat=heartbeat.then(sendHeartbeat).finally(()=>{inflight=false;});
+    };
+    const renewNow=async()=>{
+      if(inflight)await heartbeat;
+      if(lost||controller.signal.aborted)return false;
+      inflight=true;
+      try{await sendHeartbeat();}finally{inflight=false;}
+      return !lost;
     };
     const timer=setInterval(tick,this.config.heartbeatIntervalMs);timer.unref();
     try{
@@ -68,25 +82,28 @@ export class SourceReleaseBuildWorker {
           await this.execute(job,this.config,controller.signal),
         );
       }catch{
+        executing=false;
         if(!lost&&!controller.signal.aborted){
           await this.client.failSource(job,"SOURCE_BUILD_FAILED").catch(()=>false);
         }
         return true;
       }
-      clearInterval(timer);
+      executing=false;
       await heartbeat;
       if(lost||controller.signal.aborted)return true;
       // Always renew the current lease before a durable result is accepted.
-      if(!(await this.client.heartbeatSource(job,this.config.leaseSeconds)))return true;
+      if(!(await renewNow()))return true;
       try{
-        if(!(await this.client.producedSource(job,result)))return true;
+        reportAccepted=await this.client.producedSource(job,result);
       }catch{
         // A failed report remains safely fenced: the job is reclaimed on
         // expiry and rebuilt. No unverified artifact enters admission.
       }
       return true;
     }finally{
+      executing=false;
       clearInterval(timer);
+      await heartbeat;
       shutdown?.removeEventListener("abort",abort);
     }
   }

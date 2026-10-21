@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildKey } from "@praetorium/contracts";
-import type { BuildInput } from "@praetorium/contracts";
+import type { BuildInput, SourceProducerResult } from "@praetorium/contracts";
+import type { SourceBuildClaim } from "../src/source-producer-builder.js";
 import {
   BuildQueueHttpClient,
   BuildQueueHttpError,
@@ -73,6 +74,41 @@ afterEach(async () => {
 });
 
 describe("Build Control Plane HTTP adapter", () => {
+  it("keeps the Produced proof request bounded by its longer verification budget", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        signal = init?.signal as AbortSignal | undefined;
+        signal?.addEventListener("abort", () => reject(new Error("request timed out")), { once: true });
+      }));
+      const queue = new BuildQueueHttpClient({
+        baseUrl: "https://control.example",
+        serviceToken: token,
+        requestTimeoutMs: 100,
+        sourceReportTimeoutMs: 500,
+        maxResponseBytes: 262_144,
+        leaseSeconds: 60,
+        fetch: fetchMock as typeof fetch,
+      });
+      const job = {
+        job_id: "sr_00000000-0000-4000-8000-000000000001",
+        lease_worker: "worker-1",
+        lease_token: "00000000-0000-4000-8000-000000000002",
+        lease_epoch: 1,
+      } as SourceBuildClaim;
+      const report = queue.producedSource(job, {} as SourceProducerResult);
+      const expectedTimeout = expect(report).rejects.toBeInstanceOf(BuildQueueHttpError);
+      await vi.advanceTimersByTimeAsync(499);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expectedTimeout;
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("claims a validated immutable input and sends the separate service bearer", async () => {
     const claim = {
       buildId: "build-1",

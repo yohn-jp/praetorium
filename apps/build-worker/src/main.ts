@@ -169,6 +169,10 @@ export async function main(): Promise<void> {
     baseUrl: config.controlPlaneUrl,
     serviceToken: await readBuildServiceToken(config.serviceTokenFile),
     requestTimeoutMs: config.requestTimeoutMs,
+    sourceReportTimeoutMs: Math.max(
+      config.requestTimeoutMs,
+      config.maxImageVerificationMs + 2 * config.maxRegistryRequestMs,
+    ),
     maxResponseBytes: config.maxResponseBytes,
     leaseSeconds: config.leaseSeconds,
   }));

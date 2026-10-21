@@ -105,11 +105,19 @@ export function composeBuildServices(
   policyJson: string,
   pullCredentialJson?: string,
   producerResolver?: ProducerCatalogResolver | ProducerCatalogResolverRegistry,
+  dependencies: { readonly registry?: GhcrRegistryClient } = {},
 ) {
   const policy = Policy.parse(JSON.parse(policyJson));
   if (!policy.allowedRepositories.includes(policy.outputRepository))
     throw new TypeError("Output repository must be explicitly approved");
-  const registry = new GhcrRegistryClient({
+  const logicalRegistryHost = new URL(policy.registryUrl).host;
+  if (policy.sourceProducerRepository &&
+      !policy.sourceProducerRepository.startsWith(logicalRegistryHost + "/"))
+    throw new TypeError("Source Producer repository must belong to the configured Registry");
+  if (dependencies.registry &&
+      !["127.0.0.1", "localhost", "[::1]"].includes(new URL("http://" + dependencies.registry.registryHost).hostname))
+    throw new TypeError("Disposable Registry injection requires an explicit loopback client");
+  const registry = dependencies.registry ?? new GhcrRegistryClient({
     registryUrl: policy.registryUrl,
     allowedRepositories: policy.allowedRepositories,
     maxImageLayerBytes: policy.maxImageLayerBytes,
@@ -119,6 +127,10 @@ export function composeBuildServices(
       ? { pullCredential: PullCredential.parse(JSON.parse(pullCredentialJson)) }
       : {}),
   });
+  const sourceRegistry: Pick<GhcrRegistryClient, "registryHost" | "verifyImage"> = dependencies.registry ? {
+    registryHost: logicalRegistryHost,
+    verifyImage: registry.verifyImage.bind(registry),
+  } : registry;
   const signer = new OperatorBuilderSignatureVerifier(
     policy.builderKeys.map((key) => ({
       keyId: key.keyId,
@@ -197,6 +209,7 @@ export function composeBuildServices(
     admission,
     sourceBuilderKeys: policy.builderKeys,
     sourceProducerRepository: policy.sourceProducerRepository,
+    sourceRegistry,
     resourceLimits: policy.runtimeResourceLimits,
     cache,
     cacheStore,

@@ -1,9 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ArtifactRegistryProvider } from "@praetorium/application/artifacts";
-import { RegistryError } from "@praetorium/ghcr/registry";
-import { withAdmissionRegistryDiagnostics } from "./build-composition.js";
+import { GhcrRegistryClient, RegistryError } from "@praetorium/ghcr/registry";
+import { composeBuildServices, withAdmissionRegistryDiagnostics } from "./build-composition.js";
 
 describe("admission registry diagnostics", () => {
+  it("keeps disposable OCI transport distinct from signed Source origin and rejects remote overrides", () => {
+    const policy = {
+      registryUrl: "https://ghcr.io", allowedRepositories: ["owner/source", "owner/output"],
+      outputRepository: "owner/output", sourceProducerRepository: "ghcr.io/owner/source",
+      maxImageLayerBytes: 1024, maxImageVerificationMs: 1000, maxRegistryRequestMs: 1000,
+      runtimeResourceLimits: { cpuMilli: 100, memoryMiB: 128, ephemeralStorageMiB: 256 },
+      cacheRetention: { maxBytes: 1024, maxEntries: 1, minAgeMs: 0, maxEvictions: 1 },
+      targetPlatform: "linux/amd64", builderKeys: [{ keyId: "test", publicKeyBase64: "a" }],
+    };
+    const db = { prepare: vi.fn(), batch: vi.fn() };
+    const loopback = new GhcrRegistryClient({
+      registryUrl: "http://127.0.0.1:5000", allowInsecureLoopback: true,
+      allowedRepositories: policy.allowedRepositories, maxImageLayerBytes: 1024,
+      maxImageVerificationMs: 1000, maxRegistryRequestMs: 1000,
+    });
+    const services = composeBuildServices(db, JSON.stringify(policy), undefined, undefined, { registry: loopback });
+    expect(services.registry.registryHost).toBe("127.0.0.1:5000");
+    expect(services.sourceRegistry.registryHost).toBe("ghcr.io");
+    const normal = composeBuildServices(db, JSON.stringify(policy));
+    expect(normal.sourceRegistry).toBe(normal.registry);
+    expect(() => composeBuildServices(db, JSON.stringify(policy), undefined, undefined, { registry: normal.registry })).toThrow("loopback");
+    expect(() => composeBuildServices(db, JSON.stringify({ ...policy, sourceProducerRepository: "ghcr.io.evil/owner/source" }))).toThrow();
+    expect(db.prepare).not.toHaveBeenCalled();
+  });
+
   it("rethrows the identical image RegistryError and logs only its reason and exact-message code", async () => {
     const error = new RegistryError(
       "invalid_content",

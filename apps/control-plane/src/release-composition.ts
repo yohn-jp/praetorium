@@ -77,7 +77,7 @@ export function composeReleaseServices(input: {
   if (!/^[\x21-\x7e]{32,4096}$/u.test(input.operatorToken))
     throw new TypeError("Separate release operator credential required");
   const sourceProofVerifier = new SourceProducerProofVerifier(
-    input.db, input.builds.registry, input.builds.sourceBuilderKeys,
+    input.db, input.builds.sourceRegistry, input.builds.sourceBuilderKeys,
     undefined, input.builds.sourceProducerRepository,
   );
   const signatureVerifier = new SigstoreProvenanceVerifier({
@@ -134,7 +134,7 @@ export function composeReleaseServices(input: {
       const manifest: ReleaseCandidateManifest = ReleaseCandidateManifestSchema.parse({
         schemaVersion: 1, version: job.release_version,
         imageRepository: repositoryPathForHost(
-          result.statement.imageRepository, input.builds.registry.registryHost,
+          result.statement.imageRepository, input.builds.sourceRegistry.registryHost,
         ),
         catalog: result.catalog, runtimeMetadata: result.runtimeMetadata,
         signatureRef: url, provenanceRef: url,

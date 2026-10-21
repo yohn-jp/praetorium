@@ -37,6 +37,26 @@ const Policy = z.strictObject({
   }),
 });
 
+/** Two already-authorized entry points for one operator authority.
+ * Public bearer tokens are not accepted from browsers as operator grants.
+ * The delegated path requires the existing private Gateway service secret AND
+ * exactly the configured operator's GitHub user ID.
+ */
+export async function authorizeConfiguredReleaseOperator(
+  headers: Headers,
+  input: { operatorToken: string; gatewayServiceSecret?: string; operatorActorId: string },
+): Promise<{ actorId: string } | null> {
+  if (await equalSecret(
+    headers.get("Authorization")?.replace(/^Bearer /u, "") ?? "", input.operatorToken,
+  )) return { actorId: input.operatorActorId };
+  if (
+    input.gatewayServiceSecret &&
+    headers.get("X-Praetorium-Admin-Actor") === input.operatorActorId &&
+    await equalSecret(headers.get("X-Control-Plane-Gateway-Auth") ?? "", input.gatewayServiceSecret)
+  ) return { actorId: input.operatorActorId };
+  return null;
+}
+
 /** Operator-selected owned canary, never a repository user's configuration input. */
 export function composeReleaseServices(input: {
   db: D1Database;
@@ -67,21 +87,11 @@ export function composeReleaseServices(input: {
     ...(input.notifyWorkAvailable
       ? { notifyWorkAvailable: input.notifyWorkAvailable }
       : {}),
-    authorizeOperator: async (headers) => {
-      // The existing machine operator credential remains independent. The
-      // admin console delegates only the configured operator identity over the
-      // already-authenticated internal Gateway service binding.
-      if (await equalSecret(
-        headers.get("Authorization")?.replace(/^Bearer /u, "") ?? "",
-        input.operatorToken,
-      )) return { actorId: policy.operatorActorId };
-      if (
-        input.gatewayServiceSecret &&
-        headers.get("X-Praetorium-Admin-Actor") === policy.operatorActorId &&
-        await equalSecret(headers.get("X-Control-Plane-Gateway-Auth") ?? "", input.gatewayServiceSecret)
-      ) return { actorId: policy.operatorActorId };
-      return null;
-    },
+    authorizeOperator: (headers) => authorizeConfiguredReleaseOperator(headers, {
+      operatorToken: input.operatorToken,
+      gatewayServiceSecret: input.gatewayServiceSecret,
+      operatorActorId: policy.operatorActorId,
+    }),
     registry: input.builds.registry,
     provenance: new SigstoreProvenanceVerifier({
       signerIdentityAllowlist: policy.signerIdentityAllowlist.map(

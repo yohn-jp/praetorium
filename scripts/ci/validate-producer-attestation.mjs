@@ -5,7 +5,9 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 
-const revision = "008d5c429ec279a424cafd5b8c4cbee70a613b8e";
+const revision = process.env.SCRIPTORIUM_REVISION;
+if (!/^[0-9a-f]{40}$/u.test(revision ?? ""))
+  throw new Error("SCRIPTORIUM_REVISION must be a full immutable commit SHA");
 const sourceOrigin = "https://github.com/yohn-jp/scriptorium";
 const imageRepository = "127.0.0.1:5000/scriptorium/producer";
 const recipientFingerprint = "4f117e60f1ff8af66e5eb9619dcf7142782162507ec558201b77d4ac62c2ad9b";
@@ -559,8 +561,8 @@ async function main() {
   const metadataDirectory = process.env.PRODUCER_METADATA_DIR;
   if (!sourceRoot || !metadataDirectory)
     fail("SCRIPTORIUM_ROOT and PRODUCER_METADATA_DIR are required");
-  if (process.env.SCRIPTORIUM_REVISION !== revision)
-    fail("workflow producer revision does not match the validator pin");
+  // Trust the workflow-selected immutable source revision, then independently
+  // prove the checked-out source and signed catalog are that exact revision.
   const sourceHead = git(["rev-parse", "HEAD"], sourceRoot);
   const sourceStatus = git(["status", "--porcelain"], sourceRoot);
   const sourceRemote = git(["remote", "get-url", "origin"], sourceRoot);

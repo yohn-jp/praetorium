@@ -13,7 +13,10 @@ import { SourceProducerProofVerifier } from "./source-producer-verifier.js";
 import catalogFixture from "../../../plugins/scriptorium/test/fixtures/build-catalog.v1.fixture.json" with { type: "json" };
 
 const legacyRevision="008d5c429ec279a424cafd5b8c4cbee70a613b8e";
+const v021Revision="3189a85bfa28ddd160600a0188ab3ccfa91755e4";
 const resolverDigest="sha256:2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18";
+const legacyProvenanceDigest="sha256:c81b71fff985aaf542d8fd6e2d76c0740ff9390f53f642d00da2fc6bd975db88";
+const v021ProvenanceDigest="sha256:46dc7f209c1a074b5acdeb8a7111006cfb20e3c40f219bc3edbe910be2209cac";
 const digestA="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const digestB="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const SOURCE_REPOSITORY="ghcr.io/yohn-jp/praetorium/scriptorium-producer";
@@ -24,6 +27,13 @@ const job={
   source_tag:"v0.1.0",
   source_revision:legacyRevision,
   release_version:"0.1.0",
+} as const;
+const v021Job={
+  ...job,
+  github_release_id:416422590,
+  source_tag:"v0.2.1",
+  source_revision:v021Revision,
+  release_version:"0.2.1",
 } as const;
 
 const keyPair=generateKeyPairSync("ed25519");
@@ -138,42 +148,54 @@ describe("source producer proof verification", () => {
 
   it("requires v2 resolver identity and signed bundle digest to match the approved static entry", async () => {
     const {client,verifyImage}=registry();
-    const catalog=fixtureCatalog();
+    const catalog=fixtureCatalog(v021Revision);
+    const metadata={...runtimeMetadata,producerRevision:v021Revision};
     const statement={
       schemaVersion:2,
-      jobId:job.job_id,
-      githubReleaseId:job.github_release_id,
+      jobId:v021Job.job_id,
+      githubReleaseId:v021Job.github_release_id,
       sourceId:"scriptorium",
       sourceRepository:"yohn-jp/scriptorium",
-      sourceTag:job.source_tag,
-      sourceRevision:legacyRevision,
-      releaseVersion:job.release_version,
+      sourceTag:v021Job.source_tag,
+      sourceRevision:v021Revision,
+      releaseVersion:v021Job.release_version,
       imageRepository:"ghcr.io/yohn-jp/praetorium/scriptorium-producer",
       runtimeBaseDigest:digestA,
       buildKitDigest:digestB,
       catalogDigest:await sourceProofDigest(catalog),
-      runtimeMetadataDigest:await sourceProofDigest(runtimeMetadata),
+      runtimeMetadataDigest:await sourceProofDigest(metadata),
       resolverDigest,
     };
     const proof=SourceProducerResultSchemaV2.parse({
       statement,
       signature:{algorithm:"Ed25519",keyId:"test-builder",signature:await signedStatement(statement)},
       catalog,
-      runtimeMetadata,
+      runtimeMetadata:metadata,
       resolver:{
-        producerRevision:legacyRevision,
+        producerRevision:v021Revision,
         resolverRevision:resolverDigest,
         contractVersion:"scriptorium-build/v1",
-        provenanceDigest:"sha256:c81b71fff985aaf542d8fd6e2d76c0740ff9390f53f642d00da2fc6bd975db88",
+        provenanceDigest:v021ProvenanceDigest,
       },
     });
+    await expect(verifier(client).verify(v021Job,proof)).resolves.toMatchObject({
+      statement:{schemaVersion:2,sourceRevision:v021Revision},
+    });
+    expect(verifyImage).toHaveBeenCalledTimes(2);
+
     const changed={
       ...proof,
-      resolver:{...proof.resolver,provenanceDigest:digestA},
+      resolver:{...proof.resolver,provenanceDigest:legacyProvenanceDigest},
     };
-    await expect(verifier(client).verify(job,changed))
+    await expect(verifier(client).verify(v021Job,changed))
       .rejects.toMatchObject({retryable:false,code:"SOURCE_VERIFICATION_FAILED"});
-    expect(verifyImage).not.toHaveBeenCalled();
+    const wrongProducerRevision={
+      ...proof,
+      resolver:{...proof.resolver,producerRevision:legacyRevision},
+    };
+    await expect(verifier(client).verify(v021Job,wrongProducerRevision))
+      .rejects.toMatchObject({retryable:false,code:"SOURCE_VERIFICATION_FAILED"});
+    expect(verifyImage).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed on v2 when operator policy has no exact producer repository", async () => {

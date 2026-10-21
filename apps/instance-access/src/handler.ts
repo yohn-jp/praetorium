@@ -485,7 +485,7 @@ export function createInstanceAccessHandler(
     if (url.pathname === "/mcp" && !authorization) {
       return mcpUnauthorized(instance);
     }
-    if (authorization && /^Bearer [A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(authorization) &&
+    if (authorization && /^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(authorization) &&
         authorization.length <= 16_400 && !request.headers.has("Cookie")) {
       const wake = await postGateway(config, "/internal/instance-access/wake", {
         appIdentity: instance.appIdentity,

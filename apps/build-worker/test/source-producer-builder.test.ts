@@ -4,9 +4,12 @@ import { access, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { SOURCE_PRODUCER_RESULT_MAX_BYTES } from "@praetorium/contracts";
 import {
+  assertSourceProducerResultWithinBudget,
   buildSourceRelease,
   readSourceProducerFile,
+  SourceBuildVerificationError,
   sourceGitEnvironment,
 } from "../src/source-producer-builder.js";
 
@@ -97,6 +100,19 @@ it("rejects a BuildKit output whose parent directory is a symbolic link", async 
   await expect(readSourceProducerFile(
     path.join(exportedDirectory, "build-catalog.mjs"), 1024, "producer resolver bundle",
   )).rejects.toThrow();
+});
+
+it("bounds the complete signed proof by canonical UTF-8 bytes before signing", () => {
+  const exact={proof:"a".repeat(SOURCE_PRODUCER_RESULT_MAX_BYTES-12)};
+  expect(JSON.stringify(exact)).toHaveLength(SOURCE_PRODUCER_RESULT_MAX_BYTES);
+  expect(()=>assertSourceProducerResultWithinBudget(exact)).not.toThrow();
+
+  const oversized={proof:"a".repeat(SOURCE_PRODUCER_RESULT_MAX_BYTES-11)};
+  expect(()=>assertSourceProducerResultWithinBudget(oversized)).toThrow(SourceBuildVerificationError);
+
+  const multibyte={proof:"é".repeat(32_763)};
+  expect(multibyte.proof).toHaveLength(32_763);
+  expect(()=>assertSourceProducerResultWithinBudget(multibyte)).toThrow(SourceBuildVerificationError);
 });
 
 it("reports an unpublished Source Release as an immutable source change", async () => {

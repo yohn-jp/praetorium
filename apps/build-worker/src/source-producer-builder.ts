@@ -6,7 +6,8 @@ import path from "node:path";
 import { createBuildctlRunner } from "@praetorium/buildkit";
 import {
   BuildCatalogSchema, RuntimeMetadataSchema, SourceProducerResultSchemaV2,
-  canonicalSourceProof, repositoryPathForHost, sourceProofDigest, type SourceProducerResult,
+  SOURCE_PRODUCER_RESULT_MAX_BYTES, canonicalSourceProof, repositoryPathForHost,
+  sourceProducerResultByteLength, sourceProofDigest, type SourceProducerResult,
 } from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "./config.js";
 
@@ -41,6 +42,19 @@ export interface SourceBuildOptions {
 export class SourceBuildChangedError extends Error {
   readonly code="SOURCE_CHANGED" as const;
   constructor(){super("SOURCE_CHANGED");this.name="SourceBuildChangedError";}
+}
+
+/** Source outputs are permanent evidence failures once the BuildKit solve has succeeded. */
+export class SourceBuildVerificationError extends Error {
+  readonly code="SOURCE_VERIFICATION_FAILED" as const;
+  constructor(){super("SOURCE_VERIFICATION_FAILED");this.name="SourceBuildVerificationError";}
+}
+
+export function assertSourceProducerResultWithinBudget(value:unknown):void{
+  let byteLength:number;
+  try{byteLength=sourceProducerResultByteLength(value);}
+  catch{throw new SourceBuildVerificationError();}
+  if(byteLength>SOURCE_PRODUCER_RESULT_MAX_BYTES)throw new SourceBuildVerificationError();
 }
 
 function outputRepository(options:SourceBuildOptions,logicalRepository:string):string{
@@ -168,33 +182,37 @@ async function checkout(job:SourceBuildClaim,folder:string,privateHome:string,si
     throw new SourceBuildChangedError();
 }
 async function metadataDigest(filename:string):Promise<string>{
-  const bytes=await readSourceProducerFile(filename,16384,"BuildKit metadata");
-  const raw:unknown=JSON.parse(bytes.toString("utf8"));
-  const digest=typeof raw==="object"&&raw!==null&&"containerimage.digest" in raw
-    ? (raw as Record<string,unknown>)["containerimage.digest"] : null;
-  if(typeof digest!=="string"||!DIGEST.test(digest))throw new Error("BuildKit digest missing");
-  return digest;
+  try{
+    const bytes=await readSourceProducerFile(filename,16384,"BuildKit metadata");
+    const raw:unknown=JSON.parse(bytes.toString("utf8"));
+    const digest=typeof raw==="object"&&raw!==null&&"containerimage.digest" in raw
+      ? (raw as Record<string,unknown>)["containerimage.digest"] : null;
+    if(typeof digest!=="string"||!DIGEST.test(digest))throw new Error("BuildKit digest missing");
+    return digest;
+  }catch{throw new SourceBuildVerificationError();}
 }
 async function resolverArtifact(folder:string):Promise<{
   readonly digest:`sha256:${string}`;readonly provenance:Record<string,unknown>;
   readonly provenanceDigest:`sha256:${string}`;
 }>{
-  const bundlePath=path.join(folder,"build-catalog.mjs");
-  const provenancePath=path.join(folder,"provenance.json");
-  const [bundle,provenanceBytes]=await Promise.all([
-    readSourceProducerFile(bundlePath,MAX_RESOLVER_BYTES,"producer resolver bundle"),
-    readSourceProducerFile(provenancePath,64*1024,"producer resolver provenance"),
-  ]);
-  const provenance:unknown=JSON.parse(provenanceBytes.toString("utf8"));
-  if(typeof provenance!=="object"||provenance===null||Array.isArray(provenance))
-    throw new Error("Invalid producer resolver provenance");
-  const record=provenance as Record<string,unknown>;
-  const digest=`sha256:${createHash("sha256").update(bundle).digest("hex")}` as const;
-  if(record.schemaVersion!=="scriptorium-build-catalog-resolver-provenance/v1"||
-     record.sourceTreeClean!==true||record.bundlePath!=="build-catalog.mjs"||
-     record.bundleDigest!==digest)
-    throw new Error("Producer resolver provenance does not match its bundle");
-  return {digest,provenance:record,provenanceDigest:await sourceProofDigest(record)};
+  try{
+    const bundlePath=path.join(folder,"build-catalog.mjs");
+    const provenancePath=path.join(folder,"provenance.json");
+    const [bundle,provenanceBytes]=await Promise.all([
+      readSourceProducerFile(bundlePath,MAX_RESOLVER_BYTES,"producer resolver bundle"),
+      readSourceProducerFile(provenancePath,64*1024,"producer resolver provenance"),
+    ]);
+    const provenance:unknown=JSON.parse(provenanceBytes.toString("utf8"));
+    if(typeof provenance!=="object"||provenance===null||Array.isArray(provenance))
+      throw new Error("Invalid producer resolver provenance");
+    const record=provenance as Record<string,unknown>;
+    const digest=`sha256:${createHash("sha256").update(bundle).digest("hex")}` as const;
+    if(record.schemaVersion!=="scriptorium-build-catalog-resolver-provenance/v1"||
+       record.sourceTreeClean!==true||record.bundlePath!=="build-catalog.mjs"||
+       record.bundleDigest!==digest)
+      throw new Error("Producer resolver provenance does not match its bundle");
+    return {digest,provenance:record,provenanceDigest:await sourceProofDigest(record)};
+  }catch{throw new SourceBuildVerificationError();}
 }
 function buildctlPrefix(config:BuildWorkerConfig):string[]{
   return [
@@ -305,17 +323,27 @@ export async function buildSourceRelease(
       "--opt","build-arg:BUILD_KIT_DIGEST="+buildKitDigest,
       "--output","type=local,dest="+metadata,
     ],source,root,signal);
-    const catalogBytes=await readSourceProducerFile(path.join(metadata,"build-catalog.json"),MAX_CATALOG_BYTES,"BuildKit catalog");
-    const runtimeBytes=await readSourceProducerFile(path.join(metadata,"runtime-metadata.json"),16*1024,"BuildKit runtime metadata");
-    const catalog=BuildCatalogSchema.parse(JSON.parse(catalogBytes.toString("utf8")));
-    const runtime=RuntimeMetadataSchema.parse(JSON.parse(runtimeBytes.toString("utf8")));
+    let catalogBytes:Buffer;
+    let runtimeBytes:Buffer;
+    try{
+      [catalogBytes,runtimeBytes]=await Promise.all([
+        readSourceProducerFile(path.join(metadata,"build-catalog.json"),MAX_CATALOG_BYTES,"BuildKit catalog"),
+        readSourceProducerFile(path.join(metadata,"runtime-metadata.json"),16*1024,"BuildKit runtime metadata"),
+      ]);
+    }catch{throw new SourceBuildVerificationError();}
+    let catalog:ReturnType<typeof BuildCatalogSchema.parse>;
+    let runtime:ReturnType<typeof RuntimeMetadataSchema.parse>;
+    try{
+      catalog=BuildCatalogSchema.parse(JSON.parse(catalogBytes.toString("utf8")));
+      runtime=RuntimeMetadataSchema.parse(JSON.parse(runtimeBytes.toString("utf8")));
+    }catch{throw new SourceBuildVerificationError();}
     const resolver=await resolverArtifact(path.join(metadata,"resolver"));
     if(catalog.producerRevision!==job.source_revision ||
       runtime.producerRevision!==job.source_revision ||
       catalog.runtimeBaseDigest!==runtimeDigest ||
       catalog.buildKitDigest!==buildKitDigest ||
       resolver.provenance.producerRevision!==job.source_revision)
-      throw new Error("Producer catalog does not bind exact BuildKit outputs");
+      throw new SourceBuildVerificationError();
     const statement={
       schemaVersion:2 as const,jobId:job.job_id,githubReleaseId:job.github_release_id,
       sourceId:"scriptorium" as const,sourceRepository:"yohn-jp/scriptorium" as const,
@@ -327,15 +355,24 @@ export async function buildSourceRelease(
       runtimeMetadataDigest:await sourceProofDigest(runtime),
       resolverDigest:resolver.digest,
     };
+    let unsigned:SourceProducerResult;
+    try{
+      unsigned=SourceProducerResultSchemaV2.parse({
+        statement,
+        signature:{algorithm:"Ed25519",keyId:config.signingKeyId,signature:"A".repeat(88)},
+        catalog,runtimeMetadata:runtime,
+        resolver:{
+          producerRevision:job.source_revision,
+          resolverRevision:resolver.digest,
+          contractVersion:catalog.contractVersion,
+          provenanceDigest:resolver.provenanceDigest,
+        },
+      });
+    }catch{throw new SourceBuildVerificationError();}
+    assertSourceProducerResultWithinBudget(unsigned);
     return SourceProducerResultSchemaV2.parse({
-      statement,signature:await signSource(config,statement),
-      catalog,runtimeMetadata:runtime,
-      resolver:{
-        producerRevision:job.source_revision,
-        resolverRevision:resolver.digest,
-        contractVersion:catalog.contractVersion,
-        provenanceDigest:resolver.provenanceDigest,
-      },
+      ...unsigned,
+      signature:await signSource(config,statement),
     });
   }finally{await rm(root,{recursive:true,force:true,maxRetries:2,retryDelay:100});}
 }

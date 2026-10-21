@@ -40,6 +40,12 @@ ARG PRAETORIUM_BUILDKIT_BUILDCTL_PATH
 ENV NODE_ENV=production \
     PRAETORIUM_BUILDKIT_BUILDCTL_PATH=${PRAETORIUM_BUILDKIT_BUILDCTL_PATH}
 WORKDIR /app
+# Source Producer fetches only an allowlisted GitHub Release at its verified
+# immutable SHA. Build scripts still execute exclusively in remote BuildKit.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/* \
+ && git --version
 COPY --from=buildkit-client --chmod=0555 ${BUILDKIT_CLIENT_BUILDCTL_PATH} ${PRAETORIUM_BUILDKIT_BUILDCTL_PATH}
 COPY --from=build --chmod=0444 /workspace/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN chmod 0755 /etc/ssl /etc/ssl/certs \

@@ -6,6 +6,8 @@ import {
   BuildHeartbeatRequestSchema,
   BuildReportRequestSchema,
 } from "@praetorium/contracts";
+import type { SourceBuildClaim } from "./source-producer-builder.js";
+import type { SourceProducerResult } from "@praetorium/contracts";
 import type {
   BuildClaim,
   BuildQueueHeartbeatInput,
@@ -126,6 +128,38 @@ export class BuildQueueHttpClient implements BuildQueuePort {
       body,
     );
     return ReportResponseSchema.parse(response.value);
+  }
+
+  /** Same worker identity/token as composition builds; no GitHub Actions scope. */
+  async claimSource(workerId:string,leaseSeconds:number):Promise<unknown|null>{
+    const response=await this.post("/internal/builds/source/claim",{workerId,leaseSeconds});
+    if(response.status===204)return null;
+    const body=z.strictObject({job:z.unknown()}).parse(response.value);
+    return body.job;
+  }
+  async heartbeatSource(job:SourceBuildClaim,leaseSeconds:number):Promise<boolean>{
+    const response=await this.post(
+      "/internal/builds/source/"+encodeURIComponent(job.job_id)+"/heartbeat",
+      {workerId:job.lease_worker,leaseToken:job.lease_token,
+        leaseEpoch:job.lease_epoch,leaseSeconds},
+    );
+    return z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
+  }
+  async producedSource(job:SourceBuildClaim,result:SourceProducerResult):Promise<boolean>{
+    const response=await this.post(
+      "/internal/builds/source/"+encodeURIComponent(job.job_id)+"/produced",
+      {workerId:job.lease_worker,leaseToken:job.lease_token,
+        leaseEpoch:job.lease_epoch,result},
+    );
+    return z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
+  }
+  async failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"):Promise<boolean>{
+    const response=await this.post(
+      "/internal/builds/source/"+encodeURIComponent(job.job_id)+"/fail",
+      {workerId:job.lease_worker,leaseToken:job.lease_token,
+        leaseEpoch:job.lease_epoch,code},
+    );
+    return z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
   }
 
   private async post(path: string, body: unknown): Promise<{ status: number; value: unknown }> {

@@ -4,6 +4,8 @@ import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js";
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
+import { D1SourceReleaseBuildQueue, createSourceReleaseOperatorRoutes, createSourceReleaseWorkerRoutes } from "./source-release-builds.js";
+import { SourceProducerResultSchema } from "@praetorium/contracts";
 import { createScheduledHandler } from "./scheduled.js";
 import type { ExecutionContext } from "hono";
 import { notifyWorkAvailable, type WorkNotificationEnv } from "./work-notifications.js";
@@ -101,6 +103,27 @@ function composeServices(env: ControlPlaneEnv) {
           notifyWorkAvailable: notifyWork,
         })
       : undefined;
+  const sourceBuilds = releases && env.BUILD_WORKER_AUTH_TOKEN
+    ? new D1SourceReleaseBuildQueue(env.CONTROL_PLANE_DB) : undefined;
+  const progressProduced = async () => {
+    if(!sourceBuilds || !releases)return;
+    for(const job of await sourceBuilds.listProduced()){
+      try {
+        const result=SourceProducerResultSchema.parse(JSON.parse(job.result_json));
+        const decision=await releases.admitSourceRelease(job,result);
+        if(decision.kind==="admitted"){
+          await sourceBuilds.markAdmitted(job.job_id,decision.candidate.id);
+          await releases.progressAdmittedSourceRelease();
+        }else if(decision.kind==="denied"){
+          await sourceBuilds.rejectProduced(job.job_id,"ADMISSION_DENIED");
+        }
+        // A retryable registry/provider outage leaves this durable row as
+        // 'produced'; the existing Control Plane recovery cron can retry.
+      }catch{
+        // Do not manufacture an admitted candidate if evidence is unavailable.
+      }
+    }
+  };
   const app = createControlPlaneApp({
     notifyWorkAvailable: notifyWork,
     ...(env.GATEWAY_SERVICE && env.PROVISIONER_AUTH_TOKEN
@@ -154,6 +177,20 @@ function composeServices(env: ControlPlaneEnv) {
           }),
         }
       : {}),
+    ...(sourceBuilds ? {
+      sourceReleaseOperator: createSourceReleaseOperatorRoutes({
+        queue: sourceBuilds,
+        operatorActorId: (JSON.parse(required(env.RELEASE_POLICY_JSON)) as {operatorActorId:string}).operatorActorId,
+        notifyBuild: async () => { await notifyWork("build"); },
+      }),
+      sourceReleaseWorker: createSourceReleaseWorkerRoutes({
+        queue: sourceBuilds,
+        workerId: required(env.BUILD_WORKER_ID),
+        serviceToken: required(env.BUILD_WORKER_AUTH_TOKEN),
+        verifyProduced: (job, proof) => releases!.sourceProofVerifier.verify(job,proof).then(()=>undefined),
+        afterProduced: progressProduced,
+      }),
+    } : {}),
     ...(releases
       ? {
           operatorAdmission: releases.operatorReleaseAdmission,
@@ -287,7 +324,7 @@ function composeServices(env: ControlPlaneEnv) {
         }
       : {}),
   });
-  return { app, releases, buildServices };
+  return { app, releases, buildServices, progressProduced };
 }
 export function composeControlPlane(env: ControlPlaneEnv) {
   return composeServices(env).app;
@@ -336,7 +373,9 @@ export class RepositoryCoordinator {
 export default {
   scheduled: createScheduledHandler<ControlPlaneEnv>(async (env) => {
     await new D1RuntimeGitCredentialStore(env.CONTROL_PLANE_DB).purgeExpired(Date.now(), 64);
-    return composeServices(env).releases?.scheduled ?? null;
+    const composed=composeServices(env);
+    await composed.progressProduced();
+    return composed.releases?.scheduled ?? null;
   }),
   async fetch(
     request: Request,

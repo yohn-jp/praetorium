@@ -192,6 +192,7 @@ export function composeBuildServices(
     canaryConfigurations: createConfigurations(true),
     registry,
     admission,
+    sourceBuilderKeys: policy.builderKeys,
     resourceLimits: policy.runtimeResourceLimits,
     cache,
     cacheStore,

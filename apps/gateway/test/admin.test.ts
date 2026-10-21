@@ -30,6 +30,14 @@ async function fixture(userId = "213253858") {
       return request.method === "GET"
         ? Response.json({ items: [], nextCursor: null })
         : Response.json({ release: { id: "rel_test", status: "candidate" } }, { status: 201 });
+    if (path === "/v1/operator/source-builds") {
+      if (request.method === "GET") return Response.json({items:[]});
+      const value = gatewayCalls[gatewayCalls.length-1]?.body as {sourceId:string;githubReleaseId:number;sourceTag:string;sourceRevision:string;releaseVersion:string};
+      return Response.json({job:{id:"sr_00000000-0000-4000-a000-000000000001",sourceId:value.sourceId,releaseId:value.githubReleaseId,
+        tag:value.sourceTag,commit:value.sourceRevision,version:value.releaseVersion,state:"queued",attempt:0,error:null,admittedReleaseId:null},
+        duplicate:gatewayCalls.filter(x=>x.path==="/v1/operator/source-builds"&&x.method==="POST").length>1},
+        {status:202});
+    }
     if (path === "/v1/operator/releases/audit")
       return Response.json({ events: [] });
     if (path === "/v1/operator/releases/rel_test/retry")
@@ -157,7 +165,7 @@ describe("operator-only admin origin", () => {
     expect(html).not.toContain("Release manifest (JSON)");
     expect(html).not.toContain("operator-internal-service-token-not-a-browser-secret");
     expect(f.gatewayCalls.map(x => x.path)).toEqual([
-      "/v1/operator/releases", "/v1/operator/releases/audit",
+      "/v1/operator/releases", "/v1/operator/releases/audit", "/v1/operator/source-builds",
     ]);
     expect((await handleAdminHost(new Request(ADMIN + "/api/credentials", {
       headers: { Cookie: cookies.raw },
@@ -170,8 +178,7 @@ describe("operator-only admin origin", () => {
     const cookies = cookiesFrom(await complete());
     Object.assign(f.context.env, {PRAETORIUM_RELEASE_SOURCES_JSON: JSON.stringify([{
       id:"scriptorium",label:"Scriptorium",githubRepository:"yohn-jp/scriptorium",
-      workflowRepository:"yohn-jp/praetorium",
-      workflowFile:"scriptorium-producer-verification.yml",adapter:"scriptorium-v1",
+      adapter:"scriptorium-v1",
     }])});
     Object.assign(f.context, { githubUserTokens: { accessTokenFor: async () => "operator-oauth-token" } });
     const SHA = "a".repeat(40);
@@ -187,14 +194,10 @@ describe("operator-only admin origin", () => {
         body:request.method==="POST"?await request.json():null});
       if(url.pathname==="/repos/yohn-jp/scriptorium/releases")
         return Response.json([selected,{...selected,id:5,tag_name:"perf-wave1",prerelease:true}]);
-      if(url.pathname==="/repos/yohn-jp/praetorium/actions/workflows/scriptorium-producer-verification.yml/runs")
-        return Response.json({workflow_runs:[]});
       if(url.pathname==="/repos/yohn-jp/scriptorium/releases/416422590")
         return Response.json(selected);
       if(url.pathname==="/repos/yohn-jp/scriptorium/git/ref/tags/v0.2.1")
         return Response.json({object:{type:"commit",sha:SHA}});
-      if(url.pathname==="/repos/yohn-jp/praetorium/actions/workflows/scriptorium-producer-verification.yml/dispatches")
-        return new Response(null,{status:204});
       return Response.json({message:"not found"},{status:404});
     }));
     const view = await handleAdminHost(new Request(ADMIN,{headers:{Cookie:cookies.raw}}),f.context);
@@ -216,22 +219,18 @@ describe("operator-only admin origin", () => {
       sourceId:"scriptorium",releaseId:"416422590",
     }),f.context);
     expect(dispatched.status).toBe(303);
-    expect(dispatched.headers.get("Location")).toContain("Producer%20dispatched");
-    const dispatchRequests=githubRequests.filter(x=>x.url.endsWith("/dispatches"));
-    expect(dispatchRequests).toHaveLength(1);
-    expect(dispatchRequests[0]?.body).toEqual({
-      ref:"main", inputs: {
-        source_revision:SHA,source_tag:"v0.2.1",release_version:"0.2.1",
-        publish_public_producer_inputs:"true",
-      },
-    });
+    expect(dispatched.headers.get("Location")).toContain("Source%20build%20queued");
+    expect(githubRequests.some(x=>x.url.includes("/actions/"))).toBe(false);
+    const request=f.gatewayCalls.find(x=>x.path==="/v1/operator/source-builds"&&x.method==="POST");
+    expect(request?.body).toEqual({sourceId:"scriptorium",githubReleaseId:416422590,
+      sourceTag:"v0.2.1",sourceRevision:SHA,releaseVersion:"0.2.1"});
     const duplicate=await handleAdminHost(post("/source-releases/deploy",cookies,{
       sourceId:"scriptorium",releaseId:"416422590",
     }),f.context);
     expect(duplicate.status).toBe(303);
-    expect(duplicate.headers.get("Location")).toContain("already%20selected");
-    expect(githubRequests.filter(x=>x.url.endsWith("/dispatches"))).toHaveLength(1);
-    expect(f.gatewayCalls).toHaveLength(2); // Only authenticated platform ledger/audit reads.
+    expect(duplicate.headers.get("Location")).toContain("already%20accepted");
+    expect(githubRequests.some(x=>x.url.includes("/actions/"))).toBe(false);
+    expect(f.gatewayCalls.filter(x=>x.path==="/v1/operator/source-builds"&&x.method==="POST")).toHaveLength(2);
   });
 
   it("offers retry only for the canonical failed pre-runtime Canary build", async () => {
@@ -249,6 +248,7 @@ describe("operator-only admin origin", () => {
     });
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input)).pathname;
+      if (path === "/v1/operator/source-builds") return Response.json({ items: [] });
       if (path === "/v1/operator/releases")
         return Response.json({ items: [
           candidate("rel_ineligible", "canary_health_missing"),

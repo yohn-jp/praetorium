@@ -6,7 +6,7 @@ import {
   logoutAdmin,
 } from "./session.js";
 import { generateToken } from "@praetorium/auth";
-import { dispatchPublishedRelease, listRegisteredSources, sourceReleaseCards, type SourceReleaseView } from "./release-sources.js";
+import { dispatchPublishedRelease, listRegisteredSources, sourceReleaseCards, type SourceReleaseView, type SourceBuildStatus } from "./release-sources.js";
 
 const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 
@@ -130,7 +130,7 @@ function adminPage(title: string, content: string, csrf: string): Response {
 }
 function overview(
   items: readonly Summary[], events: readonly Audit[], csrf: string, cursor: string | null,
-  stableReleaseId: string | null, notice: string | null, sourceViews: readonly SourceReleaseView[],
+  stableReleaseId: string | null, notice: string | null, sourceViews: readonly SourceReleaseView[], sourceBuilds: readonly SourceBuildStatus[],
 ): Response {
   const available = items.filter(item => item.release.status === "available").length;
   const waiting = items.filter(item => item.release.status !== "available").length;
@@ -150,7 +150,7 @@ function overview(
     '<header class="admin-section-head"><div><span class="admin-kicker">01 / GITHUB RELEASES</span>' +
     '<h2>Deploy a published version</h2></div></header>' +
     '<p class="admin-subtext">Select a published GitHub Release. Praetorium resolves its exact commit and runs the signed Producer, OCI admission, Canary and Stable promotion. The GitHub Actions result alone does not mean Stable.</p>' +
-    sourceReleaseCards(sourceViews,csrf) + '</section>' +
+    sourceReleaseCards(sourceViews,csrf,sourceBuilds) + '</section>' +
     '<section class="admin-section" aria-labelledby="admin-releases-title"><header class="admin-section-head">' +
     '<div><span class="admin-kicker">02 / PLATFORM RELEASES</span><h2 id="admin-releases-title">Release ledger</h2></div>' +
     '<a class="button button-secondary" href="/">Refresh status</a></header>' + rows + next + '</section>' +
@@ -210,14 +210,14 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
       try {
         const result = await dispatchPublishedRelease(context,session.actor.userId,sources[0]!,Number(releases[0]));
         if (result.kind === "forbidden") return renderError(context, session.csrfToken,
-          "GitHub App Actions:write permission or service release authority is unavailable", 403);
+          "Operator authorization or GitHub Release access is unavailable", 403);
         if (result.kind === "unavailable") return renderError(context, session.csrfToken,
-          "GitHub Release dispatch unavailable. Check Actions access and workflow configuration.", 503);
-        if (result.kind === "duplicate") return localRedirect("/?notice=" +
-          encodeURIComponent("This GitHub Release was already selected for a Producer build. Check its Actions status."));
+          "Praetorium source build admission unavailable. Check Control Plane and Build Worker.", 503);
+        if (result.kind === "conflict") return renderError(context, session.csrfToken,
+          "GitHub Release source identity changed. Refresh releases.", 409);
         return localRedirect("/?notice=" + encodeURIComponent(
-          "Producer dispatched for " + result.tag + " (" + result.commit.slice(0,12) +
-          "). Build/sign/publish/admission and Canary/Stable now run through their verified stages.",
+          result.duplicate ? "This source build was already accepted by Control Plane."
+            : "Source build queued in Praetorium (" + result.job.id + "). Verify its worker progress below.",
         ));
       } catch {
         return renderError(context, session.csrfToken, "Release dispatch authority unavailable", 503);
@@ -263,23 +263,25 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
   if (cursor && (cursor.length > 512 || !/^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(cursor)))
     return response(400, "Invalid cursor");
   try {
-    const [catalog, audit, sourceViews] = await Promise.all([
+    const [catalog, audit, sourceViews, sourceBuildStatus] = await Promise.all([
       controlPlane(context, session.actor.userId, "GET",
         "/v1/operator/releases" + (cursor ? "?cursor=" + encodeURIComponent(cursor) : "")),
       controlPlane(context, session.actor.userId, "GET", "/v1/operator/releases/audit"),
       listRegisteredSources(context, session.actor.userId),
+      controlPlane(context, session.actor.userId, "GET", "/v1/operator/source-builds"),
     ]);
-    if (catalog.status !== 200 || audit.status !== 200)
+    if (catalog.status !== 200 || audit.status !== 200 || sourceBuildStatus.status !== 200)
       return renderError(context, session.csrfToken,
         "Release authority unavailable: " + errorCode(catalog.status !== 200 ? catalog.data : audit.data), 503);
     const data = catalog.data as { items?: Summary[]; nextCursor?: string | null;
       stableChannel?: { currentReleaseId: string | null; revision: number } | null };
     const audited = audit.data as { events?: Audit[] };
-    if (!Array.isArray(data?.items) || !Array.isArray(audited?.events))
+    const sourceQueue = sourceBuildStatus.data as { items?: SourceBuildStatus[] };
+    if (!Array.isArray(data?.items) || !Array.isArray(audited?.events) || !Array.isArray(sourceQueue?.items))
       return renderError(context, session.csrfToken, "Invalid release authority response", 503);
     return overview(data.items.slice(0, 25), audited.events.slice(0, 25), session.csrfToken,
       data.nextCursor ?? null, data.stableChannel?.currentReleaseId ?? null,
-      url.searchParams.get("notice")?.slice(0, 200) ?? null, sourceViews);
+      url.searchParams.get("notice")?.slice(0, 200) ?? null, sourceViews, sourceQueue.items.slice(0,40));
   } catch {
     return renderError(context, session.csrfToken, "Control Plane temporarily unavailable", 503);
   }

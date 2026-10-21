@@ -60,5 +60,26 @@ if (process.argv.includes("--write")) {
   console.error(
     "Contract JSON schema drift: regenerate with node packages/contracts/scripts/schemas.mjs --write",
   );
+  // Surface the first structural difference to make a failed CI actionable.
+  // Never relax the comparison or write generated files in verification mode.
+  const actual = JSON.parse(await readFile(target, "utf8"));
+  function firstDifference(expected, received, location = "root") {
+    if (JSON.stringify(expected) === JSON.stringify(received)) return null;
+    if (expected && received && typeof expected === "object" && typeof received === "object") {
+      const expectedKeys = Object.keys(expected);
+      const receivedKeys = Object.keys(received);
+      if (JSON.stringify(expectedKeys) !== JSON.stringify(receivedKeys)) {
+        const at = expectedKeys.findIndex((key, index) => key !== receivedKeys[index]);
+        return { location, at, expected: expectedKeys.slice(Math.max(0,at-3),at+4),
+          received: receivedKeys.slice(Math.max(0,at-3),at+4) };
+      }
+      for (const key of expectedKeys) {
+        const difference = firstDifference(expected[key], received[key], location + "." + key);
+        if (difference) return difference;
+      }
+    }
+    return { location, expected, received };
+  }
+  console.error("First schema mismatch:", JSON.stringify(firstDifference(schemas, actual)).slice(0, 1600));
   process.exitCode = 1;
 } else console.log("Contract structural JSON schemas match canonical generation");

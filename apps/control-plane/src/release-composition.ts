@@ -45,6 +45,8 @@ export function composeReleaseServices(input: {
   operations: OperationService;
   policyJson: string;
   operatorToken: string;
+  /** Existing authenticated Gateway service binding, never exposed to browsers. */
+  gatewayServiceSecret?: string;
   notifyWorkAvailable?: WorkNotificationDispatcher;
 }) {
   const policy = Policy.parse(JSON.parse(input.policyJson));
@@ -65,13 +67,21 @@ export function composeReleaseServices(input: {
     ...(input.notifyWorkAvailable
       ? { notifyWorkAvailable: input.notifyWorkAvailable }
       : {}),
-    authorizeOperator: async (headers) =>
-      (await equalSecret(
+    authorizeOperator: async (headers) => {
+      // The existing machine operator credential remains independent. The
+      // admin console delegates only the configured operator identity over the
+      // already-authenticated internal Gateway service binding.
+      if (await equalSecret(
         headers.get("Authorization")?.replace(/^Bearer /u, "") ?? "",
         input.operatorToken,
-      ))
-        ? { actorId: policy.operatorActorId }
-        : null,
+      )) return { actorId: policy.operatorActorId };
+      if (
+        input.gatewayServiceSecret &&
+        headers.get("X-Praetorium-Admin-Actor") === policy.operatorActorId &&
+        await equalSecret(headers.get("X-Control-Plane-Gateway-Auth") ?? "", input.gatewayServiceSecret)
+      ) return { actorId: policy.operatorActorId };
+      return null;
+    },
     registry: input.builds.registry,
     provenance: new SigstoreProvenanceVerifier({
       signerIdentityAllowlist: policy.signerIdentityAllowlist.map(

@@ -5,6 +5,9 @@ import { SourceProofVerificationError } from "./source-producer-verifier.js";
 import { metadataFailureReason } from "./http-failure.js";
 import {
   SourceProducerResultSchema,
+  SOURCE_PRODUCER_RESULT_MAX_BYTES,
+  SOURCE_PRODUCER_REQUEST_MAX_BYTES,
+  sourceProducerResultByteLength,
   readBoundedJson,
   RequestTooLargeError,
   canonicalSourceProof,
@@ -298,7 +301,8 @@ export class D1SourceReleaseBuildQueue {
     const current=await this.byId(jobId);
     if(!current)return false;
     const json=canonicalSourceProof(result);
-    if(json.length>65536)throw new RangeError("Source release evidence exceeds bound");
+    if(sourceProducerResultByteLength(result)>SOURCE_PRODUCER_RESULT_MAX_BYTES)
+      throw new RangeError("Source release evidence exceeds bound");
     if((current.state==="produced"||current.state==="admitted"||current.state==="failed") &&
       current.lease_epoch===input.leaseEpoch && current.result_json!==null) {
       try {
@@ -582,7 +586,9 @@ export function createSourceReleaseWorkerRoutes(input:{
       workerId:z.string().regex(WORKER),leaseToken:z.string().uuid(),
       leaseEpoch:z.number().int().positive().safe(),
       result:SourceProducerResultSchema,
-    }).parse(await readBoundedJson(c.req.raw,70*1024));
+    }).parse(await readBoundedJson(c.req.raw,SOURCE_PRODUCER_REQUEST_MAX_BYTES));
+    if(sourceProducerResultByteLength(data.result)>SOURCE_PRODUCER_RESULT_MAX_BYTES)
+      return c.json({error:{code:"REQUEST_TOO_LARGE"}},413);
     if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
     const current=await input.queue.byId(c.req.param("jobId"));
     if(!current)return c.json({error:{code:"SOURCE_BUILD_LEASE_CONFLICT"}},409);

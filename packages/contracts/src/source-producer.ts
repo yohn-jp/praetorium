@@ -2,6 +2,9 @@ import { z } from "zod";
 import { BuildCatalogSchema, RuntimeMetadataSchema } from "./producer.js";
 import { ProducerRevisionSchema, ResolverRevisionSchema } from "./artifact-identity.js";
 
+export const SOURCE_PRODUCER_RESULT_MAX_BYTES = 65_536;
+export const SOURCE_PRODUCER_REQUEST_MAX_BYTES = 70 * 1024;
+
 /**
  * Producer evidence is signed by the existing trusted Build Worker Ed25519 key.
  * It is distinct from a composition attestation and cannot claim Stable on its own.
@@ -71,6 +74,9 @@ export function canonicalSourceProof(value: unknown): string {
   const json = JSON.stringify(value);
   if (json === undefined) throw new TypeError("Proof contains unsupported data");
   return json;
+}
+export function sourceProducerResultByteLength(value: unknown): number {
+  return new TextEncoder().encode(canonicalSourceProof(value)).byteLength;
 }
 export async function sourceProofDigest(value: unknown): Promise<`sha256:${string}`> {
   const bytes = new TextEncoder().encode(canonicalSourceProof(value));

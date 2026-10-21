@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+import { createControlPlaneApp, type ControlPlaneDependencies } from "./app.js";
 import { D1SourceReleaseBuildQueue, createSourceReleaseOperatorRoutes, createSourceReleaseWorkerRoutes } from "./source-release-builds.js";
 
 const jobId = "sr_11111111-1111-4111-8111-111111111111";
@@ -16,6 +18,27 @@ function request(path: string, bytes: Uint8Array, headers: Record<string, string
 }
 
 describe("Source HTTP body admission", () => {
+  it("leaves internal Source body enforcement to its mounted route instead of the Gateway cap", async () => {
+    const source = new Hono();
+    source.post("/:jobId/produced", async c => c.json({ bytes: (await c.req.arrayBuffer()).byteLength }));
+    const app = createControlPlaneApp({
+      registry: null as unknown as ControlPlaneDependencies["registry"],
+      instances: null as unknown as ControlPlaneDependencies["instances"],
+      gatewaySecret: "g".repeat(40),
+      builds: {
+        queue: null as unknown as NonNullable<ControlPlaneDependencies["builds"]>["queue"],
+        serviceToken: token, workerId: "worker",
+      },
+      sourceReleaseWorker: source,
+    });
+    const bytes = new Uint8Array(66_000);
+    const response = await app.request(`/internal/builds/source/${jobId}/produced`, {
+      method: "POST", headers: { Authorization: "Bearer " + token, "Content-Length": String(bytes.length) }, body: bytes,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ bytes: bytes.length });
+  });
+
   it("reports a missing migration without leaking the provider error", async () => {
     const queue = new D1SourceReleaseBuildQueue({
       prepare: () => { throw new Error("D1 request failed", { cause: new Error("no such table: private_source_table") }); },

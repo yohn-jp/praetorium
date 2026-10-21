@@ -6,6 +6,7 @@ import {
   canonicalSourceProof,
   SOURCE_PRODUCER_REQUEST_MAX_BYTES,
   SOURCE_PRODUCER_RESULT_MAX_BYTES,
+  SourceProducerResultSchema,
   sourceProducerResultByteLength,
   sourceProofDigest,
 } from "@praetorium/contracts";
@@ -53,7 +54,7 @@ async function sourceResult(jobId: string, extraUnicodePathChars = 0) {
     },
     shutdownTimeoutSeconds: 25,
   } as const;
-  return {
+  return SourceProducerResultSchema.parse({
     statement: {
       schemaVersion: 1,
       jobId,
@@ -72,7 +73,7 @@ async function sourceResult(jobId: string, extraUnicodePathChars = 0) {
     signature: { algorithm: "Ed25519", keyId: "test-builder", signature: "dGVzdA==" },
     catalog,
     runtimeMetadata,
-  };
+  });
 }
 
 class SQLiteD1 implements D1Database {

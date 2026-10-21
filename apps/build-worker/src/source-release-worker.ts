@@ -4,6 +4,7 @@ import type { BuildWorkerConfig } from "./config.js";
 import {
   buildSourceRelease,
   SourceBuildChangedError,
+  SourceBuildVerificationError,
   type SourceBuildClaim,
 } from "./source-producer-builder.js";
 
@@ -88,7 +89,8 @@ export class SourceReleaseBuildWorker {
       }catch(error){
         executing=false;
         if(!lost&&!controller.signal.aborted){
-          const code=error instanceof SourceBuildChangedError?error.code:"SOURCE_BUILD_FAILED";
+          const code=error instanceof SourceBuildChangedError || error instanceof SourceBuildVerificationError
+            ?error.code:"SOURCE_BUILD_FAILED";
           await this.client.failSource(job,code).catch(()=>false);
         }
         return true;

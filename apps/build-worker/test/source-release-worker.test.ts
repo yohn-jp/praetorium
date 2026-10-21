@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SourceProducerResult } from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "../src/config.js";
-import { SourceBuildChangedError } from "../src/source-producer-builder.js";
+import {
+  SourceBuildChangedError,
+  SourceBuildVerificationError,
+} from "../src/source-producer-builder.js";
 import {
   SourceReleaseBuildWorker,
   type SourceBuildQueueClient,
@@ -145,6 +148,22 @@ describe("Source Release Worker lease lifecycle", () => {
 
     await expect(worker.runOnce()).resolves.toBe(true);
     expect(client.failSource).toHaveBeenCalledWith(JOB, "SOURCE_CHANGED");
+    expect(client.producedSource).not.toHaveBeenCalled();
+  });
+
+  it("terminalizes malformed or oversized builder evidence as verification failure", async () => {
+    const client: SourceBuildQueueClient = {
+      claimSource: vi.fn(async () => JOB),
+      heartbeatSource: vi.fn(async () => true),
+      producedSource: vi.fn(async () => true),
+      failSource: vi.fn(async () => true),
+    };
+    const worker = new SourceReleaseBuildWorker(CONFIG, client, async () => {
+      throw new SourceBuildVerificationError();
+    });
+
+    await expect(worker.runOnce()).resolves.toBe(true);
+    expect(client.failSource).toHaveBeenCalledWith(JOB, "SOURCE_VERIFICATION_FAILED");
     expect(client.producedSource).not.toHaveBeenCalled();
   });
 });

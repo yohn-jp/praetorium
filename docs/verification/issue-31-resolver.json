@@ -1,0 +1,189 @@
+{
+  "schemaVersion": "praetorium.issue31.resolver-generation-evidence/v1",
+  "generatedAt": "2026-10-21T15:54:45Z",
+  "source": {
+    "project": "Scriptorium",
+    "tag": "v0.2.1",
+    "revision": "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
+    "sourceTreeCleanInSuccessfulBuild": true,
+    "nodeBaseImage": "docker.io/library/node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "pnpmVersion": "12.10.1"
+  },
+  "dockerfileInputs": {
+    "upstreamSourceDockerfileSha256": "005b540188d5337e103bb4e5aba17c0ae4be3439c17d02b170a6b3d9a28ce350",
+    "adaptedNetworkFoundationDockerfileSha256": "73bf0ffc2bfd834c54556331a51de79dc857578ef2e70232be773d75dc09c9f6",
+    "adaptedResolverTargetDockerfileSha256": "7c563979d35b23fcf9419f3d050b8d2f87770a513a2157efebca2e23a0a166e0",
+    "upstreamSourceDockerignoreSha256": "74f8c3802e47bd2c62aef7170018255e11e26321e74657a7f8fdd107bdf958f3",
+    "metadataDockerfileSpecificIgnoreSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scope": "Metadata-only context ignore is empty for complete Git provenance input; upstream source Dockerfile and regular source ignore are unchanged."
+  },
+  "gitCleanDiagnostic": {
+    "attempt": "failed context used an ignore set that omitted tracked metadata paths",
+    "expectedRevision": "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
+    "actualRevision": "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
+    "revisionMatched": true,
+    "gitAvailable": true,
+    "gitStatusExit": 0,
+    "clean": false,
+    "changedPathCount": 48,
+    "statusCodes": [" D"],
+    "firstChangedPaths": [
+      ".env.example",
+      ".github/workflows/publish-oci.yml",
+      "docs/HOSTED-DEPLOYMENT.md",
+      "docs/architecture/CORE.md",
+      "docs/architecture/FULL-MIGRATION.md",
+      "docs/architecture/MIGRATION.md",
+      "docs/goals/DESKTOP-MOBILE-UI-V1.md",
+      "docs/hosted-producer-attestation.md",
+      "docs/migration/CAMPAIGN.json",
+      "docs/migration/FULL-MIGRATION-PLAN.md",
+      "docs/migration/P00-INVENTORY.md",
+      "docs/migration/P08-MCP-INTEGRATION.md",
+      "docs/migration/SOL-GOAL.md",
+      "docs/migration/evidence/P05.json",
+      "docs/migration/evidence/P06.json",
+      "docs/migration/evidence/P07.json",
+      "docs/migration/evidence/P08-API.json",
+      "docs/migration/evidence/P08-MCP.json",
+      "docs/migration/evidence/P09.json",
+      "docs/migration/evidence/P10.json"
+    ],
+    "diagnosticTruncated": true,
+    "correctedForSuccessfulRuns": "metadata-specific Dockerfile ignore set to zero bytes; successful producer provenance reports clean=true"
+  },
+  "runs": [
+    {
+      "state": "succeeded",
+      "startedAt": "2026-10-21T15:44:15.580Z",
+      "finishedAt": "2026-10-21T15:45:17.040Z",
+      "durationMs": 61461,
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null,
+      "timeoutMinutes": 90,
+      "target": "issue31-resolver-output",
+      "exporter": "local",
+      "publish": false,
+      "sourceRevision": "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
+      "outputFiles": [
+        {
+          "name": "build-catalog.mjs",
+          "bytes": 30156,
+          "sha256": "2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18"
+        },
+        {
+          "name": "build-catalog.d.mts",
+          "bytes": 812,
+          "sha256": "4c5c02dcf633dea98e3a984b5e0a296aabb884bedab2b80d33258a5dae06f6b0"
+        },
+        {
+          "name": "provenance.json",
+          "bytes": 3140,
+          "sha256": "26993976c30fcfb0eb30629c61e6262da345c55dcace23a987b53ad8331156ba"
+        }
+      ],
+      "outputInventoryValid": true
+    },
+    {
+      "state": "succeeded",
+      "startedAt": "2026-10-21T15:46:19.379Z",
+      "finishedAt": "2026-10-21T15:46:57.363Z",
+      "durationMs": 37986,
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null,
+      "timeoutMinutes": 90,
+      "target": "issue31-resolver-output",
+      "exporter": "local",
+      "publish": false,
+      "sourceRevision": "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
+      "outputFiles": [
+        {
+          "name": "build-catalog.mjs",
+          "bytes": 30156,
+          "sha256": "2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18"
+        },
+        {
+          "name": "build-catalog.d.mts",
+          "bytes": 812,
+          "sha256": "4c5c02dcf633dea98e3a984b5e0a296aabb884bedab2b80d33258a5dae06f6b0"
+        },
+        {
+          "name": "provenance.json",
+          "bytes": 3140,
+          "sha256": "26993976c30fcfb0eb30629c61e6262da345c55dcace23a987b53ad8331156ba"
+        }
+      ],
+      "outputInventoryValid": true
+    }
+  ],
+  "publication": {
+    "registryPush": false,
+    "releaseCreated": false,
+    "serviceRollout": false
+  },
+  "acceptanceLevel": "ISOLATED_RESOLVER_GENERATION_ONLY",
+  "buildkit": {
+    "target": "issue31-resolver-output",
+    "exporter": "local",
+    "publish": false,
+    "imageExportOrRegistryPush": false,
+    "fullSourceGoStageGates": {
+      "status": "NOT_CHECKED",
+      "publicOrigins": ["proxy.golang.org", "sum.golang.org", "storage.googleapis.com"],
+      "reason": "Resolver-only target is FROM source and does not execute the separate Go frontend-build stage."
+    },
+    "clientVersion": "buildctl github.com/moby/buildkit v0.30.0 dd2170e156c9633da1b2d1a58a6188e3f7d36fa4",
+    "daemonVersion": "NOT_RECORDED_IN_THIS_EVIDENCE"
+  },
+  "outputs": {
+    "files": [
+      {
+        "name": "build-catalog.mjs",
+        "bytes": 30156,
+        "rawSha256": "2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18",
+        "secondRunRawSha256": "2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18",
+        "byteIdentical": true
+      },
+      {
+        "name": "build-catalog.d.mts",
+        "bytes": 812,
+        "rawSha256": "4c5c02dcf633dea98e3a984b5e0a296aabb884bedab2b80d33258a5dae06f6b0",
+        "secondRunRawSha256": "4c5c02dcf633dea98e3a984b5e0a296aabb884bedab2b80d33258a5dae06f6b0",
+        "byteIdentical": true
+      },
+      {
+        "name": "provenance.json",
+        "bytes": 3140,
+        "rawSha256": "26993976c30fcfb0eb30629c61e6262da345c55dcace23a987b53ad8331156ba",
+        "secondRunRawSha256": "26993976c30fcfb0eb30629c61e6262da345c55dcace23a987b53ad8331156ba",
+        "byteIdentical": true
+      }
+    ],
+    "allArtifactsByteIdenticalAcrossRuns": true,
+    "provenance": {
+      "producerRevision": "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
+      "sourceTreeClean": true,
+      "bundleDigest": "sha256:2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18",
+      "declarationDigest": "sha256:4c5c02dcf633dea98e3a984b5e0a296aabb884bedab2b80d33258a5dae06f6b0",
+      "trustedModuleDigest": "sha256:7a223ada68d3f08819ea330da85faa1efa0c89c59af35d850dd16200a516f3c2",
+      "canonicalProvenanceJsonSha256DerivedWithGeneratorCanonicalJson": "46dc7f209c1a074b5acdeb8a7111006cfb20e3c40f219bc3edbe910be2209cac"
+    },
+    "vendoredBundle": "plugins/scriptorium/vendor/build-catalog.mjs",
+    "vendoredDeclaration": "plugins/scriptorium/vendor/build-catalog.d.mts",
+    "vendoredProvenance": "plugins/scriptorium/vendor/provenance-3189a85bfa28ddd160600a0188ab3ccfa91755e4.json"
+  },
+  "cleanup": {
+    "status": "cleaned-and-verified",
+    "verifiedAt": "2026-10-21T15:54:45Z",
+    "liveBuildctlBeforeCleanup": 0,
+    "liveBuildctlAfterCleanup": 0,
+    "processScanErrors": 0,
+    "removedTempDirectoryCount": 29,
+    "finalRootContentsVerifiedAgainstRetainedAllowlist": true,
+    "logsAndRunnerScriptsRetained": true,
+    "sharedBuildKitCacheTouched": false,
+    "combinedScriptNote": "The cleanup command removed only allowlisted directories; its first post-check reused pre-cleanup expected entries and returned exit 4. A separate read-only final-state verifier passed with no problems."
+  }
+}

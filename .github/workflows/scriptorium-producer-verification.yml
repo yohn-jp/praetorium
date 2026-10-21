@@ -240,6 +240,7 @@ jobs:
       scriptorium_revision: ${{ inputs.source_revision }}
       source_tag: ${{ inputs.source_tag }}
       release_version: ${{ inputs.release_version }}
+      admit_release: true
       producer_run_attempt: ${{ needs.build-producer.outputs.build-attempt }}
       metadata_artifact_name: ${{ needs.build-producer.outputs.metadata-artifact-name }}
       signed_artifact_name: ${{ needs.sign-producer-metadata.outputs.signed-metadata-artifact-name }}

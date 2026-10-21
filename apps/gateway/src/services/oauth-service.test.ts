@@ -49,7 +49,9 @@ function ephemeralStore() {
     return new Response(null, { status: 404 });
   });
   return {
-    namespace: { idFromName: (s: string) => s, get: () => ({ fetch: fetcher }) },
+    namespace: { idFromName: (s: string) => s, get: () => ({
+      fetch: (input: string | Request, init?: RequestInit) => fetcher(new Request(input, init)),
+    }) },
     fetcher, state,
   };
 }

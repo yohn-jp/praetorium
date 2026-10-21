@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SourceProducerResult } from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "../src/config.js";
+import { SourceBuildChangedError } from "../src/source-producer-builder.js";
 import {
   SourceReleaseBuildWorker,
   type SourceBuildQueueClient,
@@ -129,5 +130,21 @@ describe("Source Release Worker lease lifecycle", () => {
     expect(producerSignal?.aborted).toBe(true);
     expect(client.producedSource).not.toHaveBeenCalled();
     expect(client.failSource).not.toHaveBeenCalled();
+  });
+
+  it("terminalizes a moved or unpublished Release instead of retrying it as a build outage", async () => {
+    const client: SourceBuildQueueClient = {
+      claimSource: vi.fn(async () => JOB),
+      heartbeatSource: vi.fn(async () => true),
+      producedSource: vi.fn(async () => true),
+      failSource: vi.fn(async () => true),
+    };
+    const worker = new SourceReleaseBuildWorker(CONFIG, client, async () => {
+      throw new SourceBuildChangedError();
+    });
+
+    await expect(worker.runOnce()).resolves.toBe(true);
+    expect(client.failSource).toHaveBeenCalledWith(JOB, "SOURCE_CHANGED");
+    expect(client.producedSource).not.toHaveBeenCalled();
   });
 });

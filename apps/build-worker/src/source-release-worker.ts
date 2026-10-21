@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { SourceProducerResultSchema, type SourceProducerResult } from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "./config.js";
-import { buildSourceRelease, type SourceBuildClaim } from "./source-producer-builder.js";
+import {
+  buildSourceRelease,
+  SourceBuildChangedError,
+  type SourceBuildClaim,
+} from "./source-producer-builder.js";
 
 const ClaimSchema=z.strictObject({
   job_id:z.string().regex(/^sr_[0-9a-f-]{36}$/u),
@@ -32,7 +36,7 @@ export interface SourceBuildQueueClient {
   claimSource(workerId:string,leaseSeconds:number):Promise<unknown|null>;
   heartbeatSource(job:SourceBuildClaim,leaseSeconds:number):Promise<boolean>;
   producedSource(job:SourceBuildClaim,result:SourceProducerResult):Promise<boolean>;
-  failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"):Promise<boolean>;
+  failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"|"SOURCE_CHANGED"):Promise<boolean>;
 }
 export class SourceReleaseBuildWorker {
   constructor(
@@ -81,10 +85,11 @@ export class SourceReleaseBuildWorker {
         result=SourceProducerResultSchema.parse(
           await this.execute(job,this.config,controller.signal),
         );
-      }catch{
+      }catch(error){
         executing=false;
         if(!lost&&!controller.signal.aborted){
-          await this.client.failSource(job,"SOURCE_BUILD_FAILED").catch(()=>false);
+          const code=error instanceof SourceBuildChangedError?error.code:"SOURCE_BUILD_FAILED";
+          await this.client.failSource(job,code).catch(()=>false);
         }
         return true;
       }

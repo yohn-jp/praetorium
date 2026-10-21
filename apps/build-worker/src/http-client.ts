@@ -159,7 +159,7 @@ export class BuildQueueHttpClient implements BuildQueuePort {
     );
     return z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
   }
-  async failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"):Promise<boolean>{
+  async failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"|"SOURCE_CHANGED"):Promise<boolean>{
     const response=await this.post(
       "/internal/builds/source/"+encodeURIComponent(job.job_id)+"/fail",
       {workerId:job.lease_worker,leaseToken:job.lease_token,

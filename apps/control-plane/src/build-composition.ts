@@ -14,7 +14,7 @@ import {
 } from "@praetorium/persistence/d1";
 import { GhcrRegistryClient, RegistryError } from "@praetorium/ghcr/registry";
 import { OperatorBuilderSignatureVerifier } from "@praetorium/ghcr/builder-signature";
-import { normalizeComposition, type ProducerCatalogResolver } from "@praetorium/scriptorium";
+import { normalizeComposition, type ProducerCatalogResolver, type ProducerCatalogResolverRegistry } from "@praetorium/scriptorium";
 
 const Policy = z.strictObject({
   registryUrl: z.url().startsWith("https://"),
@@ -103,7 +103,7 @@ export function composeBuildServices(
   db: D1Database,
   policyJson: string,
   pullCredentialJson?: string,
-  producerResolver?: ProducerCatalogResolver,
+  producerResolver?: ProducerCatalogResolver | ProducerCatalogResolverRegistry,
 ) {
   const policy = Policy.parse(JSON.parse(policyJson));
   if (!policy.allowedRepositories.includes(policy.outputRepository))
@@ -155,7 +155,9 @@ export function composeBuildServices(
             targetPlatform: policy.targetPlatform,
             resourceProfileId: selection.resourceProfileId,
           },
-          producerResolver,
+          "contractVersion" in producerResolver
+            ? producerResolver
+            : producerResolver.resolve(release.catalog.producerRevision).resolver,
         );
         const requested = composition.selectedResourceProfile;
         const caps = policy.runtimeResourceLimits;

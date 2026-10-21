@@ -1,4 +1,4 @@
-import { createScriptoriumCatalogResolver } from "@praetorium/scriptorium";
+import { createScriptoriumCatalogResolverRegistry } from "@praetorium/scriptorium";
 import { BuildInputSchema } from "@praetorium/contracts";
 import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js";
@@ -71,7 +71,7 @@ function composeServices(env: ControlPlaneEnv) {
         env.CONTROL_PLANE_DB,
         env.BUILD_POLICY_JSON,
         env.REGISTRY_PULL_CREDENTIAL,
-        createScriptoriumCatalogResolver(),
+        createScriptoriumCatalogResolverRegistry(),
       )
     : undefined;
   const controlIssuer = env.RUNTIME_CONTROL_SIGNING_KEY

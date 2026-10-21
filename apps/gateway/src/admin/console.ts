@@ -126,7 +126,7 @@ function adminPage(title: string, content: string, csrf: string): Response {
 }
 function overview(
   items: readonly Summary[], events: readonly Audit[], csrf: string, cursor: string | null,
-  notice: string | null, error: string | null,
+  stableReleaseId: string | null, notice: string | null, error: string | null,
 ): Response {
   const latest = items.filter(item => item.release.status === "available").length;
   const waiting = items.filter(item => item.release.status !== "available").length;
@@ -141,6 +141,8 @@ function overview(
     '<div class="admin-metrics"><div><strong>' + items.length + '</strong><span>Visible releases</span></div>' +
     '<div><strong>' + latest + '</strong><span>Available</span></div>' +
     '<div><strong>' + waiting + '</strong><span>In admission / promotion</span></div></div>' +
+    '<div class="admin-stable"><span class="admin-kicker">CURRENT STABLE CHANNEL</span>' +
+    '<strong>' + escapeHtml(stableReleaseId ?? "No release promoted yet") + '</strong></div>' +
     '<section class="admin-section" aria-labelledby="admin-releases-title"><header class="admin-section-head">' +
     '<div><span class="admin-kicker">01 / REGISTRY</span><h2 id="admin-releases-title">Release ledger</h2></div>' +
     '<a class="button button-secondary" href="/">Refresh status</a></header>' + rows + next + '</section>' +
@@ -279,12 +281,14 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
     if (catalog.status !== 200 || audit.status !== 200)
       return renderError(context, session.csrfToken,
         "Release authority unavailable: " + errorCode(catalog.status !== 200 ? catalog.data : audit.data), 503);
-    const data = catalog.data as { items?: Summary[]; nextCursor?: string | null };
+    const data = catalog.data as { items?: Summary[]; nextCursor?: string | null;
+      stableChannel?: { currentReleaseId: string | null; revision: number } | null };
     const audited = audit.data as { events?: Audit[] };
     if (!Array.isArray(data?.items) || !Array.isArray(audited?.events))
       return renderError(context, session.csrfToken, "Invalid release authority response", 503);
     return overview(data.items.slice(0, 25), audited.events.slice(0, 25), session.csrfToken,
-      data.nextCursor ?? null, url.searchParams.get("notice")?.slice(0, 200) ?? null, null);
+      data.nextCursor ?? null, data.stableChannel?.currentReleaseId ?? null,
+      url.searchParams.get("notice")?.slice(0, 200) ?? null, null);
   } catch {
     return renderError(context, session.csrfToken, "Control Plane temporarily unavailable", 503);
   }

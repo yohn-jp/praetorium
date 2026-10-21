@@ -176,6 +176,15 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     clock: deps.clock,
     ids: deps.ids,
     authorize: deps.authorizeOperator,
+    listAudit: async () => {
+      // Report existing D1 operator release events; never duplicate audit state.
+      const rows = await deps.db.prepare(
+        "SELECT actor_id, action, outcome, occurred_at FROM audit_events WHERE actor_kind='operator' AND action LIKE 'release.%' ORDER BY occurred_at DESC LIMIT 25",
+      ).all<{ actor_id: string | null; action: string; outcome: string; occurred_at: number }>();
+      return rows.results.map((row) => ({
+        actorId: row.actor_id, action: row.action, outcome: row.outcome, occurredAt: row.occurred_at,
+      }));
+    },
     retry: {
       status: (releaseId) => releases.getReleaseRetryStatus(releaseId),
       replay: (command) => releases.findPreRuntimeCanaryRetry(command),

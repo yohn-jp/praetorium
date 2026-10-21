@@ -34,7 +34,11 @@ async function setup(options: { ready?: boolean; denied?: boolean; noArtifact?: 
       desiredState: "stopped", currentArtifactDigest: options.ready ? "sha256:abc" : null,
       desiredArtifactDigest: options.noArtifact ? null : "sha256:def", generation: 5 },
   };
-  const requestDesiredState = vi.fn(async (_id: string, _request: unknown) => ({}));
+  const requestDesiredState = vi.fn(async (id: string, request: unknown) => {
+    void id;
+    void request;
+    return {};
+  });
   const consume = vi.fn(async () => !options.rateLimited);
   const checkBoundAccess = vi.fn(async () => ({
     status: options.denied ? "denied" : "allowed", repositoryId: 482901, instanceId: INSTANCE,

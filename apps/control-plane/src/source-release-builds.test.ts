@@ -2,12 +2,13 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
-import { sourceProofDigest } from "@praetorium/contracts";
+import { canonicalSourceProof, sourceProofDigest } from "@praetorium/contracts";
 import catalogFixture from "../../../plugins/scriptorium/test/fixtures/build-catalog.v1.fixture.json" with { type: "json" };
 import {
   createSourceReleaseOperatorRoutes,
   createSourceReleaseWorkerRoutes,
   D1SourceReleaseBuildQueue,
+  publicSourceJob,
   SourceRevisionConflict,
   SourceRetryConflict,
   type SourceJobInput,
@@ -230,6 +231,59 @@ describe("source Release build queue against migrated SQLite D1", () => {
     expect(reclaimed).toMatchObject({ attempt: 1, lease_epoch: expired!.lease_epoch + 1 });
   });
 
+  it("accepts the worker's 15-second lease through claim and heartbeat, while rejecting 14 seconds", async () => {
+    const h = harness();
+    await Promise.all(Array.from({ length: 2 }, (_, index) => h.queue.enqueue({
+      ...JOB,
+      githubReleaseId: JOB.githubReleaseId + index,
+    }, ACTOR)));
+    const app = createSourceReleaseWorkerRoutes({
+      queue: h.queue,
+      workerId: SOURCE_WORKER,
+      serviceToken: SOURCE_TOKEN,
+    });
+    const headers = {
+      Authorization: `Bearer ${SOURCE_TOKEN}`,
+      "content-type": "application/json",
+    };
+    const claimedResponse = await app.request("/claim", {
+      method: "POST", headers,
+      body: JSON.stringify({ workerId: SOURCE_WORKER, leaseSeconds: 15 }),
+    });
+    expect(claimedResponse.status).toBe(200);
+    const { job } = await claimedResponse.json() as { job: Awaited<ReturnType<typeof h.queue.claim>> };
+    if (!job) throw new Error("expected a 15-second source lease");
+
+    const heartbeat = await app.request(`/${job.job_id}/heartbeat`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        workerId: SOURCE_WORKER, leaseToken: job.lease_token,
+        leaseEpoch: job.lease_epoch, leaseSeconds: 15,
+      }),
+    });
+    expect(heartbeat.status).toBe(200);
+    expect(await heartbeat.json()).toEqual({ accepted: true });
+
+    const claimed29 = await app.request("/claim", {
+      method: "POST", headers,
+      body: JSON.stringify({ workerId: SOURCE_WORKER, leaseSeconds: 29 }),
+    });
+    expect(claimed29.status).toBe(200);
+    const rejected14 = await app.request("/claim", {
+      method: "POST", headers,
+      body: JSON.stringify({ workerId: SOURCE_WORKER, leaseSeconds: 14 }),
+    });
+    expect(rejected14.status).toBe(400);
+    const rejectedHeartbeat = await app.request(`/${job.job_id}/heartbeat`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        workerId: SOURCE_WORKER, leaseToken: job.lease_token,
+        leaseEpoch: job.lease_epoch, leaseSeconds: 14,
+      }),
+    });
+    expect(rejectedHeartbeat.status).toBe(400);
+  });
+
   it("pages due Produced rows past five deferred jobs and terminal-audits bounded exhaustion", async () => {
     const h = harness();
     const jobs = await Promise.all(Array.from({ length: 6 }, (_, index) => h.queue.enqueue({
@@ -260,6 +314,112 @@ describe("source Release build queue against migrated SQLite D1", () => {
     });
     expect(h.db.database.prepare(
       "SELECT count(*) AS count FROM audit_events WHERE action='source-release-build.admission-exhausted'",
+    ).get()).toEqual({ count: 1 });
+  });
+
+  it("claims one Produced row at a time so later rows do not lose their lease while it is processed", async () => {
+    const h = harness();
+    const jobs = await Promise.all(Array.from({ length: 2 }, (_, index) => h.queue.enqueue({
+      ...JOB,
+      githubReleaseId: JOB.githubReleaseId + index,
+    }, ACTOR)));
+    for (const [index, item] of jobs.entries()) {
+      h.db.database.prepare(
+        "UPDATE source_release_builds SET state='produced',result_json='{}',created_at=? WHERE job_id=?",
+      ).run(index, item.job.id);
+    }
+
+    const first = (await h.queue.claimProduced(1, 60_000))[0];
+    expect(first?.job_id).toBe(jobs[0]!.job.id);
+    expect(first?.admission_attempt).toBe(1);
+    expect(await h.queue.byId(jobs[1]!.job.id)).toMatchObject({
+      state: "produced", admission_attempt: 0, next_attempt_at: null,
+    });
+
+    expect(await h.queue.markAdmitted(first!.job_id, "admitted-first", first!.admission_attempt)).toBe(true);
+    h.advance(60_001);
+    const second = (await h.queue.claimProduced(1, 60_000))[0];
+    expect(second).toMatchObject({ job_id: jobs[1]!.job.id, admission_attempt: 1 });
+  });
+
+  it("fences admission outcomes after the claimed Produced lease expires", async () => {
+    const h = harness();
+    const created = await h.queue.enqueue(JOB, ACTOR);
+    h.db.database.prepare(
+      "UPDATE source_release_builds SET state='produced',result_json='{}' WHERE job_id=?",
+    ).run(created.job.id);
+    const claim = (await h.queue.claimProduced(1, 60_000))[0];
+    if (!claim) throw new Error("expected a claimed Produced result");
+    h.advance(60_001);
+
+    expect(await h.queue.markAdmitted(claim.job_id, "stale-release", claim.admission_attempt)).toBe(false);
+    expect(await h.queue.rejectProduced(claim.job_id, "ADMISSION_DENIED", claim.admission_attempt)).toBe(false);
+    expect(await h.queue.deferProduced(claim.job_id, claim.admission_attempt)).toBe(false);
+    expect(await h.queue.byId(claim.job_id)).toMatchObject({
+      state: "produced", admission_attempt: 1, next_attempt_at: claim.next_attempt_at,
+      admitted_release_id: null,
+    });
+  });
+
+  it("retries admission exhaustion by re-verifying the same proof without rebuilding or admitting it", async () => {
+    const h = harness();
+    const created = await h.queue.enqueue(JOB, ACTOR);
+    const proof = await sourceResult(created.job.id);
+    const proofJson = canonicalSourceProof(proof);
+    h.db.database.prepare(
+      `UPDATE source_release_builds SET state='produced',attempt=2,lease_epoch=7,
+         admission_attempt=4,result_json=?,created_at=0 WHERE job_id=?`,
+    ).run(proofJson, created.job.id);
+    const finalAttempt = (await h.queue.claimProduced(1, 60_000))[0];
+    expect(finalAttempt).toMatchObject({ job_id: created.job.id, admission_attempt: 5 });
+    expect(await h.queue.deferProduced(created.job.id, finalAttempt!.admission_attempt)).toBe(true);
+    const exhausted = await h.queue.byId(created.job.id);
+    expect(exhausted).toMatchObject({
+      state: "failed", attempt: 2, revision: 0, lease_epoch: 7,
+      failure_code: "SOURCE_ADMISSION_RETRIES_EXHAUSTED", result_json: proofJson,
+    });
+    expect(publicSourceJob(exhausted!).retryable).toBe(true);
+
+    const retryInput = { ...JOB, expectedRevision: 0, idempotencyKey: "retry-admission-outage" };
+    const retried = await h.queue.retry(created.job.id, retryInput, ACTOR);
+    expect(retried).toMatchObject({
+      duplicate: false,
+      job: { state: "produced", attempt: 2, revision: 1, retryable: false },
+    });
+    const resumed = await h.queue.byId(created.job.id);
+    expect(resumed).toMatchObject({
+      state: "produced", attempt: 2, revision: 1, lease_epoch: 7,
+      admission_attempt: 0, next_attempt_at: null, failure_code: null,
+      result_json: proofJson, admitted_release_id: null,
+    });
+    expect(h.db.database.prepare(
+      "SELECT metadata_json FROM audit_events WHERE action='source-release-build.retried'",
+    ).get()).toEqual({
+      metadata_json: JSON.stringify({
+        jobId: created.job.id, sourceId: JOB.sourceId, githubReleaseId: JOB.githubReleaseId,
+        sourceTag: JOB.sourceTag, sourceRevision: JOB.sourceRevision,
+        expectedRevision: 0, revision: 1, state: "produced", retryMode: "reverify_produced_result",
+      }),
+    });
+
+    const replay = await h.queue.retry(created.job.id, retryInput, ACTOR);
+    expect(replay).toMatchObject({ duplicate: true, job: { state: "produced", revision: 1 } });
+    await expect(h.queue.retry(created.job.id, {
+      ...JOB, expectedRevision: 0, idempotencyKey: "retry-admission-competing-key",
+    }, ACTOR)).rejects.toMatchObject({ reason: "stale_or_ineligible" });
+
+    const verifyAgain = (await h.queue.claimProduced(1, 60_000))[0];
+    expect(verifyAgain).toMatchObject({ job_id: created.job.id, admission_attempt: 1, result_json: proofJson });
+    expect(await h.queue.byId(created.job.id)).toMatchObject({ state: "produced", admitted_release_id: null });
+    expect(await h.queue.markAdmitted(created.job.id, "canonical-admission", verifyAgain!.admission_attempt)).toBe(true);
+    expect(await h.queue.retry(created.job.id, retryInput, ACTOR)).toMatchObject({
+      duplicate: true, job: { state: "admitted", admittedReleaseId: "canonical-admission" },
+    });
+    expect(h.db.database.prepare(
+      "SELECT count(*) AS count FROM idempotency_records WHERE response_kind='source-release-build-retry'",
+    ).get()).toEqual({ count: 1 });
+    expect(h.db.database.prepare(
+      "SELECT count(*) AS count FROM audit_events WHERE action='source-release-build.retried'",
     ).get()).toEqual({ count: 1 });
   });
 
@@ -316,6 +476,7 @@ describe("source Release build queue against migrated SQLite D1", () => {
         expect(await h.queue.byId(claim.job_id)).toMatchObject({
           state: "failed", failure_code: code, lease_token: null,
         });
+        expect(publicSourceJob((await h.queue.byId(claim.job_id))!).retryable).toBe(false);
         await expect(h.queue.retry(created.job.id, {
           ...JOB, expectedRevision: 0, idempotencyKey: `retry-invalid-proof-${code}`,
         }, ACTOR)).rejects.toBeInstanceOf(SourceRetryConflict);
@@ -339,7 +500,7 @@ describe("source Release build queue against migrated SQLite D1", () => {
     expect(await current.json()).toMatchObject({ job: {
       id: created.job.id, sourceId: JOB.sourceId, releaseId: JOB.githubReleaseId,
       tag: JOB.sourceTag, commit: JOB.sourceRevision, version: JOB.releaseVersion,
-      revision: 0, state: "failed",
+      revision: 0, state: "failed", retryable: true,
     } });
     const retryInput = {
       ...JOB, expectedRevision: 0, idempotencyKey: "route-retry-1",
@@ -349,7 +510,9 @@ describe("source Release build queue against migrated SQLite D1", () => {
       body: JSON.stringify(retryInput),
     });
     expect(accepted.status).toBe(202);
-    expect(await accepted.json()).toMatchObject({ duplicate: false, job: { state: "queued", revision: 1 } });
+    expect(await accepted.json()).toMatchObject({
+      duplicate: false, job: { state: "queued", revision: 1, retryable: false },
+    });
     const replay = await app.request(`/${created.job.id}/retry`, {
       method: "POST", headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify(retryInput),

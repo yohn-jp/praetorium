@@ -37,13 +37,13 @@ const RetryRequest = SourceIdentity.extend({
 }).refine(x => x.sourceTag.replace(/^v/u,"") === x.releaseVersion);
 const LeaseRequest = z.strictObject({
   workerId: z.string().regex(WORKER),
-  leaseSeconds: z.number().int().min(30).max(300),
+  leaseSeconds: z.number().int().min(15).max(300),
 });
 const HeartbeatRequest = z.strictObject({
   workerId: z.string().regex(WORKER),
   leaseToken: z.string().uuid(),
   leaseEpoch: z.number().int().positive().safe(),
-  leaseSeconds: z.number().int().min(30).max(300),
+  leaseSeconds: z.number().int().min(15).max(300),
 });
 const FailureRequest = z.strictObject({
   workerId: z.string().regex(WORKER),
@@ -89,12 +89,14 @@ type PublicJob = {
   readonly revision: number;
   readonly error: string|null;
   readonly admittedReleaseId: string|null;
+  readonly retryable: boolean;
 };
 export function publicSourceJob(job: SourceJob): PublicJob {
   return { id:job.job_id,sourceId:job.source_id,releaseId:job.github_release_id,
     tag:job.source_tag,commit:job.source_revision,version:job.release_version,
     state:job.state,attempt:job.attempt,revision:job.revision,error:job.failure_code,
-    admittedReleaseId:job.admitted_release_id };
+    admittedReleaseId:job.admitted_release_id,
+    retryable:job.state==="failed" && isRetryableSourceFailure(job.failure_code) };
 }
 export class D1SourceReleaseBuildQueue {
   constructor(private readonly db:D1Database,private readonly now:()=>number=Date.now){}
@@ -136,22 +138,29 @@ export class D1SourceReleaseBuildQueue {
 
     const now=this.now();
     const nextRevision=checked.expectedRevision+1;
+    const resumeProduced=current.failure_code==="SOURCE_ADMISSION_RETRIES_EXHAUSTED";
+    const nextState=resumeProduced?"produced":"queued";
     const metadata=JSON.stringify({
       jobId,sourceId:current.source_id,githubReleaseId:current.github_release_id,
       sourceTag:current.source_tag,sourceRevision:current.source_revision,
       expectedRevision:checked.expectedRevision,revision:nextRevision,
+      state:nextState,retryMode:resumeProduced?"reverify_produced_result":"rebuild_source",
     });
     try {
       await this.db.batch([
         this.db.prepare(
-          `UPDATE source_release_builds SET state='queued',attempt=0,revision=revision+1,
-             admission_attempt=0,next_attempt_at=NULL,failure_code=NULL,result_json=NULL,updated_at=?
+          `UPDATE source_release_builds SET state=?,attempt=?,revision=revision+1,
+             admission_attempt=0,next_attempt_at=NULL,failure_code=NULL,
+             result_json=CASE WHEN failure_code='SOURCE_ADMISSION_RETRIES_EXHAUSTED'
+                              THEN result_json ELSE NULL END,updated_at=?
            WHERE job_id=? AND revision=? AND state='failed'
              AND failure_code IN ('SOURCE_UNAVAILABLE','SOURCE_BUILD_FAILED',
-               'SOURCE_WORKER_UNAVAILABLE','SOURCE_ATTEMPTS_EXHAUSTED')
+               'SOURCE_WORKER_UNAVAILABLE','SOURCE_ATTEMPTS_EXHAUSTED',
+               'SOURCE_ADMISSION_RETRIES_EXHAUSTED')
              AND source_id=? AND github_release_id=? AND source_tag=?
              AND source_revision=? AND release_version=?`,
-        ).bind(now,jobId,checked.expectedRevision,checked.sourceId,checked.githubReleaseId,
+        ).bind(nextState,resumeProduced?current.attempt:0,now,jobId,
+          checked.expectedRevision,checked.sourceId,checked.githubReleaseId,
           checked.sourceTag,checked.sourceRevision,checked.releaseVersion),
         this.assertOneChange(),
         this.db.prepare(
@@ -326,8 +335,8 @@ export class D1SourceReleaseBuildQueue {
           this.db.prepare(
             `UPDATE source_release_builds SET state='failed',
                failure_code='SOURCE_ADMISSION_RETRIES_EXHAUSTED',next_attempt_at=NULL,updated_at=?
-             WHERE job_id=? AND state='produced' AND admission_attempt=?`,
-          ).bind(now,jobId,expectedAdmissionAttempt),
+             WHERE job_id=? AND state='produced' AND admission_attempt=? AND next_attempt_at>?`,
+          ).bind(now,jobId,expectedAdmissionAttempt,now),
           this.assertOneChange(),
           this.db.prepare(
             `INSERT INTO audit_events
@@ -356,25 +365,29 @@ export class D1SourceReleaseBuildQueue {
     ).bind(now+delay,now,jobId,expectedAdmissionAttempt,now).run();
     return (result.meta.changes??0)===1;
   }
-  async markAdmitted(jobId:string,releaseId:string,expectedAdmissionAttempt?:number):Promise<boolean>{
+  async markAdmitted(jobId:string,releaseId:string,expectedAdmissionAttempt:number):Promise<boolean>{
+    if(!Number.isSafeInteger(expectedAdmissionAttempt)||expectedAdmissionAttempt<1)
+      throw new TypeError("Invalid source admission attempt");
+    const now=this.now();
     const response=await this.db.prepare(
       `UPDATE source_release_builds SET state='admitted',
          admitted_release_id=?,next_attempt_at=NULL,updated_at=?
        WHERE job_id=? AND state='produced'
-         AND (? IS NULL OR admission_attempt=?)`
-    ).bind(releaseId,this.now(),jobId,expectedAdmissionAttempt??null,
-      expectedAdmissionAttempt??null).run();
+         AND admission_attempt=? AND next_attempt_at>?`
+    ).bind(releaseId,now,jobId,expectedAdmissionAttempt,now).run();
     return (response.meta.changes??0)===1;
   }
-  async rejectProduced(jobId:string,code:string,expectedAdmissionAttempt?:number):Promise<boolean>{
+  async rejectProduced(jobId:string,code:string,expectedAdmissionAttempt:number):Promise<boolean>{
     if(!ID.test(jobId)||!/^[A-Z_]{3,64}$/u.test(code))throw new TypeError("Invalid failure code");
+    if(!Number.isSafeInteger(expectedAdmissionAttempt)||expectedAdmissionAttempt<1)
+      throw new TypeError("Invalid source admission attempt");
     const now=this.now();
     try {
       const result=await this.db.batch([
         this.db.prepare(
           `UPDATE source_release_builds SET state='failed',failure_code=?,next_attempt_at=NULL,updated_at=?
-           WHERE job_id=? AND state='produced' AND (? IS NULL OR admission_attempt=?)`,
-        ).bind(code,now,jobId,expectedAdmissionAttempt??null,expectedAdmissionAttempt??null),
+           WHERE job_id=? AND state='produced' AND admission_attempt=? AND next_attempt_at>?`,
+        ).bind(code,now,jobId,expectedAdmissionAttempt,now),
         this.assertOneChange(),
         this.db.prepare(
           `INSERT INTO audit_events
@@ -385,8 +398,8 @@ export class D1SourceReleaseBuildQueue {
                   'failed',job_id,json_object('failureCode',failure_code,
                   'admissionAttempt',admission_attempt),updated_at
              FROM source_release_builds WHERE job_id=? AND state='failed'
-               AND failure_code=? AND (? IS NULL OR admission_attempt=?)`,
-        ).bind(jobId,code,expectedAdmissionAttempt??null,expectedAdmissionAttempt??null),
+               AND failure_code=? AND admission_attempt=?`,
+        ).bind(jobId,code,expectedAdmissionAttempt,expectedAdmissionAttempt),
         this.assertOneChange(),
       ]);
       return (result[0]?.meta.changes??0)===1;
@@ -470,7 +483,8 @@ function sameSourceIdentity(job:SourceJob,input:z.infer<typeof SourceIdentity>):
 }
 function isRetryableSourceFailure(code:string|null):boolean {
   return code!==null && ["SOURCE_UNAVAILABLE","SOURCE_BUILD_FAILED",
-    "SOURCE_WORKER_UNAVAILABLE","SOURCE_ATTEMPTS_EXHAUSTED"].includes(code);
+    "SOURCE_WORKER_UNAVAILABLE","SOURCE_ATTEMPTS_EXHAUSTED",
+    "SOURCE_ADMISSION_RETRIES_EXHAUSTED"].includes(code);
 }
 function isTransactionAssertion(error:unknown):boolean {
   return (error instanceof Error?error.message:String(error)).includes("platform_transaction_sentinel");

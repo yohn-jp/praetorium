@@ -74,6 +74,38 @@ afterEach(async () => {
 });
 
 describe("Build Control Plane HTTP adapter", () => {
+  it("sends the worker-supported 15-second Source claim and heartbeat lease", async () => {
+    const sourceJob = {
+      job_id: "sr_00000000-0000-4000-8000-000000000001",
+      lease_worker: "worker-1",
+      lease_token: "00000000-0000-4000-8000-000000000002",
+      lease_epoch: 1,
+    } as SourceBuildClaim;
+    const responses = [
+      new Response(JSON.stringify({ job: sourceJob })),
+      new Response(JSON.stringify({ accepted: true })),
+    ];
+    const fetchMock = vi.fn(async () => responses.shift()!);
+    const queue = new BuildQueueHttpClient({
+      baseUrl: "https://control.example",
+      serviceToken: token,
+      requestTimeoutMs: 1000,
+      maxResponseBytes: 262_144,
+      leaseSeconds: 15,
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await expect(queue.claimSource("worker-1", 15)).resolves.toEqual(sourceJob);
+    await expect(queue.heartbeatSource(sourceJob, 15)).resolves.toBe(true);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      workerId: "worker-1", leaseSeconds: 15,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      workerId: "worker-1", leaseToken: sourceJob.lease_token,
+      leaseEpoch: sourceJob.lease_epoch, leaseSeconds: 15,
+    });
+  });
+
   it("keeps the Produced proof request bounded by its longer verification budget", async () => {
     vi.useFakeTimers();
     try {

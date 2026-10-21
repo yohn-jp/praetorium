@@ -178,7 +178,7 @@ describe("operator-only admin origin", () => {
     }), f.context);
     expect(result.status).toBe(200);
     const html = await result.text();
-    expect(html.match(/Retry verification/g)).toHaveLength(1);
+    expect(html.match(/Retry Canary build/g)).toHaveLength(1);
     expect(html).toContain('/releases/rel_eligible/retry');
     expect(html).not.toContain('/releases/rel_ineligible/retry');
   });

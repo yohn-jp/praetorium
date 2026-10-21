@@ -80,7 +80,7 @@ export class D1SourceReleaseBuildQueue {
     if(!/^[1-9][0-9]{0,15}$/u.test(actorId)) throw new TypeError("Invalid admin actor");
     const now=this.now();
     const id="sr_"+crypto.randomUUID();
-    const saved=await this.db.prepare(
+    await this.db.prepare(
       `INSERT OR IGNORE INTO source_release_builds
        (job_id,source_id,github_release_id,source_repository,source_tag,
         source_revision,release_version,actor_id,state,created_at,updated_at)
@@ -213,7 +213,7 @@ export function createSourceReleaseOperatorRoutes(input:{
     try {
       const {job,duplicate}=await input.queue.enqueue(body,input.operatorActorId);
       // A hint is never the durable admission receipt; worker polls on loss.
-      if(!duplicate)try{c.executionCtx.waitUntil(input.notifyBuild?.()??Promise.resolve());}catch{}
+      if(!duplicate)try{c.executionCtx.waitUntil(input.notifyBuild?.()??Promise.resolve());}catch{ /* Recovery polling remains authoritative. */ }
       return c.json({job,duplicate},duplicate?200:202);
     } catch(e) {
       if(e instanceof SourceRevisionConflict)
@@ -274,7 +274,7 @@ export function createSourceReleaseWorkerRoutes(input:{
     await input.verifyProduced(current,data.result);
     const accepted=await input.queue.produced(current.job_id,data);
     if(accepted && input.afterProduced) {
-      try {c.executionCtx.waitUntil(input.afterProduced());}catch{}
+      try {c.executionCtx.waitUntil(input.afterProduced());}catch{ /* Cron will reconcile durable source proofs. */ }
     }
     return c.json({accepted});
   });

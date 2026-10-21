@@ -99,3 +99,16 @@ kubectl --context "$CTX" -n praetorium-admin port-forward --address 127.0.0.1 sv
 - [Headlamp in-clusterインストール](https://headlamp.dev/docs/latest/installation/in-cluster/)
 - [Headlamp認証とRBAC](https://headlamp.dev/docs/latest/installation/)
 - [既存Praetorium責務分離](SYSTEM.md)
+
+## 8. 2026-10-21 — Operator Release Console（Issue #26）
+
+Ownerの新しい指示により、**リリースの管理操作に限って**上記「将来のPraetorium Admin」の旧スコープ除外が更新された。具体的な現行契約・UI/認可設計は [Operator Console / Mobile V2](../design/OPERATOR-CONSOLE-MOBILE-V2.md) を参照する。
+
+- 公開Origin: `https://admin.praetorium.yohn.jp`。Gateway Workerの追加custom domainであり、Control Planeやk3sに無制限の管理APIを公開しない。
+- 初期運用者: GitHub OAuthの数値user ID `213253858`、Gateway Wranglerの通常変数 `PRAETORIUM_ADMIN_GITHUB_USER_IDS` に設定。別Originには一度限りのコード交換でhost-only Cookieを発行し、現在のオペレーターIDとCSRFを毎回検証する。
+- リリース登録・候補参照・再試行・監査は既存のOperator Admission/Release D1契約をGateway→Control Planeの認証済みService Binding経由で操作する。`RELEASE_OPERATOR_TOKEN` はControl Planeに留まり、ブラウザや別OriginのJavaScriptへ露出しない。
+- 一般Repository AdminはOperator権限ではない。Canary/Stable昇格は既存の検証/lease/CASに従い、管理者画面で手動確定を捏造しない。
+- Headlampのポートフォワード・Kubernetes RBAC・Host管理の権限境界は本変更ではそのまま。ホスト管理、D1の直接書換、任意コンテナ操作、モデル実行機能の追加とは切り離す。
+- GitHub mainへのPRマージだけでは公開されない。Cloudflare custom domain/Worker deployed・操作権限・現行リリースデータの実稼働確認は別途必要。
+
+第1段階のHeadlampに関する履歴・非ゴールは、その当時のスコープと受入記録として残し、今回の認可を根拠にKubernetes Adminを自動付与しない。

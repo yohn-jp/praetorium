@@ -11,6 +11,8 @@ export interface GatewayEnv {
   readonly CONTROL_PLANE: Fetcher;
   readonly GATEWAY_ENVIRONMENT?: string;
   readonly GATEWAY_ORIGIN?: string;
+  readonly PRAETORIUM_ADMIN_ORIGIN?: string;
+  readonly PRAETORIUM_ADMIN_GITHUB_USER_IDS?: string;
   readonly GATEWAY_SESSION_TTL_SECONDS?: string;
   readonly GATEWAY_HANDOFF_TTL_SECONDS?: string;
   readonly GATEWAY_ACCESS_GRANT_TTL_SECONDS?: string;

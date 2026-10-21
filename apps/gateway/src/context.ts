@@ -49,6 +49,8 @@ export { type GatewayEnv } from "./env.js";
 export interface GatewayConfig {
   readonly environment: string;
   readonly origin: string;
+  readonly adminOrigin: string | null;
+  readonly adminGithubUserIds: readonly string[];
   readonly sessionTtlSeconds: number;
   readonly handoffTtlSeconds: number;
   readonly accessGrantTtlSeconds: number;
@@ -135,6 +137,12 @@ function object(value: unknown): value is Record<string, unknown> {
 
 async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
   const origin = parseOrigin(env.GATEWAY_ORIGIN);
+  const adminOrigin = env.PRAETORIUM_ADMIN_ORIGIN ? parseOrigin(env.PRAETORIUM_ADMIN_ORIGIN) : null;
+  const adminIds = env.PRAETORIUM_ADMIN_GITHUB_USER_IDS;
+  if (adminIds !== undefined && !/^[1-9][0-9]{0,15}(?:,[1-9][0-9]{0,15})*$/.test(adminIds))
+    throw new TypeError("PRAETORIUM_ADMIN_GITHUB_USER_IDS must contain numeric GitHub user IDs");
+  const adminGithubUserIds = adminIds ? [...new Set(adminIds.split(","))] : [];
+  if (adminOrigin && adminOrigin === origin) throw new TypeError("Admin must use a distinct origin");
   const environment = env.GATEWAY_ENVIRONMENT;
   if (!environment || !/^(production|preview|development|test)$/.test(environment))
     throw new TypeError("GATEWAY_ENVIRONMENT must explicitly identify the deployment environment");
@@ -159,6 +167,8 @@ async function configFrom(env: GatewayEnv): Promise<GatewayConfig> {
   return {
     environment,
     origin,
+    adminOrigin,
+    adminGithubUserIds,
     sessionTtlSeconds,
     handoffTtlSeconds,
     accessGrantTtlSeconds,

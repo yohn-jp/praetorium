@@ -49,6 +49,7 @@ import { page } from "./ui/views/document.js";
 import { createPortalHandler } from "./ui/index.js";
 import type { PortalActor, PortalSession } from "./ui/index.js";
 import { createPortalService } from "./services/portal-service.js";
+import { enterAdminFromGateway } from "./admin/session.js";
 import { requestAuthorizedServiceWake } from "./services/service-wake.js";
 import { authorizationServerMetadata, registerOAuthClient, authorizeOAuth, exchangeOAuthToken } from "./services/oauth-service.js";
 import { errorResponse } from "./middleware/error-response.js";
@@ -232,9 +233,12 @@ async function readLogoutForm(request: Request): Promise<FormData | null> {
 function loginPage(request: Request): Response {
   const query = new URLSearchParams({ redirect_to: safeRedirectTarget(new URL(request.url)) });
   return page("Sign in to Praetorium",
-    `<section><h1>Sign in to Praetorium</h1>` +
-    `<p>Your repository workspace requires a signed-in session.</p>` +
-    `<a class="button button-primary" href="${escapeHtml(`/auth/github/start?${query}`)}">Sign in with GitHub</a></section>`,
+    `<section class="signin-panel" aria-labelledby="signin-heading"><div class="signin-mark" aria-hidden="true">P</div>` +
+    `<p class="signin-kicker">PRAETORIUM / SECURE ACCESS</p>` +
+    `<h1 id="signin-heading">Welcome to Praetorium</h1>` +
+    `<p class="signin-description">Sign in with GitHub to access your repositories and authorized application runtimes.</p>` +
+    `<a class="button signin-action" href="${escapeHtml(`/auth/github/start?${query}`)}">Continue with GitHub</a>` +
+    `<p class="signin-footnote">Your current GitHub permissions determine your access.</p></section>`,
     { layout: "handoff" });
 }
 
@@ -1076,6 +1080,7 @@ export function createGatewayRouter(context: GatewayContext): Hono {
   app.post("/oauth/authorize", (c) => authorizeOAuth(c.req.raw, context));
   app.post("/oauth/token", (c) => exchangeOAuthToken(c.req.raw, context));
   app.get("/auth/login", (c) => loginPage(c.req.raw));
+  app.get("/_admin/entry", (c) => enterAdminFromGateway(c.req.raw, context));
   app.get("/auth/github/start", (c) => handleGithubStart(c.req.raw, context, context.requestNow));
   app.get("/auth/github/callback", (c) => handleGithubCallback(c.req.raw, context, context.requestNow));
   app.get("/api/session", (c) => handleSession(c.req.raw, context, context.requestNow));

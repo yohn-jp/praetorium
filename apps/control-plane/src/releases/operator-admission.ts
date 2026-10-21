@@ -7,6 +7,7 @@ import {
   type IngestReleaseDeps,
   type IngestReleaseResult,
   type ReleaseCandidate,
+  type StableReleaseChannel,
   type RegistryBackedReleaseVerifierDeps,
 } from "@praetorium/application/releases";
 
@@ -29,6 +30,10 @@ export interface OperatorReleaseAdmissionDependencies
     candidate: ReleaseCandidate,
     context: ReleaseAdmissionExecutionContext,
   ) => void;
+  readonly listAudit?: () => Promise<readonly {
+    action: string; outcome: string; actorId: string | null; occurredAt: number;
+  }[]>;
+  readonly stableChannel?: () => Promise<Pick<StableReleaseChannel, "currentReleaseId" | "revision">>;
   readonly retry?: {
     status(releaseId: string): Promise<ReleaseRetryStatus | null>;
     replay(input: Pick<ReleaseRetryCommand, "releaseId" | "idempotencyKey" | "requestHash">): Promise<ReleaseRetryResult | null>;
@@ -65,6 +70,36 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
     }
     c.set("operatorPrincipal", principal);
     await next();
+  });
+
+  /** Operator-only bounded read of the existing admission catalog and workflow. */
+  app.get("/", async (c) => {
+    const rawCursor = c.req.query("cursor");
+    if (rawCursor && (rawCursor.length > 512 || !/^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(rawCursor)))
+      return c.json({ error: { code: "INVALID_CURSOR" } }, 400);
+    try {
+      const page = await deps.releases.listCandidates(rawCursor ?? null, 25);
+      const items = await Promise.all(page.items.map(async (candidate) => ({
+        release: {
+          id: candidate.id, version: candidate.version, status: candidate.status,
+          imageDigest: candidate.imageDigest, createdAt: candidate.createdAt,
+        },
+        workflow: deps.retry ? await deps.retry.status(candidate.id) : null,
+      })));
+      const stableChannel = deps.stableChannel ? await deps.stableChannel() : null;
+      return c.json({ items, nextCursor: page.nextCursor, stableChannel });
+    } catch {
+      return c.json({ error: { code: "RELEASE_LIST_UNAVAILABLE" } }, 503);
+    }
+  });
+
+  app.get("/audit", async (c) => {
+    if (!deps.listAudit) return c.json({ error: { code: "RELEASE_AUDIT_UNAVAILABLE" } }, 503);
+    try {
+      return c.json({ events: await deps.listAudit() });
+    } catch {
+      return c.json({ error: { code: "RELEASE_AUDIT_UNAVAILABLE" } }, 503);
+    }
   });
 
   app.get("/:releaseId", async (c) => {

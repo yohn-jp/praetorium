@@ -37,6 +37,7 @@ export function page(
       `<a class="brand" href="${home}"><span class="brand-mark" aria-hidden="true">P</span><span>Praetorium</span></a>` +
       `<nav aria-label="Primary"><a href="${home}">Repositories</a></nav><nav aria-label="Presentation">${(["desktop", "mobile"] as const).map((mode) => `<a data-ui-choice href="${localUrl(path, mode)}"${mode === presentation.mode ? ' aria-current="true"' : ""}>${mode === "desktop" ? "Desktop" : "Mobile"}</a>`).join(" ")}</nav></div></header>` : "") +
       `<main id="main-content" class="page-shell">${body}</main>` +
+      (showNavigation && presentation.offerModeChoice ? modeChoice(path) : "") +
       `${validNonce && showNavigation ? interactionScript(validNonce) : ""}` +
       (showNavigation ? `<footer class="page-footer"><div class="footer-inner"><span>Praetorium repository workspace</span>` +
       `<span>Access is checked with your current GitHub permissions.</span></div></footer>` : "") +
@@ -53,6 +54,19 @@ export function page(
       },
     },
   );
+}
+
+/** CSS-only first-visit sheet: visible only to touch-sized devices, and each
+ * decision writes the existing explicit UI preference cookie. No UA sniffing. */
+function modeChoice(path: string): string {
+  return '<aside class="mode-choice" role="dialog" aria-modal="false" aria-labelledby="mode-choice-title">' +
+    '<span class="mode-choice-kicker">DISPLAY / PREFERENCE</span>' +
+    '<h2 id="mode-choice-title">Choose your workspace layout</h2>' +
+    '<p>A compact mobile workspace is available for this screen. Your choice is remembered.</p>' +
+    '<div class="mode-choice-actions"><a class="button" href="' +
+      localUrl(path, "mobile") + '">Use mobile layout</a>' +
+    '<a class="button button-secondary" href="' + localUrl(path, "desktop") +
+      '">Keep desktop</a></div></aside>';
 }
 
 /** Enhancement only: all navigation, labels and forms remain native without JS. */

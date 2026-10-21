@@ -659,6 +659,26 @@ describe("presentation mode boundary", () => {
     expect(await preferred.text()).toContain('data-ui="mobile"');
   });
 
+  it("offers a touch-device layout choice once, without overriding explicit Desktop/Mobile", async () => {
+    const handler = createPortalHandler(sessionDependencies(service()));
+    const first = await handler(new Request("https://gateway.example/repositories/123456789"));
+    const html = await first.text();
+    expect(html).toContain('data-ui="desktop"');
+    expect(html).toContain('class="mode-choice"');
+    expect(html).toContain('href="/repositories/123456789?ui=mobile"');
+    expect(html).toContain('href="/repositories/123456789?ui=desktop"');
+    expect(first.headers.get("Set-Cookie")).toBeNull();
+
+    const chosen = await handler(new Request("https://gateway.example/repositories/123456789?ui=desktop"));
+    expect(await chosen.text()).not.toContain('class="mode-choice"');
+    expect(chosen.headers.get("Set-Cookie")).toContain("praetorium_ui=desktop");
+    const retained = await handler(new Request("https://gateway.example/repositories/123456789", {
+      headers: { Cookie: "praetorium_ui=desktop" },
+    }));
+    expect(await retained.text()).not.toContain('class="mode-choice"');
+    expect(retained.headers.get("Set-Cookie")).toBeNull();
+  });
+
   it.each(["ui=invalid", "ui=desktop&ui=mobile", "ui=%3Cscript%3E"])(
     "falls back to preference for %s",
     async (query) => {

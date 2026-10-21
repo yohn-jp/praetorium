@@ -6,6 +6,19 @@ on:
       producer_run_id:
         required: true
         type: string
+      scriptorium_revision:
+        required: true
+        type: string
+      source_tag:
+        required: false
+        type: string
+      release_version:
+        required: false
+        type: string
+      admit_release:
+        required: false
+        default: false
+        type: boolean
       producer_run_attempt:
         required: true
         type: string
@@ -21,6 +34,8 @@ on:
     secrets:
       GHCR_TOKEN:
         required: true
+      RELEASE_OPERATOR_TOKEN:
+        required: false
 
 permissions:
   actions: read
@@ -32,10 +47,12 @@ jobs:
     timeout-minutes: 30
     permissions:
       actions: read
-      contents: read
+      contents: write
       packages: write
     env:
-      SCRIPTORIUM_REVISION: 008d5c429ec279a424cafd5b8c4cbee70a613b8e
+      SCRIPTORIUM_REVISION: ${{ inputs.scriptorium_revision }}
+      SCRIPTORIUM_TAG: ${{ inputs.source_tag }}
+      SCRIPTORIUM_RELEASE_VERSION: ${{ inputs.release_version }}
       IMAGE_REPOSITORY: ghcr.io/yohn-jp/praetorium/scriptorium-producer
       SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:8342e1e8d7b12d0bd3bf53ce8f4fde7ed876277aa8e4345f53937a505309e6b5
       PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
@@ -60,9 +77,14 @@ jobs:
           source_dir="$GITHUB_WORKSPACE/scriptorium"
           git init --quiet "$source_dir"
           git -C "$source_dir" remote add origin https://github.com/yohn-jp/scriptorium.git
-          git -C "$source_dir" fetch --depth=1 origin "$SCRIPTORIUM_REVISION"
-          git -C "$source_dir" checkout --quiet --detach FETCH_HEAD
-          test "$(git -C "$source_dir" rev-parse HEAD)" = "$SCRIPTORIUM_REVISION"
+          if [ -n "$SCRIPTORIUM_TAG" ] && [ -n "$SCRIPTORIUM_RELEASE_VERSION" ]; then
+            bash "$GITHUB_WORKSPACE/praetorium/scripts/ci/checkout-selected-release.sh" "$source_dir"
+          else
+            [[ "$SCRIPTORIUM_REVISION" =~ ^[0-9a-f]{40}$ ]]
+            git -C "$source_dir" fetch --depth=1 origin "$SCRIPTORIUM_REVISION"
+            git -C "$source_dir" checkout --quiet --detach FETCH_HEAD
+            test "$(git -C "$source_dir" rev-parse HEAD)" = "$SCRIPTORIUM_REVISION"
+          fi
           test -z "$(git -C "$source_dir" status --porcelain)"
           test "$(git -C "$source_dir" remote get-url origin)" = "https://github.com/yohn-jp/scriptorium.git"
 

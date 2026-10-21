@@ -85,6 +85,20 @@ it("rejects a BuildKit metadata path that is a symbolic link", async () => {
   await expect(readSourceProducerFile(exported, 1024, "BuildKit catalog")).rejects.toThrow();
 });
 
+it("rejects a BuildKit output whose parent directory is a symbolic link", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "praetorium-source-artifact-parent-test-"));
+  directories.push(root);
+  const outside = path.join(root, "outside");
+  const exportedDirectory = path.join(root, "resolver");
+  await mkdir(outside);
+  await writeFile(path.join(outside, "build-catalog.mjs"), "outside output");
+  await symlink(outside, exportedDirectory);
+
+  await expect(readSourceProducerFile(
+    path.join(exportedDirectory, "build-catalog.mjs"), 1024, "producer resolver bundle",
+  )).rejects.toThrow();
+});
+
 it("reports an unpublished Source Release as an immutable source change", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "praetorium-source-release-test-"));
   directories.push(root);

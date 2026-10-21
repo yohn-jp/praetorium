@@ -112,16 +112,26 @@ export async function readSourceProducerFile(
 ):Promise<Buffer>{
   if(!Number.isSafeInteger(maximumBytes)||maximumBytes<1)
     throw new TypeError("Invalid producer artifact bound");
-  const handle=await open(filename,constants.O_RDONLY|constants.O_NOFOLLOW);
+  const leaf=path.basename(filename);
+  if(!leaf||leaf==="."||leaf==="..")throw new Error("Invalid "+label);
+  const parent=await open(path.dirname(filename),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
   try{
-    const info=await handle.stat();
-    if(!info.isFile()||(!allowEmpty&&info.size<=0)||info.size>maximumBytes)
-      throw new Error("Invalid "+label);
-    const bytes=await handle.readFile();
-    if(bytes.length!==info.size||bytes.length>maximumBytes||(!allowEmpty&&bytes.length===0))
-      throw new Error("Invalid "+label);
-    return bytes;
-  }finally{await handle.close();}
+    const parentInfo=await parent.stat();
+    if(!parentInfo.isDirectory())throw new Error("Invalid "+label+" directory");
+    // Pin the parent directory while opening the leaf. BuildKit can export a
+    // symlink as an intermediate directory (for example `resolver/`), so a
+    // leaf-only O_NOFOLLOW check does not prevent reading outside the output.
+    const handle=await open(`/proc/self/fd/${parent.fd}/${leaf}`,constants.O_RDONLY|constants.O_NOFOLLOW);
+    try{
+      const info=await handle.stat();
+      if(!info.isFile()||(!allowEmpty&&info.size<=0)||info.size>maximumBytes)
+        throw new Error("Invalid "+label);
+      const bytes=await handle.readFile();
+      if(bytes.length!==info.size||bytes.length>maximumBytes||(!allowEmpty&&bytes.length===0))
+        throw new Error("Invalid "+label);
+      return bytes;
+    }finally{await handle.close();}
+  }finally{await parent.close();}
 }
 
 async function validatePublishedRelease(job:SourceBuildClaim,signal:AbortSignal):Promise<void>{

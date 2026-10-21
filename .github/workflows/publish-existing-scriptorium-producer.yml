@@ -11,6 +11,10 @@ on:
         description: Exact successful producer attempt whose artifacts should be published
         required: true
         type: string
+      source_revision:
+        description: Exact original Scriptorium source commit SHA verified by the signed producer metadata
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -129,6 +133,7 @@ jobs:
     uses: ./.github/workflows/publish-scriptorium-producer-inputs.yml
     with:
       producer_run_id: ${{ inputs.producer_run_id }}
+      scriptorium_revision: ${{ inputs.source_revision }}
       producer_run_attempt: ${{ inputs.producer_run_attempt }}
       metadata_artifact_name: ${{ needs.validate-producer-run.outputs.metadata-artifact-name }}
       signed_artifact_name: ${{ needs.validate-producer-run.outputs.signed-artifact-name }}

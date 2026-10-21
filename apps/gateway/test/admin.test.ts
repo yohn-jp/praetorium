@@ -140,7 +140,8 @@ describe("operator-only admin origin", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain("Release administration");
-    expect(html).toContain("Register producer release");
+    expect(html).toContain("Deploy a published version");
+    expect(html).not.toContain("Release manifest (JSON)");
     expect(html).not.toContain("operator-internal-service-token-not-a-browser-secret");
     expect(f.gatewayCalls.map(x => x.path)).toEqual([
       "/v1/operator/releases", "/v1/operator/releases/audit",
@@ -183,31 +184,26 @@ describe("operator-only admin origin", () => {
     expect(html).not.toContain('/releases/rel_ineligible/retry');
   });
 
-  it("uses the real authenticated Control Plane service binding for CSRF-gated admission and retry", async () => {
+  it("removes browser raw-manifest authority while keeping canonical CSRF-gated Canary retry", async () => {
     const f = await fixture();
     const { complete } = await login(f);
     const cookies = cookiesFrom(await complete());
-    const manifest = { schemaVersion: 1, version: "1.2.3", imageRepository: "ghcr.io/example/release" };
-    const malicious = await handleAdminHost(post("/releases", cookies,
-      { manifest: JSON.stringify(manifest) }, "https://attacker.test"), f.context);
+    const rawJson = await handleAdminHost(post("/releases", cookies, {
+      manifest: JSON.stringify({ version: "1.2.3" }),
+    }), f.context);
+    expect(rawJson.status).toBe(404);
+    expect(f.gatewayCalls).toHaveLength(0);
+    const malicious = await handleAdminHost(post("/releases/rel_test/retry", cookies, {
+      expectedRevision: "5", idempotencyKey: "retry-operation-1",
+    }, "https://attacker.test"), f.context);
     expect(malicious.status).toBe(403);
     expect(f.gatewayCalls).toHaveLength(0);
-    const registered = await handleAdminHost(post("/releases", cookies,
-      { manifest: JSON.stringify(manifest) }), f.context);
-    expect(registered.status).toBe(303);
-    expect(registered.headers.get("Location")).toContain("Release%20admitted");
-    expect(f.gatewayCalls).toHaveLength(1);
-    expect(f.gatewayCalls[0]?.body).toEqual(manifest);
-    expect(f.gatewayCalls[0]?.headers.get("X-Praetorium-Admin-Actor")).toBe("213253858");
-    expect(f.gatewayCalls[0]?.headers.get("X-Control-Plane-Gateway-Auth"))
-      .toBe("operator-internal-service-token-not-a-browser-secret");
-    expect(f.gatewayCalls[0]?.headers.has("Authorization")).toBe(false);
     const retry = await handleAdminHost(post("/releases/rel_test/retry", cookies, {
       expectedRevision: "5", idempotencyKey: "retry-operation-1",
     }), f.context);
     expect(retry.status).toBe(303);
-    expect(f.gatewayCalls[1]?.path).toBe("/v1/operator/releases/rel_test/retry");
-    expect(f.gatewayCalls[1]?.body).toEqual({
+    expect(f.gatewayCalls[0]?.path).toBe("/v1/operator/releases/rel_test/retry");
+    expect(f.gatewayCalls[0]?.body).toEqual({
       expectedRevision: 5, idempotencyKey: "retry-operation-1",
     });
     const logout = await handleAdminHost(post("/logout", cookies, {}), f.context);

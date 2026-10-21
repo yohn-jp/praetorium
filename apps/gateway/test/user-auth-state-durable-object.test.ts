@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { UserAuthStateDurableObject } from "../src/adapters/durable-objects/user-auth-state-durable-object.js";
 import { createDurableObjectSessionStore } from "../src/adapters/durable-objects/user-auth-state-client.js";
 import { createFakeDurableObjectState } from "./testing/fake-durable-object-state.js";
-import { createSession, type UserId } from "@praetorium/auth";
+import { createSession, type McpCredentialRecord, type UserId } from "@praetorium/auth";
+import { createInMemoryMcpCredentialStore } from "@praetorium/auth/testing";
 
 function post(path: string, body: unknown): Request {
   return new Request(`https://user-auth-state${path}`, { method: "POST", body: JSON.stringify(body) });
@@ -13,7 +14,7 @@ const FUTURE = "2099-01-01T00:00:00.000Z";
 
 async function seedCredentialRows(state: ReturnType<typeof createFakeDurableObjectState>, count: number): Promise<void> {
   await state.storage.put("session-index:v1:ready", true);
-  await state.storage.put("credential-index:v2:ready", true);
+  await state.storage.put("credential-index:v3:ready", true);
   await state.storage.put("credential-generation:v1:current", 0);
   await state.storage.put("credential-generation:v1:revoked-through", 0);
   for (let index = 0; index < count; index += 1) {
@@ -145,7 +146,7 @@ describe("UserAuthStateDurableObject sessions", () => {
   it("counts from the active index after one-time legacy backfill", async () => {
     const state = createFakeDurableObjectState();
     await state.storage.put("session-index:v1:ready", true);
-    await state.storage.put("credential-index:v2:ready", true);
+    await state.storage.put("credential-index:v3:ready", true);
     const expired = {
       userId: "usr_1", createdAt: NOW, expiresAt: "2020-01-01T00:00:00.000Z",
       lastActivityBucket: NOW, revokedAt: null,
@@ -205,7 +206,7 @@ describe("UserAuthStateDurableObject sessions", () => {
   it("garbage-collects expired session records in bounded alarm batches", async () => {
     const state = createFakeDurableObjectState();
     await state.storage.put("session-index:v1:ready", true);
-    await state.storage.put("credential-index:v2:ready", true);
+    await state.storage.put("credential-index:v3:ready", true);
     const object = new UserAuthStateDurableObject(state);
     const expired = {
       userId: "usr_1", createdAt: NOW, expiresAt: "2020-01-01T00:00:00.000Z",
@@ -310,9 +311,105 @@ describe("UserAuthStateDurableObject credentials", () => {
       .toEqual({ record: afterRevokeAll });
   });
 
-  it("backfills legacy credential ID routes even when the old index-ready marker exists", async () => {
+  it("lists retained revoked and expired credentials with the in-memory store semantics", async () => {
+    vi.useFakeTimers();
+    const nowMs = Date.parse(NOW);
+    vi.setSystemTime(nowMs);
+    try {
+      const state = createFakeDurableObjectState();
+      const object = new UserAuthStateDurableObject(state);
+      const memory = createInMemoryMcpCredentialStore();
+      const userId = "usr_1" as UserId;
+      const record = (
+        id: string,
+        expiresAt = FUTURE,
+      ): McpCredentialRecord => ({
+        id: id as McpCredentialRecord["id"],
+        userId,
+        sessionRevision: 0,
+        repositoryId: 91,
+        instanceId: "instance_list_compat",
+        runtimeEpoch: 1,
+        name: id,
+        permissions: ["read"],
+        createdAt: NOW,
+        expiresAt,
+        lastUsedAt: null,
+        revokedAt: null,
+      });
+      const entries = [
+        ["digest-active-before", record("compat-active-before")],
+        ["digest-individual", record("compat-individual")],
+        ["digest-future-grace", record("compat-future-grace")],
+        ["digest-expired", record("compat-expired", "2020-01-01T00:00:00.000Z")],
+        ["digest-active-after", record("compat-active-after")],
+      ] as const;
+      for (const [digest, credential] of entries.slice(0, 4)) {
+        expect((await object.fetch(post("/credentials/create", { digest, record: credential }))).status).toBe(204);
+        await memory.create(digest, credential);
+      }
+
+      const futureGraceAt = new Date(nowMs + 120_000).toISOString();
+      expect(await (await object.fetch(post("/credentials/revoke-by-id", {
+        id: "compat-individual", revokedAt: NOW,
+      }))).json()).toEqual({ revoked: true });
+      await memory.revokeById(userId, "compat-individual" as McpCredentialRecord["id"], NOW);
+      expect(await (await object.fetch(post("/credentials/revoke-by-id", {
+        id: "compat-future-grace", revokedAt: futureGraceAt,
+      }))).json()).toEqual({ revoked: true });
+      await memory.revokeById(
+        userId,
+        "compat-future-grace" as McpCredentialRecord["id"],
+        futureGraceAt,
+      );
+
+      const bulkRevokedAt = new Date(nowMs + 60_000).toISOString();
+      expect((await object.fetch(post("/credentials/revoke-all", { revokedAt: bulkRevokedAt }))).status).toBe(204);
+      await memory.revokeAllForUser(userId, bulkRevokedAt);
+      const afterBulk = entries[4]![1];
+      expect((await object.fetch(post("/credentials/create", {
+        digest: entries[4]![0], record: afterBulk,
+      }))).status).toBe(204);
+      await memory.create(entries[4]![0], afterBulk);
+
+      const readDoRows = async () => {
+        const rows: Array<{ digest: string; record: McpCredentialRecord }> = [];
+        let cursor: string | undefined;
+        do {
+          const response = await object.fetch(post("/credentials/list", cursor ? { cursor } : {}));
+          expect(response.status).toBe(200);
+          const page = await response.json() as {
+            items: Array<{ digest: string; record: McpCredentialRecord }>;
+            nextCursor?: string;
+          };
+          rows.push(...page.items);
+          cursor = page.nextCursor;
+        } while (cursor);
+        return rows;
+      };
+      const doRows = await readDoRows();
+      const memoryRows = await memory.listForUser(userId);
+      const byId = (rows: readonly { digest: string; record: McpCredentialRecord }[]) =>
+        [...rows].sort((left, right) => left.record.id.localeCompare(right.record.id));
+      expect(byId(doRows)).toEqual(byId(memoryRows.items));
+      expect(doRows).toHaveLength(5);
+      expect(doRows.find(item => item.record.id === "compat-expired")?.record.revokedAt)
+        .toBe(bulkRevokedAt);
+      expect(doRows.find(item => item.record.id === "compat-future-grace")?.record.revokedAt)
+        .toBe(futureGraceAt);
+      expect(doRows.find(item => item.record.id === "compat-active-after")?.record.revokedAt)
+        .toBeNull();
+      expect(await (await object.fetch(post("/credentials/get", { digest: "digest-future-grace" }))).json())
+        .toEqual({ record: { ...entries[2]![1], revokedAt: futureGraceAt } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rebuilds credential ID routes when legacy v1 and v2 ready markers exist", async () => {
     const state = createFakeDurableObjectState();
     await state.storage.put("credential-index:v1:ready", true);
+    await state.storage.put("credential-index:v2:ready", true);
     await state.storage.put("session-index:v1:ready", true);
     const count = 1_001;
     for (let index = 0; index < count; index += 1) {
@@ -360,7 +457,7 @@ describe("UserAuthStateDurableObject credentials", () => {
       const fenceAt = new Date(nowMs + 60_000).toISOString();
       expect((await object.fetch(post("/credentials/revoke-all", { revokedAt: fenceAt }))).status).toBe(204);
       expect(await (await object.fetch(post("/credentials/get", { digest: "future-old-digest" }))).json())
-        .toEqual({ record: oldRecord });
+        .toEqual({ record: { ...oldRecord, revokedAt: fenceAt } });
 
       const freshRecord = {
         ...oldRecord, id: "future-new", name: "new",
@@ -467,13 +564,51 @@ describe("UserAuthStateDurableObject credentials", () => {
       const digest = "digest-" + String(index).padStart(4, "0");
       const id = "credential-" + String(index).padStart(4, "0");
       expect(await state.storage.get("credential-active:" + digest)).toBeUndefined();
-      expect(await state.storage.get("credential-id:" + encodeURIComponent(id))).toBeUndefined();
+      expect(await state.storage.get("credential-id:" + encodeURIComponent(id))).toBe(digest);
+      expect(await state.storage.get(
+        "credential-generation-index:0000000000000000:" + digest,
+      )).toEqual({ digest });
     }
     expect(await state.storage.get("credential-active:digest-fresh")).toBeDefined();
     expect(await state.storage.get("credential-id:credential-fresh")).toBe("digest-fresh");
     expect(await state.storage.get("credential:digest-0000")).toBeDefined();
-    expect(await state.storage.get("credential-id:credential-0000")).toBeUndefined();
     expect(await state.storage.get("credential-active:digest-0000")).toBeUndefined();
+    expect(await state.storage.get("credential-generation:revocation-time:0000000000000001")).toBe(NOW);
+
+    state.testMetrics.listCalls = 0;
+    state.testMetrics.rowsReturned = 0;
+    state.testMetrics.maxRowsPerList = 0;
+    let cursor: string | undefined;
+    const retained = new Set<string>();
+    do {
+      const response = await object.fetch(post("/credentials/list", cursor ? { cursor } : {}));
+      expect(response.status).toBe(200);
+      const page = await response.json() as {
+        items: Array<{ digest: string }>;
+        nextCursor?: string;
+      };
+      for (const item of page.items) retained.add(item.digest);
+      cursor = page.nextCursor;
+    } while (cursor);
+    const retainedCount = count + 1;
+    expect(retained.size).toBe(retainedCount);
+    expect(state.testMetrics.listCalls).toBe(
+      Math.ceil(retainedCount / 100) + Math.floor((retainedCount - 1) / 100),
+    );
+    expect(state.testMetrics.rowsReturned).toBe(
+      retainedCount + Math.floor((retainedCount - 1) / 100),
+    );
+    expect(state.testMetrics.maxRowsPerList).toBe(100);
+
+    state.testMetrics.listCalls = 0;
+    const directRevoke = await object.fetch(post("/credentials/revoke-by-id", {
+      id: "credential-0000", revokedAt: "2026-08-01T00:01:00.000Z",
+    }));
+    expect(directRevoke.status).toBe(200);
+    expect(await directRevoke.json()).toEqual({ revoked: true });
+    expect(state.testMetrics.listCalls).toBe(0);
+    expect(await state.storage.get<{ revokedAt: string }>("credential:digest-0000"))
+      .toMatchObject({ revokedAt: "2026-08-01T00:01:00.000Z" });
   });
 });
 

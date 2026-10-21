@@ -7,6 +7,7 @@ const CREDENTIAL_RECORD_EPOCH_PREFIX = "credential-record-epoch:";
 const CREDENTIAL_GENERATION_INDEX_PREFIX = "credential-generation-index:";
 const CREDENTIAL_EPOCH_KEY = "credential-generation:v1:current";
 const CREDENTIAL_REVOKED_THROUGH_KEY = "credential-generation:v1:revoked-through";
+const CREDENTIAL_REVOCATION_TIME_PREFIX = "credential-generation:revocation-time:";
 const CREDENTIAL_REVOKE_CLEANUP_EPOCH_KEY = "credential-generation:v1:cleanup-epoch";
 const CREDENTIAL_REVOKE_CLEANUP_CURSOR_KEY = "credential-generation:v1:cleanup-cursor";
 const CREDENTIAL_REVOKE_FENCE_PREFIX = "credential-revoke-at:";
@@ -14,8 +15,8 @@ const CREDENTIAL_NEXT_REVOKE_FENCE_KEY = "credential-fence-next-at:v1";
 const AUTH_EXPIRY_PREFIX = "auth-expiry:";
 const SESSION_INDEX_READY_KEY = "session-index:v1:ready";
 const SESSION_INDEX_CURSOR_KEY = "session-index:v1:cursor";
-const CREDENTIAL_INDEX_READY_KEY = "credential-index:v2:ready";
-const CREDENTIAL_INDEX_CURSOR_KEY = "credential-index:v2:cursor";
+const CREDENTIAL_INDEX_READY_KEY = "credential-index:v3:ready";
+const CREDENTIAL_INDEX_CURSOR_KEY = "credential-index:v3:cursor";
 const GITHUB_TOKEN_KEY = "github-user-token";
 const INDEX_PAGE_SIZE = 100;
 const MAX_INDEX_PAGES = 10;
@@ -54,6 +55,10 @@ function credentialGenerationIndexKey(epoch: number, digest: string): string {
   return `${CREDENTIAL_GENERATION_INDEX_PREFIX}${generationSuffix(epoch)}:${digest}`;
 }
 
+function credentialRevocationTimeKey(targetEpoch: number): string {
+  return `${CREDENTIAL_REVOCATION_TIME_PREFIX}${generationSuffix(targetEpoch)}`;
+}
+
 function credentialFenceKey(at: number, targetEpoch: number): string {
   return `${CREDENTIAL_REVOKE_FENCE_PREFIX}${String(Math.trunc(at)).padStart(16, "0")}:${generationSuffix(targetEpoch)}`;
 }
@@ -67,7 +72,7 @@ function decodeCursor(cursor: string): string | null {
     const base64 = cursor.replaceAll("-", "+").replaceAll("_", "/");
     const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
     const key = atob(padded);
-    return key.startsWith(CREDENTIAL_ACTIVE_PREFIX) ? key : null;
+    return key.startsWith(CREDENTIAL_PREFIX) ? key : null;
   } catch {
     return null;
   }
@@ -86,6 +91,20 @@ async function revokedThrough(transaction: DurableObjectTransaction): Promise<nu
   const value = await transaction.get<number>(CREDENTIAL_REVOKED_THROUGH_KEY);
   if (value === undefined) return 0;
   return Number.isSafeInteger(value) && value >= 0 ? value : Number.MAX_SAFE_INTEGER;
+}
+
+async function effectiveCredentialRevocationAt(
+  transaction: DurableObjectTransaction,
+  digest: string,
+  record: Record<string, unknown>,
+): Promise<string | null> {
+  const stored = record["revokedAt"];
+  if (stored !== null && stored !== undefined) {
+    return typeof stored === "string" && timestamp(stored) !== null ? stored : null;
+  }
+  const epoch = await credentialEpoch(transaction, digest);
+  const bulk = await transaction.get<string>(credentialRevocationTimeKey(epoch + 1));
+  return timestamp(bulk) === null ? null : bulk!;
 }
 
 async function applyDueCredentialFences(
@@ -209,8 +228,9 @@ async function backfillIndex(
       await transaction.delete(`${activePrefix}${digest}`);
     }
     const at = await effectiveCleanupAt(transaction, kind, record);
-    if (at !== null && at > nowMs) {
+    if (at !== null && (at > nowMs || !session)) {
       await transaction.put(expiryKey(kind, digest, at), { kind, digest });
+      if (!session && at <= nowMs) await transaction.setAlarm(nowMs + 1);
     } else if (at !== null) {
       await transaction.delete(key);
       await transaction.delete(`${activePrefix}${digest}`);
@@ -250,14 +270,17 @@ async function cleanRevokedCredentialIndexes(
   const cutoff = await revokedThrough(transaction);
   let epoch = await transaction.get<number>(CREDENTIAL_REVOKE_CLEANUP_EPOCH_KEY) ?? 0;
   let cursor = await transaction.get<string>(CREDENTIAL_REVOKE_CLEANUP_CURSOR_KEY);
-  let removed = 0;
+  let processed = 0;
   let emptyGenerations = 0;
-  while (epoch < cutoff && removed < INDEX_PAGE_SIZE && emptyGenerations < 10) {
+  while (epoch < cutoff && processed < INDEX_PAGE_SIZE && emptyGenerations < 10) {
     const prefix = CREDENTIAL_GENERATION_INDEX_PREFIX + generationSuffix(epoch) + ':';
     const options: DurableObjectListOptions = { prefix, limit: INDEX_PAGE_SIZE };
     if (cursor) options.startAfter = cursor;
     const entries = await transaction.list<{ digest: string }>(options);
     if (entries.size === 0) {
+      // A cursor means an earlier page contained retained records. Keep their
+      // generation timestamp until expiry GC removes the last row.
+      if (!cursor) await transaction.delete(credentialRevocationTimeKey(epoch + 1));
       epoch += 1;
       cursor = undefined;
       emptyGenerations += 1;
@@ -269,15 +292,10 @@ async function cleanRevokedCredentialIndexes(
       const digest = typeof locator?.digest === 'string'
         ? locator.digest
         : key.slice(prefix.length);
-      const record = await transaction.get<Record<string, unknown>>(CREDENTIAL_PREFIX + digest);
-      const id = record?.['id'];
-      if (typeof id === 'string') {
-        const idKey = credentialIdKey(id);
-        if (await transaction.get<string>(idKey) === digest) await transaction.delete(idKey);
-      }
+      // Retained rows remain listable and directly revocable until expiry GC.
+      // Only the active authorization index is invalidated by the epoch fence.
       await transaction.delete(CREDENTIAL_ACTIVE_PREFIX + digest);
-      await transaction.delete(key);
-      removed += 1;
+      processed += 1;
     }
     const last = [...entries.keys()].at(-1);
     if (entries.size < INDEX_PAGE_SIZE) {
@@ -290,7 +308,7 @@ async function cleanRevokedCredentialIndexes(
       if (last) await transaction.put(CREDENTIAL_REVOKE_CLEANUP_CURSOR_KEY, last);
       return false;
     }
-    if (removed >= INDEX_PAGE_SIZE) return false;
+    if (processed >= INDEX_PAGE_SIZE) return false;
   }
   return epoch >= cutoff;
 }
@@ -367,6 +385,13 @@ export class UserAuthStateDurableObject implements DurableObject {
           const epoch = await credentialEpoch(transaction, locator.digest);
           await transaction.delete(`${CREDENTIAL_RECORD_EPOCH_PREFIX}${locator.digest}`);
           await transaction.delete(credentialGenerationIndexKey(epoch, locator.digest));
+          const remainingGenerationRows = await transaction.list({
+            prefix: CREDENTIAL_GENERATION_INDEX_PREFIX + generationSuffix(epoch) + ':',
+            limit: 1,
+          });
+          if (remainingGenerationRows.size === 0) {
+            await transaction.delete(credentialRevocationTimeKey(epoch + 1));
+          }
         }
       });
       processed += 1;
@@ -684,7 +709,20 @@ export class UserAuthStateDurableObject implements DurableObject {
           const record = await transaction.get<Record<string, unknown>>(CREDENTIAL_PREFIX + digest);
           if (!record) return { ready: true, record: null };
           const epoch = await credentialEpoch(transaction, digest);
-          if (epoch < await revokedThrough(transaction)) return { ready: true, record: null };
+          const cutoff = await revokedThrough(transaction);
+          const revokedAt = await effectiveCredentialRevocationAt(transaction, digest, record);
+          if (epoch < cutoff) {
+            if (revokedAt === null || timestamp(revokedAt)! <= nowMs) {
+              return { ready: true, record: null };
+            }
+            return {
+              ready: true,
+              record: record["revokedAt"] == null ? { ...record, revokedAt } : record,
+            };
+          }
+          if (record["revokedAt"] == null && revokedAt !== null) {
+            return { ready: true, record: { ...record, revokedAt } };
+          }
           return { ready: true, record };
         });
         if (!result.ready) {
@@ -712,26 +750,24 @@ export class UserAuthStateDurableObject implements DurableObject {
           }
           const result: Array<{ digest: string; record: unknown }> = [];
           const options: DurableObjectListOptions = {
-            prefix: CREDENTIAL_ACTIVE_PREFIX, limit: INDEX_PAGE_SIZE,
+            prefix: CREDENTIAL_PREFIX, limit: INDEX_PAGE_SIZE,
           };
           if (cursor) options.startAfter = cursor;
-          const entries = await transaction.list<AuthRecord>(options);
-          const now = new Date().toISOString();
-          const cutoff = await revokedThrough(transaction);
-          for (const [activeKey, active] of entries) {
-            const digest = activeKey.slice(CREDENTIAL_ACTIVE_PREFIX.length);
-            const record = await transaction.get<Record<string, unknown>>(CREDENTIAL_PREFIX + digest);
-            const epoch = await credentialEpoch(transaction, digest);
-            if (!record || epoch < cutoff || !isActiveRecord(active, now)) {
-              await transaction.delete(activeKey);
-              continue;
-            }
-            result.push({ digest, record });
+          const entries = await transaction.list<Record<string, unknown>>(options);
+          for (const [recordKey, record] of entries) {
+            const digest = recordKey.slice(CREDENTIAL_PREFIX.length);
+            const revokedAt = await effectiveCredentialRevocationAt(transaction, digest, record);
+            result.push({
+              digest,
+              record: record["revokedAt"] == null && revokedAt !== null
+                ? { ...record, revokedAt }
+                : record,
+            });
           }
           const last = [...entries.keys()].at(-1);
           const more = last && entries.size === INDEX_PAGE_SIZE
             ? await transaction.list<AuthRecord>({
-              prefix: CREDENTIAL_ACTIVE_PREFIX, startAfter: last, limit: 1,
+              prefix: CREDENTIAL_PREFIX, startAfter: last, limit: 1,
             })
             : null;
           return {
@@ -775,8 +811,6 @@ export class UserAuthStateDurableObject implements DurableObject {
             await transaction.put(activeKey, { expiresAt: updated.expiresAt, revokedAt });
           } else {
             await transaction.delete(activeKey);
-            const id = existing["id"];
-            if (typeof id === "string") await transaction.delete(credentialIdKey(id));
           }
           return effectiveCleanupAt(transaction, "credential", updated);
         });
@@ -805,24 +839,22 @@ export class UserAuthStateDurableObject implements DurableObject {
           if (!digest) return { ready: true, revoked: false, cleanupAt: null };
           const recordKey = CREDENTIAL_PREFIX + digest;
           const record = await transaction.get<Record<string, unknown>>(recordKey);
-          const epoch = await credentialEpoch(transaction, digest);
-          const cutoff = await revokedThrough(transaction);
-          if (!record || record["id"] !== id || epoch < cutoff ||
-              !isActiveRecord(record as AuthRecord, now)) {
+          if (!record || record["id"] !== id) {
             await transaction.delete(idKey);
             return { ready: true, revoked: false, cleanupAt: null };
           }
+          const epoch = await credentialEpoch(transaction, digest);
+          const cutoff = await revokedThrough(transaction);
           const previous = record as AuthRecord;
           const updated = { ...record, revokedAt } as AuthRecord;
           await transaction.put(recordKey, updated);
           await writeExpiryIndex(transaction, "credential", digest, previous, updated);
-          if (isActiveRecord(updated, now)) {
+          if (epoch >= cutoff && isActiveRecord(updated, now)) {
             await transaction.put(CREDENTIAL_ACTIVE_PREFIX + digest, {
               expiresAt: updated.expiresAt, revokedAt,
             });
           } else {
             await transaction.delete(CREDENTIAL_ACTIVE_PREFIX + digest);
-            await transaction.delete(idKey);
           }
           return {
             ready: true,
@@ -848,6 +880,7 @@ export class UserAuthStateDurableObject implements DurableObject {
             : 0;
           const nextEpoch = previousEpoch + 1;
           await transaction.put(CREDENTIAL_EPOCH_KEY, nextEpoch);
+          await transaction.put(credentialRevocationTimeKey(nextEpoch), revokedAt);
           if (at <= Date.now()) {
             const cutoff = await revokedThrough(transaction);
             await transaction.put(CREDENTIAL_REVOKED_THROUGH_KEY, Math.max(cutoff, nextEpoch));

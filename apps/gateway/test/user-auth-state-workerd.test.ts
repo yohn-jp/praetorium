@@ -193,8 +193,12 @@ describe("UserAuthStateDurableObject in workerd", () => {
     const afterBulk = record("workerd-id-after-bulk", "after-bulk");
     await store.create("workerd-digest-after-bulk", afterBulk);
     await expect(store.get("workerd-digest-after-bulk")).resolves.toEqual(afterBulk);
-    await expect(store.listForUser(userId)).resolves.toMatchObject({
-      items: [{ digest: "workerd-digest-after-bulk", record: afterBulk }],
-    });
+    const listed = await store.listForUser(userId);
+    expect(listed.items.map(item => [item.digest, item.record.id, item.record.revokedAt]).sort())
+      .toEqual([
+        ["workerd-digest-after-bulk", afterBulk.id, null],
+        ["workerd-digest-bulk", bulkRevoked.id, now],
+        ["workerd-digest-one", individuallyRevoked.id, now],
+      ].sort());
   });
 });

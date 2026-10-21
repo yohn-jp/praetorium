@@ -17,6 +17,7 @@ import type { BuildCandidateReceiptReader } from "@praetorium/buildkit";
 import { pathToFileURL } from "node:url";
 import { readBuildWorkerConfig } from "./config.js";
 import { BuildQueueHttpClient, readBuildServiceToken } from "./http-client.js";
+import { SourceReleaseBuildWorker } from "./source-release-worker.js";
 import { readRegistryPullCredential } from "./registry-credential.js";
 import {
   closeBuildWorkNotificationServer,
@@ -164,6 +165,13 @@ export async function main(): Promise<void> {
   const config = readBuildWorkerConfig();
   const workAvailability = new WorkAvailability();
   const worker = await createBuildWorker(process.env, { workAvailability });
+  const sourceWorker = new SourceReleaseBuildWorker(config, new BuildQueueHttpClient({
+    baseUrl: config.controlPlaneUrl,
+    serviceToken: await readBuildServiceToken(config.serviceTokenFile),
+    requestTimeoutMs: config.requestTimeoutMs,
+    maxResponseBytes: config.maxResponseBytes,
+    leaseSeconds: config.leaseSeconds,
+  }));
   const notificationServer = config.notificationEnabled
     ? await startBuildWorkNotificationServer(config, workAvailability)
     : undefined;
@@ -175,7 +183,16 @@ export async function main(): Promise<void> {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {
-    await worker.runUntilStopped(shutdown.signal, config.reconciliationIntervalMs);
+    while(!shutdown.signal.aborted){
+      let didWork=false;
+      try {didWork=await sourceWorker.runOnce(shutdown.signal);}
+      catch { /* Source-build errors do not stop existing composition jobs. */ }
+      if(shutdown.signal.aborted)break;
+      try {didWork=(await worker.runOnce(shutdown.signal))||didWork;}
+      catch { /* The durable Build queue is retried after a bounded wait. */ }
+      if(!didWork&&!shutdown.signal.aborted)
+        await workAvailability.wait(shutdown.signal,config.reconciliationIntervalMs);
+    }
   } finally {
     if (notificationServer) await closeBuildWorkNotificationServer(notificationServer);
     process.removeListener("SIGINT", stop);

@@ -39,6 +39,32 @@ export class EphemeralCodeDurableObject implements DurableObject {
       return Response.json({ record: record ?? null });
     }
 
+    // Atomic short-lived operator dispatch deduplication. This DO is *not* a
+    // release-state machine: GitHub Actions owns builds and Control Plane owns
+    // admission/Stable. Ambiguous network failures retain this claim.
+    if (url.pathname === "/release-dispatch/claim" || url.pathname === "/release-dispatch/release") {
+      const { key, claimId, now } = (await request.json()) as {
+        key: string; claimId: string; now: number;
+      };
+      if (!/^release-dispatch:[a-f0-9]{64}$/u.test(key) ||
+          !/^[0-9a-f-]{36}$/u.test(claimId) ||
+          !Number.isSafeInteger(now) || Math.abs(now-Date.now()) > 120_000)
+        return new Response("invalid dispatch claim", { status: 400 });
+      const claimed = await this.state.storage.transaction(async (tx) => {
+        const existing = await tx.get<{ claimId: string; expiresAt: number }>(key);
+        if (url.pathname === "/release-dispatch/release") {
+          if (!existing || existing.claimId !== claimId) return false;
+          await tx.delete(key);
+          return true;
+        }
+        if (existing && existing.expiresAt > now) return false;
+        await tx.put(key, { claimId, expiresAt: now + 24 * 3600_000 });
+        return true;
+      });
+      return Response.json(url.pathname.endsWith("/claim")
+        ? { claimed } : { released: claimed });
+    }
+
     if (url.pathname === "/refresh/create") {
       const { credentialId, digest, record } = (await request.json()) as {
         credentialId: string;

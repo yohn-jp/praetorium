@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { renderWorkerTemplate } from "../infrastructure/scripts/worker-config.mjs";
 import {
+  assertMigrationReadback,
+  orderedMigrationFiles,
+  parseAppliedMigrationReadback,
+} from "./deployment-migrations.mjs";
+import {
   validateWorkNotificationTokens,
   workNotificationsEnabled,
 } from "../infrastructure/scripts/work-notifications.mjs";
@@ -16,11 +21,15 @@ const args = process.argv.slice(2);
 let inventoryPath;
 let secretFilesPath;
 let mode = "--check";
+let modeSelected = false;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--inventory" && args[i + 1]) inventoryPath = args[++i];
   else if (args[i] === "--secret-files" && args[i + 1]) secretFilesPath = args[++i];
-  else if (["--check", "--apply"].includes(args[i])) mode = args[i];
-  else throw new Error("Usage: node scripts/deploy-cloudflare.mjs --inventory <private-inventory.json> [--check|--apply]");
+  else if (["--check", "--preflight", "--migrate", "--workers", "--apply"].includes(args[i])) {
+    if (modeSelected) throw new Error("choose one Cloudflare deployment mode");
+    mode = args[i];
+    modeSelected = true;
+  } else throw new Error("Usage: node scripts/deploy-cloudflare.mjs --inventory <private-inventory.json> --secret-files <private-manifest.json> [--check|--preflight|--migrate|--workers|--apply]");
 }
 if (!inventoryPath || !secretFilesPath) throw new Error("--inventory and --secret-files are required");
 const input = readInventory(inventoryPath);
@@ -93,14 +102,13 @@ const conf = {
 };
 try {
   const workerTemplates = [
-    ["control", "control-plane.template.json", inventory.domains.controlPlaneUrl],
-    ["gateway", "gateway.template.json", inventory.domains.gatewayOrigin],
+    ["control", "control-plane.template.json"],
+    ["gateway", "gateway.template.json"],
   ];
-  for (const [key, name, origin] of workerTemplates) {
+  for (const [key, name] of workerTemplates) {
     const original = readFileSync(path.join(root, "infrastructure/workers", name), "utf8");
     const config = JSON.parse(renderWorkerTemplate(original, inventory, key === "control" ? "control-plane" : "gateway"));
     config.account_id = inventory.cloudflare.accountId;
-    config.routes = [{ pattern: new URL(origin).hostname, custom_domain: true }];
     // Generated configs live in a private subdirectory; make source and migration paths relative to it.
     config.main = path.relative(generated, path.join(root, "apps", key === "control" ? "control-plane" : "gateway", "src/worker.ts")).replaceAll(path.sep, "/");
     for (const database of config.d1_databases ?? []) {
@@ -139,61 +147,85 @@ try {
   if (notificationsEnabled) {
     console.log("Work notification token files are privately referenced and validated locally; remote notification Worker Secrets are not checked until deployment. DNS, Runtime ingress, and certificate readiness are not verified here.");
   }
+  const migrationDirectory = path.join(root, "apps/control-plane/migrations");
+  const expectedMigrations = orderedMigrationFiles(migrationDirectory);
+  const migrationReadback = () => {
+    const output = wrangler([
+      "d1", "execute", "praetorium-platform", "--remote",
+      "--command", "SELECT name FROM d1_migrations ORDER BY id",
+      "--json", "--config", conf.control,
+    ]);
+    const appliedMigrations = parseAppliedMigrationReadback(output);
+    assertMigrationReadback(expectedMigrations, appliedMigrations);
+    console.log("Remote D1 migration history matches this checkout: " + expectedMigrations.join(", "));
+  };
+  const applyMigrations = () => {
+    wrangler(["d1", "migrations", "apply", "praetorium-platform", "--remote",
+      "--config", conf.control], { capture: false });
+    migrationReadback();
+  };
   if (mode === "--check") {
+    migrationReadback();
     console.log("No Cloudflare resource mutated.");
-    process.exit(0);
-  }
-  run("corepack", ["pnpm@11.18.0", "install", "--frozen-lockfile"], { capture: false });
-  run("corepack", ["pnpm@11.18.0", "build"], { capture: false });
-  // Publish the same operator-supplied runtime tokens to the respective Worker
-  // that K3s reads from its namespace Secret; never ask for a second token.
-  for (const [worker, key, role] of [
-    [conf.gateway, "INSTANCE_ACCESS_SERVICE_AUTH_TOKEN", "instanceAccessServiceAuth"],
-    [conf.control, "PROVISIONER_AUTH_TOKEN", "controlPlaneCredential"],
-    [conf.control, "BUILD_WORKER_AUTH_TOKEN", "buildWorkerControlPlaneAuth"],
-    [conf.control, "REGISTRY_PULL_CREDENTIAL", "buildWorkerRegistryPull"],
-  ]) {
-    wrangler(["secret", "put", key, "--config", worker], { input: privateBytes(role), capture: true });
-  }
-  if (notificationTokenBytes) {
-    for (const [key, role] of [
-      ["PROVISIONER_WORK_NOTIFICATION_TOKEN", "provisioner"],
-      ["BUILD_WORK_NOTIFICATION_TOKEN", "build"],
-    ]) {
-      wrangler(["secret", "put", key, "--config", conf.control], {
-        input: notificationTokenBytes[role],
-        capture: true,
-      });
-    }
-  }
-  if (privateManifest.values.releaseOperatorToken) {
-    wrangler(["secret", "put", "RELEASE_OPERATOR_TOKEN", "--config", conf.control],
-      { input: privateBytes("releaseOperatorToken"), capture: true });
-  }
-  wrangler(["d1", "migrations", "apply", "praetorium-platform", "--remote",
-    "--config", conf.control], { capture: false });
-  wrangler(["deploy", "--config", conf.control], { capture: false });
-  wrangler(["deploy", "--config", conf.gateway], { capture: false });
-  for (const [origin, endpoint] of [
-    [inventory.domains.controlPlaneUrl, "/healthz"],
-    [inventory.domains.gatewayOrigin, "/healthz"],
-    [inventory.domains.gatewayOrigin, "/auth/login"],
-    [inventory.domains.gatewayOrigin, "/.well-known/jwks.json"],
-  ]) {
-    const response = await fetch(origin + endpoint, { signal: AbortSignal.timeout(20_000) });
-    if (!response.ok) throw new Error("Cloudflare HTTPS probe failed: " + origin + endpoint +
-      " HTTP " + response.status);
-    if (endpoint.endsWith("jwks.json")) {
-      const actual = await response.json();
-      const active = records.find((row) => row.status === "active");
-      if (!actual.keys?.some((key) => key.kid === active.kid &&
-          key.x === active.publicKeyJwk.x && key.y === active.publicKeyJwk.y)) {
-        throw new Error("deployed Gateway JWKS differs from approved public key registry");
+  } else if (mode === "--preflight") {
+    console.log("Cloudflare resource/secret preflight passed; migration state was not changed or read.");
+  } else {
+    if (mode === "--workers") migrationReadback();
+    run("corepack", ["pnpm@11.18.0", "install", "--frozen-lockfile"], { capture: false });
+    if (mode === "--migrate" || mode === "--apply") applyMigrations();
+    if (mode === "--migrate") {
+      console.log("D1 migrations applied and read back; no Worker or Kubernetes workload was deployed.");
+    } else {
+      run("corepack", ["pnpm@11.18.0", "build"], { capture: false });
+      // Publish the same operator-supplied runtime tokens to the respective Worker
+      // that K3s reads from its namespace Secret; never ask for a second token.
+      for (const [worker, key, role] of [
+        [conf.gateway, "INSTANCE_ACCESS_SERVICE_AUTH_TOKEN", "instanceAccessServiceAuth"],
+        [conf.control, "PROVISIONER_AUTH_TOKEN", "controlPlaneCredential"],
+        [conf.control, "BUILD_WORKER_AUTH_TOKEN", "buildWorkerControlPlaneAuth"],
+        [conf.control, "REGISTRY_PULL_CREDENTIAL", "buildWorkerRegistryPull"],
+      ]) {
+        wrangler(["secret", "put", key, "--config", worker], { input: privateBytes(role), capture: true });
       }
+      if (notificationTokenBytes) {
+        for (const [key, role] of [
+          ["PROVISIONER_WORK_NOTIFICATION_TOKEN", "provisioner"],
+          ["BUILD_WORK_NOTIFICATION_TOKEN", "build"],
+        ]) {
+          wrangler(["secret", "put", key, "--config", conf.control], {
+            input: notificationTokenBytes[role],
+            capture: true,
+          });
+        }
+      }
+      if (privateManifest.values.releaseOperatorToken) {
+        wrangler(["secret", "put", "RELEASE_OPERATOR_TOKEN", "--config", conf.control],
+          { input: privateBytes("releaseOperatorToken"), capture: true });
+      }
+      wrangler(["deploy", "--config", conf.control], { capture: false });
+      wrangler(["deploy", "--config", conf.gateway], { capture: false });
+      for (const [origin, endpoint] of [
+        [inventory.domains.controlPlaneUrl, "/healthz"],
+        [inventory.domains.gatewayOrigin, "/healthz"],
+        [inventory.domains.gatewayOrigin, "/auth/login"],
+        [inventory.domains.gatewayOrigin, "/.well-known/jwks.json"],
+      ]) {
+        const response = await fetch(origin + endpoint, { signal: AbortSignal.timeout(20_000) });
+        if (!response.ok) throw new Error("Cloudflare HTTPS probe failed: " + origin + endpoint +
+          " HTTP " + response.status);
+        if (endpoint.endsWith("jwks.json")) {
+          const actual = await response.json();
+          const active = records.find((row) => row.status === "active");
+          if (!actual.keys?.some((key) => key.kid === active.kid &&
+              key.x === active.publicKeyJwk.x && key.y === active.publicKeyJwk.y)) {
+            throw new Error("deployed Gateway JWKS differs from approved public key registry");
+          }
+        }
+        console.log("Verified " + origin + endpoint);
+      }
+      console.log("Cloudflare Worker deployment verified (K3s and hosted end-to-end checks separate).");
     }
-    console.log("Verified " + origin + endpoint);
   }
-  console.log("Cloudflare Worker deployment verified (K3s and hosted end-to-end checks separate).");
 } finally {
   rmSync(generated, { recursive: true, force: true });
 }

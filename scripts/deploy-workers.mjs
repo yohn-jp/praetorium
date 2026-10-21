@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -9,17 +9,12 @@ import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { buildPolicy, releasePolicy, renderWorkerTemplate } from "../infrastructure/scripts/worker-config.mjs";
 import { workNotificationEndpoints, workNotificationsEnabled } from "../infrastructure/scripts/work-notifications.mjs";
+import { orderedMigrationFiles } from "./deployment-migrations.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const templatesDir = path.join(repoRoot, "infrastructure/workers");
-const requiredMigrations = [
-  "0001_repository_platform.sql",
-  "0002_stable_release_rollouts.sql",
-  "0003_staged_configurations.sql",
-  "0004_runtime_git_credentials.sql",
-  "0005_runtime_health_observations.sql",
-  "0006_application_origins.sql",
-];
+const migrationDirectory = path.join(repoRoot, "apps/control-plane/migrations");
+const requiredMigrations = orderedMigrationFiles(migrationDirectory);
 
 function usage() {
   process.stderr.write(`Usage:
@@ -79,11 +74,8 @@ function checkPaths() {
     "infrastructure/workers/control-plane.template.json",
     "infrastructure/workers/gateway.template.json",
   ];
-  const directory = path.join(repoRoot, "apps/control-plane/migrations");
-  const migrationFiles = existsSync(directory)
-    ? readdirSync(directory)
-        .filter((entry) => entry.endsWith(".sql"))
-        .sort()
+  const migrationFiles = existsSync(migrationDirectory)
+    ? orderedMigrationFiles(migrationDirectory)
     : [];
   return {
     files: Object.fromEntries(

@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { workNotificationsEnabled } from "../infrastructure/scripts/work-notifications.mjs";
+import { platformDeploymentSteps } from "./deployment-plan.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = {};
@@ -64,25 +65,21 @@ executeTool("corepack", ["pnpm@11.18.0", "install", "--frozen-lockfile"]);
 const k3s = ["--inventory", options["--inventory"], "--secret-files", options["--secret-files"],
   "--kubeconfig", options["--kubeconfig"], "--confirm", options["--confirm"]];
 const cloudflare = ["--inventory", options["--inventory"], "--secret-files", options["--secret-files"]];
-console.log("Preflighting target K3s and Cloudflare before any remote deployment...");
-execute("deploy-k3s.mjs", [...k3s, "--check"]);
-execute("deploy-cloudflare.mjs", [...cloudflare, "--check"]);
+for (const step of platformDeploymentSteps(options.mode, notificationsEnabled)) {
+  console.log(step.stage + "...");
+  if (step.script === "verify-work-notifications.mjs") {
+    execute(step.script, [
+      "--inventory", options["--inventory"],
+      "--secret-files", options["--secret-files"],
+    ]);
+  } else {
+    const base = step.script === "deploy-k3s.mjs" ? k3s : cloudflare;
+    execute(step.script, [...base, step.mode]);
+  }
+}
 if (options.mode === "--check") {
   console.log("Both deployments passed preflight. Nothing changed.");
-  process.exit(0);
+} else {
+  console.log("Praetorium Cloudflare and static K3s deployment complete.");
+  console.log("Run Hosted end-to-end acceptance separately; ingress transport and GitHub/Scriptorium are not certified by this step.");
 }
-console.log("Installing and reconciling declared K3s services and notification receivers...");
-execute("deploy-k3s.mjs", [...k3s, "--apply"]);
-if (notificationsEnabled) {
-  console.log("Verifying both work notification HTTPS receivers before configuring Worker delivery...");
-  execute("verify-work-notifications.mjs", [
-    "--inventory",
-    options["--inventory"],
-    "--secret-files",
-    options["--secret-files"],
-  ]);
-}
-console.log("Applying Cloudflare migrations and Workers after the K3s receivers are ready...");
-execute("deploy-cloudflare.mjs", [...cloudflare, "--apply"]);
-console.log("Praetorium Cloudflare and static K3s deployment complete.");
-console.log("Run the Hosted end-to-end acceptance separately; ingress transport and GitHub/Scriptorium are not certified by this step.");

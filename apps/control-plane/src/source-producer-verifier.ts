@@ -55,10 +55,9 @@ export class SourceProducerProofVerifier {
     catch(error){
       if(error instanceof SourceProofVerificationError)throw error;
       if(error instanceof RegistryError){
-        if(error.reason==="unavailable"||error.reason==="rate_limited")
+        if(error.reason==="unavailable"||error.reason==="rate_limited"||
+           error.reason==="not_found"||error.reason==="unauthorized")
           throw new SourceProofVerificationError(true,"SOURCE_VERIFICATION_FAILED");
-        if(error.reason==="not_found")
-          throw new SourceProofVerificationError(false,"SOURCE_CHANGED");
         throw new SourceProofVerificationError(false,"SOURCE_VERIFICATION_FAILED");
       }
       throw new SourceProofVerificationError(false,"SOURCE_VERIFICATION_FAILED");
@@ -75,7 +74,9 @@ export class SourceProducerProofVerifier {
       statement.githubReleaseId!==job.github_release_id ||
       statement.sourceTag!==job.source_tag ||
       statement.sourceRevision!==job.source_revision ||
-      statement.releaseVersion!==job.release_version ||
+      statement.releaseVersion!==job.release_version)
+      throw new SourceProofVerificationError(false,"SOURCE_CHANGED");
+    if(
       statement.runtimeBaseDigest!==result.catalog.runtimeBaseDigest ||
       statement.buildKitDigest!==result.catalog.buildKitDigest ||
       statement.sourceRevision!==result.catalog.producerRevision ||

@@ -112,6 +112,13 @@ describe("source producer proof verification", () => {
     expect(verifyImage).not.toHaveBeenCalled();
   });
 
+  it("classifies a different leased source tuple as SOURCE_CHANGED", async () => {
+    const {client,verifyImage}=registry();
+    await expect(verifier(client).verify({...job,source_tag:"v0.2.0"},await legacyProof()))
+      .rejects.toMatchObject({retryable:false,code:"SOURCE_CHANGED"});
+    expect(verifyImage).not.toHaveBeenCalled();
+  });
+
   it("rejects registry host mismatch before registry access", async () => {
     const {client,verifyImage}=registry("registry-attacker.example");
     await expect(verifier(client).verify(job,await legacyProof()))
@@ -159,7 +166,7 @@ describe("source producer proof verification", () => {
     expect(verifyImage).not.toHaveBeenCalled();
   });
 
-  it("classifies registry throttling as retryable while missing immutable images are terminal", async () => {
+  it("classifies registry availability and authorization failures as retryable without admitting", async () => {
     const transient={
       registryHost:"ghcr.io",
       verifyImage:vi.fn(async()=>{throw new RegistryError("rate_limited","private detail");}),
@@ -173,8 +180,30 @@ describe("source producer proof verification", () => {
       verifyImage:vi.fn(async()=>{throw new RegistryError("not_found","private detail");}),
     };
     await expect(verifier(missing).verify(job,await legacyProof())).rejects.toMatchObject({
-      name:"SourceProofVerificationError",retryable:false,code:"SOURCE_CHANGED",
+      name:"SourceProofVerificationError",retryable:true,code:"SOURCE_VERIFICATION_FAILED",
     });
     expect(missing.verifyImage).toHaveBeenCalledTimes(2);
+
+    let registryAvailable=false;
+    const recovers={
+      registryHost:"ghcr.io",
+      verifyImage:vi.fn(async(repository:string,manifestDigest:string)=>{
+        if(!registryAvailable)throw new RegistryError("not_found","private detail");
+        return {repository,manifestDigest} as unknown as Awaited<ReturnType<GhcrRegistryClient["verifyImage"]>>;
+      }),
+    };
+    const proof=await legacyProof();
+    await expect(verifier(recovers).verify(job,proof)).rejects.toMatchObject({retryable:true});
+    registryAvailable=true;
+    await expect(verifier(recovers).verify(job,proof)).resolves.toMatchObject({statement:proof.statement});
+
+    const denied={
+      registryHost:"ghcr.io",
+      verifyImage:vi.fn(async()=>{throw new RegistryError("unauthorized","private detail");}),
+    };
+    await expect(verifier(denied).verify(job,proof)).rejects.toMatchObject({
+      name:"SourceProofVerificationError",retryable:true,code:"SOURCE_VERIFICATION_FAILED",
+    });
+    expect(denied.verifyImage).toHaveBeenCalledTimes(2);
   });
 });

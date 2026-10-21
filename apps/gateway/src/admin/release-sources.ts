@@ -205,7 +205,7 @@ export async function listRegisteredSources(
   const sources=configuredReleaseSources(context.env.PRAETORIUM_RELEASE_SOURCES_JSON);
   if(!sources.length)return [];
   const token=await context.githubUserTokens.accessTokenFor(userId,context.requestNow);
-  if(!token)return sources.map(source=>({source,releases:[],workflows:[],error:"GitHub authorization unavailable"}));
+  if(!token)return sources.map(source=>({source,releases:[],error:"GitHub authorization unavailable"}));
   const client=createGitHubRestClient({requestTimeoutMs:8000});
   return Promise.all(sources.map(async source=>{
     try{
@@ -214,20 +214,21 @@ export async function listRegisteredSources(
     }catch(e){
       const err=e instanceof GitHubApiError && (e.status===401||e.status===403)
         ? "GitHub App access to this repository is missing" : "GitHub Releases are temporarily unavailable";
-      return {source,releases:[],workflows:[],error:err};
+      return {source,releases:[],error:err};
     }
   }));
 }
 
 /** Markup is escaped even when Release titles and notes contain arbitrary Markdown/HTML. */
-export function sourceReleaseCards(views:readonly SourceReleaseView[],csrf:string):string {
+export function sourceReleaseCards(views:readonly SourceReleaseView[],csrf:string,builds:readonly SourceBuildStatus[]=[]):string {
   if(!views.length)return '<p class="admin-empty">No release sources registered. Configure trusted service sources in Wrangler.</p>';
-  return views.map(({source,releases,workflows,error})=>{
+  return views.map(({source,releases,error})=>{
     const entries=error?'<p class="alert" role="status">'+escapeHtml(error)+'</p>':
       releases.length===0?'<p class="admin-empty">No published GitHub Releases were found.</p>':
       releases.map(release=>{
-        const run=workflows.find(x=>x.tag===release.tag);
-        const workflow=run?'<p class="admin-subtext">Producer: <a href="'+escapeHtml(run.url)+'" rel="noopener noreferrer">'+escapeHtml(run.status+(run.conclusion?" / "+run.conclusion:""))+'</a></p>':"";
+        const build = builds.find(x => x.sourceId === source.id && x.releaseId === release.id);
+        const progress = build ? '<p class="admin-subtext">Build Worker: ' + escapeHtml(build.state) +
+          (build.error ? ' / ' + escapeHtml(build.error) : '') + '</p>' : '';
         const action=release.version?
           '<form method="post" action="/source-releases/deploy">'+
           '<input type="hidden" name="csrfToken" value="'+escapeHtml(csrf)+'">'+
@@ -239,7 +240,7 @@ export function sourceReleaseCards(views:readonly SourceReleaseView[],csrf:strin
           '<div><span class="admin-kicker">'+(release.prerelease?"PRERELEASE":"PUBLISHED RELEASE")+'</span>'+
           '<h3>'+escapeHtml(release.tag)+'</h3><p>'+escapeHtml(release.name)+'</p></div>'+
           '<div><span class="admin-kicker">PUBLISHED</span><p class="admin-subtext">'+escapeHtml(release.publishedAt.slice(0,10))+'</p></div>'+
-          '<div><p class="admin-subtext">'+escapeHtml(release.notes.slice(0,200))+'</p>'+workflow+'</div>'+
+          '<div><p class="admin-subtext">'+escapeHtml(release.notes.slice(0,200))+'</p>'+progress+'</div>'+
           '<div class="admin-actions">'+action+'</div></article>';
       }).join("");
     return '<section class="admin-section" aria-label="'+escapeHtml(source.label)+' GitHub releases">'+

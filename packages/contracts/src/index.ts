@@ -19,3 +19,4 @@ export * from "./persistence-compatibility.js";
 export * from "./work-notification.js";
 export * from "./runtime-canary-health.js";
 export * from "./source-producer.js";
+export * from "./artifact-identity.js";

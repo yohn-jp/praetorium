@@ -22,6 +22,7 @@ export type ReleaseProducerMetadataInput = {
 
 const SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1";
 const PRAETORIUM_SOURCE_BUILD_V1 = "https://praetorium.yohn.jp/attestation/source-build/v1";
+const PRAETORIUM_SOURCE_BUILD_V2 = "https://praetorium.yohn.jp/attestation/source-build/v2";
 const CATALOG_SUBJECT = "scriptorium-build/v1/catalog.json";
 const RUNTIME_METADATA_SUBJECT = "scriptorium-platform/v1/runtime-metadata.json";
 
@@ -55,7 +56,7 @@ export async function verifyReleaseProducerMetadata(
     !isHttpsReference(input.provenanceRef) ||
     attestation.bundleRef !== input.signatureRef ||
     (attestation.predicateType !== SLSA_PROVENANCE_V1 &&
-      !(attestation.predicateType === PRAETORIUM_SOURCE_BUILD_V1 &&
+      !([PRAETORIUM_SOURCE_BUILD_V1, PRAETORIUM_SOURCE_BUILD_V2].includes(attestation.predicateType) &&
         /^https:\/\/control\.praetorium\.yohn\.jp\/internal\/source-proofs\/sr_[0-9a-f-]{36}$/u.test(input.signatureRef)))
   ) {
     return { kind: "rejected", reason: "producer attestation does not match the admitted SLSA bundle" };

@@ -4,6 +4,7 @@ import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js";
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
+import { D1SourceReleaseBuildQueue, createSourceReleaseOperatorRoutes, createSourceReleaseWorkerRoutes } from "./source-release-builds.js";
 import { createScheduledHandler } from "./scheduled.js";
 import type { ExecutionContext } from "hono";
 import { notifyWorkAvailable, type WorkNotificationEnv } from "./work-notifications.js";
@@ -101,6 +102,8 @@ function composeServices(env: ControlPlaneEnv) {
           notifyWorkAvailable: notifyWork,
         })
       : undefined;
+  const sourceBuilds = releases && env.BUILD_WORKER_AUTH_TOKEN
+    ? new D1SourceReleaseBuildQueue(env.CONTROL_PLANE_DB) : undefined;
   const app = createControlPlaneApp({
     notifyWorkAvailable: notifyWork,
     ...(env.GATEWAY_SERVICE && env.PROVISIONER_AUTH_TOKEN
@@ -154,6 +157,18 @@ function composeServices(env: ControlPlaneEnv) {
           }),
         }
       : {}),
+    ...(sourceBuilds ? {
+      sourceReleaseOperator: createSourceReleaseOperatorRoutes({
+        queue: sourceBuilds,
+        operatorActorId: (JSON.parse(required(env.RELEASE_POLICY_JSON)) as {operatorActorId:string}).operatorActorId,
+        notifyBuild: () => notifyWork("build"),
+      }),
+      sourceReleaseWorker: createSourceReleaseWorkerRoutes({
+        queue: sourceBuilds,
+        workerId: required(env.BUILD_WORKER_ID),
+        serviceToken: required(env.BUILD_WORKER_AUTH_TOKEN),
+      }),
+    } : {}),
     ...(releases
       ? {
           operatorAdmission: releases.operatorReleaseAdmission,

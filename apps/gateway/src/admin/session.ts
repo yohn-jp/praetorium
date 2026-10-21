@@ -199,7 +199,10 @@ export async function logoutAdmin(
   try {
     await revokeSession(context.sessionStore, session.resolved.digest, context.requestNow);
   } catch { return noStore(503, "Admin logout unavailable"); }
-  const response = redirect("/");
+  // A redirect to "/" would immediately re-run the Gateway OAuth handoff
+  // while the ordinary repository session remains valid. Keep the admin
+  // session signed out until the operator explicitly chooses to sign in.
+  const response = redirect("/signed-out");
   response.headers.append("Set-Cookie",
     SESSION_COOKIE_NAME + "=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
   response.headers.append("Set-Cookie",

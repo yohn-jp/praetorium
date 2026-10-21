@@ -1,8 +1,14 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
-import { canonicalSourceProof, sourceProofDigest } from "@praetorium/contracts";
+import {
+  canonicalSourceProof,
+  SOURCE_PRODUCER_REQUEST_MAX_BYTES,
+  SOURCE_PRODUCER_RESULT_MAX_BYTES,
+  sourceProducerResultByteLength,
+  sourceProofDigest,
+} from "@praetorium/contracts";
 import catalogFixture from "../../../plugins/scriptorium/test/fixtures/build-catalog.v1.fixture.json" with { type: "json" };
 import {
   createSourceReleaseOperatorRoutes,
@@ -28,7 +34,7 @@ const SOURCE_TOKEN = "x".repeat(32);
 const DIGEST_A = `sha256:${"a".repeat(64)}`;
 const DIGEST_B = `sha256:${"b".repeat(64)}`;
 
-async function sourceResult(jobId: string) {
+async function sourceResult(jobId: string, extraUnicodePathChars = 0) {
   const catalog = {
     ...catalogFixture,
     producerRevision: JOB.sourceRevision,
@@ -40,7 +46,8 @@ async function sourceResult(jobId: string) {
     producerRevision: JOB.sourceRevision,
     listener: { port: 3000 },
     paths: {
-      liveness: "/healthz", readiness: "/readyz", metadata: "/metadata",
+      liveness: `/healthz${"é".repeat(extraUnicodePathChars)}`,
+      readiness: "/readyz", metadata: "/metadata",
       shutdown: "/shutdown", status: "/api/platform/v1/status",
       quiesce: "/api/platform/v1/quiesce", resume: "/api/platform/v1/resume",
     },
@@ -482,6 +489,52 @@ describe("source Release build queue against migrated SQLite D1", () => {
         }, ACTOR)).rejects.toBeInstanceOf(SourceRetryConflict);
       }
     }
+  });
+
+  it("rejects a UTF-8-expanded Source proof before verification or database access", async () => {
+    const h = harness();
+    const created = await h.queue.enqueue(JOB, ACTOR);
+    const claim = await h.queue.claim(SOURCE_WORKER, 30);
+    if (!claim) throw new Error("expected a source lease");
+    const oversized = await sourceResult(claim.job_id, 33_000);
+    const jsonResult = JSON.stringify(oversized);
+    const requestBody = JSON.stringify({
+      workerId: SOURCE_WORKER,
+      leaseToken: claim.lease_token,
+      leaseEpoch: claim.lease_epoch,
+      result: oversized,
+    });
+    expect(jsonResult.length).toBeLessThan(SOURCE_PRODUCER_RESULT_MAX_BYTES);
+    expect(sourceProducerResultByteLength(oversized)).toBeGreaterThan(SOURCE_PRODUCER_RESULT_MAX_BYTES);
+    expect(new TextEncoder().encode(requestBody).byteLength).toBeLessThan(SOURCE_PRODUCER_REQUEST_MAX_BYTES);
+
+    const prepare = vi.spyOn(h.db, "prepare");
+    const verifyProduced = vi.fn(async () => undefined);
+    const app = createSourceReleaseWorkerRoutes({
+      queue: h.queue,
+      workerId: SOURCE_WORKER,
+      serviceToken: SOURCE_TOKEN,
+      verifyProduced,
+    });
+    const response = await app.request(`/${claim.job_id}/produced`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SOURCE_TOKEN}`, "content-type": "application/json" },
+      body: requestBody,
+    });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: { code: "REQUEST_TOO_LARGE" } });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(verifyProduced).not.toHaveBeenCalled();
+
+    await expect(h.queue.produced(claim.job_id, {
+      workerId: claim.lease_worker!,
+      leaseToken: claim.lease_token!,
+      leaseEpoch: claim.lease_epoch,
+      result: oversized,
+    })).rejects.toThrow("Source release evidence exceeds bound");
+    expect(await h.queue.byId(created.job.id)).toMatchObject({
+      state: "building", result_json: null, lease_epoch: claim.lease_epoch,
+    });
   });
 
   it("serves the immutable retry identity and explicit retry through the operator route", async () => {

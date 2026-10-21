@@ -49,6 +49,7 @@ import { page } from "./ui/views/document.js";
 import { createPortalHandler } from "./ui/index.js";
 import type { PortalActor, PortalSession } from "./ui/index.js";
 import { createPortalService } from "./services/portal-service.js";
+import { enterAdminFromGateway } from "./admin/session.js";
 import { requestAuthorizedServiceWake } from "./services/service-wake.js";
 import { authorizationServerMetadata, registerOAuthClient, authorizeOAuth, exchangeOAuthToken } from "./services/oauth-service.js";
 import { errorResponse } from "./middleware/error-response.js";
@@ -1076,6 +1077,7 @@ export function createGatewayRouter(context: GatewayContext): Hono {
   app.post("/oauth/authorize", (c) => authorizeOAuth(c.req.raw, context));
   app.post("/oauth/token", (c) => exchangeOAuthToken(c.req.raw, context));
   app.get("/auth/login", (c) => loginPage(c.req.raw));
+  app.get("/_admin/entry", (c) => enterAdminFromGateway(c.req.raw, context));
   app.get("/auth/github/start", (c) => handleGithubStart(c.req.raw, context, context.requestNow));
   app.get("/auth/github/callback", (c) => handleGithubCallback(c.req.raw, context, context.requestNow));
   app.get("/api/session", (c) => handleSession(c.req.raw, context, context.requestNow));

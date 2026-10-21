@@ -144,60 +144,59 @@ export async function fetchSelectedRelease(
   return {release,commit};
 }
 
-async function oneShotClaim(context: GatewayContext, key: string, claimId: string, action: "claim"|"release"): Promise<boolean> {
-  const hash = await keyedDigest(context.config.handoffPepper,"release-dispatch:"+key);
-  const stub = context.env.EPHEMERAL_CODES.get(
-    context.env.EPHEMERAL_CODES.idFromName("release-dispatch:"+hash.slice(0,2)),
-  );
-  const response = await stub.fetch("https://ephemeral-code/release-dispatch/"+action,{
-    method:"POST", body:JSON.stringify({
-      key:"release-dispatch:"+hash, claimId, now:Date.parse(context.requestNow),
-    }),
-  });
-  if (!response.ok) throw new Error("Release dispatch coordination unavailable");
-  const result: unknown = await response.json();
-  return object(result)?.[action==="claim"?"claimed":"released"] === true;
-}
 
 export type DispatchReleaseResult =
-  | {readonly kind:"dispatched";readonly tag:string;readonly commit:string}
-  | {readonly kind:"duplicate"}
-  | {readonly kind:"forbidden"}
-  | {readonly kind:"unavailable"};
+  | { readonly kind: "queued"; readonly job: SourceBuildStatus; readonly duplicate: boolean }
+  | { readonly kind: "forbidden" }
+  | { readonly kind: "conflict" }
+  | { readonly kind: "unavailable" };
 
+/** Source authority is GitHub; build/admission authority is Praetorium's Control Plane. */
 export async function dispatchPublishedRelease(
-  context:GatewayContext, userId:string, sourceId:string,releaseId:number,
-):Promise<DispatchReleaseResult>{
-  const sources=configuredReleaseSources(context.env.PRAETORIUM_RELEASE_SOURCES_JSON);
-  const source=sources.find(x=>x.id===sourceId);
-  if(!source) return {kind:"forbidden"};
-  const token=await context.githubUserTokens.accessTokenFor(userId,context.requestNow);
-  if(!token) return {kind:"unavailable"};
-  const client=createGitHubRestClient({requestTimeoutMs:8000});
-  let selected;
-  try {selected=await fetchSelectedRelease(source,releaseId,client,token);}
-  catch(e){return {kind:e instanceof GitHubApiError && (e.status===403||e.status===401)?"forbidden":"unavailable"};}
-  const key=`${source.id}:${selected.release.id}:${selected.commit}`;
-  const claimId=crypto.randomUUID();
-  if(!(await oneShotClaim(context,key,claimId,"claim")))return {kind:"duplicate"};
-  try{
-    await client.request(`/repos/${source.workflowRepository}/actions/workflows/${source.workflowFile}/dispatches`,token,{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ref:"main",inputs:{
-        source_revision:selected.commit,source_tag:selected.release.tag,
-        release_version:selected.release.version,publish_public_producer_inputs:"true",
-      }}),
-    });
-    return {kind:"dispatched",tag:selected.release.tag,commit:selected.commit};
-  }catch(e){
-    // Only a definite authorization failure proves the workflow was not queued.
-    // Network timeouts/5xx are ambiguous and retain the claim to prevent duplicates.
-    if(e instanceof GitHubApiError && [401,403,404,422].includes(e.status)){
-      await oneShotClaim(context,key,claimId,"release").catch(()=>false);
-      return {kind:e.status===401||e.status===403?"forbidden":"unavailable"};
-    }
-    return {kind:"unavailable"};
+  context: GatewayContext, userId: string, sourceId: string, releaseId: number,
+): Promise<DispatchReleaseResult> {
+  const source = configuredReleaseSources(context.env.PRAETORIUM_RELEASE_SOURCES_JSON)
+    .find((value) => value.id === sourceId);
+  if (!source) return { kind: "forbidden" };
+  const token = await context.githubUserTokens.accessTokenFor(userId, context.requestNow);
+  if (!token) return { kind: "unavailable" };
+  const client = createGitHubRestClient({ requestTimeoutMs: 8000 });
+  let selected: Awaited<ReturnType<typeof fetchSelectedRelease>>;
+  try {
+    selected = await fetchSelectedRelease(source, releaseId, client, token);
+  } catch (error) {
+    return { kind: error instanceof GitHubApiError && (error.status === 401 || error.status === 403)
+      ? "forbidden" : "unavailable" };
   }
+  let response: Response;
+  try {
+    response = await context.env.CONTROL_PLANE.fetch(
+      "https://control-plane.internal/v1/operator/source-builds", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Control-Plane-Gateway-Auth": context.config.controlPlaneSecret,
+          "X-Praetorium-Admin-Actor": userId,
+        },
+        body: JSON.stringify({
+          sourceId: source.id, githubReleaseId: selected.release.id,
+          sourceTag: selected.release.tag, sourceRevision: selected.commit,
+          releaseVersion: selected.release.version,
+        }),
+      },
+    );
+  } catch { return { kind: "unavailable" }; }
+  if (response.status === 409) return { kind: "conflict" };
+  if (response.status === 401 || response.status === 403) return { kind: "forbidden" };
+  if (response.status !== 200 && response.status !== 202) return { kind: "unavailable" };
+  let body: unknown;
+  try { body = await response.json(); } catch { return { kind: "unavailable" }; }
+  const data = object(body), job = object(data?.job);
+  if (!job || typeof job.id !== "string" || typeof job.state !== "string" ||
+      job.releaseId !== selected.release.id || job.commit !== selected.commit) {
+    return { kind: "unavailable" };
+  }
+  return { kind: "queued", job: job as unknown as SourceBuildStatus, duplicate: data?.duplicate === true };
 }
 
 export async function listRegisteredSources(

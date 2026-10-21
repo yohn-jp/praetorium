@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createPrivateKey, sign as edSign } from "node:crypto";
+import { createHash, createPrivateKey, sign as edSign } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile, lstat } from "node:fs/promises";
 import path from "node:path";
 import { createBuildctlRunner } from "@praetorium/buildkit";
@@ -128,9 +128,9 @@ ARG BUILD_KIT_DIGEST
 RUN pnpm build
 RUN mkdir -p /tmp/praetorium-source-proof \\
  && node scripts/hosted-build.mjs catalog \\
-    --producer-revision "\\$SCRIPTORIUM_PRODUCER_REVISION" \\
-    --runtime-base-digest "\\$RUNTIME_BASE_DIGEST" \\
-    --build-kit-digest "\\$BUILD_KIT_DIGEST" \\
+    --producer-revision "$SCRIPTORIUM_PRODUCER_REVISION" \\
+    --runtime-base-digest "$RUNTIME_BASE_DIGEST" \\
+    --build-kit-digest "$BUILD_KIT_DIGEST" \\
     --out /tmp/praetorium-source-proof/build-catalog.json
 RUN node --input-type=module -e 'import {writeFileSync} from "node:fs"; import {metadataForRuntime} from "./packages/api/dist/platform-runtime.js"; writeFileSync("/tmp/praetorium-source-proof/runtime-metadata.json", JSON.stringify(metadataForRuntime({producerRevision:process.env.SCRIPTORIUM_PRODUCER_REVISION,port:3000,shutdownTimeoutSeconds:25})));'
 FROM scratch AS praetorium-source-output
@@ -165,7 +165,7 @@ export async function buildSourceRelease(
     await checkout(job,source,signal);
     const dockerfile=await readFile(path.join(source,"Dockerfile"));
     if(dockerfile.length>128*1024)throw new Error("Source Dockerfile exceeds bound");
-    const dockerfileDigest=await sourceProofDigest(dockerfile.toString("utf8"));
+    const dockerfileDigest=createHash("sha256").update(dockerfile).digest("hex");
     // The Dockerfile is kept inside the remote BuildKit execution boundary;
     // the Worker never loads or executes producer Node packages locally.
     const args=[
@@ -180,7 +180,7 @@ export async function buildSourceRelease(
     const runtimeDigest=await metadataDigest(runtimeMetadata);
     const kitMetadata=path.join(root,"build-kit.json");
     await runBuild(config,[...args,"--opt","target=buildkit",
-      "--opt","build-arg:SCRIPTORIUM_DOCKERFILE_SHA256="+dockerfileDigest.slice(7),
+      "--opt","build-arg:SCRIPTORIUM_DOCKERFILE_SHA256="+dockerfileDigest,
       "--output","type=image,name="+IMAGE+":build-kit-"+job.source_revision+",push=true",
       "--metadata-file",kitMetadata],source,root,signal);
     const buildKitDigest=await metadataDigest(kitMetadata);

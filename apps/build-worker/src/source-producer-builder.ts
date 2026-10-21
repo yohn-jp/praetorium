@@ -141,7 +141,7 @@ async function signSource(
 ):Promise<{algorithm:"Ed25519";keyId:string;signature:string}>{
   const info=await lstat(config.signingKeyFile);
   if(!info.isFile()||info.isSymbolicLink()||info.size>16384||
-    (info.mode&0o077)!==0||info.uid!==process.getuid())
+    (info.mode&0o077)!==0||(typeof process.getuid==="function" && info.uid!==process.getuid()))
     throw new Error("Worker signing key cannot be used");
   const key=createPrivateKey(await readFile(config.signingKeyFile));
   if(key.asymmetricKeyType!=="ed25519")throw new Error("Wrong Builder signing key type");

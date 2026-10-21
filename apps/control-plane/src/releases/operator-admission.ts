@@ -7,6 +7,7 @@ import {
   type IngestReleaseDeps,
   type IngestReleaseResult,
   type ReleaseCandidate,
+  type StableReleaseChannel,
   type RegistryBackedReleaseVerifierDeps,
 } from "@praetorium/application/releases";
 
@@ -32,6 +33,7 @@ export interface OperatorReleaseAdmissionDependencies
   readonly listAudit?: () => Promise<readonly {
     action: string; outcome: string; actorId: string | null; occurredAt: number;
   }[]>;
+  readonly stableChannel?: () => Promise<Pick<StableReleaseChannel, "currentReleaseId" | "revision">>;
   readonly retry?: {
     status(releaseId: string): Promise<ReleaseRetryStatus | null>;
     replay(input: Pick<ReleaseRetryCommand, "releaseId" | "idempotencyKey" | "requestHash">): Promise<ReleaseRetryResult | null>;
@@ -84,7 +86,8 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
         },
         workflow: deps.retry ? await deps.retry.status(candidate.id) : null,
       })));
-      return c.json({ items, nextCursor: page.nextCursor });
+      const stableChannel = deps.stableChannel ? await deps.stableChannel() : null;
+      return c.json({ items, nextCursor: page.nextCursor, stableChannel });
     } catch {
       return c.json({ error: { code: "RELEASE_LIST_UNAVAILABLE" } }, 503);
     }

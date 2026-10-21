@@ -34,7 +34,8 @@ async function fixture(userId = "213253858") {
       if (request.method === "GET") return Response.json({items:[]});
       const value = gatewayCalls[gatewayCalls.length-1]?.body as {sourceId:string;githubReleaseId:number;sourceTag:string;sourceRevision:string;releaseVersion:string};
       return Response.json({job:{id:"sr_00000000-0000-4000-a000-000000000001",sourceId:value.sourceId,releaseId:value.githubReleaseId,
-        tag:value.sourceTag,commit:value.sourceRevision,version:value.releaseVersion,state:"queued",attempt:0,revision:0,error:null,admittedReleaseId:null},
+        tag:value.sourceTag,commit:value.sourceRevision,version:value.releaseVersion,state:"queued",attempt:0,revision:0,
+        retryable:false,error:null,admittedReleaseId:null},
         duplicate:gatewayCalls.filter(x=>x.path==="/v1/operator/source-builds"&&x.method==="POST").length>1},
         {status:202});
     }
@@ -186,6 +187,7 @@ describe("operator-only admin origin", () => {
     const healthySources = { items: [{ id: "sr_00000000-0000-4000-a000-000000000001",
       sourceId: "scriptorium", releaseId: 416422590, tag: "v0.2.1", commit: "c".repeat(40),
       version: "0.2.1", state: "queued", attempt: 1, revision: 0,
+      retryable: false,
       error: null, admittedReleaseId: null }] };
     let failedPath = "";
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
@@ -294,7 +296,7 @@ describe("operator-only admin origin", () => {
     const job = {
       id: jobId, sourceId: "scriptorium", releaseId: 416422590, tag: "v0.2.1",
       commit: "a".repeat(40), version: "0.2.1", state: "failed", attempt: 3,
-      revision: 4, error: "SOURCE_BUILD_FAILED", admittedReleaseId: null,
+      revision: 4, retryable: true, error: "SOURCE_BUILD_FAILED", admittedReleaseId: null,
     };
     let resolvedCommit = job.commit;
     const calls: Array<{ path: string; method: string; body: unknown }> = [];
@@ -309,7 +311,8 @@ describe("operator-only admin origin", () => {
       if (path === "/v1/operator/source-builds/" + jobId && request.method === "GET")
         return Response.json({ job });
       if (path === "/v1/operator/source-builds/" + jobId + "/retry")
-        return Response.json({ job: { ...job, state: "queued", attempt: 0, revision: 5 }, duplicate: false },
+        return Response.json({ job: { ...job, state: "queued", attempt: 0, revision: 5,
+          retryable: false }, duplicate: false },
           { status: 202 });
       return Response.json({ error: { code: "NOT_FOUND" } }, { status: 404 });
     });
@@ -365,13 +368,27 @@ describe("operator-only admin origin", () => {
     });
     expect(github).toHaveBeenCalledTimes(3);
 
+    job.retryable = false;
+    const exhaustedPage = await handleAdminHost(new Request(ADMIN, {
+      headers: { Cookie: cookies.raw },
+    }), f.context);
+    expect(await exhaustedPage.text()).not.toContain(`/source-builds/${jobId}/retry`);
+    const githubCallsAfterExhaustedPage = github.mock.calls.length;
+    const exhausted = await handleAdminHost(post(`/source-builds/${jobId}/retry`, cookies, {
+      expectedRevision: "4", idempotencyKey: "retry-operation-exhausted",
+    }), f.context);
+    expect(exhausted.status).toBe(409);
+    expect(calls.filter(call => call.path.endsWith("/retry"))).toHaveLength(1);
+    expect(github).toHaveBeenCalledTimes(githubCallsAfterExhaustedPage);
+
+    job.retryable = true;
     resolvedCommit = "b".repeat(40);
     const moved = await handleAdminHost(post(`/source-builds/${jobId}/retry`, cookies, {
       expectedRevision: "4", idempotencyKey: "retry-operation-2",
     }), f.context);
     expect(moved.status).toBe(409);
     expect(calls.filter(call => call.path.endsWith("/retry"))).toHaveLength(1);
-    expect(github).toHaveBeenCalledTimes(5);
+    expect(github).toHaveBeenCalledTimes(githubCallsAfterExhaustedPage + 2);
   });
 
   it("offers retry only for the canonical failed pre-runtime Canary build", async () => {

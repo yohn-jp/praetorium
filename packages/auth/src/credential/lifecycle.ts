@@ -2,7 +2,7 @@ import { err, ok, type McpCredentialId, type Result, type UserId } from "../doma
 import { keyedDigest } from "../digest.js";
 import { generateToken } from "../random.js";
 import { roundToBucket } from "../time-bucket.js";
-import type { McpCredentialListEntry, McpCredentialRecord, McpCredentialStore } from "./types.js";
+import type { McpCredentialListPage, McpCredentialRecord, McpCredentialStore } from "./types.js";
 import type { RepositoryPermission } from "../repository-access.js";
 
 const CREDENTIAL_ENTROPY_BITS = 256;
@@ -83,8 +83,9 @@ export async function createMcpCredential(
 export async function listMcpCredentialsForUser(
   store: McpCredentialStore,
   userId: UserId,
-): Promise<readonly McpCredentialListEntry[]> {
-  return store.listForUser(userId);
+  cursor?: string,
+): Promise<McpCredentialListPage> {
+  return store.listForUser(userId, cursor);
 }
 
 export async function revokeMcpCredential(

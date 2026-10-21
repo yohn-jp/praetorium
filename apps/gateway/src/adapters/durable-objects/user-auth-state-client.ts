@@ -117,14 +117,14 @@ export function createDurableObjectMcpCredentialStore(
       if (!record) await digestIndex.delete(digest);
       return record;
     },
-    async listForUser(userId) {
-      const { items } = await call<{ items: Awaited<ReturnType<McpCredentialStore["listForUser"]>> }>(
+    async listForUser(userId, cursor) {
+      const page = await call<Awaited<ReturnType<McpCredentialStore["listForUser"]>>>(
         namespace,
         userId,
         "/credentials/list",
-        {},
+        cursor ? { cursor } : {},
       );
-      return items;
+      return page;
     },
     async touchLastUsed(digest, lastUsedAt) {
       const userId = await digestIndex.get(digest);
@@ -139,6 +139,15 @@ export function createDurableObjectMcpCredentialStore(
         return;
       }
       await call(namespace, userId, "/credentials/revoke", { digest, revokedAt });
+    },
+    async revokeById(userId, id, revokedAt) {
+      const { revoked } = await call<{ revoked: boolean }>(
+        namespace,
+        userId,
+        "/credentials/revoke-by-id",
+        { id, revokedAt },
+      );
+      return revoked;
     },
     async revokeAllForUser(userId, revokedAt) {
       await call(namespace, userId, "/credentials/revoke-all", { revokedAt });

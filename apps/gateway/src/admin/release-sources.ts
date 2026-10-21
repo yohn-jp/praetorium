@@ -28,6 +28,7 @@ export interface SourceBuildStatus {
   readonly state: "queued"|"building"|"produced"|"admitted"|"failed";
   readonly attempt: number;
   readonly revision: number;
+  readonly retryable: boolean;
   readonly error: string|null;
   readonly admittedReleaseId: string|null;
 }
@@ -244,7 +245,8 @@ export async function dispatchPublishedRelease(
   try { body = await response.json(); } catch { return { kind: "unavailable" }; }
   const data = object(body), job = object(data?.job);
   if (!job || typeof job.id !== "string" || typeof job.state !== "string" ||
-      job.releaseId !== selected.release.id || job.commit !== selected.commit) {
+      job.releaseId !== selected.release.id || job.commit !== selected.commit ||
+      typeof job.retryable !== "boolean") {
     return { kind: "unavailable" };
   }
   return { kind: "queued", job: job as unknown as SourceBuildStatus, duplicate: data?.duplicate === true };

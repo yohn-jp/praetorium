@@ -192,6 +192,7 @@ function parseSourceBuildStatus(value: unknown): SourceBuildStatus | null {
       !["queued", "building", "produced", "admitted", "failed"].includes(job.state ?? "") ||
       !Number.isSafeInteger(job.attempt) || job.attempt! < 0 ||
       !Number.isSafeInteger(job.revision) || job.revision! < 0 ||
+      typeof job.retryable !== "boolean" ||
       !(job.error === null || typeof job.error === "string") ||
       !(job.admittedReleaseId === null || typeof job.admittedReleaseId === "string")) return null;
   return job as SourceBuildStatus;
@@ -250,7 +251,8 @@ function sourceBuildRows(section: OperatorSection<{ items: SourceBuildStatus[] }
   const jobs = section.value.items.slice(0, 40);
   if (!jobs.length) return '<p class="admin-empty">No Source builds have been queued.</p>';
   return '<div class="admin-source-builds">' + jobs.map(job => {
-    const retry = job.state === "failed" && Number.isSafeInteger(job.revision) && job.revision >= 0
+    const retry = job.state === "failed" && job.retryable === true &&
+      Number.isSafeInteger(job.revision) && job.revision >= 0
       ? '<form method="post" action="/source-builds/' + encodeURIComponent(job.id) + '/retry">' +
         csrfInput(csrf) +
         '<input type="hidden" name="expectedRevision" value="' + job.revision + '">' +
@@ -392,6 +394,9 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
         }
         if (job.revision !== Number(revision[0])) {
           return renderError(context, session.csrfToken, "Source build changed. Refresh the queue.", 409);
+        }
+        if (job.state !== "failed" || !job.retryable) {
+          return renderError(context, session.csrfToken, "This Source failure cannot be retried.", 409);
         }
         const identity = await revalidateSourceRetryIdentity(context, session.actor.userId, job);
         if (identity.kind !== "matched") {

@@ -119,7 +119,8 @@ describe("trusted GitHub Release selection", () => {
       endpoint:"GET /repos/yohn-jp/scriptorium/releases",status:200,code:null}],"csrf",[{
       id:"sr_00000000-0000-4000-a000-000000000001",
       sourceId:"scriptorium",releaseId:416422590,tag:"v0.2.1",commit:A,
-      version:"0.2.1",state:"building",attempt:1,revision:0,error:null,admittedReleaseId:null,
+      version:"0.2.1",state:"building",attempt:1,revision:0,retryable:false,
+      error:null,admittedReleaseId:null,
     }]);
     expect(html).toContain("Build Worker: building");
     expect(html).not.toContain("/actions/");

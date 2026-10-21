@@ -27,12 +27,20 @@ export interface McpCredentialListEntry {
   readonly record: McpCredentialRecord;
 }
 
+export interface McpCredentialListPage {
+  readonly items: readonly McpCredentialListEntry[];
+  /** Opaque cursor for the next bounded page, absent when the list is complete. */
+  readonly nextCursor?: string;
+}
+
 export interface McpCredentialStore {
   create(digest: string, record: McpCredentialRecord): Promise<void>;
   get(digest: string): Promise<McpCredentialRecord | null>;
-  listForUser(userId: UserId): Promise<readonly McpCredentialListEntry[]>;
+  listForUser(userId: UserId, cursor?: string): Promise<McpCredentialListPage>;
   /** Debounced last-used update; callers bucket the timing decision themselves. */
   touchLastUsed(digest: string, lastUsedAt: string): Promise<void>;
   revoke(digest: string, revokedAt: string): Promise<void>;
+  /** Revoke one user-owned credential by its public ID without scanning a list. */
+  revokeById(userId: UserId, id: McpCredentialId, revokedAt: string): Promise<boolean>;
   revokeAllForUser(userId: UserId, revokedAt: string): Promise<void>;
 }

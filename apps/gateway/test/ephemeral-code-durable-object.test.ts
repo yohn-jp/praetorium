@@ -128,7 +128,7 @@ describe("EphemeralCodeDurableObject", () => {
   it("atomically claims one Release dispatch and releases only its owner", async () => {
     const object = new EphemeralCodeDurableObject(createFakeDurableObjectState());
     const now = Date.now();
-    const key = "release-dispatch:" + "a".repeat(64);
+    const key = "release-dispatch:" + "a".repeat(43);
     const body = { key, now, claimId: "00000000-0000-4000-a000-000000000001" };
     const responses = await Promise.all([
       object.fetch(post("/release-dispatch/claim", body)),

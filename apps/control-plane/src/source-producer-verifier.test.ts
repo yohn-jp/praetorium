@@ -16,6 +16,7 @@ const legacyRevision="008d5c429ec279a424cafd5b8c4cbee70a613b8e";
 const resolverDigest="sha256:2982c0d9595168b73b021da3229b30e7c4dd699ed86b6a728060f77cb3c2ea18";
 const digestA="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const digestB="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const SOURCE_REPOSITORY="ghcr.io/yohn-jp/praetorium/scriptorium-producer";
 const job={
   job_id:"sr_11111111-1111-4111-8111-111111111111",
   github_release_id:1,
@@ -60,11 +61,13 @@ function registry(host="ghcr.io") {
   return {client:{registryHost:host,verifyImage},verifyImage};
 }
 
-function verifier(client: ReturnType<typeof registry>["client"]) {
+function verifier(client: ReturnType<typeof registry>["client"],sourceProducerRepository:string|undefined=SOURCE_REPOSITORY) {
   return new SourceProducerProofVerifier(
     null as unknown as D1Database,
     client as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
     builderKeys,
+    undefined,
+    sourceProducerRepository,
   );
 }
 
@@ -163,6 +166,38 @@ describe("source producer proof verification", () => {
     };
     await expect(verifier(client).verify(job,changed))
       .rejects.toMatchObject({retryable:false,code:"SOURCE_VERIFICATION_FAILED"});
+    expect(verifyImage).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on v2 when operator policy has no exact producer repository", async () => {
+    const {client,verifyImage}=registry();
+    const proof=await legacyProof();
+    const statement={
+      ...proof.statement,
+      schemaVersion:2,
+      resolverDigest,
+    };
+    const catalog=proof.catalog;
+    const v2=SourceProducerResultSchemaV2.parse({
+      statement,
+      signature:{...proof.signature,signature:await signedStatement(statement)},
+      catalog,
+      runtimeMetadata:proof.runtimeMetadata,
+      resolver:{
+        producerRevision:legacyRevision,
+        resolverRevision:resolverDigest,
+        contractVersion:"scriptorium-build/v1",
+        provenanceDigest:"sha256:c81b71fff985aaf542d8fd6e2d76c0740ff9390f53f642d00da2fc6bd975db88",
+      },
+    });
+    const unconfigured=new SourceProducerProofVerifier(
+      null as unknown as D1Database,
+      client as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
+      builderKeys,
+    );
+    await expect(unconfigured.verify(job,v2)).rejects.toMatchObject({
+      retryable:false,code:"SOURCE_VERIFICATION_FAILED",
+    });
     expect(verifyImage).not.toHaveBeenCalled();
   });
 

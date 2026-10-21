@@ -45,6 +45,7 @@ export class SourceProducerProofVerifier {
     private readonly builderKeys:readonly SourceProofKey[],
     private readonly resolverRegistry:Pick<ProducerCatalogResolverRegistry,"resolve">=
       createScriptoriumCatalogResolverRegistry(),
+    private readonly sourceProducerRepository?:string,
   ) {}
   async verify(job:{
     readonly job_id:string;readonly github_release_id:number;
@@ -90,6 +91,9 @@ export class SourceProducerProofVerifier {
         throw new TypeError("Legacy Source proof is not approved for this producer revision");
       this.resolverRegistry.resolve(LEGACY_SOURCE_REVISION);
     }else{
+      if(!this.sourceProducerRepository||
+         statement.imageRepository!==this.sourceProducerRepository)
+        throw new TypeError("Source proof repository is not the configured producer repository");
       if(!("resolver" in result)||
          result.resolver.producerRevision!==statement.sourceRevision||
          result.resolver.resolverRevision!==statement.resolverDigest||

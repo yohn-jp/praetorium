@@ -1,5 +1,4 @@
 import { createGitHubRestClient, GitHubApiError, type GitHubRestClient } from "@praetorium/github";
-import { keyedDigest } from "@praetorium/auth";
 import type { GatewayContext } from "../context.js";
 import { escapeHtml } from "../ui/presentation.js";
 
@@ -8,8 +7,6 @@ export interface RegisteredReleaseSource {
   readonly id: string;
   readonly label: string;
   readonly githubRepository: string;
-  readonly workflowRepository: string;
-  readonly workflowFile: string;
   readonly adapter: "scriptorium-v1";
 }
 export interface PublishedSourceRelease {
@@ -21,26 +18,28 @@ export interface PublishedSourceRelease {
   readonly prerelease: boolean;
   readonly notes: string;
 }
-export interface SourceWorkflowRun {
-  readonly url: string;
-  readonly commit: string;
+export interface SourceBuildStatus {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly releaseId: number;
   readonly tag: string;
-  readonly status: string;
-  readonly conclusion: string | null;
+  readonly commit: string;
+  readonly version: string;
+  readonly state: "queued"|"building"|"produced"|"admitted"|"failed";
+  readonly attempt: number;
+  readonly error: string|null;
+  readonly admittedReleaseId: string|null;
 }
 export interface SourceReleaseView {
   readonly source: RegisteredReleaseSource;
   readonly releases: readonly PublishedSourceRelease[];
-  readonly workflows: readonly SourceWorkflowRun[];
   readonly error: string | null;
 }
 
 const SHA = /^[0-9a-f]{40}$/u;
 const GITHUB_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const WORKFLOW_FILE = /^[a-z0-9][a-z0-9_.-]{0,100}\.yml$/u;
 const TAG = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const MAX_RELEASES = 40;
-const MAX_GITHUB_RUNS = 40;
 const MAX_SOURCES = 8;
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -57,25 +56,18 @@ export function configuredReleaseSources(raw: string | undefined): readonly Regi
   const sources = data.map((item): RegisteredReleaseSource => {
     const r = object(item);
     if (!r || Object.keys(r).some(k => ![
-      "id", "label", "githubRepository", "workflowRepository", "workflowFile", "adapter",
+      "id", "label", "githubRepository", "adapter",
     ].includes(k)) || typeof r.id !== "string" || !/^[a-z][a-z0-9-]{0,31}$/u.test(r.id) ||
         typeof r.label !== "string" || r.label.length < 1 || r.label.length > 64 ||
         typeof r.githubRepository !== "string" || !GITHUB_REPOSITORY.test(r.githubRepository) ||
-        typeof r.workflowRepository !== "string" || !GITHUB_REPOSITORY.test(r.workflowRepository) ||
-        typeof r.workflowFile !== "string" || !WORKFLOW_FILE.test(r.workflowFile) ||
         r.adapter !== "scriptorium-v1")
       throw new TypeError("Release source registration has invalid or unsupported entries");
     // Scriptorium's current signed producer adapter must only build Scriptorium.
     // Additional services require a separately verified producer adapter.
-    if (r.adapter === "scriptorium-v1" &&
-        (r.githubRepository !== "yohn-jp/scriptorium" ||
-         r.workflowRepository !== "yohn-jp/praetorium" ||
-         r.workflowFile !== "scriptorium-producer-verification.yml"))
+    if (r.adapter === "scriptorium-v1" && r.githubRepository !== "yohn-jp/scriptorium")
       throw new TypeError("Producer adapter cannot be retargeted to arbitrary GitHub source");
     return {
-      id: r.id, label: r.label, githubRepository: r.githubRepository,
-      workflowRepository: r.workflowRepository, workflowFile: r.workflowFile,
-      adapter: r.adapter,
+      id: r.id, label: r.label, githubRepository: r.githubRepository, adapter: r.adapter,
     };
   });
   if (new Set(sources.map(x => x.id)).size !== sources.length ||

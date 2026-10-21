@@ -120,7 +120,7 @@ export function renderWorkerTemplate(template, inventory, worker) {
   } else {
     config.vars = {
       GATEWAY_ENVIRONMENT: inventory.environment === "deployment" ? "production" : "test",
-      GATEWAY_SESSION_TTL_SECONDS: "43200",
+      GATEWAY_SESSION_TTL_SECONDS: "28800",
       GATEWAY_HANDOFF_TTL_SECONDS: "60",
       GATEWAY_ACCESS_GRANT_TTL_SECONDS: "300",
       ...Object.fromEntries(
@@ -132,12 +132,23 @@ export function renderWorkerTemplate(template, inventory, worker) {
           GITHUB_APP_ID: inventory.gateway.githubAppId,
           GITHUB_OAUTH_CLIENT_ID: inventory.gateway.githubOauthClientId,
           GATEWAY_TOKEN_ENCRYPTION_KEY_ID: inventory.gateway.tokenEncryptionKeyId,
+          PRAETORIUM_ADMIN_ORIGIN: inventory.gateway.adminOrigin,
+          PRAETORIUM_ADMIN_GITHUB_USER_IDS: inventory.gateway.adminGithubUserIds?.length
+            ? inventory.gateway.adminGithubUserIds.join(",") : undefined,
+          PRAETORIUM_RELEASE_SOURCES_JSON: inventory.gateway.releaseSources?.length
+            ? JSON.stringify(inventory.gateway.releaseSources) : undefined,
         })
           .filter(([, value]) => value !== null && value !== undefined)
           .map(([key, value]) => [key, String(value)]),
       ),
     };
   }
+  const origins = worker === "control-plane"
+    ? [inventory.domains.controlPlaneUrl]
+    : [inventory.domains.gatewayOrigin, inventory.gateway.adminOrigin];
+  config.routes = origins.filter(Boolean).map(origin => ({
+    pattern: new URL(origin).hostname, custom_domain: true,
+  }));
   if (worker === "control-plane") {
     config.d1_databases[0].database_id = inventory.cloudflare.controlPlaneDatabaseId;
   } else {

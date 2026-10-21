@@ -314,9 +314,11 @@ export function validateInventory(value) {
 
   exactKeys(
     value.gateway,
-    ["allowedRepositoryOwner", "githubAppId", "githubOauthClientId", "tokenEncryptionKeyId"],
+    ["allowedRepositoryOwner", "githubAppId", "githubOauthClientId", "tokenEncryptionKeyId",
+      "adminOrigin", "adminGithubUserIds", "releaseSources"],
     "gateway",
     errors,
+    ["adminOrigin", "adminGithubUserIds", "releaseSources"],
   );
   for (const field of [
     "allowedRepositoryOwner",
@@ -354,6 +356,41 @@ export function validateInventory(value) {
     !/^[A-Za-z0-9_-]{1,64}$/.test(value.gateway.tokenEncryptionKeyId)
   ) {
     errors.push("gateway.tokenEncryptionKeyId must be a safe key identifier");
+  }
+
+  const adminOrigin = value.gateway?.adminOrigin ?? null;
+  const adminIds = value.gateway?.adminGithubUserIds ?? [];
+  const releaseSources = value.gateway?.releaseSources ?? [];
+  if (!Array.isArray(adminIds) || adminIds.length > 32 ||
+      adminIds.some(id => !Number.isSafeInteger(id) || id < 1) ||
+      new Set(adminIds).size !== adminIds.length)
+    errors.push("gateway.adminGithubUserIds must contain unique positive safe integers (maximum 32)");
+  if (!Array.isArray(releaseSources) || releaseSources.length > 8) {
+    errors.push("gateway.releaseSources must be an array (maximum 8)");
+  } else {
+    for (const source of releaseSources) {
+      exactKeys(source, ["id", "label", "githubRepository", "adapter"], "gateway.releaseSources[]", errors);
+      if (source?.id !== "scriptorium" || source?.githubRepository !== "yohn-jp/scriptorium" ||
+          source?.adapter !== "scriptorium-v1" || typeof source?.label !== "string" ||
+          source.label.length < 1 || source.label.length > 64)
+        errors.push("gateway.releaseSources must use the approved Scriptorium identity and adapter");
+    }
+    if (new Set(releaseSources.map(source => source?.id)).size !== releaseSources.length)
+      errors.push("gateway.releaseSources must have unique identities");
+  }
+  if (adminOrigin !== null) {
+    try {
+      const url = new URL(adminOrigin);
+      if (url.origin !== adminOrigin || url.protocol !== "https:" || url.username || url.password ||
+          adminOrigin === value.domains?.gatewayOrigin)
+        errors.push("gateway.adminOrigin must be a distinct exact HTTPS origin");
+    } catch { errors.push("gateway.adminOrigin must be an exact HTTPS origin or null"); }
+  }
+  if (adminOrigin !== null || adminIds.length || releaseSources.length) {
+    if (!adminOrigin || !Array.isArray(adminIds) || adminIds.length === 0)
+      errors.push("Gateway Admin features require both adminOrigin and adminGithubUserIds");
+    if (releaseSources.length && !value.releasePolicy)
+      errors.push("Gateway Source features require releasePolicy");
   }
 
   exactKeys(

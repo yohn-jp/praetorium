@@ -26,7 +26,10 @@
     "allowedRepositoryOwner": null,
     "githubAppId": null,
     "githubOauthClientId": null,
-    "tokenEncryptionKeyId": null
+    "tokenEncryptionKeyId": null,
+    "adminOrigin": null,
+    "adminGithubUserIds": [],
+    "releaseSources": []
   },
   "buildkit": {
     "endpoint": null,

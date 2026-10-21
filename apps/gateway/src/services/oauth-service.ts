@@ -187,7 +187,7 @@ export async function registerOAuthClient(request: Request, context: GatewayCont
     if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim() !== "application/json")
       return oauthError("invalid_client_metadata");
     const announced = request.headers.get("Content-Length");
-    if (announced && (!/^\\d+$/.test(announced) || Number(announced) > MAX_BODY_BYTES))
+    if (announced && (!/^\d+$/.test(announced) || Number(announced) > MAX_BODY_BYTES))
       return oauthError("invalid_client_metadata");
     const reader = request.body?.getReader();
     if (!reader) return oauthError("invalid_client_metadata");

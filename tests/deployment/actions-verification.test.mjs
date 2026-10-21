@@ -42,7 +42,23 @@ test("Actions retain PR and main verification while removing publication and run
   );
   assert.match(
     verificationWorkflow,
-    /NODE_ENV: test\n {8}run: node scripts\/ci\/source-stable-fixture\.mjs/u,
+    /NODE_ENV: test\n {10}PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR: \$\{\{ runner\.temp \}\}\/praetorium-source-stable-evidence\n {8}run: node scripts\/ci\/source-stable-fixture\.mjs/u,
+  );
+  assert.match(
+    verificationWorkflow,
+    /name: Verify built fixture imports\n {8}run: node scripts\/ci\/source-stable-fixture\.mjs --check-imports/u,
+  );
+  assert.match(
+    verificationWorkflow,
+    /name: Upload bounded Source fixture evidence\n {8}if: always\(\)\n {8}uses: actions\/upload-artifact@v4/u,
+  );
+  assert.match(
+    verificationWorkflow,
+    /source-stable-fixture-result\.json\n {12}\$\{\{ runner\.temp \}\}\/praetorium-source-stable-evidence\/buildkitd\.log/u,
+  );
+  assert.match(
+    verificationWorkflow,
+    /PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR: \$\{\{ runner\.temp \}\}\/praetorium-source-stable-evidence/u,
   );
   assert.match(verificationWorkflow, /timeout-minutes: 180/u);
   const checkouts = [
@@ -71,6 +87,7 @@ test("Actions retain PR and main verification while removing publication and run
     "candidate script uses the same pinned BuildKit client",
   );
   assert.match(sourceStableFixture, /BUILDKIT_VERSION = "v0\.34\.0"/u);
+  assert.doesNotMatch(sourceStableFixture, /from "@praetorium\//u);
 });
 
 test("legacy Actions producer publication and Admission workflows are absent", () => {

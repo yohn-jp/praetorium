@@ -33,6 +33,7 @@ jobs:
           node --test tests/deployment/headlamp-admin.test.mjs
           node --test tests/deployment/deployment-order.test.mjs tests/deployment/migrations.test.mjs tests/deployment/worker-projection.test.mjs
           node --test tests/deployment/actions-verification.test.mjs
+          node --test tests/deployment/fixture-process.test.mjs
           node --check scripts/deployment-migrations.mjs scripts/deployment-plan.mjs
           node --check scripts/deploy-cloudflare.mjs scripts/deploy-platform.mjs scripts/deploy-k3s.mjs
           node --check scripts/ci/source-stable-fixture.mjs
@@ -58,10 +59,23 @@ jobs:
           corepack enable
           corepack pnpm@11.18.0 install --frozen-lockfile
           corepack pnpm@11.18.0 build
+      - name: Verify built fixture imports
+        run: node scripts/ci/source-stable-fixture.mjs --check-imports
       - name: Exercise Source queue, BuildKit producer, OCI verification and Stable CAS
         env:
           NODE_ENV: test
+          PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/praetorium-source-stable-evidence
         run: node scripts/ci/source-stable-fixture.mjs
+      - name: Upload bounded Source fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-stable-fixture-evidence
+          path: |
+            ${{ runner.temp }}/praetorium-source-stable-evidence/source-stable-fixture-result.json
+            ${{ runner.temp }}/praetorium-source-stable-evidence/buildkitd.log
+          if-no-files-found: warn
+          retention-days: 7
 
   candidate-images:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')

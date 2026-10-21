@@ -9,11 +9,23 @@ import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { D1PlatformStore } from "@praetorium/persistence/d1";
-import { InstanceService, RepositoryRegistryService } from "@praetorium/application/instances";
-import { OperationService } from "@praetorium/application/operations";
-import { GhcrRegistryClient } from "@praetorium/ghcr/registry";
-import { createScriptoriumCatalogResolverRegistry } from "@praetorium/scriptorium";
+import { D1PlatformStore } from "../../packages/persistence/dist/d1/index.js";
+import {
+  InstanceService,
+  RepositoryRegistryService,
+} from "../../packages/application/dist/instances/index.js";
+import { OperationService } from "../../packages/application/dist/operations/index.js";
+import { GhcrRegistryClient } from "../../plugins/ghcr/dist/oci-registry-client.js";
+import { SigstoreProvenanceVerifier } from "../../plugins/ghcr/dist/sigstore-provenance.js";
+import { createScriptoriumCatalogResolverRegistry } from "../../plugins/scriptorium/dist/index.js";
+import {
+  BoundedOutputTail,
+  FIXTURE_CHILD_OUTPUT_MAX_BYTES,
+  FIXTURE_EVIDENCE_MAX_BYTES,
+  run as runOwnedCommand,
+  sanitizeFixtureDiagnostic,
+  stopProcessGroup,
+} from "./fixture-process.mjs";
 import {
   BuildQueueHttpClient,
   readBuildServiceToken,
@@ -33,8 +45,7 @@ import {
   createSourceReleaseWorkerRoutes,
 } from "../../apps/control-plane/dist/source-release-builds.js";
 import { createControlPlaneApp } from "../../apps/control-plane/dist/app.js";
-import { advanceStablePromotions } from "@praetorium/application/releases";
-import { SigstoreProvenanceVerifier } from "@praetorium/ghcr/provenance";
+import { advanceStablePromotions } from "../../packages/application/dist/releases/index.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const BUILDKIT_VERSION = "v0.34.0";
@@ -51,28 +62,10 @@ const INSTANCE_ID = "ins_01J9A2M4K8B7C6D5E4F3G2H1A0";
 const REPOSITORY_ID = 1938475621;
 
 function run(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd ?? ROOT,
-      env: options.env ?? process.env,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let output = "";
-    child.stdout.on("data", (chunk) => {
-      if (output.length < 4000) output += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      if (output.length < 4000) output += chunk.toString();
-    });
-    child.once("error", reject);
-    child.once("close", (code, signal) =>
-      code === 0
-        ? resolve(output.trim())
-        : reject(
-            new Error(`${path.basename(command)} exited ${code ?? signal}: ${output.slice(-1200)}`),
-          ),
-    );
+  return runOwnedCommand(command, args, {
+    cwd: ROOT,
+    env: process.env,
+    ...options,
   });
 }
 
@@ -167,22 +160,26 @@ async function waitFor(check, message, timeoutMs = 30_000) {
   throw new Error(`${message}${last ? `: ${last.message}` : ""}`);
 }
 
-async function startOwnedBuildKit(root) {
+async function startOwnedBuildKit(root, daemonOutput) {
   const tools = path.join(root, "tools");
   await mkdir(tools, { recursive: true, mode: 0o700 });
   const archive = path.join(tools, `buildkit-${BUILDKIT_VERSION}.tgz`);
-  await run("curl", [
-    "--fail",
-    "--silent",
-    "--show-error",
-    "--location",
-    "--proto",
-    "=https",
-    "--tlsv1.2",
-    `https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/buildkit-${BUILDKIT_VERSION}.linux-amd64.tar.gz`,
-    "--output",
-    archive,
-  ]);
+  await run(
+    "curl",
+    [
+      "--fail",
+      "--silent",
+      "--show-error",
+      "--location",
+      "--proto",
+      "=https",
+      "--tlsv1.2",
+      `https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/buildkit-${BUILDKIT_VERSION}.linux-amd64.tar.gz`,
+      "--output",
+      archive,
+    ],
+    { timeoutMs: 120_000 },
+  );
   const actual = createHash("sha256")
     .update(await readFile(archive))
     .digest("hex");
@@ -271,7 +268,6 @@ async function startOwnedBuildKit(root) {
     `[grpc]\n  address = ["${buildkitAddress}"]\n[grpc.tls]\n  cert = "${path.join(pki, "server.crt")}"\n  key = "${path.join(pki, "server.key")}"\n  ca = "${path.join(pki, "ca.crt")}"\n[registry."127.0.0.1:5000"]\n  http = true\n  insecure = true\n`,
     { mode: 0o600 },
   );
-  const daemonLog = path.join(root, "buildkitd.log");
   const daemon = spawn(
     "sudo",
     [
@@ -287,28 +283,38 @@ async function startOwnedBuildKit(root) {
     {
       cwd: ROOT,
       env: { ...process.env, NODE_USE_ENV_PROXY: "1" },
-      stdio: ["ignore", "ignore", "ignore"],
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
     },
   );
-  daemon.unref();
+  daemon.stdout?.on("data", (chunk) => daemonOutput.append(chunk));
+  daemon.stderr?.on("data", (chunk) => daemonOutput.append(chunk));
+  daemon.once("error", (error) => daemonOutput.append(`buildkitd spawn error: ${error.message}\n`));
+  daemon.once("close", (code, signal) =>
+    daemonOutput.append(`buildkitd exited ${code ?? signal ?? "unknown"}\n`),
+  );
   await writeFile(path.join(root, "daemon.pid"), `${daemon.pid}\n`, { mode: 0o600 });
   await waitFor(
     async () => {
       try {
-        await run("sudo", [
-          "-n",
-          buildctl,
-          "--addr",
-          buildkitAddress,
-          "--tlscacert",
-          path.join(pki, "ca.crt"),
-          "--tlscert",
-          path.join(pki, "client.crt"),
-          "--tlskey",
-          path.join(pki, "client.key"),
-          "debug",
-          "workers",
-        ]);
+        await run(
+          "sudo",
+          [
+            "-n",
+            buildctl,
+            "--addr",
+            buildkitAddress,
+            "--tlscacert",
+            path.join(pki, "ca.crt"),
+            "--tlscert",
+            path.join(pki, "client.crt"),
+            "--tlskey",
+            path.join(pki, "client.key"),
+            "debug",
+            "workers",
+          ],
+          { timeoutMs: 5_000 },
+        );
         return true;
       } catch {
         return false;
@@ -320,7 +326,9 @@ async function startOwnedBuildKit(root) {
   await waitFor(
     async () => {
       try {
-        await run("curl", ["--fail", "--silent", "http://127.0.0.1:5000/v2/"]);
+        await run("curl", ["--fail", "--silent", "http://127.0.0.1:5000/v2/"], {
+          timeoutMs: 2_000,
+        });
         return true;
       } catch {
         return false;
@@ -329,7 +337,15 @@ async function startOwnedBuildKit(root) {
     "loopback OCI registry",
     30_000,
   );
-  return { buildctl, buildkitAddress, buildkitPort, pki, registryContainer: name, daemonLog };
+  return {
+    buildctl,
+    buildkitAddress,
+    buildkitPort,
+    pki,
+    registryContainer: name,
+    daemonPid: daemon.pid,
+    daemonOutput,
+  };
 }
 
 async function workerEnvironment(root, kit, input, keys) {
@@ -836,61 +852,116 @@ async function runSourceToStable(root, kit) {
   );
   fixture.db.database.close();
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  return report;
+}
+
+function failureReport(error) {
+  return {
+    schemaVersion: "praetorium.source-stable-fixture/v1",
+    status: error?.blocked ? "BLOCKED" : "FAIL",
+    reason: error?.reason ?? "FIXTURE_FAILED",
+    detail: sanitizeFixtureDiagnostic(error?.message ?? String(error), FIXTURE_EVIDENCE_MAX_BYTES),
+    hostedProducerRegistryAndBrowserAcceptance: "NOT_CHECKED",
+    externalPublication: false,
+  };
+}
+
+async function writeFixtureEvidence(directory, report, daemonOutput) {
+  if (!directory) return;
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeFile(
+    path.join(directory, "source-stable-fixture-result.json"),
+    `${JSON.stringify(report, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  await writeFile(
+    path.join(directory, "buildkitd.log"),
+    sanitizeFixtureDiagnostic(
+      daemonOutput?.toString() ?? "BuildKit daemon did not start.\n",
+      FIXTURE_CHILD_OUTPUT_MAX_BYTES,
+    ),
+    { mode: 0o600 },
+  );
 }
 
 async function main() {
-  if (process.env.NODE_ENV !== "test")
-    throw new Error("NODE_ENV=test is required for the loopback Source output adapter");
-  if (process.platform !== "linux" || process.versions.node.split(".")[0] !== "24")
-    throw Object.assign(new Error("runner must be Linux with Node 24"), {
-      blocked: true,
-      reason: "RUNNER_CAPABILITY_MISSING",
-    });
-  for (const command of ["docker", "sudo", "curl", "tar", "openssl", "git", "df"]) {
-    try {
-      await run("sh", ["-c", `command -v ${command} >/dev/null`]);
-    } catch {
-      throw Object.assign(new Error(`required isolated runner tool is unavailable: ${command}`), {
+  let root;
+  let report;
+  let failure;
+  let cleanupFailure;
+  const daemonOutput = new BoundedOutputTail();
+  const artifactDirectory = process.env.PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR;
+  try {
+    if (process.env.NODE_ENV !== "test")
+      throw new Error("NODE_ENV=test is required for the loopback Source output adapter");
+    if (process.platform !== "linux" || process.versions.node.split(".")[0] !== "24")
+      throw Object.assign(new Error("runner must be Linux with Node 24"), {
         blocked: true,
         reason: "RUNNER_CAPABILITY_MISSING",
       });
+    for (const command of ["docker", "sudo", "curl", "tar", "openssl", "git", "df"]) {
+      try {
+        await run("sh", ["-c", `command -v ${command} >/dev/null`], { timeoutMs: 2_000 });
+      } catch {
+        throw Object.assign(new Error(`required isolated runner tool is unavailable: ${command}`), {
+          blocked: true,
+          reason: "RUNNER_CAPABILITY_MISSING",
+        });
+      }
     }
-  }
-  const root = await mkdtemp(path.join(os.tmpdir(), "praetorium-source-stable-fixture-"));
-  await chmod(root, 0o700);
-  let kit;
-  try {
+    root = await mkdtemp(path.join(os.tmpdir(), "praetorium-source-stable-fixture-"));
+    await chmod(root, 0o700);
     const available = freeDiskBytes(root);
     if (available < 8 * 1024 ** 3)
       throw Object.assign(
         new Error(`isolated BuildKit/OCI fixture requires 8 GiB free; found ${available} bytes`),
         { blocked: true, reason: "INSUFFICIENT_DISK" },
       );
-    kit = await startOwnedBuildKit(root);
-    await runSourceToStable(root, kit);
+    const kit = await startOwnedBuildKit(root, daemonOutput);
+    report = await runSourceToStable(root, kit);
   } catch (error) {
-    if (error?.blocked) {
-      process.stdout.write(
-        `${JSON.stringify({ schemaVersion: "praetorium.source-stable-fixture/v1", status: "BLOCKED", reason: error.reason, detail: error.message, hostedProducerRegistryAndBrowserAcceptance: "NOT_CHECKED" }, null, 2)}\n`,
-      );
-    }
-    throw error;
+    failure = error;
+    report = failureReport(error);
   } finally {
-    try {
-      const pid = Number((await readFile(path.join(root, "daemon.pid"), "utf8")).trim());
-      if (Number.isSafeInteger(pid) && pid > 1)
-        await run("sudo", ["-n", "kill", "-TERM", String(pid)]).catch(() => {});
-    } catch {
-      // The disposable process may already have exited during cleanup.
+    if (root) {
+      try {
+        const pid = Number((await readFile(path.join(root, "daemon.pid"), "utf8")).trim());
+        if (Number.isSafeInteger(pid) && pid > 1) {
+          const stopped = await stopProcessGroup(pid);
+          if (!stopped) throw new Error("BuildKit daemon process group did not stop");
+        }
+      } catch (error) {
+        if (error?.code !== "ENOENT") cleanupFailure = error;
+      }
+      await run("docker", ["rm", "--force", `praetorium-source-fixture-${process.pid}`], {
+        timeoutMs: 30_000,
+      }).catch(() => {});
     }
-    await run("docker", ["rm", "--force", `praetorium-source-fixture-${process.pid}`]).catch(
-      () => {},
+    if (cleanupFailure && report?.status === "PASS") {
+      failure ??= cleanupFailure;
+      report = failureReport(cleanupFailure);
+    }
+    try {
+      await writeFixtureEvidence(
+        artifactDirectory,
+        report ?? failureReport(new Error("fixture ended without a result")),
+        daemonOutput,
+      );
+    } catch (error) {
+      failure ??= error;
+    }
+    if (root) await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
+  }
+  if (failure) {
+    process.stderr.write(
+      `Source to Stable disposable fixture failed: ${sanitizeFixtureDiagnostic(failure.message, FIXTURE_CHILD_OUTPUT_MAX_BYTES)}\n`,
     );
-    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
+    process.exitCode = 1;
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`Source to Stable disposable fixture failed: ${error.message}\n`);
-  process.exitCode = 1;
-});
+if (process.argv.includes("--check-imports")) {
+  process.stdout.write("Source fixture built workspace imports resolve.\n");
+} else {
+  await main();
+}

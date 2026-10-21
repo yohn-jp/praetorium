@@ -199,7 +199,7 @@ describe("Instance Access production handler", () => {
       return Response.json({ status: "starting" }, { status: 202 });
     }));
     const token = `${"a".repeat(43)}.${"b".repeat(43)}.${"c".repeat(43)}`;
-    const request = new Request(`${origin}/api/projects/project-one/modules/mcp/streamable`, {
+    const request = new Request(`${origin}/mcp`, {
       method: "POST",
       headers: { Host: host, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: '{"jsonrpc":"2.0","method":"tools/list","id":1}',
@@ -213,6 +213,31 @@ describe("Instance Access production handler", () => {
     }]);
     expect(request.bodyUsed).toBe(false);
     expect(response.headers.getSetCookie()).toHaveLength(0);
+  });
+
+  it("serves OAuth discovery and unauthenticated MCP challenge without waking the instance", async () => {
+    let gatewayCalls = 0;
+    const handler = createInstanceAccessHandler(environment(async () => {
+      gatewayCalls += 1;
+      return Response.json({ status: "starting" }, { status: 202 });
+    }));
+    const discovery = await handler(new Request(`${origin}/.well-known/oauth-protected-resource`, {
+      headers: { Host: host },
+    }));
+    expect(discovery.status).toBe(200);
+    expect(await discovery.json()).toEqual({
+      resource: origin, authorization_servers: ["https://gateway.service.test"],
+      scopes_supported: ["read", "write"],
+    });
+    const unauth = await handler(new Request(`${origin}/mcp`, {
+      method: "POST", headers: { Host: host },
+      body: '{"jsonrpc":"2.0","method":"initialize","id":1}',
+    }));
+    expect(unauth.status).toBe(401);
+    expect(unauth.headers.get("WWW-Authenticate")).toContain(
+      `resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+    );
+    expect(gatewayCalls).toBe(0);
   });
 
   it("fails closed for rejected or ambiguous bearer wake credentials", async () => {

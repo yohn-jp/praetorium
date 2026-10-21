@@ -101,21 +101,45 @@ test("migration apply never runs when the initial remote history is unknown", ()
   assert.equal(applies, 0);
 });
 
-test("0007 adds recovery defaults while preserving rows written with the 0004 schema", () => {
+test("0007 adds recovery defaults to an existing row written with the 0004 schema", () => {
   const db = new DatabaseSync(":memory:");
   db.exec(readFileSync(path.join(migrationDirectory, "0004_source_release_builds.sql"), "utf8"));
-  db.exec(readFileSync(path.join(migrationDirectory, "0007_source_release_recovery.sql"), "utf8"));
   db.prepare(`INSERT INTO source_release_builds (
     job_id, source_id, github_release_id, source_repository, source_tag, source_revision,
-    release_version, actor_id, state, created_at, updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    release_version, actor_id, state, attempt, lease_epoch, progress_json, result_json,
+    created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     "sr_11111111-1111-4111-8111-111111111111", "scriptorium", 416422590,
     "yohn-jp/scriptorium", "v0.2.1", "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
-    "0.2.1", "213253858", "queued", 1, 1,
+    "0.2.1", "213253858", "produced", 2, 4,
+    '{"stage":"producer","percent":100}', '{"proof":"unchanged"}', 1, 2,
   );
+  db.exec(readFileSync(path.join(migrationDirectory, "0007_source_release_recovery.sql"), "utf8"));
   assert.deepEqual(
-    { ...db.prepare("SELECT revision, admission_attempt, next_attempt_at FROM source_release_builds").get() },
-    { revision: 0, admission_attempt: 0, next_attempt_at: null },
+    { ...db.prepare(`SELECT job_id, source_id, github_release_id, source_repository, source_tag,
+      source_revision, release_version, actor_id, state, attempt, lease_epoch,
+      progress_json, result_json, created_at, updated_at, revision, admission_attempt,
+      next_attempt_at FROM source_release_builds`).get() },
+    {
+      job_id: "sr_11111111-1111-4111-8111-111111111111",
+      source_id: "scriptorium",
+      github_release_id: 416422590,
+      source_repository: "yohn-jp/scriptorium",
+      source_tag: "v0.2.1",
+      source_revision: "3189a85bfa28ddd160600a0188ab3ccfa91755e4",
+      release_version: "0.2.1",
+      actor_id: "213253858",
+      state: "produced",
+      attempt: 2,
+      lease_epoch: 4,
+      progress_json: '{"stage":"producer","percent":100}',
+      result_json: '{"proof":"unchanged"}',
+      created_at: 1,
+      updated_at: 2,
+      revision: 0,
+      admission_attempt: 0,
+      next_attempt_at: null,
+    },
   );
   db.close();
 });

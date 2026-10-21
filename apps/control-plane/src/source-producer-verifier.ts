@@ -7,7 +7,7 @@ export type SourceProofKey = {
   keyId: string;
   publicKeyBase64: string;
   revoked?: boolean | undefined;
-  validFrom?: string;
+  validFrom?: string | undefined;
   validUntil?: string;
 };
 const SOURCE_URI = /^https:\/\/control\.praetorium\.yohn\.jp\/internal\/source-proofs\/(sr_[0-9a-f-]{36})$/u;

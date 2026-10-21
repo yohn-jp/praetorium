@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { D1Database } from "@praetorium/persistence/d1";
+import { SourceProducerResultSchema, type SourceProducerResult } from "@praetorium/contracts";
 
 const SHA = /^[0-9a-f]{40}$/u;
 const SOURCE_TAG = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
@@ -134,6 +135,48 @@ export class D1SourceReleaseBuildQueue {
       checked.leaseToken,checked.leaseEpoch,now).run();
     return (result.meta.changes??0)===1;
   }
+  async byId(jobId:string):Promise<SourceJob|null> {
+    if(!ID.test(jobId))throw new TypeError("Invalid source job ID");
+    return (await this.db.prepare("SELECT * FROM source_release_builds WHERE job_id=?")
+      .bind(jobId).first<SourceJob>())??null;
+  }
+  async produced(jobId:string,input:{
+    workerId:string;leaseToken:string;leaseEpoch:number;result:SourceProducerResult;
+  }):Promise<boolean>{
+    const result=SourceProducerResultSchema.parse(input.result);
+    const current=await this.byId(jobId);
+    if(!current)return false;
+    const json=JSON.stringify(result);
+    if(json.length>65536)throw new RangeError("Source release evidence exceeds bound");
+    const now=this.now();
+    const response=await this.db.prepare(
+      `UPDATE source_release_builds SET state='produced', result_json=?,
+         lease_worker=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+       WHERE job_id=? AND state='building' AND lease_worker=? AND lease_token=?
+         AND lease_epoch=? AND lease_expires_at>?`
+    ).bind(json,now,jobId,input.workerId,input.leaseToken,input.leaseEpoch,now).run();
+    return (response.meta.changes??0)===1;
+  }
+  async listProduced():Promise<readonly (SourceJob&{result_json:string})[]>{
+    const rows=await this.db.prepare(
+      "SELECT * FROM source_release_builds WHERE state='produced' ORDER BY updated_at LIMIT 5"
+    ).all<SourceJob&{result_json:string}>();
+    return rows.results;
+  }
+  async markAdmitted(jobId:string,releaseId:string):Promise<boolean>{
+    const response=await this.db.prepare(
+      `UPDATE source_release_builds SET state='admitted',
+         admitted_release_id=?,updated_at=?
+       WHERE job_id=? AND state='produced'`
+    ).bind(releaseId,this.now(),jobId).run();
+    return (response.meta.changes??0)===1;
+  }
+  async rejectProduced(jobId:string,code:string):Promise<void>{
+    if(!/^[A-Z_]{3,64}$/u.test(code))throw new TypeError("Invalid failure code");
+    await this.db.prepare(
+      "UPDATE source_release_builds SET state='failed',failure_code=?,updated_at=? WHERE job_id=? AND state='produced'"
+    ).bind(code,this.now(),jobId).run();
+  }
   async fail(jobId:string,request:z.infer<typeof FailureRequest>):Promise<boolean>{
     if(!ID.test(jobId))throw new TypeError("Invalid source job id");
     const checked=FailureRequest.parse(request);
@@ -188,6 +231,8 @@ export function createSourceReleaseWorkerRoutes(input:{
   readonly queue:D1SourceReleaseBuildQueue;
   readonly workerId:string;
   readonly serviceToken:string;
+  readonly verifyProduced?: (job:SourceJob,result:SourceProducerResult)=>Promise<void>;
+  readonly afterProduced?: () => Promise<void>;
 }){
   const app=new Hono();
   app.use("*",async(c,next)=>{
@@ -209,6 +254,28 @@ export function createSourceReleaseWorkerRoutes(input:{
     const data=HeartbeatRequest.parse(await c.req.json());
     if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
     const accepted=await input.queue.heartbeat(c.req.param("jobId"),data);
+    return c.json({accepted});
+  });
+  app.post("/:jobId/produced",async c=>{
+    if(!input.verifyProduced)return c.json({error:{code:"SOURCE_PRODUCER_UNAVAILABLE"}},503);
+    const data=z.strictObject({
+      workerId:z.string().regex(WORKER),leaseToken:z.string().uuid(),
+      leaseEpoch:z.number().int().positive().safe(),
+      result:SourceProducerResultSchema,
+    }).parse(await c.req.json());
+    if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
+    const current=await input.queue.byId(c.req.param("jobId"));
+    if(!current || current.state!=="building" || current.lease_worker!==data.workerId ||
+      current.lease_token!==data.leaseToken || current.lease_epoch!==data.leaseEpoch ||
+      !current.lease_expires_at || current.lease_expires_at<=Date.now())
+      return c.json({error:{code:"SOURCE_BUILD_LEASE_CONFLICT"}},409);
+    // Cryptographic proof + Registry admission must complete before any D1
+    // source result is trusted or before the worker's lease is retired.
+    await input.verifyProduced(current,data.result);
+    const accepted=await input.queue.produced(current.job_id,data);
+    if(accepted && input.afterProduced) {
+      try {c.executionCtx.waitUntil(input.afterProduced());}catch{}
+    }
     return c.json({accepted});
   });
   app.post("/:jobId/fail",async c=>{

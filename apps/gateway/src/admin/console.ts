@@ -119,9 +119,9 @@ function adminPage(title: string, content: string, csrf: string): Response {
     '<a href="/">Releases</a><a href="https://praetorium.yohn.jp/">Workspace</a></nav>' +
     '<form method="post" action="/logout">' + csrfInput(csrf) +
     '<button class="button button-secondary" type="submit">Sign out</button></form></header>' +
-    '<main class="admin-main"><div class="admin-heading"><span class="admin-kicker">OPERATOR / CONTROL PLANE</span>' +
+    '<div class="admin-main"><div class="admin-heading"><span class="admin-kicker">OPERATOR / CONTROL PLANE</span>' +
     '<h1>' + escapeHtml(title) + '</h1><p>Immutable release admission and promotion evidence.</p></div>' +
-    content + '</main><footer class="admin-footer">Praetorium / Operator-authorized actions only</footer></div>';
+    content + '</div><footer class="admin-footer">Praetorium / Operator-authorized actions only</footer></div>';
   return page("Praetorium Admin — " + title, body, { layout: "handoff" });
 }
 function overview(

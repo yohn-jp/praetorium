@@ -125,37 +125,11 @@ export async function resolveTagCommit(
   throw new TypeError("Published tag does not resolve to a unique commit");
 }
 
-function parseWorkflowRuns(payload: unknown): readonly SourceWorkflowRun[] {
-  const body = object(payload);
-  if (!body || !Array.isArray(body.workflow_runs)) throw new TypeError("GitHub workflow response is invalid");
-  const runs: SourceWorkflowRun[] = [];
-  for (const value of body.workflow_runs.slice(0, MAX_GITHUB_RUNS)) {
-    const x = object(value);
-    if (!x || typeof x.display_title !== "string" || typeof x.html_url !== "string" ||
-        x.event !== "workflow_dispatch" || !["completed", "in_progress", "queued", "pending", "requested", "waiting"].includes(String(x.status))) continue;
-    const match = /^Producer (v?\S+) @ ([0-9a-f]{40})$/u.exec(x.display_title);
-    if (!match || !TAG.test(match[1]!)) continue;
-    const u = new URL(x.html_url);
-    if (u.protocol !== "https:" || u.hostname !== "github.com") continue;
-    runs.push({tag:match[1]!,commit:match[2]!,url:u.toString(),
-      status:String(x.status),conclusion:typeof x.conclusion === "string"?x.conclusion:null});
-  }
-  return runs;
-}
-
 export async function fetchSourceReleases(
   source: RegisteredReleaseSource, client: GitHubRestClient, token: string,
-): Promise<{releases: readonly PublishedSourceRelease[]; workflows: readonly SourceWorkflowRun[]}> {
-  const releases = await client.request(`/repos/${source.githubRepository}/releases?per_page=50`, token);
-  // The workflow status is best-effort, but does not mutate release authority.
-  let workflows: readonly SourceWorkflowRun[] = [];
-  try {
-    const runs = await client.request(
-      `/repos/${source.workflowRepository}/actions/workflows/${source.workflowFile}/runs?event=workflow_dispatch&per_page=40`, token,
-    );
-    workflows = parseWorkflowRuns(runs.body);
-  } catch { /* Unavailable actions permission must not falsify the release catalog. */ }
-  return {releases:publishedReleases(releases.body),workflows};
+): Promise<{releases: readonly PublishedSourceRelease[]}> {
+  const response = await client.request(`/repos/${source.githubRepository}/releases?per_page=50`, token);
+  return { releases: publishedReleases(response.body) };
 }
 
 export async function fetchSelectedRelease(

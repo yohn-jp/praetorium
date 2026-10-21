@@ -75,6 +75,9 @@ export async function requestAuthorizedServiceWake(
   if (hasReadyCurrentRuntime(snapshot.instance)) return { status: "route_unavailable" };
   if (!snapshot.instance.desiredArtifactDigest ||
       snapshot.instance.observedState === "failed") return { status: "unavailable" };
+  // A wake already queued/running should not enqueue a new operation for each
+  // retried MCP request. Only the stopped-to-running transition needs a CAS.
+  if (snapshot.instance.desiredState === "running") return { status: "starting" };
 
   if (snapshot.instance.desiredState === "stopped" &&
       !(await context.wakeRateLimiter.consume(`${verified.value.sub}:${input.repositoryId}`, context.requestNow))) {

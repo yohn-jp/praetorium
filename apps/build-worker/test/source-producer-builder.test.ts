@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -11,6 +12,7 @@ import {
   adaptScriptoriumV021Dockerfile,
   buildSourceRelease,
   readSourceProducerFile,
+  sourceMetadataDockerfileIgnore,
   SourceBuildVerificationError,
   sourceGitEnvironment,
 } from "../src/source-producer-builder.js";
@@ -128,6 +130,18 @@ it("keeps tracked .gitconfig out of Git's global configuration", async () => {
   // The fixed environment is the exact helper called by production checkout.
   expect(runGit(gitEnvironment,"status","--porcelain")).toBe("");
   await expect(access(marker)).rejects.toThrow();
+});
+
+it("keeps complete Git provenance outside the exact pinned image exclusions", async () => {
+  const ignore = await readFile(new URL("./fixtures/scriptorium-v0.2.1.dockerignore", import.meta.url));
+  expect(createHash("sha256").update(ignore).digest("hex"))
+    .toBe("74f8c3802e47bd2c62aef7170018255e11e26321e74657a7f8fdd107bdf958f3");
+  expect(ignore.toString("utf8").split("\n")).toEqual(expect.arrayContaining([
+    ".git", ".github", "docs", ".env.*", ".gitconfig",
+  ]));
+  // The metadata context is a private, verified Git checkout; ignore no files
+  // there so the producer's clean-tree check sees every tracked source file.
+  expect(sourceMetadataDockerfileIgnore()).toHaveLength(0);
 });
 
 it("rejects a BuildKit metadata path that is a symbolic link", async () => {

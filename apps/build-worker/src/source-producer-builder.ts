@@ -107,6 +107,13 @@ export function adaptScriptoriumV021Dockerfile(revision:string,original:Buffer):
   return Buffer.from(adapted,"utf8");
 }
 
+/** The provenance build consumes only a fresh, verified Git checkout. Give
+ * its separate metadata Dockerfile the complete checkout, including tracked
+ * files ignored by Scriptorium's production image context rules. */
+export function sourceMetadataDockerfileIgnore():Buffer{
+  return Buffer.alloc(0);
+}
+
 function outputRepository(options:SourceBuildOptions,logicalRepository:string):string{
   const target=options.isolatedRegistry;
   if(!target)return logicalRepository;
@@ -371,7 +378,7 @@ export async function buildSourceRelease(
     await writeFile(path.join(metadataDockerfiles,"Dockerfile"),
       Buffer.concat([buildDockerfile,Buffer.from("\n"+wrapper,"utf8")]),{mode:0o600});
     await writeFile(path.join(metadataDockerfiles,"Dockerfile.dockerignore"),
-      Buffer.concat([ignoreBytes,Buffer.from("\n!.git\n!.git/**\n","utf8")]),{mode:0o600});
+      sourceMetadataDockerfileIgnore(),{mode:0o600});
     await runBuild(config,[
       "--local","context="+source,"--local","dockerfile="+metadataDockerfiles,
       "--opt","platform=linux/amd64","--opt","target=praetorium-source-output",

@@ -46,8 +46,12 @@ function parseGatewayProjection(toml) {
 }
 
 test("inventory Gateway projection matches direct Wrangler Admin and Source settings", () => {
-  const direct = parseGatewayProjection(readFileSync(path.join(root, "apps/gateway/wrangler.toml"), "utf8"));
-  const inventory = JSON.parse(readFileSync(path.join(root, "infrastructure/test/disposable-inventory.json"), "utf8"));
+  const direct = parseGatewayProjection(
+    readFileSync(path.join(root, "apps/gateway/wrangler.toml"), "utf8"),
+  );
+  const inventory = JSON.parse(
+    readFileSync(path.join(root, "infrastructure/test/disposable-inventory.json"), "utf8"),
+  );
   inventory.environment = "deployment";
   inventory.domains.gatewayOrigin = direct.vars.GATEWAY_ORIGIN;
   inventory.domains.controlPlaneUrl = direct.vars.CONTROL_PLANE_ORIGIN;
@@ -63,12 +67,61 @@ test("inventory Gateway projection matches direct Wrangler Admin and Source sett
     releaseSources: JSON.parse(direct.vars.PRAETORIUM_RELEASE_SOURCES_JSON),
   };
 
-  const template = readFileSync(path.join(root, "infrastructure/workers/gateway.template.json"), "utf8");
+  const template = readFileSync(
+    path.join(root, "infrastructure/workers/gateway.template.json"),
+    "utf8",
+  );
   const generated = JSON.parse(renderWorkerTemplate(template, inventory, "gateway"));
   assert.deepEqual(generated.vars, direct.vars);
   assert.deepEqual(generated.routes, direct.routes);
   assert.equal(generated.vars.GATEWAY_SESSION_TTL_SECONDS, "28800");
   assert.equal(generated.vars.PRAETORIUM_ADMIN_ORIGIN, inventory.gateway.adminOrigin);
-  assert.deepEqual(JSON.parse(generated.vars.PRAETORIUM_RELEASE_SOURCES_JSON), inventory.gateway.releaseSources);
+  assert.deepEqual(
+    JSON.parse(generated.vars.PRAETORIUM_RELEASE_SOURCES_JSON),
+    inventory.gateway.releaseSources,
+  );
 });
 
+test("inventory Control Plane projection keeps the direct Source Producer trust policy", () => {
+  const directText = readFileSync(path.join(root, "apps/control-plane/wrangler.toml"), "utf8");
+  const directVars = parseGatewayProjection(directText);
+  const directPolicy = JSON.parse(directVars.vars.BUILD_POLICY_JSON);
+  const inventory = JSON.parse(
+    readFileSync(path.join(root, "infrastructure/test/disposable-inventory.json"), "utf8"),
+  );
+  inventory.environment = "deployment";
+  inventory.clusterId = directVars.vars.PROVISIONER_CLUSTER_ID;
+  inventory.domains.gatewayOrigin = directVars.vars.GATEWAY_ORIGIN;
+  inventory.domains.controlPlaneUrl = directVars.vars.CONTROL_PLANE_ORIGIN;
+  inventory.domains.instanceHostnameSuffix = directVars.vars.INSTANCE_HOST_SUFFIX;
+  inventory.buildkit.frontendRepository = directPolicy.sourceProducerRepository;
+  inventory.buildkit.outputRepository = `ghcr.io/${directPolicy.outputRepository}`;
+  inventory.buildWorker.compositionRepository = directPolicy.allowedRepositories.find(
+    (repository) =>
+      repository !== directPolicy.outputRepository &&
+      repository !== directPolicy.sourceProducerRepository.slice("ghcr.io/".length),
+  );
+  inventory.buildPolicy = {
+    ...inventory.buildPolicy,
+    registryUrl: directPolicy.registryUrl,
+    maxImageLayerBytes: directPolicy.maxImageLayerBytes,
+    maxImageVerificationMs: directPolicy.maxImageVerificationMs,
+    maxRegistryRequestMs: directPolicy.maxRegistryRequestMs,
+    runtimeResourceLimits: directPolicy.runtimeResourceLimits,
+    cacheRetention: directPolicy.cacheRetention,
+    targetPlatform: directPolicy.targetPlatform,
+    builderKeys: directPolicy.builderKeys,
+  };
+
+  const template = readFileSync(
+    path.join(root, "infrastructure/workers/control-plane.template.json"),
+    "utf8",
+  );
+  const generated = JSON.parse(renderWorkerTemplate(template, inventory, "control-plane"));
+  assert.deepEqual(JSON.parse(generated.vars.BUILD_POLICY_JSON), directPolicy);
+  assert.equal(
+    JSON.parse(generated.vars.BUILD_POLICY_JSON).sourceProducerRepository,
+    "ghcr.io/yohn-jp/praetorium/scriptorium-producer",
+  );
+  assert.deepEqual(generated.routes, directVars.routes);
+});

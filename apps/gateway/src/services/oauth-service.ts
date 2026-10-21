@@ -177,9 +177,24 @@ export async function registerOAuthClient(request: Request, context: GatewayCont
       return oauthError("temporarily_unavailable", 429);
     if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim() !== "application/json")
       return oauthError("invalid_client_metadata");
-    const text = await request.text();
-    if (text.length > MAX_BODY_BYTES) return oauthError("invalid_client_metadata");
-    const input: unknown = JSON.parse(text);
+    const announced = request.headers.get("Content-Length");
+    if (announced && (!/^\\d+$/.test(announced) || Number(announced) > MAX_BODY_BYTES))
+      return oauthError("invalid_client_metadata");
+    const reader = request.body?.getReader();
+    if (!reader) return oauthError("invalid_client_metadata");
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      length += part.value.length;
+      if (length > MAX_BODY_BYTES) { await reader.cancel(); return oauthError("invalid_client_metadata"); }
+      chunks.push(part.value);
+    }
+    const bytes = new Uint8Array(length);
+    let at = 0;
+    for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.length; }
+    const input: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     if (!input || typeof input !== "object" || Array.isArray(input)) return oauthError("invalid_client_metadata");
     const data = input as Record<string, unknown>;
     const name = data.client_name;
@@ -342,11 +357,14 @@ export async function exchangeOAuthToken(
       const raw = single(params, "refresh_token");
       if (!raw) return oauthError("invalid_grant");
       const store = storage(context);
-      // Rotation is atomic and the old refresh token cannot be replayed.
+      const current = await store.getRefresh(raw, clientId, resource, context.requestNow);
+      if (!current) return oauthError("invalid_grant");
+      // Do not consume a refresh secret when upstream repository authority is unavailable.
+      const token = await issueToken(context, current);
+      if (!token) return oauthError("invalid_grant");
+      // Rotation is atomic: only one racing refresh may return a token.
       const rotated = await store.rotateRefresh(raw, clientId, resource, context.requestNow);
       if (!rotated) return oauthError("invalid_grant");
-      const token = await issueToken(context, rotated.record);
-      if (!token) return oauthError("invalid_grant");
       return json({ ...token, refresh_token: rotated.nextToken,
         scope: rotated.record.permissions.join(" ") });
     }

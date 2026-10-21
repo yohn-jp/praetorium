@@ -73,7 +73,7 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
   /** Operator-only bounded read of the existing admission catalog and workflow. */
   app.get("/", async (c) => {
     const rawCursor = c.req.query("cursor");
-    if (rawCursor && (rawCursor.length > 256 || /[^A-Za-z0-9_.:-]/u.test(rawCursor)))
+    if (rawCursor && (rawCursor.length > 512 || !/^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(rawCursor)))
       return c.json({ error: { code: "INVALID_CURSOR" } }, 400);
     try {
       const page = await deps.releases.listCandidates(rawCursor ?? null, 25);

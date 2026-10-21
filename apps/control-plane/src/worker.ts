@@ -181,7 +181,7 @@ function composeServices(env: ControlPlaneEnv) {
       sourceReleaseOperator: createSourceReleaseOperatorRoutes({
         queue: sourceBuilds,
         operatorActorId: (JSON.parse(required(env.RELEASE_POLICY_JSON)) as {operatorActorId:string}).operatorActorId,
-        notifyBuild: () => notifyWork("build"),
+        notifyBuild: async () => { await notifyWork("build"); },
       }),
       sourceReleaseWorker: createSourceReleaseWorkerRoutes({
         queue: sourceBuilds,

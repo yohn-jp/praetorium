@@ -193,6 +193,16 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
   const origin = context.config.adminOrigin;
   if (!origin || new URL(request.url).origin !== origin) return response(404, "Not found");
   const url = new URL(request.url);
+  if (url.pathname === "/signed-out" && request.method === "GET") {
+    return page("Praetorium Admin — Signed out",
+      '<section class="signin-panel" aria-labelledby="admin-signed-out">' +
+      '<div class="signin-mark" aria-hidden="true">P</div>' +
+      '<p class="signin-kicker">OPERATOR / SESSION</p>' +
+      '<h1 id="admin-signed-out">Signed out of Admin</h1>' +
+      '<p class="signin-description">Your administration session has ended. Your repository workspace session was not changed.</p>' +
+      '<a class="button signin-action" href="/">Sign in to Admin</a></section>',
+      { layout: "handoff" });
+  }
   if (url.pathname === "/_admin/handoff" && request.method === "POST")
     return completeAdminHandoff(request, context);
 

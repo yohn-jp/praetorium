@@ -148,7 +148,15 @@ export class SourceProducerProofVerifier {
       source_revision:string;release_version:string;result_json:string|null;
     }>();
     if(!job?.result_json)return {verified:false,evidence:["Source proof not persisted"]};
-    const proof=await this.verify(job,JSON.parse(job.result_json));
+    let candidate:unknown;
+    try{candidate=JSON.parse(job.result_json);}
+    catch{return {verified:false,evidence:["Source proof record is invalid"]};}
+    let proof:SourceProducerResult;
+    try{proof=await this.verify(job,candidate);}
+    catch(error){
+      if(error instanceof SourceProofVerificationError&&error.retryable)throw error;
+      return {verified:false,evidence:["Source proof verification failed"]};
+    }
     if(proof.statement.runtimeBaseDigest!==input.imageDigest)
       return {verified:false,evidence:["Source image digest differs from proof"]};
     return {

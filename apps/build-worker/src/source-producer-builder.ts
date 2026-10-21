@@ -19,6 +19,16 @@ const DIGEST=/^sha256:[a-f0-9]{64}$/u;
 const MAX_RESOLVER_BYTES=4*1024*1024;
 const TRUSTED_GIT_PATH="/usr/local/bin:/usr/bin:/bin";
 const MAX_CATALOG_BYTES=4*1024*1024;
+const SCRIPTORIUM_V021_REVISION="3189a85bfa28ddd160600a0188ab3ccfa91755e4";
+const SCRIPTORIUM_V021_DOCKERFILE_SHA256="005b540188d5337e103bb4e5aba17c0ae4be3439c17d02b170a6b3d9a28ce350";
+const NODE_PUBLIC_CA_BOOTSTRAP="RUN node --input-type=module -e 'import{rootCertificates}from\"node:tls\";import{mkdirSync,writeFileSync}from\"node:fs\";mkdirSync(\"/etc/ssl/certs\",{recursive:true});writeFileSync(\"/etc/ssl/certs/ca-certificates.crt\",rootCertificates.join(\"\\n\")+\"\\n\")'";
+const DEBIAN_HTTPS_SOURCES=String.raw`RUN test -f /etc/apt/sources.list.d/debian.sources \
+ && sed -i \
+    -e 's|^URIs: http://deb.debian.org/debian$|URIs: https://deb.debian.org/debian|' \
+    -e 's|^URIs: http://deb.debian.org/debian-security$|URIs: https://deb.debian.org/debian-security|' \
+    /etc/apt/sources.list.d/debian.sources \
+ && grep -Fqx 'URIs: https://deb.debian.org/debian' /etc/apt/sources.list.d/debian.sources \
+ && grep -Fqx 'URIs: https://deb.debian.org/debian-security' /etc/apt/sources.list.d/debian.sources`;
 
 export interface SourceBuildClaim {
   job_id:string; source_id:"scriptorium"; source_repository:"yohn-jp/scriptorium";
@@ -55,6 +65,46 @@ export function assertSourceProducerResultWithinBudget(value:unknown):void{
   try{byteLength=sourceProducerResultByteLength(value);}
   catch{throw new SourceBuildVerificationError();}
   if(byteLength>SOURCE_PRODUCER_RESULT_MAX_BYTES)throw new SourceBuildVerificationError();
+}
+
+function replaceDockerfileAnchor(source:string,anchor:string,replacement:string):string{
+  const first=source.indexOf(anchor);
+  if(first<0||source.indexOf(anchor,first+anchor.length)>=0)
+    throw new SourceBuildVerificationError();
+  return source.slice(0,first)+replacement+source.slice(first+anchor.length);
+}
+
+/** Apply the platform-owned network foundation only to the byte-pinned
+ * Scriptorium v0.2.1 Dockerfile. The original bytes and digest remain the
+ * source provenance identity; this adapted copy is only a BuildKit frontend
+ * input. */
+export function adaptScriptoriumV021Dockerfile(revision:string,original:Buffer):Buffer{
+  if(revision!==SCRIPTORIUM_V021_REVISION||
+     createHash("sha256").update(original).digest("hex")!==SCRIPTORIUM_V021_DOCKERFILE_SHA256)
+    throw new SourceBuildVerificationError();
+  let adapted=original.toString("utf8");
+  const pnpmAnchor=`FROM \${NODE_IMAGE} AS pnpm-base\nARG PNPM_VERSION\nENV CI=true\n`;
+  adapted=replaceDockerfileAnchor(adapted,pnpmAnchor,
+    pnpmAnchor+NODE_PUBLIC_CA_BOOTSTRAP+"\n");
+  const corepackAnchor=[
+    "RUN corepack enable \\",
+    " && corepack prepare pnpm@${PNPM_VERSION} --activate",
+  ].join("\n");
+  const corepackReplacement=[
+    "RUN export NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 \\",
+    " && corepack enable \\",
+    " && corepack prepare pnpm@${PNPM_VERSION} --activate",
+  ].join("\n");
+  adapted=replaceDockerfileAnchor(adapted,corepackAnchor,corepackReplacement);
+  adapted=replaceDockerfileAnchor(adapted,"RUN pnpm install --frozen-lockfile",
+    "RUN NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 pnpm install --frozen-lockfile");
+  const runtimeBaseAnchor=`FROM \${NODE_IMAGE} AS runtime-base\nARG SCRIPTORIUM_PRODUCER_REVISION\n`;
+  adapted=replaceDockerfileAnchor(adapted,runtimeBaseAnchor,
+    runtimeBaseAnchor+NODE_PUBLIC_CA_BOOTSTRAP+"\n"+DEBIAN_HTTPS_SOURCES+"\n");
+  const runtimeAnchor=`FROM \${NODE_IMAGE} AS runtime\nARG PROFILE\n`;
+  adapted=replaceDockerfileAnchor(adapted,runtimeAnchor,
+    runtimeAnchor+NODE_PUBLIC_CA_BOOTSTRAP+"\n"+DEBIAN_HTTPS_SOURCES+"\n");
+  return Buffer.from(adapted,"utf8");
 }
 
 function outputRepository(options:SourceBuildOptions,logicalRepository:string):string{
@@ -241,6 +291,8 @@ FROM source AS praetorium-producer-metadata
 ARG SCRIPTORIUM_PRODUCER_REVISION
 ARG RUNTIME_BASE_DIGEST
 ARG BUILD_KIT_DIGEST
+${NODE_PUBLIC_CA_BOOTSTRAP}
+${DEBIAN_HTTPS_SOURCES}
 RUN apt-get update \\
  && apt-get install -y --no-install-recommends ca-certificates git \\
  && rm -rf /var/lib/apt/lists/*
@@ -280,22 +332,28 @@ export async function buildSourceRelease(
   const outputImage=outputRepository(options,imageRepository);
   const root=await mkdtemp(path.join(config.buildKit.temporaryDirectory,"source-producer-"));
   const source=path.join(root,"source");
-  const dockerfiles=path.join(root,"dockerfile");
+  const dockerfiles=path.join(root,"dockerfile-source");
+  const metadataDockerfiles=path.join(root,"dockerfile-metadata");
   const metadata=path.join(root,"metadata");
   const privateGitHome=path.join(root,"git-home");
   try{
     await mkdir(source);
     await mkdir(dockerfiles);
+    await mkdir(metadataDockerfiles);
     await mkdir(metadata);
     await mkdir(privateGitHome,{mode:0o700});
     await validatePublishedRelease(job,signal);
     await checkout(job,source,privateGitHome,signal);
     const dockerfile=await readSourceProducerFile(path.join(source,"Dockerfile"),128*1024,"Source Dockerfile");
     const dockerfileDigest=createHash("sha256").update(dockerfile).digest("hex");
+    const buildDockerfile=adaptScriptoriumV021Dockerfile(job.source_revision,dockerfile);
+    const ignoreBytes=await readSourceProducerFile(path.join(source,".dockerignore"),64*1024,"Source Docker ignore file",true);
+    await writeFile(path.join(dockerfiles,"Dockerfile"),buildDockerfile,{mode:0o600});
+    await writeFile(path.join(dockerfiles,"Dockerfile.dockerignore"),ignoreBytes,{mode:0o600});
     // The Dockerfile is kept inside the remote BuildKit execution boundary;
     // the Worker never loads or executes producer Node packages locally.
     const args=[
-      "--local","context="+source,"--local","dockerfile="+source,
+      "--local","context="+source,"--local","dockerfile="+dockerfiles,
       "--opt","platform=linux/amd64",
       "--opt","build-arg:SCRIPTORIUM_PRODUCER_REVISION="+job.source_revision,
     ];
@@ -310,13 +368,12 @@ export async function buildSourceRelease(
       "--output","type=image,name="+outputImage+":build-kit-"+job.source_revision+",push=true",
       "--metadata-file",kitMetadata],source,root,signal);
     const buildKitDigest=await metadataDigest(kitMetadata);
-    await writeFile(path.join(dockerfiles,"Dockerfile"),
-      Buffer.concat([dockerfile,Buffer.from("\n"+wrapper,"utf8")]),{mode:0o600});
-    const ignoreBytes=await readSourceProducerFile(path.join(source,".dockerignore"),64*1024,"Source Docker ignore file",true);
-    await writeFile(path.join(dockerfiles,"Dockerfile.dockerignore"),
+    await writeFile(path.join(metadataDockerfiles,"Dockerfile"),
+      Buffer.concat([buildDockerfile,Buffer.from("\n"+wrapper,"utf8")]),{mode:0o600});
+    await writeFile(path.join(metadataDockerfiles,"Dockerfile.dockerignore"),
       Buffer.concat([ignoreBytes,Buffer.from("\n!.git\n!.git/**\n","utf8")]),{mode:0o600});
     await runBuild(config,[
-      "--local","context="+source,"--local","dockerfile="+dockerfiles,
+      "--local","context="+source,"--local","dockerfile="+metadataDockerfiles,
       "--opt","platform=linux/amd64","--opt","target=praetorium-source-output",
       "--opt","build-arg:SCRIPTORIUM_PRODUCER_REVISION="+job.source_revision,
       "--opt","build-arg:RUNTIME_BASE_DIGEST="+runtimeDigest,

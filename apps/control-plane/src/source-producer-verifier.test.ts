@@ -71,6 +71,13 @@ function verifier(client: ReturnType<typeof registry>["client"],sourceProducerRe
   );
 }
 
+function sourceProofDatabase(resultJson:string|null) {
+  const row={...job,result_json:resultJson};
+  return {
+    prepare:vi.fn(()=>({bind:vi.fn(()=>({first:vi.fn(async()=>row)}))})),
+  } as unknown as D1Database;
+}
+
 async function legacyProof(revision=legacyRevision) {
   const catalog=fixtureCatalog(revision);
   const statement={
@@ -240,5 +247,51 @@ describe("source producer proof verification", () => {
       name:"SourceProofVerificationError",retryable:true,code:"SOURCE_VERIFICATION_FAILED",
     });
     expect(denied.verifyImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects invalid persisted signature evidence but leaves registry outages retryable", async () => {
+    const valid=await legacyProof();
+    const changedSignature=Buffer.from(valid.signature.signature,"base64");
+    changedSignature[0]=changedSignature[0]!^1;
+    const invalid={
+      ...valid,
+      signature:{...valid.signature,signature:changedSignature.toString("base64")},
+    };
+    const {client,verifyImage}=registry();
+    const permanent=new SourceProducerProofVerifier(
+      sourceProofDatabase(JSON.stringify(invalid)),client as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
+      builderKeys,
+    );
+    const proofUri=`https://control.praetorium.yohn.jp/internal/source-proofs/${job.job_id}`;
+    await expect(permanent.provenance({imageDigest:digestA,signatureRef:proofUri,provenanceRef:proofUri}))
+      .resolves.toMatchObject({verified:false,evidence:["Source proof verification failed"]});
+    expect(verifyImage).not.toHaveBeenCalled();
+
+    const unavailable={
+      registryHost:"ghcr.io",
+      verifyImage:vi.fn(async()=>{throw new RegistryError("unavailable","private detail");}),
+    };
+    const retryable=new SourceProducerProofVerifier(
+      sourceProofDatabase(JSON.stringify(valid)),
+      unavailable as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
+      builderKeys,
+    );
+    await expect(retryable.provenance({imageDigest:digestA,signatureRef:proofUri,provenanceRef:proofUri}))
+      .rejects.toMatchObject({retryable:true,code:"SOURCE_VERIFICATION_FAILED"});
+    expect(unavailable.verifyImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a rejected result for malformed persisted proof JSON", async () => {
+    const {client,verifyImage}=registry();
+    const verifierWithBadStoredJson=new SourceProducerProofVerifier(
+      sourceProofDatabase("{"),
+      client as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
+      builderKeys,
+    );
+    const proofUri=`https://control.praetorium.yohn.jp/internal/source-proofs/${job.job_id}`;
+    await expect(verifierWithBadStoredJson.provenance({
+      imageDigest:digestA,signatureRef:proofUri,provenanceRef:proofUri,
+    })).resolves.toMatchObject({verified:false,evidence:["Source proof record is invalid"]});
+    expect(verifyImage).not.toHaveBeenCalled();
   });
 });

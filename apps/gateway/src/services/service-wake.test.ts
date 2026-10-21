@@ -38,7 +38,7 @@ async function setup(options: { ready?: boolean; denied?: boolean; noArtifact?: 
   const consume = vi.fn(async () => !options.rateLimited);
   const checkBoundAccess = vi.fn(async () => ({
     status: options.denied ? "denied" : "allowed", repositoryId: 482901, instanceId: INSTANCE,
-    runtimeEpoch: 7, installationId: 84, authorizationRevision: 9, permissions: ["read"],
+    runtimeEpoch: 7, installationId: 84, authorizationRevision: 9, origin: ORIGIN, permissions: ["read"],
     expiresAt: Date.parse(NOW) + 60_000,
   }));
   const context = {

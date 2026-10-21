@@ -8,8 +8,6 @@ import {
 const source: RegisteredReleaseSource = {
   id: "scriptorium", label: "Scriptorium",
   githubRepository: "yohn-jp/scriptorium",
-  workflowRepository: "yohn-jp/praetorium",
-  workflowFile: "scriptorium-producer-verification.yml",
   adapter: "scriptorium-v1",
 };
 const A = "a".repeat(40);
@@ -57,7 +55,7 @@ describe("trusted GitHub Release selection", () => {
 
   it("escapes untrusted Release notes/title and excludes non-SemVer deployment", () => {
     const cards = sourceReleaseCards([{
-      source, error:null,workflows:[],
+      source, error:null,
       releases:publishedReleases([
         release({id:5,tag_name:"perf-wave1",name:"<script>alert(1)</script>",body:"<img src=x onerror=x>" }),
         release(),
@@ -109,22 +107,19 @@ describe("trusted GitHub Release selection", () => {
     await expect(resolveTagCommit(source,"../../malicious",client,"operator-oauth-token")).rejects.toThrow();
   });
 
-  it("retains actual workflow progress only for exact SHA-tag title, discarding unrelated runs", async () => {
-    const client=fakeApi({
-      "/repos/yohn-jp/scriptorium/releases?per_page=50":[release()],
-      "/repos/yohn-jp/praetorium/actions/workflows/scriptorium-producer-verification.yml/runs?event=workflow_dispatch&per_page=40":{
-        workflow_runs:[
-          {event:"workflow_dispatch",display_title:"Producer v0.2.1 @ "+A,
-            html_url:"https://github.com/yohn-jp/praetorium/actions/runs/123",status:"in_progress",conclusion:null},
-          {event:"push",display_title:"Producer v0.2.1 @ "+B,
-            html_url:"https://github.com/yohn-jp/praetorium/actions/runs/456",status:"completed",conclusion:"success"},
-        ],
-      },
+  it("lists only GitHub Releases while showing durable Praetorium Build Worker progress", async () => {
+    const client = fakeApi({
+      "/repos/yohn-jp/scriptorium/releases?per_page=50": [release()],
     });
-    const result=await fetchSourceReleases(source,client,"operator-oauth-token");
-    expect(result.releases).toHaveLength(1);
-    expect(result.workflows).toHaveLength(1);
-    expect(result.workflows[0]).toMatchObject({tag:"v0.2.1",commit:A,status:"in_progress"});
-    expect(sourceReleaseCards([{source,...result,error:null}],"csrf")).toContain("in_progress");
+    const selected=await fetchSourceReleases(source,client,"operator-oauth-token");
+    expect(selected.releases).toHaveLength(1);
+    expect(client.request.mock.calls).toHaveLength(1);
+    const html=sourceReleaseCards([{source,...selected,error:null}],"csrf",[{
+      id:"sr_00000000-0000-4000-a000-000000000001",
+      sourceId:"scriptorium",releaseId:416422590,tag:"v0.2.1",commit:A,
+      version:"0.2.1",state:"building",attempt:1,error:null,admittedReleaseId:null,
+    }]);
+    expect(html).toContain("Build Worker: building");
+    expect(html).not.toContain("/actions/");
   });
 });

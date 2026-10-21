@@ -63,6 +63,8 @@ export type ControlPlaneDependencies = {
   operationAdmin?: OperationAdminDependencies;
   webhook?: Parameters<typeof createGitHubWebhookRoutes>[0];
   operatorAdmission?: ReturnType<typeof createOperatorReleaseAdmissionRoutes>;
+  sourceReleaseOperator?: Hono;
+  sourceReleaseWorker?: Hono;
   operatorToken?: string;
   runtimeIdentity?: Hono;
   runtimeHealth?: Hono;
@@ -226,6 +228,9 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
   if (deps.runtimeAuthProbe) app.route("/internal/provisioner", deps.runtimeAuthProbe);
   if (deps.runtimeCredentials) app.route("/", deps.runtimeCredentials);
   if (deps.operatorAdmission) app.route("/v1/operator/releases", deps.operatorAdmission);
+  if (deps.sourceReleaseOperator) app.route("/v1/operator/source-builds", deps.sourceReleaseOperator);
+  // Precede the generic /internal/builds/* catchall with source Producer work.
+  if (deps.sourceReleaseWorker) app.route("/internal/builds/source", deps.sourceReleaseWorker);
   if (deps.builds)
     app.route(
       "/",

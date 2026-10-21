@@ -88,7 +88,7 @@ function releaseRow(input: Summary, csrf: string): string {
       csrfInput(csrf) +
       '<input type="hidden" name="expectedRevision" value="' + revision + '">' +
       '<input type="hidden" name="idempotencyKey" value="' + generateToken(128) + '">' +
-      '<button class="button button-secondary" type="submit">Retry verification</button></form>'
+      '<button class="button button-secondary" type="submit">Retry Canary build</button></form>'
     : "";
   const issue = workflow?.failureCode ?? input.workflow?.build?.failure?.code ?? "";
   return '<article class="admin-release">' +

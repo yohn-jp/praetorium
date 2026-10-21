@@ -39,9 +39,6 @@ function csrfInput(token: string): string {
 function str(value: unknown, limit = 256): string {
   return typeof value === "string" ? value.slice(0, limit) : "";
 }
-function num(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
 function errorCode(value: unknown): string {
   if (!value || typeof value !== "object" || !("error" in value)) return "OPERATOR_UNAVAILABLE";
   const error = (value as { error: unknown }).error;

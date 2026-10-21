@@ -109,6 +109,7 @@ function composeServices(env: ControlPlaneEnv) {
     if(!sourceBuilds || !releases)return;
     await progressProducedSourceReleases({
       queue: sourceBuilds,
+      admissionLeaseMs: buildServices!.sourceAdmissionLeaseMs,
       admit: releases.admitSourceRelease,
       progressAdmitted: releases.progressAdmittedSourceRelease,
     });

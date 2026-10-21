@@ -6,12 +6,13 @@ type ProgressionQueue = Pick<D1SourceReleaseBuildQueue, "claimProduced" | "markA
 
 export async function progressProducedSourceReleases(input: {
   readonly queue: ProgressionQueue;
+  readonly admissionLeaseMs: number;
   readonly admit: (job: SourceJob, result: SourceProducerResult) => Promise<IngestReleaseResult>;
   readonly progressAdmitted: () => Promise<unknown>;
 }): Promise<void> {
   for (let processed = 0; processed < 25; processed += 1) {
     // Start each lease when its verification starts, not while another job waits on OCI.
-    const [job] = await input.queue.claimProduced(1);
+    const [job] = await input.queue.claimProduced(1, input.admissionLeaseMs);
     if (!job) return;
     const attempt = job.admission_attempt;
     let result: SourceProducerResult;

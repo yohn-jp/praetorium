@@ -22,6 +22,7 @@ describe("admission registry diagnostics", () => {
     const services = composeBuildServices(db, JSON.stringify(policy), undefined, undefined, { registry: loopback });
     expect(services.registry.registryHost).toBe("127.0.0.1:5000");
     expect(services.sourceRegistry.registryHost).toBe("ghcr.io");
+    expect(services.sourceAdmissionLeaseMs).toBe(33_000);
     const normal = composeBuildServices(db, JSON.stringify(policy));
     expect(normal.sourceRegistry).toBe(normal.registry);
     expect(() => composeBuildServices(db, JSON.stringify(policy), undefined, undefined, { registry: normal.registry })).toThrow("loopback");

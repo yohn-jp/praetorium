@@ -210,6 +210,8 @@ export function composeBuildServices(
     sourceBuilderKeys: policy.builderKeys,
     sourceProducerRepository: policy.sourceProducerRepository,
     sourceRegistry,
+    // Two supported Linux platform checks, then the parallel Source provenance checks.
+    sourceAdmissionLeaseMs: Math.max(30_000, 3 * policy.maxImageVerificationMs + 30_000),
     resourceLimits: policy.runtimeResourceLimits,
     cache,
     cacheStore,

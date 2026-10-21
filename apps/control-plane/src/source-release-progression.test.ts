@@ -46,7 +46,7 @@ it("leaves later jobs unclaimed while OCI is slow, then moves past five retrying
       ? { kind: "retry" as const, reason: "unit fixture provider unavailable" }
       : { kind: "denied" as const, reason: "unit fixture completed verification" };
   });
-  const run = progressProducedSourceReleases({ queue, admit, progressAdmitted: vi.fn() });
+  const run = progressProducedSourceReleases({ queue, admissionLeaseMs: 390_000, admit, progressAdmitted: vi.fn() });
   await vi.waitFor(() => expect(admit).toHaveBeenCalledOnce());
   expect(queue.claimProduced).toHaveBeenCalledTimes(1);
   expect(jobs).toHaveLength(5);
@@ -55,5 +55,5 @@ it("leaves later jobs unclaimed while OCI is slow, then moves past five retrying
   expect(admit).toHaveBeenCalledTimes(6);
   expect(queue.deferProduced).toHaveBeenCalledTimes(5);
   expect(queue.rejectProduced).toHaveBeenCalledWith(expect.any(String), "ADMISSION_DENIED", 1);
-  for (const args of queue.claimProduced.mock.calls) expect(args).toEqual([1]);
+  for (const args of queue.claimProduced.mock.calls) expect(args).toEqual([1, 390_000]);
 });

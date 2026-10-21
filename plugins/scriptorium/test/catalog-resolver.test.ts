@@ -34,3 +34,9 @@ it("pins the legacy resolver entry to the exact clean-source bundle and provenan
     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   )).toThrow(/does not match/u);
 });
+
+it("fails closed for producer revisions without a statically approved bundle", () => {
+  expect(() => createScriptoriumCatalogResolverRegistry().resolve(
+    "1111111111111111111111111111111111111111",
+  )).toThrow(/No approved Scriptorium resolver/u);
+});

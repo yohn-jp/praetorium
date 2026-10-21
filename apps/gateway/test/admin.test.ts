@@ -150,6 +150,39 @@ describe("operator-only admin origin", () => {
     }), f.context)).status).toBe(404);
   });
 
+  it("offers retry only for the canonical failed pre-runtime Canary build", async () => {
+    const f = await fixture();
+    const { complete } = await login(f);
+    const cookies = cookiesFrom(await complete());
+    const candidate = (id: string, failureCode: string) => ({
+      release: { id, version: "1.2.3", imageDigest: "sha256:" + "a".repeat(64),
+        status: "candidate", createdAt: NOW },
+      workflow: {
+        workflow: { state: "blocked", revision: 3, failureCode,
+          attempts: 1, nextAttemptAt: null },
+        build: { status: "failed", failure: { code: "BUILD_FAILED" } },
+      },
+    });
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/operator/releases")
+        return Response.json({ items: [
+          candidate("rel_ineligible", "canary_health_missing"),
+          candidate("rel_eligible", "canary_build_failed"),
+        ], nextCursor: null, stableChannel: { currentReleaseId: null, revision: 0 } });
+      return Response.json({ events: [] });
+    });
+    Object.assign(f.context.env, { CONTROL_PLANE: { fetch: fetcher } });
+    const result = await handleAdminHost(new Request(ADMIN, {
+      headers: { Cookie: cookies.raw },
+    }), f.context);
+    expect(result.status).toBe(200);
+    const html = await result.text();
+    expect(html.match(/Retry verification/g)).toHaveLength(1);
+    expect(html).toContain('/releases/rel_eligible/retry');
+    expect(html).not.toContain('/releases/rel_ineligible/retry');
+  });
+
   it("uses the real authenticated Control Plane service binding for CSRF-gated admission and retry", async () => {
     const f = await fixture();
     const { complete } = await login(f);

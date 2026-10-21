@@ -130,7 +130,7 @@ describe("generic service MCP OAuth", () => {
     submitted.set("decision", "approve");
     const approved = await authorizeOAuth(new Request(GATEWAY + "/oauth/authorize", {
       method: "POST",
-      headers: { Cookie: f.cookie, Origin: GATEWAY, "Sec-Fetch-Site": "same-origin",
+      headers: { Cookie: `${f.cookie}; __Host-praetorium_csrf=${f.csrf}`, Origin: GATEWAY, "Sec-Fetch-Site": "same-origin",
         "Content-Type": "application/x-www-form-urlencoded",
         "X-OAuth-Test": "1" },
       body: submitted,

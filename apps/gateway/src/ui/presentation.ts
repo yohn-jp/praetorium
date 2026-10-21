@@ -11,6 +11,8 @@ export type PortalUiMode = "desktop" | "mobile";
 export interface PortalPresentation {
   readonly mode: PortalUiMode;
   readonly repositoryId?: string;
+  /** Offer a choice only when the visitor has not selected either presentation. */
+  readonly offerModeChoice?: boolean;
 }
 const COOKIE = "praetorium_ui";
 function isMode(value: string | undefined): value is PortalUiMode {
@@ -19,6 +21,7 @@ function isMode(value: string | undefined): value is PortalUiMode {
 export function resolvePresentation(request: Request): {
   readonly mode: PortalUiMode;
   readonly cookie?: string;
+  readonly offerModeChoice: boolean;
 } {
   const url = new URL(request.url);
   const choices = url.searchParams.getAll("ui");
@@ -33,8 +36,10 @@ export function resolvePresentation(request: Request): {
     return {
       mode: explicit,
       cookie: `${COOKIE}=${explicit}; Path=/; SameSite=Lax${url.protocol === "https:" ? "; Secure" : ""}`,
+      offerModeChoice: false,
     };
-  return { mode: isMode(preference) ? preference : "desktop" };
+  return { mode: isMode(preference) ? preference : "desktop",
+    offerModeChoice: !isMode(preference) };
 }
 /** Accept only application paths supplied by the renderer; never external URLs. */
 export function localUrl(path: string, mode: PortalUiMode): string {

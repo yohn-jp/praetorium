@@ -5,7 +5,7 @@ import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
 import { D1SourceReleaseBuildQueue, createSourceReleaseOperatorRoutes, createSourceReleaseWorkerRoutes } from "./source-release-builds.js";
-import { SourceProducerResultSchema } from "@praetorium/contracts";
+import { progressProducedSourceReleases } from "./source-release-progression.js";
 import { createScheduledHandler } from "./scheduled.js";
 import type { ExecutionContext } from "hono";
 import { notifyWorkAvailable, type WorkNotificationEnv } from "./work-notifications.js";
@@ -107,33 +107,11 @@ function composeServices(env: ControlPlaneEnv) {
     ? new D1SourceReleaseBuildQueue(env.CONTROL_PLANE_DB) : undefined;
   const progressProduced = async () => {
     if(!sourceBuilds || !releases)return;
-    for(let page=0;page<5;page++){
-      const jobs=await sourceBuilds.claimProduced(5);
-      if(jobs.length===0)break;
-      for(const job of jobs){
-        const attempt=job.admission_attempt;
-        let result;
-        try {
-          result=SourceProducerResultSchema.parse(JSON.parse(job.result_json));
-        } catch {
-          await sourceBuilds.rejectProduced(job.job_id,"SOURCE_RESULT_INVALID",attempt);
-          continue;
-        }
-        try {
-          const decision=await releases.admitSourceRelease(job,result);
-          if(decision.kind==="admitted"){
-            if(await sourceBuilds.markAdmitted(job.job_id,decision.candidate.id,attempt))
-              await releases.progressAdmittedSourceRelease();
-          }else if(decision.kind==="denied"){
-            await sourceBuilds.rejectProduced(job.job_id,"ADMISSION_DENIED",attempt);
-          }else{
-            await sourceBuilds.deferProduced(job.job_id,attempt);
-          }
-        }catch{
-          await sourceBuilds.deferProduced(job.job_id,attempt);
-        }
-      }
-    }
+    await progressProducedSourceReleases({
+      queue: sourceBuilds,
+      admit: releases.admitSourceRelease,
+      progressAdmitted: releases.progressAdmittedSourceRelease,
+    });
   };
   const app = createControlPlaneApp({
     notifyWorkAvailable: notifyWork,

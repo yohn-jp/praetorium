@@ -113,8 +113,8 @@ body[data-ui="mobile"] .form-grid { grid-template-columns:1fr; }
 `;
 
 export const PORTAL_STYLE_HASHES = {
-  desktop: "e2phgXq+QR4sDtWnBbCMJw9allRzVRUjtFFW48WSCuw=",
-  mobile: "nEiQMKEdHLj78sx+QegxEf79zqiRLaatZohYyALUy8Q=",
+  desktop: "ukaiks6WR9Xu8ttxnPIxQBWbSRLHSQNazwcbgY3XaG4=",
+  mobile: "O+i3Lvlk5dDvHZDtC5ZyjyA9m+T4qU7qQDZy7ETXAzg=",
 } as const;
 export function portalStyles(mode: PortalUiMode): string {
   return PORTAL_STYLES + (mode === "mobile" ? MOBILE_STYLES : DESKTOP_STYLES) + EVIDENCE_LEDGER_STYLES + EVIDENCE_LEDGER_LIST_STYLES + ADMIN_STYLES;

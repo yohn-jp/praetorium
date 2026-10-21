@@ -258,7 +258,7 @@ export async function listRegisteredSources(
 export function sourceReleaseCards(views:readonly SourceReleaseView[],csrf:string):string {
   if(!views.length)return '<p class="admin-empty">No release sources registered. Configure trusted service sources in Wrangler.</p>';
   return views.map(({source,releases,workflows,error})=>{
-    let entries=error?'<p class="alert" role="status">'+escapeHtml(error)+'</p>':
+    const entries=error?'<p class="alert" role="status">'+escapeHtml(error)+'</p>':
       releases.length===0?'<p class="admin-empty">No published GitHub Releases were found.</p>':
       releases.map(release=>{
         const run=workflows.find(x=>x.tag===release.tag);

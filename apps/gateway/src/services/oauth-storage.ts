@@ -36,6 +36,7 @@ export interface OAuthStorage {
   saveCode(code: string, record: OAuthCodeRecord): Promise<void>;
   consumeCode(code: string): Promise<OAuthCodeRecord | null>;
   createRefresh(record: OAuthRefreshRecord): Promise<string>;
+  getRefresh(plaintext: string, clientId: string, resource: string, now: string): Promise<OAuthRefreshRecord | null>;
   rotateRefresh(plaintext: string, clientId: string, resource: string, now: string):
     Promise<{ record: OAuthRefreshRecord; nextToken: string } | null>;
 }
@@ -83,6 +84,20 @@ export function createOAuthStorage(namespace: DurableObjectNamespace, pepper: Ui
       const digest = await keyedDigest(pepper, plaintext);
       await call("refresh:" + credentialId, "/refresh/create", { credentialId, digest, record });
       return plaintext;
+    },
+    async getRefresh(plaintext, clientId, resource, now) {
+      const parsed = parseRefresh(plaintext);
+      if (!parsed) return null;
+      const credentialId = "oauth:" + parsed.id;
+      const entry = await call<{ entry: { digest: string; record: OAuthRefreshRecord } | null }>(
+        "refresh:" + credentialId, "/refresh/get", { credentialId },
+      );
+      const record = entry.entry?.record;
+      if (!entry.entry || !record || record.revokedAt !== null ||
+          record.clientId !== clientId || record.resource !== resource ||
+          Date.parse(record.expiresAt) <= Date.parse(now)) return null;
+      const digest = await keyedDigest(pepper, plaintext);
+      return constantTimeEqual(digest, entry.entry.digest) ? record : null;
     },
     async rotateRefresh(plaintext, clientId, resource, now) {
       const parsed = parseRefresh(plaintext);

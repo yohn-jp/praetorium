@@ -2,7 +2,7 @@ import {
   AccessGrantId, deriveCodeChallengeS256, generateToken, generateUlid,
   isSafeRelativeRedirect, issueAccessGrant,
 } from "@praetorium/auth";
-import { applicationFromHostname, applicationHostname, publicRuntimeIdentity } from "@praetorium/contracts";
+import { applicationFromHostname, applicationHostname, publicRuntimeIdentity, type AppIdentity } from "@praetorium/contracts";
 import type { GatewayContext } from "../context.js";
 import { requireSession, hasValidGatewayCsrf } from "../http/session.js";
 import { runtimeEpochForAccess } from "../active-runtime.js";
@@ -28,7 +28,7 @@ function redirect(uri: string): Response {
 function htmlEscape(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
-function originOfResource(raw: string): { appIdentity: "scriptorium"; repositoryId: number } | null {
+function originOfResource(raw: string): { appIdentity: AppIdentity; repositoryId: number } | null {
   try {
     const uri = new URL(raw);
     if (uri.protocol !== "https:" || uri.origin !== raw || uri.username || uri.password ||
@@ -122,6 +122,7 @@ async function authorizedResource(
       access.instanceId !== snapshot.instance.instanceId || access.runtimeEpoch !== epoch ||
       access.installationId !== snapshot.binding.installationId ||
       access.authorizationRevision !== snapshot.binding.authorizationRevision ||
+      access.origin !== resource ||
       access.expiresAt <= Date.parse(context.requestNow) ||
       requested.some((permission) => !access.permissions.includes(permission))) return null;
   return { snapshot, access, epoch };

@@ -248,6 +248,7 @@ describe("operator-only admin origin", () => {
     });
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input)).pathname;
+      if (path === "/v1/operator/source-builds") return Response.json({ items: [] });
       if (path === "/v1/operator/releases")
         return Response.json({ items: [
           candidate("rel_ineligible", "canary_health_missing"),

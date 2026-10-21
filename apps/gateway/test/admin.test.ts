@@ -37,7 +37,7 @@ async function fixture(userId = "213253858") {
   });
   const ephemeral = {
     idFromName: (id: string) => id,
-    get: (_id: string) => ({
+    get: () => ({
       fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
         const request = new Request(input, init);
         const payload = await request.json() as { key: string; record?: unknown };

@@ -1,11 +1,24 @@
-name: Verify Scriptorium producer compositions (disposable)
+name: Verify selected Scriptorium GitHub Release
+run-name: Producer ${{ inputs.source_tag }} @ ${{ inputs.source_revision }}
 
 on:
   workflow_dispatch:
     inputs:
-      recipient_cert_b64:
-        description: Base64 PEM of the pinned public CI recipient certificate
+      source_revision:
+        description: Exact 40-character commit SHA resolved from an existing published Scriptorium GitHub Release
         required: true
+        type: string
+      source_tag:
+        description: Published Scriptorium GitHub Release tag (not a branch)
+        required: true
+        type: string
+      release_version:
+        description: SemVer version corresponding to the selected published tag (without leading v)
+        required: true
+        type: string
+      recipient_cert_b64:
+        description: Optional preapproved public certificate; normally use SCRIPTORIUM_PRODUCER_RECIPIENT_CERT_B64 Actions variable
+        required: false
         type: string
       publish_public_producer_inputs:
         description: Publish only the Runtime Base and Build Kit OCI inputs after signed metadata validation
@@ -17,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: scriptorium-producer-verification-${{ github.ref }}
+  group: scriptorium-producer-verification-${{ inputs.source_revision }}
   cancel-in-progress: false
 
 jobs:
@@ -32,8 +45,10 @@ jobs:
       public-images-artifact-name: ${{ steps.evidence-names.outputs.public-images }}
       build-attempt: ${{ steps.evidence-names.outputs.attempt }}
     env:
-      SCRIPTORIUM_REVISION: 008d5c429ec279a424cafd5b8c4cbee70a613b8e
-      RECIPIENT_CERT_B64: ${{ inputs.recipient_cert_b64 }}
+      SCRIPTORIUM_REVISION: ${{ inputs.source_revision }}
+      SCRIPTORIUM_TAG: ${{ inputs.source_tag }}
+      SCRIPTORIUM_RELEASE_VERSION: ${{ inputs.release_version }}
+      RECIPIENT_CERT_B64: ${{ inputs.recipient_cert_b64 || vars.SCRIPTORIUM_PRODUCER_RECIPIENT_CERT_B64 }}
       PUBLISH_PUBLIC_PRODUCER_IMAGES: ${{ inputs.publish_public_producer_inputs }}
 
     steps:
@@ -64,9 +79,7 @@ jobs:
           source_dir="$GITHUB_WORKSPACE/scriptorium"
           git init --quiet "$source_dir"
           git -C "$source_dir" remote add origin https://github.com/yohn-jp/scriptorium.git
-          git -C "$source_dir" fetch --depth=1 origin "$SCRIPTORIUM_REVISION"
-          git -C "$source_dir" checkout --quiet --detach FETCH_HEAD
-          test "$(git -C "$source_dir" rev-parse HEAD)" = "$SCRIPTORIUM_REVISION"
+          bash "$GITHUB_WORKSPACE/praetorium/scripts/ci/checkout-selected-release.sh" "$source_dir"
           test -z "$(git -C "$source_dir" status --porcelain)"
           test "$(git -C "$source_dir" remote get-url origin)" = "https://github.com/yohn-jp/scriptorium.git"
 
@@ -114,7 +127,9 @@ jobs:
       contents: read
       id-token: write
     env:
-      SCRIPTORIUM_REVISION: 008d5c429ec279a424cafd5b8c4cbee70a613b8e
+      SCRIPTORIUM_REVISION: ${{ inputs.source_revision }}
+      SCRIPTORIUM_TAG: ${{ inputs.source_tag }}
+      SCRIPTORIUM_RELEASE_VERSION: ${{ inputs.release_version }}
       PUBLISH_PUBLIC_PRODUCER_IMAGES: ${{ inputs.publish_public_producer_inputs }}
 
     steps:
@@ -222,13 +237,18 @@ jobs:
     uses: ./.github/workflows/publish-scriptorium-producer-inputs.yml
     with:
       producer_run_id: ${{ github.run_id }}
+      scriptorium_revision: ${{ inputs.source_revision }}
+      source_tag: ${{ inputs.source_tag }}
+      release_version: ${{ inputs.release_version }}
+      admit_release: true
       producer_run_attempt: ${{ needs.build-producer.outputs.build-attempt }}
       metadata_artifact_name: ${{ needs.build-producer.outputs.metadata-artifact-name }}
       signed_artifact_name: ${{ needs.sign-producer-metadata.outputs.signed-metadata-artifact-name }}
       public_inputs_artifact_name: ${{ needs.build-producer.outputs.public-images-artifact-name }}
     secrets:
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_OPERATOR_TOKEN: ${{ secrets.PRAETORIUM_RELEASE_OPERATOR_TOKEN }}
     permissions:
       actions: read
-      contents: read
+      contents: write
       packages: write

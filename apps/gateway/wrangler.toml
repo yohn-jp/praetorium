@@ -89,6 +89,8 @@ GATEWAY_ENVIRONMENT = "production"
 GATEWAY_ORIGIN = "https://praetorium.yohn.jp"
 PRAETORIUM_ADMIN_ORIGIN = "https://admin.praetorium.yohn.jp"
 PRAETORIUM_ADMIN_GITHUB_USER_IDS = "213253858"
+# Explicit trusted service source and producer adapter registry; never user-controlled URLs.
+PRAETORIUM_RELEASE_SOURCES_JSON = '[{"id":"scriptorium","label":"Scriptorium","githubRepository":"yohn-jp/scriptorium","workflowRepository":"yohn-jp/praetorium","workflowFile":"scriptorium-producer-verification.yml","adapter":"scriptorium-v1"}]'
 CONTROL_PLANE_ORIGIN = "https://control.praetorium.yohn.jp"
 GATEWAY_SESSION_TTL_SECONDS = "28800"
 GATEWAY_HANDOFF_TTL_SECONDS = "60"

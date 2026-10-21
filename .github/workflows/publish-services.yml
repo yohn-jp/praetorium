@@ -40,6 +40,11 @@ jobs:
           corepack pnpm@11.18.0 check
           node --test tests/deployment/reproducibility.test.mjs
           node --test tests/deployment/headlamp-admin.test.mjs
+          node --test tests/deployment/release-selection.test.mjs
+          bash -n scripts/ci/checkout-selected-release.sh scripts/ci/hosted-producer-verification.sh
+          node --check scripts/ci/admit-produced-release.mjs
+          node --check scripts/ci/validate-producer-attestation.mjs
+          node --check scripts/ci/publish-producer-inputs.mjs
           node scripts/ci/verify-workerd-runtime-identity.mjs
 
   candidate-images:

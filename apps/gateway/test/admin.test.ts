@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSession, type UserId } from "@praetorium/auth";
 import { createInMemorySessionStore } from "@praetorium/auth/testing";
 import type { GatewayContext } from "../src/context.js";
@@ -8,6 +8,7 @@ import { handleAdminHost } from "../src/admin/console.js";
 const NOW = "2026-10-21T10:00:00.000Z";
 const GATEWAY = "https://praetorium.yohn.jp";
 const ADMIN = "https://admin.praetorium.yohn.jp";
+afterEach(() => vi.unstubAllGlobals());
 
 async function fixture(userId = "213253858") {
   const sessionStore = createInMemorySessionStore();
@@ -42,6 +43,18 @@ async function fixture(userId = "213253858") {
         const request = new Request(input, init);
         const payload = await request.json() as { key: string; record?: unknown };
         const route = new URL(request.url).pathname;
+        if (route === "/release-dispatch/claim") {
+          const claim = storage.get(payload.key);
+          if (claim) return Response.json({ claimed: false });
+          storage.set(payload.key, payload);
+          return Response.json({ claimed: true });
+        }
+        if (route === "/release-dispatch/release") {
+          const claim = storage.get(payload.key) as {claimId?:string}|undefined;
+          const released = claim?.claimId === (payload as {claimId?:string}).claimId;
+          if (released) storage.delete(payload.key);
+          return Response.json({ released });
+        }
         if (route === "/save") {
           storage.set(payload.key, payload.record);
           return new Response(null, { status: 204 });
@@ -140,7 +153,8 @@ describe("operator-only admin origin", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     expect(html).toContain("Release administration");
-    expect(html).toContain("Register producer release");
+    expect(html).toContain("Deploy a published version");
+    expect(html).not.toContain("Release manifest (JSON)");
     expect(html).not.toContain("operator-internal-service-token-not-a-browser-secret");
     expect(f.gatewayCalls.map(x => x.path)).toEqual([
       "/v1/operator/releases", "/v1/operator/releases/audit",
@@ -148,6 +162,76 @@ describe("operator-only admin origin", () => {
     expect((await handleAdminHost(new Request(ADMIN + "/api/credentials", {
       headers: { Cookie: cookies.raw },
     }), f.context)).status).toBe(404);
+  });
+
+  it("lists published Releases and dispatches exact SHA from GitHub rather than trusting browser ref", async () => {
+    const f = await fixture();
+    const { complete } = await login(f);
+    const cookies = cookiesFrom(await complete());
+    Object.assign(f.context.env, {PRAETORIUM_RELEASE_SOURCES_JSON: JSON.stringify([{
+      id:"scriptorium",label:"Scriptorium",githubRepository:"yohn-jp/scriptorium",
+      workflowRepository:"yohn-jp/praetorium",
+      workflowFile:"scriptorium-producer-verification.yml",adapter:"scriptorium-v1",
+    }])});
+    Object.assign(f.context, { githubUserTokens: { accessTokenFor: async () => "operator-oauth-token" } });
+    const SHA = "a".repeat(40);
+    const selected = {
+      id:416422590,tag_name:"v0.2.1",name:"Scriptorium v0.2.1",
+      body:"Current release",draft:false,prerelease:false,published_at:NOW,
+    };
+    const githubRequests: Array<{url:string;method:string;body:unknown}> = [];
+    vi.stubGlobal("fetch",vi.fn(async (input: RequestInfo | URL, init?:RequestInit) => {
+      const request = new Request(input,init);
+      const url = new URL(request.url);
+      githubRequests.push({url:url.pathname+url.search,method:request.method,
+        body:request.method==="POST"?await request.json():null});
+      if(url.pathname==="/repos/yohn-jp/scriptorium/releases")
+        return Response.json([selected,{...selected,id:5,tag_name:"perf-wave1",prerelease:true}]);
+      if(url.pathname==="/repos/yohn-jp/praetorium/actions/workflows/scriptorium-producer-verification.yml/runs")
+        return Response.json({workflow_runs:[]});
+      if(url.pathname==="/repos/yohn-jp/scriptorium/releases/416422590")
+        return Response.json(selected);
+      if(url.pathname==="/repos/yohn-jp/scriptorium/git/ref/tags/v0.2.1")
+        return Response.json({object:{type:"commit",sha:SHA}});
+      if(url.pathname==="/repos/yohn-jp/praetorium/actions/workflows/scriptorium-producer-verification.yml/dispatches")
+        return new Response(null,{status:204});
+      return Response.json({message:"not found"},{status:404});
+    }));
+    const view = await handleAdminHost(new Request(ADMIN,{headers:{Cookie:cookies.raw}}),f.context);
+    expect(view.status).toBe(200);
+    const html=await view.text();
+    expect(html).toContain("Scriptorium v0.2.1");
+    expect(html).toContain("Build &amp; deploy");
+    expect(html).toContain("Not deployable");
+    expect(html).not.toContain("Release manifest (JSON)");
+    const invalid = await handleAdminHost(post("/source-releases/deploy",cookies,{
+      sourceId:"scriptorium",releaseId:"416422590",source_revision:"b".repeat(40),
+    }),f.context);
+    expect(invalid.status).toBe(400);
+    const refused=await handleAdminHost(post("/source-releases/deploy",cookies,{
+      sourceId:"scriptorium",releaseId:"416422590",
+    },"https://attacker.test"),f.context);
+    expect(refused.status).toBe(403);
+    const dispatched=await handleAdminHost(post("/source-releases/deploy",cookies,{
+      sourceId:"scriptorium",releaseId:"416422590",
+    }),f.context);
+    expect(dispatched.status).toBe(303);
+    expect(dispatched.headers.get("Location")).toContain("Producer%20dispatched");
+    const dispatchRequests=githubRequests.filter(x=>x.url.endsWith("/dispatches"));
+    expect(dispatchRequests).toHaveLength(1);
+    expect(dispatchRequests[0]?.body).toEqual({
+      ref:"main", inputs: {
+        source_revision:SHA,source_tag:"v0.2.1",release_version:"0.2.1",
+        publish_public_producer_inputs:"true",
+      },
+    });
+    const duplicate=await handleAdminHost(post("/source-releases/deploy",cookies,{
+      sourceId:"scriptorium",releaseId:"416422590",
+    }),f.context);
+    expect(duplicate.status).toBe(303);
+    expect(duplicate.headers.get("Location")).toContain("already%20selected");
+    expect(githubRequests.filter(x=>x.url.endsWith("/dispatches"))).toHaveLength(1);
+    expect(f.gatewayCalls).toHaveLength(2); // Only authenticated platform ledger/audit reads.
   });
 
   it("offers retry only for the canonical failed pre-runtime Canary build", async () => {
@@ -183,31 +267,26 @@ describe("operator-only admin origin", () => {
     expect(html).not.toContain('/releases/rel_ineligible/retry');
   });
 
-  it("uses the real authenticated Control Plane service binding for CSRF-gated admission and retry", async () => {
+  it("removes browser raw-manifest authority while keeping canonical CSRF-gated Canary retry", async () => {
     const f = await fixture();
     const { complete } = await login(f);
     const cookies = cookiesFrom(await complete());
-    const manifest = { schemaVersion: 1, version: "1.2.3", imageRepository: "ghcr.io/example/release" };
-    const malicious = await handleAdminHost(post("/releases", cookies,
-      { manifest: JSON.stringify(manifest) }, "https://attacker.test"), f.context);
+    const rawJson = await handleAdminHost(post("/releases", cookies, {
+      manifest: JSON.stringify({ version: "1.2.3" }),
+    }), f.context);
+    expect(rawJson.status).toBe(404);
+    expect(f.gatewayCalls).toHaveLength(0);
+    const malicious = await handleAdminHost(post("/releases/rel_test/retry", cookies, {
+      expectedRevision: "5", idempotencyKey: "retry-operation-1",
+    }, "https://attacker.test"), f.context);
     expect(malicious.status).toBe(403);
     expect(f.gatewayCalls).toHaveLength(0);
-    const registered = await handleAdminHost(post("/releases", cookies,
-      { manifest: JSON.stringify(manifest) }), f.context);
-    expect(registered.status).toBe(303);
-    expect(registered.headers.get("Location")).toContain("Release%20admitted");
-    expect(f.gatewayCalls).toHaveLength(1);
-    expect(f.gatewayCalls[0]?.body).toEqual(manifest);
-    expect(f.gatewayCalls[0]?.headers.get("X-Praetorium-Admin-Actor")).toBe("213253858");
-    expect(f.gatewayCalls[0]?.headers.get("X-Control-Plane-Gateway-Auth"))
-      .toBe("operator-internal-service-token-not-a-browser-secret");
-    expect(f.gatewayCalls[0]?.headers.has("Authorization")).toBe(false);
     const retry = await handleAdminHost(post("/releases/rel_test/retry", cookies, {
       expectedRevision: "5", idempotencyKey: "retry-operation-1",
     }), f.context);
     expect(retry.status).toBe(303);
-    expect(f.gatewayCalls[1]?.path).toBe("/v1/operator/releases/rel_test/retry");
-    expect(f.gatewayCalls[1]?.body).toEqual({
+    expect(f.gatewayCalls[0]?.path).toBe("/v1/operator/releases/rel_test/retry");
+    expect(f.gatewayCalls[0]?.body).toEqual({
       expectedRevision: 5, idempotencyKey: "retry-operation-1",
     });
     const logout = await handleAdminHost(post("/logout", cookies, {}), f.context);

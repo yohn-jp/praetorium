@@ -5,7 +5,6 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 
-const expectedRevision = "008d5c429ec279a424cafd5b8c4cbee70a613b8e";
 const expectedSourceOrigin = "https://github.com/yohn-jp/scriptorium";
 const expectedLocalRepository = "127.0.0.1:5000/scriptorium/producer";
 const expectedTargetRepository = "ghcr.io/yohn-jp/praetorium/scriptorium-producer";
@@ -134,8 +133,8 @@ async function main() {
   const buildAttempt = requireEnvironment("PRODUCER_BUILD_ATTEMPT");
   const summaryPath = requireEnvironment("PUBLICATION_SUMMARY");
 
-  if (revision !== expectedRevision || targetRepository !== expectedTargetRepository) {
-    fail("Pinned source revision or Praetorium-owned target repository differs from policy");
+  if (!/^[0-9a-f]{40}$/u.test(revision) || targetRepository !== expectedTargetRepository) {
+    fail("Source commit SHA or Praetorium-owned target repository differs from policy");
   }
   if (!/^\d+$/u.test(publisherRunId) || !/^\d+$/u.test(producerRunId) || !/^\d+$/u.test(buildAttempt))
     fail("Workflow build attempt identifier is invalid");

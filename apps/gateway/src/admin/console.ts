@@ -6,8 +6,8 @@ import {
   logoutAdmin,
 } from "./session.js";
 import { generateToken } from "@praetorium/auth";
+import { dispatchPublishedRelease, listRegisteredSources, sourceReleaseCards, type SourceReleaseView } from "./release-sources.js";
 
-const MAX_MANIFEST_FORM_BYTES = 2_097_152;
 const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 
 type Summary = {
@@ -130,67 +130,34 @@ function adminPage(title: string, content: string, csrf: string): Response {
 }
 function overview(
   items: readonly Summary[], events: readonly Audit[], csrf: string, cursor: string | null,
-  stableReleaseId: string | null, notice: string | null, error: string | null,
+  stableReleaseId: string | null, notice: string | null, sourceViews: readonly SourceReleaseView[],
 ): Response {
-  const latest = items.filter(item => item.release.status === "available").length;
+  const available = items.filter(item => item.release.status === "available").length;
   const waiting = items.filter(item => item.release.status !== "available").length;
   const rows = items.length ? items.map(item => releaseRow(item, csrf)).join("")
-    : '<div class="admin-empty">No admitted releases. Register a signed producer manifest below to begin.</div>';
+    : '<div class="admin-empty">No admitted releases yet. Choose a published service version above.</div>';
   const next = cursor && cursor.length <= 512 && /^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(cursor)
     ? '<a class="button button-secondary" href="/?cursor=' + encodeURIComponent(cursor) +
       '">Older releases</a>' : "";
   return adminPage("Release administration",
     (notice ? '<p class="admin-notice" role="status">' + escapeHtml(notice) + '</p>' : '') +
-    (error ? '<p class="alert" role="alert">' + escapeHtml(error) + '</p>' : '') +
     '<div class="admin-metrics"><div><strong>' + items.length + '</strong><span>Visible releases</span></div>' +
-    '<div><strong>' + latest + '</strong><span>Available</span></div>' +
+    '<div><strong>' + available + '</strong><span>Available</span></div>' +
     '<div><strong>' + waiting + '</strong><span>In admission / promotion</span></div></div>' +
     '<div class="admin-stable"><span class="admin-kicker">CURRENT STABLE CHANNEL</span>' +
     '<strong>' + escapeHtml(stableReleaseId ?? "No release promoted yet") + '</strong></div>' +
+    '<section class="admin-section" aria-label="Source release selection">' +
+    '<header class="admin-section-head"><div><span class="admin-kicker">01 / GITHUB RELEASES</span>' +
+    '<h2>Deploy a published version</h2></div></header>' +
+    '<p class="admin-subtext">Select a published GitHub Release. Praetorium resolves its exact commit and runs the signed Producer, OCI admission, Canary and Stable promotion. The GitHub Actions result alone does not mean Stable.</p>' +
+    sourceReleaseCards(sourceViews,csrf) + '</section>' +
     '<section class="admin-section" aria-labelledby="admin-releases-title"><header class="admin-section-head">' +
-    '<div><span class="admin-kicker">01 / REGISTRY</span><h2 id="admin-releases-title">Release ledger</h2></div>' +
+    '<div><span class="admin-kicker">02 / PLATFORM RELEASES</span><h2 id="admin-releases-title">Release ledger</h2></div>' +
     '<a class="button button-secondary" href="/">Refresh status</a></header>' + rows + next + '</section>' +
-    '<section class="admin-section" aria-labelledby="admin-register-title"><header class="admin-section-head">' +
-    '<div><span class="admin-kicker">02 / ADMISSION</span><h2 id="admin-register-title">Register producer release</h2></div>' +
-    '</header><p class="admin-subtext">Paste the signed, immutable producer manifest. Submission validates' +
-    ' Registry digest, provenance and producer metadata before admitting the candidate. ' +
-    'Stable promotion is asynchronous.</p>' +
-    '<form class="admin-manifest-form" method="post" action="/releases">' + csrfInput(csrf) +
-    '<label for="manifest">Release manifest (JSON)</label>' +
-    '<textarea id="manifest" name="manifest" spellcheck="false" required rows="10" ' +
-    'placeholder="{ &quot;schemaVersion&quot;: 1, &quot;version&quot;: &quot;...&quot;, &quot;imageRepository&quot;: &quot;...&quot;, &quot;catalog&quot;: {}, &quot;runtimeMetadata&quot;: {}, &quot;signatureRef&quot;: &quot;...&quot;, &quot;provenanceRef&quot;: &quot;...&quot; }"></textarea>' +
-    '<div class="admin-form-footer"><span>Submission is audited. No bypass or immediate promotion.</span>' +
-    '<button type="submit">Verify and register</button></div></form></section>' +
     '<section class="admin-section" aria-labelledby="admin-audit-title"><header class="admin-section-head">' +
     '<div><span class="admin-kicker">03 / AUDIT</span><h2 id="admin-audit-title">Recent operator events</h2></div>' +
     '</header>' + auditRows(events) + '</section>',
     csrf);
-}
-
-async function manifestForm(request: Request): Promise<URLSearchParams | null> {
-  const length = request.headers.get("Content-Length");
-  if (length && (!/^[0-9]+$/.test(length) || Number(length) > MAX_MANIFEST_FORM_BYTES)) return null;
-  if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim() !==
-      "application/x-www-form-urlencoded") return null;
-  const reader = request.body?.getReader();
-  if (!reader) return null;
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const part = await reader.read();
-      if (part.done) break;
-      size += part.value.length;
-      if (size > MAX_MANIFEST_FORM_BYTES) { await reader.cancel(); return null; }
-      chunks.push(part.value);
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const part of chunks) { bytes.set(part, offset); offset += part.length; }
-    const raw = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-    decodeURIComponent(raw.replace(/\+/g, " "));
-    return new URLSearchParams(raw);
-  } catch { return null; }
 }
 
 export async function handleAdminHost(request: Request, context: GatewayContext): Promise<Response> {
@@ -226,28 +193,37 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
   }
 
   if (request.method === "POST") {
-    const isAdmission = url.pathname === "/releases";
+    const isSourceDeploy = url.pathname === "/source-releases/deploy";
     const retryMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/retry$/u.exec(url.pathname);
-    if (!isAdmission && !retryMatch) return response(404, "Not found");
-    const form = isAdmission ? await manifestForm(request) : await boundedForm(request);
+    if (!isSourceDeploy && !retryMatch) return response(404, "Not found");
+    const form = await boundedForm(request);
     if (!form || !(await adminFormCsrf(request, context, session, form))) return response(403, "CSRF rejected");
-    try {
-      if (isAdmission) {
-        const text = form.getAll("manifest");
-        if (text.length !== 1 || text[0]!.length > 1_048_576 ||
-            [...form.keys()].some(key => key !== "manifest" && key !== "csrfToken"))
-          return response(400, "Invalid release manifest submission");
-        let manifest: unknown;
-        try { manifest = JSON.parse(text[0]!); }
-        catch { return response(400, "Manifest must contain valid JSON"); }
-        const accepted = await controlPlane(context, session.actor.userId, "POST", "/v1/operator/releases", manifest);
-        if (![200, 201].includes(accepted.status))
-          return renderError(context, session.csrfToken, errorCode(accepted.data), accepted.status);
-        const record = accepted.data as { release?: { id?: string } };
+    if (isSourceDeploy) {
+      const sources = form.getAll("sourceId");
+      const releases = form.getAll("releaseId");
+      if (sources.length !== 1 || releases.length !== 1 ||
+          !/^[a-z][a-z0-9-]{0,31}$/u.test(sources[0]!) ||
+          !/^[1-9][0-9]{0,15}$/u.test(releases[0]!) ||
+          !Number.isSafeInteger(Number(releases[0])) ||
+          [...form.keys()].some(key => !["csrfToken", "sourceId", "releaseId"].includes(key)))
+        return response(400, "Invalid selected GitHub Release");
+      try {
+        const result = await dispatchPublishedRelease(context,session.actor.userId,sources[0]!,Number(releases[0]));
+        if (result.kind === "forbidden") return renderError(context, session.csrfToken,
+          "GitHub App Actions:write permission or service release authority is unavailable", 403);
+        if (result.kind === "unavailable") return renderError(context, session.csrfToken,
+          "GitHub Release dispatch unavailable. Check Actions access and workflow configuration.", 503);
+        if (result.kind === "duplicate") return localRedirect("/?notice=" +
+          encodeURIComponent("This GitHub Release was already selected for a Producer build. Check its Actions status."));
         return localRedirect("/?notice=" + encodeURIComponent(
-          "Release admitted: " + str(record.release?.id, 128) + ". Await Canary and Stable verification.",
+          "Producer dispatched for " + result.tag + " (" + result.commit.slice(0,12) +
+          "). Build/sign/publish/admission and Canary/Stable now run through their verified stages.",
         ));
+      } catch {
+        return renderError(context, session.csrfToken, "Release dispatch authority unavailable", 503);
       }
+    }
+    try {
       const id = retryMatch![1]!;
       const revision = form.getAll("expectedRevision");
       const idempotencyKey = form.getAll("idempotencyKey");
@@ -287,10 +263,11 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
   if (cursor && (cursor.length > 512 || !/^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(cursor)))
     return response(400, "Invalid cursor");
   try {
-    const [catalog, audit] = await Promise.all([
+    const [catalog, audit, sourceViews] = await Promise.all([
       controlPlane(context, session.actor.userId, "GET",
         "/v1/operator/releases" + (cursor ? "?cursor=" + encodeURIComponent(cursor) : "")),
       controlPlane(context, session.actor.userId, "GET", "/v1/operator/releases/audit"),
+      listRegisteredSources(context, session.actor.userId),
     ]);
     if (catalog.status !== 200 || audit.status !== 200)
       return renderError(context, session.csrfToken,
@@ -302,7 +279,7 @@ export async function handleAdminHost(request: Request, context: GatewayContext)
       return renderError(context, session.csrfToken, "Invalid release authority response", 503);
     return overview(data.items.slice(0, 25), audited.events.slice(0, 25), session.csrfToken,
       data.nextCursor ?? null, data.stableChannel?.currentReleaseId ?? null,
-      url.searchParams.get("notice")?.slice(0, 200) ?? null, null);
+      url.searchParams.get("notice")?.slice(0, 200) ?? null, sourceViews);
   } catch {
     return renderError(context, session.csrfToken, "Control Plane temporarily unavailable", 503);
   }

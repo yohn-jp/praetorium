@@ -125,6 +125,32 @@ describe("EphemeralCodeDurableObject", () => {
     expect(bodies.filter((body) => (body as { rotated: boolean }).rotated)).toHaveLength(1);
   });
 
+  it("atomically claims one Release dispatch and releases only its owner", async () => {
+    const object = new EphemeralCodeDurableObject(createFakeDurableObjectState());
+    const now = Date.now();
+    const key = "release-dispatch:" + "a".repeat(43);
+    const body = { key, now, claimId: "00000000-0000-4000-a000-000000000001" };
+    const responses = await Promise.all([
+      object.fetch(post("/release-dispatch/claim", body)),
+      object.fetch(post("/release-dispatch/claim",
+        { ...body, claimId: "00000000-0000-4000-a000-000000000002" })),
+    ]);
+    const results = await Promise.all(responses.map(r => r.json()));
+    expect(results.filter(x => (x as {claimed:boolean}).claimed)).toHaveLength(1);
+    const owner = (results[0] as {claimed:boolean}).claimed
+      ? body.claimId : "00000000-0000-4000-a000-000000000002";
+    const other = owner === body.claimId
+      ? "00000000-0000-4000-a000-000000000002" : body.claimId;
+    expect(await (await object.fetch(post("/release-dispatch/release",
+      { key, now, claimId: other }))).json()).toEqual({released:false});
+    expect(await (await object.fetch(post("/release-dispatch/release",
+      { key, now, claimId: owner }))).json()).toEqual({released:true});
+    expect(await (await object.fetch(post("/release-dispatch/claim", body))).json())
+      .toEqual({claimed:true});
+    expect((await object.fetch(post("/release-dispatch/claim",
+      {key:"release-dispatch:invalid",now,claimId:owner}))).status).toBe(400);
+  });
+
   it("rejects non-POST methods and unknown paths", async () => {
     const object = new EphemeralCodeDurableObject(createFakeDurableObjectState());
     expect((await object.fetch(new Request("https://ephemeral-code/save"))).status).toBe(405);

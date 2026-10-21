@@ -4,7 +4,7 @@ import {
 import type { GatewayContext } from "../context.js";
 import { SESSION_CONCURRENCY_LIMIT } from "../constants.js";
 import {
-  CSRF_COOKIE_NAME, SESSION_COOKIE_NAME, hasValidGatewayCsrf,
+  CSRF_COOKIE_NAME, SESSION_COOKIE_NAME,
   readCookie, requireSession, sessionCsrfToken,
 } from "../http/session.js";
 import { escapeHtml } from "../ui/presentation.js";

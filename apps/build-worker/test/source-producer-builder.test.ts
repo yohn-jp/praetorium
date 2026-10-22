@@ -9,6 +9,7 @@ import { SOURCE_PRODUCER_RESULT_MAX_BYTES } from "@praetorium/contracts";
 import {
   assertSourceProducerResultWithinBudget,
   buildSourceRelease,
+  sourceNodeImage,
   readSourceProducerFile,
   sourceMetadataDockerfileIgnore,
   SourceBuildVerificationError,
@@ -173,4 +174,16 @@ it("rejects non-loopback physical output mappings before contacting GitHub", asy
     isolatedRegistry: { host: "registry.invalid:5000", repositoryPath: "yohn-jp/scriptorium-producer" },
   })).rejects.toThrow("Isolated source registry is available only to loopback tests");
   expect(fetch).not.toHaveBeenCalled();
+});
+
+
+it("uses only the native immutable NODE_IMAGE parameter without Release-specific matching", () => {
+  for (const digest of ["a".repeat(64), "f".repeat(64)]) {
+    const image = "docker.io/library/node:24-bookworm-slim@sha256:" + digest;
+    expect(sourceNodeImage(Buffer.from("ARG NODE_IMAGE=" + image + "\nFROM ${NODE_IMAGE} AS source\n"))).toBe(image);
+  }
+  for (const value of ["node:24", "${BASE}", "docker.io/library/node@sha256:" + "a".repeat(64) + "$(id)"]) {
+    expect(() => sourceNodeImage(Buffer.from("ARG NODE_IMAGE=" + value + "\nFROM ${NODE_IMAGE}\n"))).toThrow(SourceBuildVerificationError);
+  }
+  expect(() => sourceNodeImage(Buffer.from("ARG NODE_IMAGE=x\nARG NODE_IMAGE=y\nFROM x\n"))).toThrow(SourceBuildVerificationError);
 });

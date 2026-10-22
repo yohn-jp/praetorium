@@ -6929,978 +6929,14 @@
   },
   "SourceProducerResultSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "anyOf": [
-      {
-        "type": "object",
-        "properties": {
-          "statement": {
-            "type": "object",
-            "properties": {
-              "schemaVersion": {
-                "type": "number",
-                "const": 1
-              },
-              "jobId": {
-                "type": "string",
-                "pattern": "^sr_[0-9a-f-]{36}$"
-              },
-              "githubReleaseId": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "sourceId": {
-                "type": "string",
-                "const": "scriptorium"
-              },
-              "sourceRepository": {
-                "type": "string",
-                "const": "yohn-jp/scriptorium"
-              },
-              "sourceTag": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
-              },
-              "sourceRevision": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "releaseVersion": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
-              },
-              "imageRepository": {
-                "type": "string",
-                "const": "ghcr.io/yohn-jp/praetorium/scriptorium-producer"
-              },
-              "runtimeBaseDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              },
-              "buildKitDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              },
-              "catalogDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              },
-              "runtimeMetadataDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              }
-            },
-            "required": [
-              "schemaVersion",
-              "jobId",
-              "githubReleaseId",
-              "sourceId",
-              "sourceRepository",
-              "sourceTag",
-              "sourceRevision",
-              "releaseVersion",
-              "imageRepository",
-              "runtimeBaseDigest",
-              "buildKitDigest",
-              "catalogDigest",
-              "runtimeMetadataDigest"
-            ],
-            "additionalProperties": false
-          },
-          "signature": {
-            "type": "object",
-            "properties": {
-              "algorithm": {
-                "type": "string",
-                "const": "Ed25519"
-              },
-              "keyId": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9._:-]{1,128}$"
-              },
-              "signature": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 512
-              }
-            },
-            "required": [
-              "algorithm",
-              "keyId",
-              "signature"
-            ],
-            "additionalProperties": false
-          },
-          "catalog": {
-            "type": "object",
-            "properties": {
-              "contractVersion": {
-                "type": "string",
-                "const": "scriptorium-build/v1"
-              },
-              "producerRevision": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "runtimeBaseDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "buildKitDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "recipeDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "lockDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "sourceDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "supportedPlatforms": {
-                "minItems": 1,
-                "maxItems": 32,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9._-]{0,31}\\/[a-z0-9][a-z0-9._-]{0,31}$"
-                },
-                "uniqueItems": true
-              },
-              "modules": {
-                "maxItems": 256,
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                    },
-                    "version": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 512
-                    },
-                    "artifactDigest": {
-                      "type": "string",
-                      "pattern": "^sha256:[0-9a-f]{64}$"
-                    },
-                    "requires": {
-                      "maxItems": 256,
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                      },
-                      "uniqueItems": true
-                    },
-                    "conflicts": {
-                      "maxItems": 256,
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                      },
-                      "uniqueItems": true
-                    },
-                    "contractRange": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 512
-                    },
-                    "exclusiveResources": {
-                      "type": "object",
-                      "properties": {
-                        "cpuMilli": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "memoryMiB": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "ephemeralStorageMiB": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "cpuMilli",
-                        "memoryMiB",
-                        "ephemeralStorageMiB"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "sharedResourceGroupIds": {
-                      "maxItems": 256,
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                      },
-                      "uniqueItems": true
-                    },
-                    "workerLimits": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string",
-                        "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
-                      },
-                      "additionalProperties": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "version",
-                    "artifactDigest",
-                    "requires",
-                    "conflicts",
-                    "contractRange",
-                    "exclusiveResources",
-                    "sharedResourceGroupIds",
-                    "workerLimits"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "baseResources": {
-                "type": "object",
-                "properties": {
-                  "cpuMilli": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "memoryMiB": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "ephemeralStorageMiB": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  }
-                },
-                "required": [
-                  "cpuMilli",
-                  "memoryMiB",
-                  "ephemeralStorageMiB"
-                ],
-                "additionalProperties": false
-              },
-              "sharedResourceGroups": {
-                "maxItems": 256,
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                    },
-                    "resources": {
-                      "type": "object",
-                      "properties": {
-                        "cpuMilli": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "memoryMiB": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "ephemeralStorageMiB": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "cpuMilli",
-                        "memoryMiB",
-                        "ephemeralStorageMiB"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "resources"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "resourceProfiles": {
-                "maxItems": 256,
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                    },
-                    "cpuMilli": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "memoryMiB": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "ephemeralStorageMiB": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "cpuMilli",
-                    "memoryMiB",
-                    "ephemeralStorageMiB"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            },
-            "required": [
-              "contractVersion",
-              "producerRevision",
-              "runtimeBaseDigest",
-              "buildKitDigest",
-              "recipeDigest",
-              "lockDigest",
-              "sourceDigest",
-              "supportedPlatforms",
-              "modules",
-              "baseResources",
-              "sharedResourceGroups",
-              "resourceProfiles"
-            ],
-            "additionalProperties": false
-          },
-          "runtimeMetadata": {
-            "type": "object",
-            "properties": {
-              "contractVersion": {
-                "type": "string",
-                "const": "scriptorium-platform/v1"
-              },
-              "producerRevision": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "listener": {
-                "type": "object",
-                "properties": {
-                  "port": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 65535
-                  }
-                },
-                "required": [
-                  "port"
-                ],
-                "additionalProperties": false
-              },
-              "paths": {
-                "type": "object",
-                "properties": {
-                  "liveness": {
-                    "type": "string",
-                    "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
-                  },
-                  "readiness": {
-                    "type": "string",
-                    "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
-                  },
-                  "metadata": {
-                    "type": "string",
-                    "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
-                  },
-                  "shutdown": {
-                    "type": "string",
-                    "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "const": "/api/platform/v1/status"
-                  },
-                  "quiesce": {
-                    "type": "string",
-                    "const": "/api/platform/v1/quiesce"
-                  },
-                  "resume": {
-                    "type": "string",
-                    "const": "/api/platform/v1/resume"
-                  }
-                },
-                "required": [
-                  "liveness",
-                  "readiness",
-                  "metadata",
-                  "shutdown",
-                  "status",
-                  "quiesce",
-                  "resume"
-                ],
-                "additionalProperties": false
-              },
-              "shutdownTimeoutSeconds": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
-              }
-            },
-            "required": [
-              "contractVersion",
-              "producerRevision",
-              "listener",
-              "paths",
-              "shutdownTimeoutSeconds"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "statement",
-          "signature",
-          "catalog",
-          "runtimeMetadata"
-        ],
-        "additionalProperties": false
-      },
-      {
-        "type": "object",
-        "properties": {
-          "statement": {
-            "type": "object",
-            "properties": {
-              "schemaVersion": {
-                "type": "number",
-                "const": 2
-              },
-              "jobId": {
-                "type": "string",
-                "pattern": "^sr_[0-9a-f-]{36}$"
-              },
-              "githubReleaseId": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "sourceId": {
-                "type": "string",
-                "const": "scriptorium"
-              },
-              "sourceRepository": {
-                "type": "string",
-                "const": "yohn-jp/scriptorium"
-              },
-              "sourceTag": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
-              },
-              "sourceRevision": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "releaseVersion": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
-              },
-              "imageRepository": {
-                "type": "string",
-                "maxLength": 255,
-                "pattern": "^ghcr\\.io\\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
-              },
-              "runtimeBaseDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              },
-              "buildKitDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              },
-              "catalogDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              },
-              "runtimeMetadataDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              },
-              "resolverDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              }
-            },
-            "required": [
-              "schemaVersion",
-              "jobId",
-              "githubReleaseId",
-              "sourceId",
-              "sourceRepository",
-              "sourceTag",
-              "sourceRevision",
-              "releaseVersion",
-              "imageRepository",
-              "runtimeBaseDigest",
-              "buildKitDigest",
-              "catalogDigest",
-              "runtimeMetadataDigest",
-              "resolverDigest"
-            ],
-            "additionalProperties": false
-          },
-          "signature": {
-            "type": "object",
-            "properties": {
-              "algorithm": {
-                "type": "string",
-                "const": "Ed25519"
-              },
-              "keyId": {
-                "type": "string",
-                "pattern": "^[A-Za-z0-9._:-]{1,128}$"
-              },
-              "signature": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 512
-              }
-            },
-            "required": [
-              "algorithm",
-              "keyId",
-              "signature"
-            ],
-            "additionalProperties": false
-          },
-          "catalog": {
-            "type": "object",
-            "properties": {
-              "contractVersion": {
-                "type": "string",
-                "const": "scriptorium-build/v1"
-              },
-              "producerRevision": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "runtimeBaseDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "buildKitDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "recipeDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "lockDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "sourceDigest": {
-                "type": "string",
-                "pattern": "^sha256:[0-9a-f]{64}$"
-              },
-              "supportedPlatforms": {
-                "minItems": 1,
-                "maxItems": 32,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9][a-z0-9._-]{0,31}\\/[a-z0-9][a-z0-9._-]{0,31}$"
-                },
-                "uniqueItems": true
-              },
-              "modules": {
-                "maxItems": 256,
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                    },
-                    "version": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 512
-                    },
-                    "artifactDigest": {
-                      "type": "string",
-                      "pattern": "^sha256:[0-9a-f]{64}$"
-                    },
-                    "requires": {
-                      "maxItems": 256,
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                      },
-                      "uniqueItems": true
-                    },
-                    "conflicts": {
-                      "maxItems": 256,
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                      },
-                      "uniqueItems": true
-                    },
-                    "contractRange": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 512
-                    },
-                    "exclusiveResources": {
-                      "type": "object",
-                      "properties": {
-                        "cpuMilli": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "memoryMiB": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "ephemeralStorageMiB": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "cpuMilli",
-                        "memoryMiB",
-                        "ephemeralStorageMiB"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "sharedResourceGroupIds": {
-                      "maxItems": 256,
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                      },
-                      "uniqueItems": true
-                    },
-                    "workerLimits": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string",
-                        "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
-                      },
-                      "additionalProperties": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "version",
-                    "artifactDigest",
-                    "requires",
-                    "conflicts",
-                    "contractRange",
-                    "exclusiveResources",
-                    "sharedResourceGroupIds",
-                    "workerLimits"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "baseResources": {
-                "type": "object",
-                "properties": {
-                  "cpuMilli": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "memoryMiB": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "ephemeralStorageMiB": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  }
-                },
-                "required": [
-                  "cpuMilli",
-                  "memoryMiB",
-                  "ephemeralStorageMiB"
-                ],
-                "additionalProperties": false
-              },
-              "sharedResourceGroups": {
-                "maxItems": 256,
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                    },
-                    "resources": {
-                      "type": "object",
-                      "properties": {
-                        "cpuMilli": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "memoryMiB": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "ephemeralStorageMiB": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "cpuMilli",
-                        "memoryMiB",
-                        "ephemeralStorageMiB"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "resources"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "resourceProfiles": {
-                "maxItems": 256,
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^[a-z][a-z0-9-]{0,63}$"
-                    },
-                    "cpuMilli": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "memoryMiB": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "ephemeralStorageMiB": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "cpuMilli",
-                    "memoryMiB",
-                    "ephemeralStorageMiB"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            },
-            "required": [
-              "contractVersion",
-              "producerRevision",
-              "runtimeBaseDigest",
-              "buildKitDigest",
-              "recipeDigest",
-              "lockDigest",
-              "sourceDigest",
-              "supportedPlatforms",
-              "modules",
-              "baseResources",
-              "sharedResourceGroups",
-              "resourceProfiles"
-            ],
-            "additionalProperties": false
-          },
-          "runtimeMetadata": {
-            "type": "object",
-            "properties": {
-              "contractVersion": {
-                "type": "string",
-                "const": "scriptorium-platform/v1"
-              },
-              "producerRevision": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "listener": {
-                "type": "object",
-                "properties": {
-                  "port": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 65535
-                  }
-                },
-                "required": [
-                  "port"
-                ],
-                "additionalProperties": false
-              },
-              "paths": {
-                "type": "object",
-                "properties": {
-                  "liveness": {
-                    "type": "string",
-                    "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
-                  },
-                  "readiness": {
-                    "type": "string",
-                    "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
-                  },
-                  "metadata": {
-                    "type": "string",
-                    "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
-                  },
-                  "shutdown": {
-                    "type": "string",
-                    "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "const": "/api/platform/v1/status"
-                  },
-                  "quiesce": {
-                    "type": "string",
-                    "const": "/api/platform/v1/quiesce"
-                  },
-                  "resume": {
-                    "type": "string",
-                    "const": "/api/platform/v1/resume"
-                  }
-                },
-                "required": [
-                  "liveness",
-                  "readiness",
-                  "metadata",
-                  "shutdown",
-                  "status",
-                  "quiesce",
-                  "resume"
-                ],
-                "additionalProperties": false
-              },
-              "shutdownTimeoutSeconds": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 9007199254740991
-              }
-            },
-            "required": [
-              "contractVersion",
-              "producerRevision",
-              "listener",
-              "paths",
-              "shutdownTimeoutSeconds"
-            ],
-            "additionalProperties": false
-          },
-          "resolver": {
-            "type": "object",
-            "properties": {
-              "producerRevision": {
-                "type": "string",
-                "pattern": "^[a-f0-9]{40}$"
-              },
-              "resolverRevision": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              },
-              "contractVersion": {
-                "type": "string",
-                "const": "scriptorium-build/v1"
-              },
-              "provenanceDigest": {
-                "type": "string",
-                "pattern": "^sha256:[a-f0-9]{64}$"
-              }
-            },
-            "required": [
-              "producerRevision",
-              "resolverRevision",
-              "contractVersion",
-              "provenanceDigest"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "statement",
-          "signature",
-          "catalog",
-          "runtimeMetadata",
-          "resolver"
-        ],
-        "additionalProperties": false
-      }
-    ],
-    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
-  },
-  "SourceProducerStatementSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "anyOf": [
-      {
+    "type": "object",
+    "properties": {
+      "statement": {
         "type": "object",
         "properties": {
           "schemaVersion": {
             "type": "number",
-            "const": 1
+            "const": 3
           },
           "jobId": {
             "type": "string",
@@ -7926,83 +6962,7 @@
           },
           "sourceRevision": {
             "type": "string",
-            "pattern": "^[0-9a-f]{40}$"
-          },
-          "releaseVersion": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "imageRepository": {
-            "type": "string",
-            "const": "ghcr.io/yohn-jp/praetorium/scriptorium-producer"
-          },
-          "runtimeBaseDigest": {
-            "type": "string",
-            "pattern": "^sha256:[a-f0-9]{64}$"
-          },
-          "buildKitDigest": {
-            "type": "string",
-            "pattern": "^sha256:[a-f0-9]{64}$"
-          },
-          "catalogDigest": {
-            "type": "string",
-            "pattern": "^sha256:[a-f0-9]{64}$"
-          },
-          "runtimeMetadataDigest": {
-            "type": "string",
-            "pattern": "^sha256:[a-f0-9]{64}$"
-          }
-        },
-        "required": [
-          "schemaVersion",
-          "jobId",
-          "githubReleaseId",
-          "sourceId",
-          "sourceRepository",
-          "sourceTag",
-          "sourceRevision",
-          "releaseVersion",
-          "imageRepository",
-          "runtimeBaseDigest",
-          "buildKitDigest",
-          "catalogDigest",
-          "runtimeMetadataDigest"
-        ],
-        "additionalProperties": false
-      },
-      {
-        "type": "object",
-        "properties": {
-          "schemaVersion": {
-            "type": "number",
-            "const": 2
-          },
-          "jobId": {
-            "type": "string",
-            "pattern": "^sr_[0-9a-f-]{36}$"
-          },
-          "githubReleaseId": {
-            "type": "integer",
-            "exclusiveMinimum": 0,
-            "maximum": 9007199254740991
-          },
-          "sourceId": {
-            "type": "string",
-            "const": "scriptorium"
-          },
-          "sourceRepository": {
-            "type": "string",
-            "const": "yohn-jp/scriptorium"
-          },
-          "sourceTag": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "sourceRevision": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{40}$"
+            "pattern": "^[a-f0-9]{40}$"
           },
           "releaseVersion": {
             "type": "string",
@@ -8030,7 +6990,20 @@
             "type": "string",
             "pattern": "^sha256:[a-f0-9]{64}$"
           },
+          "nodeImage": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^(?:[a-z0-9.-]+(?::[0-9]+)?\\/)+[a-z0-9._/-]+(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$"
+          },
+          "buildEnvironmentDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
           "resolverDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "resolverProvenanceDigest": {
             "type": "string",
             "pattern": "^sha256:[a-f0-9]{64}$"
           }
@@ -8049,11 +7022,524 @@
           "buildKitDigest",
           "catalogDigest",
           "runtimeMetadataDigest",
-          "resolverDigest"
+          "nodeImage",
+          "buildEnvironmentDigest",
+          "resolverDigest",
+          "resolverProvenanceDigest"
+        ],
+        "additionalProperties": false
+      },
+      "signature": {
+        "type": "object",
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "const": "Ed25519"
+          },
+          "keyId": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+          },
+          "signature": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "algorithm",
+          "keyId",
+          "signature"
+        ],
+        "additionalProperties": false
+      },
+      "catalog": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "scriptorium-build/v1"
+          },
+          "producerRevision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "runtimeBaseDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "buildKitDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "recipeDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "lockDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "sourceDigest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "supportedPlatforms": {
+            "minItems": 1,
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,31}\\/[a-z0-9][a-z0-9._-]{0,31}$"
+            },
+            "uniqueItems": true
+          },
+          "modules": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "artifactDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "requires": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                  },
+                  "uniqueItems": true
+                },
+                "conflicts": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                  },
+                  "uniqueItems": true
+                },
+                "contractRange": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "exclusiveResources": {
+                  "type": "object",
+                  "properties": {
+                    "cpuMilli": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "memoryMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "ephemeralStorageMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cpuMilli",
+                    "memoryMiB",
+                    "ephemeralStorageMiB"
+                  ],
+                  "additionalProperties": false
+                },
+                "sharedResourceGroupIds": {
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                  },
+                  "uniqueItems": true
+                },
+                "workerLimits": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
+                  },
+                  "additionalProperties": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "artifactDigest",
+                "requires",
+                "conflicts",
+                "contractRange",
+                "exclusiveResources",
+                "sharedResourceGroupIds",
+                "workerLimits"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "baseResources": {
+            "type": "object",
+            "properties": {
+              "cpuMilli": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "memoryMiB": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "ephemeralStorageMiB": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "cpuMilli",
+              "memoryMiB",
+              "ephemeralStorageMiB"
+            ],
+            "additionalProperties": false
+          },
+          "sharedResourceGroups": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "resources": {
+                  "type": "object",
+                  "properties": {
+                    "cpuMilli": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "memoryMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "ephemeralStorageMiB": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "cpuMilli",
+                    "memoryMiB",
+                    "ephemeralStorageMiB"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "resources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "resourceProfiles": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "cpuMilli": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "memoryMiB": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "ephemeralStorageMiB": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "cpuMilli",
+                "memoryMiB",
+                "ephemeralStorageMiB"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "producerRevision",
+          "runtimeBaseDigest",
+          "buildKitDigest",
+          "recipeDigest",
+          "lockDigest",
+          "sourceDigest",
+          "supportedPlatforms",
+          "modules",
+          "baseResources",
+          "sharedResourceGroups",
+          "resourceProfiles"
+        ],
+        "additionalProperties": false
+      },
+      "runtimeMetadata": {
+        "type": "object",
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "scriptorium-platform/v1"
+          },
+          "producerRevision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "listener": {
+            "type": "object",
+            "properties": {
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              }
+            },
+            "required": [
+              "port"
+            ],
+            "additionalProperties": false
+          },
+          "paths": {
+            "type": "object",
+            "properties": {
+              "liveness": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+              },
+              "readiness": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+              },
+              "metadata": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+              },
+              "shutdown": {
+                "type": "string",
+                "pattern": "^\\/(?!\\/)[^\\r\\n?#]*$"
+              },
+              "status": {
+                "type": "string",
+                "const": "/api/platform/v1/status"
+              },
+              "quiesce": {
+                "type": "string",
+                "const": "/api/platform/v1/quiesce"
+              },
+              "resume": {
+                "type": "string",
+                "const": "/api/platform/v1/resume"
+              }
+            },
+            "required": [
+              "liveness",
+              "readiness",
+              "metadata",
+              "shutdown",
+              "status",
+              "quiesce",
+              "resume"
+            ],
+            "additionalProperties": false
+          },
+          "shutdownTimeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "contractVersion",
+          "producerRevision",
+          "listener",
+          "paths",
+          "shutdownTimeoutSeconds"
+        ],
+        "additionalProperties": false
+      },
+      "resolver": {
+        "type": "object",
+        "properties": {
+          "producerRevision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "resolverRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "contractVersion": {
+            "type": "string",
+            "const": "scriptorium-build/v1"
+          },
+          "provenanceDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "producerRevision",
+          "resolverRevision",
+          "contractVersion",
+          "provenanceDigest"
         ],
         "additionalProperties": false
       }
+    },
+    "required": [
+      "statement",
+      "signature",
+      "catalog",
+      "runtimeMetadata",
+      "resolver"
     ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "SourceProducerStatementSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "schemaVersion": {
+        "type": "number",
+        "const": 3
+      },
+      "jobId": {
+        "type": "string",
+        "pattern": "^sr_[0-9a-f-]{36}$"
+      },
+      "githubReleaseId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "sourceId": {
+        "type": "string",
+        "const": "scriptorium"
+      },
+      "sourceRepository": {
+        "type": "string",
+        "const": "yohn-jp/scriptorium"
+      },
+      "sourceTag": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "sourceRevision": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{40}$"
+      },
+      "releaseVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "imageRepository": {
+        "type": "string",
+        "maxLength": 255,
+        "pattern": "^ghcr\\.io\\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$"
+      },
+      "runtimeBaseDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "buildKitDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "catalogDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "runtimeMetadataDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "nodeImage": {
+        "type": "string",
+        "maxLength": 512,
+        "pattern": "^(?:[a-z0-9.-]+(?::[0-9]+)?\\/)+[a-z0-9._/-]+(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$"
+      },
+      "buildEnvironmentDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "resolverDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "resolverProvenanceDigest": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "jobId",
+      "githubReleaseId",
+      "sourceId",
+      "sourceRepository",
+      "sourceTag",
+      "sourceRevision",
+      "releaseVersion",
+      "imageRepository",
+      "runtimeBaseDigest",
+      "buildKitDigest",
+      "catalogDigest",
+      "runtimeMetadataDigest",
+      "nodeImage",
+      "buildEnvironmentDigest",
+      "resolverDigest",
+      "resolverProvenanceDigest"
+    ],
+    "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
   "SourceResolverDescriptorSchema": {

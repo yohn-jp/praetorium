@@ -151,6 +151,27 @@ export function normalizeComposition(
   };
 }
 
+/** Interpret the declared v1 catalog; module identities come from the signed Release. */
+export function resolveCatalogModuleOrder(input: {
+  readonly catalog: BuildCatalog;
+  readonly requestedModules: readonly string[];
+  readonly targetPlatform: string;
+}): readonly string[] {
+  const catalog = BuildCatalogSchema.parse(input.catalog);
+  if (!catalog.supportedPlatforms.includes(input.targetPlatform))
+    throw new CompositionError("UNSUPPORTED_PLATFORM", "The producer catalog does not support the requested platform");
+  if (new Set(input.requestedModules).size !== input.requestedModules.length)
+    throw new CompositionError("UNSUPPORTED_MODULE_SET", "Requested module IDs must be unique");
+  const modules = validateCatalogGraph(catalog);
+  for (const module of modules.values()) {
+    if (!/^\^1(?:\.0(?:\.0)?)?$/u.test(module.contractRange))
+      throw new CompositionError("UNSUPPORTED_MODULE_SET", "The module contract range is not supported by this catalog contract");
+  }
+  const selected = dependencyClosure(modules, input.requestedModules);
+  rejectConflicts(modules, selected);
+  return [...selected];
+}
+
 function validateCatalogGraph(catalog: BuildCatalog): Map<string, BuildCatalog["modules"][number]> {
   const modules = new Map(catalog.modules.map((module) => [module.id, module]));
   const resourceGroups = new Set(catalog.sharedResourceGroups.map(({ id }) => id));

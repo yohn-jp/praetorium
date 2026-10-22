@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, open, rm, writeFile, lstat } from "node:fs/promises";
 import path from "node:path";
 import { createBuildctlRunner } from "@praetorium/buildkit";
 import {
-  BuildCatalogSchema, RuntimeMetadataSchema, SourceProducerResultSchemaV2,
+  BuildCatalogSchema, RuntimeMetadataSchema, SourceProducerResultSchema,
   SOURCE_PRODUCER_RESULT_MAX_BYTES, canonicalSourceProof, repositoryPathForHost,
   sourceProducerResultByteLength, sourceProofDigest, type SourceProducerResult,
 } from "@praetorium/contracts";
@@ -27,6 +27,28 @@ const DEBIAN_HTTPS_SOURCES=String.raw`RUN test -f /etc/apt/sources.list.d/debian
     /etc/apt/sources.list.d/debian.sources \
  && grep -Fqx 'URIs: https://deb.debian.org/debian' /etc/apt/sources.list.d/debian.sources \
  && grep -Fqx 'URIs: https://deb.debian.org/debian-security' /etc/apt/sources.list.d/debian.sources`;
+
+/** Read the Producer's native build parameter, never interpolate its source as code. */
+export function sourceNodeImage(dockerfile: Buffer): string {
+  const global = dockerfile.toString("utf8").split(/^FROM\s/mi)[0]!;
+  const declarations = [...global.matchAll(/^ARG[ \t]+NODE_IMAGE=([^\r\n]+)$/gmu)];
+  if (declarations.length !== 1) throw new SourceBuildVerificationError();
+  const image = declarations[0]![1]!;
+  if (!/^(?:[a-z0-9.-]+(?::[0-9]+)?\/)+[a-z0-9._/-]+(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/u.test(image))
+    throw new SourceBuildVerificationError();
+  return image;
+}
+
+// A platform build environment is supplied through the Producer's declared NODE_IMAGE
+// parameter. The selected Dockerfile remains byte-for-byte unchanged.
+export const sourceNodeEnvironmentDockerfile = `ARG NODE_IMAGE
+FROM \${NODE_IMAGE}
+ENV NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1
+${NODE_PUBLIC_CA_BOOTSTRAP}
+RUN chmod 0755 /etc/ssl /etc/ssl/certs \
+ && if test -f /etc/apt/sources.list.d/debian.sources; then \
+ sed -i 's|http://deb.debian.org/|https://deb.debian.org/|g' /etc/apt/sources.list.d/debian.sources; fi
+`;
 
 export interface SourceBuildClaim {
   job_id:string; source_id:"scriptorium"; source_repository:"yohn-jp/scriptorium";
@@ -313,12 +335,31 @@ export async function buildSourceRelease(
     const dockerfileDigest=createHash("sha256").update(dockerfile).digest("hex");
     // The selected immutable Release owns its recipe. Never rewrite it by version.
     const buildDockerfile=dockerfile;
+    const nodeImage=sourceNodeImage(dockerfile);
+    const environmentSource=path.join(root,"node-environment");
+    const environmentLayout=path.join(root,"node-environment-oci");
+    await mkdir(environmentSource);
+    await writeFile(path.join(environmentSource,"Dockerfile"),sourceNodeEnvironmentDockerfile,{mode:0o600});
+    const environmentMetadata=path.join(root,"node-environment.json");
+    await runBuild(config,[
+      "--local","context="+environmentSource,"--local","dockerfile="+environmentSource,
+      "--opt","platform=linux/amd64","--opt","build-arg:NODE_IMAGE="+nodeImage,
+      "--output","type=oci,tar=false,dest="+environmentLayout,
+      "--metadata-file",environmentMetadata,
+    ],environmentSource,root,signal);
+    const buildEnvironmentDigest=await metadataDigest(environmentMetadata);
+    const environmentArgs=[
+      "--oci-layout","praetorium-node="+environmentLayout,
+      "--opt","context:praetorium-node=oci-layout://praetorium-node@"+buildEnvironmentDigest,
+      "--opt","build-arg:NODE_IMAGE=praetorium-node",
+    ];
     const ignoreBytes=await readSourceProducerFile(path.join(source,".dockerignore"),64*1024,"Source Docker ignore file",true);
     await writeFile(path.join(dockerfiles,"Dockerfile"),buildDockerfile,{mode:0o600});
     await writeFile(path.join(dockerfiles,"Dockerfile.dockerignore"),ignoreBytes,{mode:0o600});
     // The Dockerfile is kept inside the remote BuildKit execution boundary;
     // the Worker never loads or executes producer Node packages locally.
     const args=[
+      ...environmentArgs,
       "--local","context="+source,"--local","dockerfile="+dockerfiles,
       "--opt","platform=linux/amd64",
       "--opt","build-arg:SCRIPTORIUM_PRODUCER_REVISION="+job.source_revision,
@@ -339,6 +380,7 @@ export async function buildSourceRelease(
     await writeFile(path.join(metadataDockerfiles,"Dockerfile.dockerignore"),
       sourceMetadataDockerfileIgnore(),{mode:0o600});
     await runBuild(config,[
+      ...environmentArgs,
       "--local","context="+source,"--local","dockerfile="+metadataDockerfiles,
       "--opt","platform=linux/amd64","--opt","target=praetorium-source-output",
       "--opt","build-arg:SCRIPTORIUM_PRODUCER_REVISION="+job.source_revision,
@@ -368,7 +410,7 @@ export async function buildSourceRelease(
       resolver.provenance.producerRevision!==job.source_revision)
       throw new SourceBuildVerificationError();
     const statement={
-      schemaVersion:2 as const,jobId:job.job_id,githubReleaseId:job.github_release_id,
+      schemaVersion:3 as const,jobId:job.job_id,githubReleaseId:job.github_release_id,
       sourceId:"scriptorium" as const,sourceRepository:"yohn-jp/scriptorium" as const,
       sourceTag:job.source_tag,sourceRevision:job.source_revision,
       releaseVersion:job.release_version,
@@ -377,10 +419,12 @@ export async function buildSourceRelease(
       catalogDigest:await sourceProofDigest(catalog),
       runtimeMetadataDigest:await sourceProofDigest(runtime),
       resolverDigest:resolver.digest,
+      resolverProvenanceDigest:resolver.provenanceDigest,
+      nodeImage,buildEnvironmentDigest,
     };
     let unsigned:SourceProducerResult;
     try{
-      unsigned=SourceProducerResultSchemaV2.parse({
+      unsigned=SourceProducerResultSchema.parse({
         statement,
         signature:{algorithm:"Ed25519",keyId:config.signingKeyId,signature:"A".repeat(88)},
         catalog,runtimeMetadata:runtime,
@@ -393,7 +437,7 @@ export async function buildSourceRelease(
       });
     }catch{throw new SourceBuildVerificationError();}
     assertSourceProducerResultWithinBudget(unsigned);
-    return SourceProducerResultSchemaV2.parse({
+    return SourceProducerResultSchema.parse({
       ...unsigned,
       signature:await signSource(config,statement),
     });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SourceProducerResult } from "@praetorium/contracts";
+import { SourceProducerResultSchema, type SourceProducerResult } from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "../src/config.js";
 import {
   SourceBuildChangedError,
@@ -34,9 +34,9 @@ const JOB = {
   failure_code: null,
   admitted_release_id: null,
 };
-const RESULT: SourceProducerResult = {
+const RESULT: SourceProducerResult = SourceProducerResultSchema.parse({
   statement: {
-    schemaVersion: 1,
+    schemaVersion: 3,
     jobId: JOB.job_id,
     githubReleaseId: JOB.github_release_id,
     sourceId: "scriptorium",
@@ -47,6 +47,8 @@ const RESULT: SourceProducerResult = {
     imageRepository: "ghcr.io/yohn-jp/praetorium/scriptorium-producer",
     runtimeBaseDigest: DIGEST,
     buildKitDigest: DIGEST,
+    nodeImage:"docker.io/library/node@"+DIGEST,buildEnvironmentDigest:DIGEST,
+    resolverDigest:DIGEST,resolverProvenanceDigest:DIGEST,
     catalogDigest: DIGEST,
     runtimeMetadataDigest: DIGEST,
   },
@@ -80,7 +82,8 @@ const RESULT: SourceProducerResult = {
     },
     shutdownTimeoutSeconds: 25,
   },
-};
+  resolver:{producerRevision:JOB.source_revision,resolverRevision:DIGEST,contractVersion:"scriptorium-build/v1",provenanceDigest:DIGEST},
+});
 const CONFIG = {
   workerId: JOB.lease_worker,
   leaseSeconds: 30,

@@ -8,10 +8,7 @@ import type { SourceProducerResult } from "@praetorium/contracts";
 import type { D1Database } from "@praetorium/persistence/d1";
 import type { GhcrRegistryClient } from "@praetorium/ghcr/registry";
 import { RegistryError } from "@praetorium/ghcr/registry";
-import {
-  createScriptoriumCatalogResolverRegistry,
-  type ProducerCatalogResolverRegistry,
-} from "@praetorium/scriptorium";
+
 
 export type SourceProofKey = {
   keyId: string;
@@ -21,7 +18,6 @@ export type SourceProofKey = {
   validUntil?: string | undefined;
 };
 const SOURCE_URI = /^https:\/\/control\.praetorium\.yohn\.jp\/internal\/source-proofs\/(sr_[0-9a-f-]{36})$/u;
-const LEGACY_SOURCE_REVISION="008d5c429ec279a424cafd5b8c4cbee70a613b8e";
 export type SourceProofFailureCode="SOURCE_VERIFICATION_FAILED"|"SOURCE_CHANGED";
 export class SourceProofVerificationError extends Error {
   constructor(readonly retryable:boolean,readonly code:SourceProofFailureCode){
@@ -43,8 +39,6 @@ export class SourceProducerProofVerifier {
     private readonly db:D1Database,
     private readonly registry:Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
     private readonly builderKeys:readonly SourceProofKey[],
-    private readonly resolverRegistry:Pick<ProducerCatalogResolverRegistry,"resolve">=
-      createScriptoriumCatalogResolverRegistry(),
     private readonly sourceProducerRepository?:string,
   ) {}
   async verify(job:{
@@ -86,23 +80,13 @@ export class SourceProducerProofVerifier {
       statement.runtimeMetadataDigest!==await sourceProofDigest(result.runtimeMetadata))
       throw new TypeError("Source evidence does not match the leased immutable Release");
     const repository=repositoryPathForHost(statement.imageRepository,this.registry.registryHost);
-    if(statement.schemaVersion===1){
-      if(statement.sourceRevision!==LEGACY_SOURCE_REVISION||"resolver" in result)
-        throw new TypeError("Legacy Source proof is not approved for this producer revision");
-      this.resolverRegistry.resolve(LEGACY_SOURCE_REVISION);
-    }else{
-      if(!this.sourceProducerRepository||
-         statement.imageRepository!==this.sourceProducerRepository)
-        throw new TypeError("Source proof repository is not the configured producer repository");
-      if(!("resolver" in result)||
-         result.resolver.producerRevision!==statement.sourceRevision||
-         result.resolver.resolverRevision!==statement.resolverDigest||
-         result.resolver.contractVersion!==result.catalog.contractVersion)
-        throw new TypeError("Source resolver descriptor does not match signed producer evidence");
-      const approved=this.resolverRegistry.resolve(statement.sourceRevision,statement.resolverDigest);
-      if(result.resolver.provenanceDigest!==approved.descriptor.provenanceDigest)
-        throw new TypeError("Source resolver provenance is not approved for this producer revision");
-    }
+    if(!this.sourceProducerRepository || statement.imageRepository!==this.sourceProducerRepository)
+      throw new TypeError("Source proof repository is not the configured producer repository");
+    if(result.resolver.producerRevision!==statement.sourceRevision ||
+       result.resolver.resolverRevision!==statement.resolverDigest ||
+       result.resolver.provenanceDigest!==statement.resolverProvenanceDigest ||
+       result.resolver.contractVersion!==result.catalog.contractVersion)
+      throw new TypeError("Source resolver descriptor does not match signed producer evidence");
     const key=this.builderKeys.find(x=>x.keyId===result.signature.keyId&&!x.revoked);
     if(!key)throw new TypeError("Source proof Builder key is not approved");
     const now=Date.now();
@@ -165,17 +149,17 @@ export class SourceProducerProofVerifier {
       evidence:["Ed25519 source provenance and immutable GitHub Release verified"],
       attestation:{
         bundleRef:input.signatureRef,
-        predicateType:proof.statement.schemaVersion===2
-          ?"https://praetorium.yohn.jp/attestation/source-build/v2"
-          :"https://praetorium.yohn.jp/attestation/source-build/v1",
+        predicateType:"https://praetorium.yohn.jp/attestation/source-build/v3",
         subjects:[
+          {name:proof.statement.nodeImage,sha256:proof.statement.nodeImage.split("@sha256:")[1]!},
+          {name:"praetorium-source-build-environment",sha256:proof.statement.buildEnvironmentDigest.slice(7)},
           {name:proof.statement.imageRepository,sha256:proof.statement.runtimeBaseDigest.slice(7)},
           {name:"scriptorium-build/v1/catalog.json",sha256:proof.statement.catalogDigest.slice(7)},
           {name:"scriptorium-platform/v1/runtime-metadata.json",sha256:proof.statement.runtimeMetadataDigest.slice(7)},
-          ...(proof.statement.schemaVersion===2
-            ?[{name:"scriptorium-build-catalog-resolver/"+proof.statement.sourceRevision,
-               sha256:proof.statement.resolverDigest.slice(7)}]
-            :[]),
+          {name:"scriptorium-build-catalog-resolver/"+proof.statement.sourceRevision,
+            sha256:proof.statement.resolverDigest.slice(7)},
+          {name:"scriptorium-build-catalog-provenance/"+proof.statement.sourceRevision,
+            sha256:proof.statement.resolverProvenanceDigest.slice(7)},
         ],
       },
     };

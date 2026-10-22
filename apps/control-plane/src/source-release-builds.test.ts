@@ -56,7 +56,7 @@ async function sourceResult(jobId: string, extraUnicodePathChars = 0) {
   } as const;
   return SourceProducerResultSchema.parse({
     statement: {
-      schemaVersion: 1,
+      schemaVersion: 3,
       jobId,
       githubReleaseId: JOB.githubReleaseId,
       sourceId: JOB.sourceId,
@@ -67,12 +67,15 @@ async function sourceResult(jobId: string, extraUnicodePathChars = 0) {
       imageRepository: "ghcr.io/yohn-jp/praetorium/scriptorium-producer",
       runtimeBaseDigest: DIGEST_A,
       buildKitDigest: DIGEST_B,
+      nodeImage:"docker.io/library/node@"+DIGEST_A,buildEnvironmentDigest:DIGEST_B,
+      resolverDigest:DIGEST_A,resolverProvenanceDigest:DIGEST_B,
       catalogDigest: await sourceProofDigest(catalog),
       runtimeMetadataDigest: await sourceProofDigest(runtimeMetadata),
     },
     signature: { algorithm: "Ed25519", keyId: "test-builder", signature: "dGVzdA==" },
     catalog,
     runtimeMetadata,
+    resolver:{producerRevision:JOB.sourceRevision,resolverRevision:DIGEST_A,contractVersion:"scriptorium-build/v1",provenanceDigest:DIGEST_B},
   });
 }
 
@@ -484,10 +487,21 @@ describe("source Release build queue against migrated SQLite D1", () => {
         expect(await h.queue.byId(claim.job_id)).toMatchObject({
           state: "failed", failure_code: code, lease_token: null,
         });
-        expect(publicSourceJob((await h.queue.byId(claim.job_id))!).retryable).toBe(false);
-        await expect(h.queue.retry(created.job.id, {
+        const retry = h.queue.retry(created.job.id, {
           ...JOB, expectedRevision: 0, idempotencyKey: `retry-invalid-proof-${code}`,
-        }, ACTOR)).rejects.toBeInstanceOf(SourceRetryConflict);
+        }, ACTOR);
+        if (code === "SOURCE_CHANGED") {
+          await expect(retry).rejects.toBeInstanceOf(SourceRetryConflict);
+        } else {
+          // An explicit admin retry rebuilds from the immutable source; the
+          // rejected proof is never reused or admitted and no automatic retry runs.
+          await expect(retry).resolves.toMatchObject({job:{state:"queued",revision:1}});
+          expect(await h.queue.byId(claim.job_id)).toMatchObject({
+            attempt:0,result_json:null,admitted_release_id:null,
+          });
+          const next = await h.queue.claim(SOURCE_WORKER,30);
+          expect(next?.lease_epoch).toBeGreaterThan(claim.lease_epoch);
+        }
       }
     }
   });

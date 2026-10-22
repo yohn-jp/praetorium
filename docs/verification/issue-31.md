@@ -1,3 +1,9 @@
+## Candidate image publication retained; CI listing correction — 2026-10-23 JST
+
+Main `f999243ebc815f4536278bc3a5159738f502a69d` passed CI39801401180 7/7 and the initial regular `verifiedMain` readback. The regular apply built/published and verified all four images and passed candidate K3s/Cloudflare/Coordination preflight. Its final CI recheck then returned an empty conditional workflow listing and stopped before Inventory admission or live rollout. Existing Inventory/service/Worker digests remain unchanged; the four newly published images remain retained, not overwritten or admitted.
+
+The first lookup repair was insufficient: `event=push`/other conditional listings also returned zero rows while the direct run and unfiltered workflow list showed the exact successful run. The complete minimal repair fetches up to100 recent runs from the exact verification workflow and retains all existing local exact SHA/main/push/success and seven-job checks. This does not accept a PR, different source or incomplete run. Regression models the observed empty conditional response; existing failed/wrong-source/branch/event/job tests remain. No alternate publisher, manual Inventory update or acceptance bypass is used.
+
 ## Verified main deployment lookup follow-up — 2026-10-23 JST
 
 PR #40 merged as `9d9d253777720f5c4e492a3bbd0d708f172f6e16`. PR CI39795946426 and main CI39798141989 passed all seven GitHub Actions jobs, including the exact v0.3.1 Source fixture. Real isolated Builder metadata execution also PASS (nine-module strict catalog/runtime schemas); CI runtime observations remain simulated and are not hosted acceptance.

@@ -260,7 +260,7 @@ test("verified-main gate rejects stale main, failed/missing CI and unexpected jo
     if (args[1].includes("/workflows/"))
       return JSON.stringify({
         workflow_runs:
-          (fault === "missing-ci" || (fault === "combined-filter" && args[1].includes("&status=")))
+          (fault === "missing-ci" || (fault === "unreliable-api-filters" && /[?&](?:head_sha|branch|event|status)=/u.test(args[1])))
             ? []
             : [
                 {
@@ -282,9 +282,9 @@ test("verified-main gate rejects stale main, failed/missing CI and unexpected jo
     });
   };
   assert.equal(verifiedMain(root, execute()).ciRunId, 42);
-  // The live API returned no rows for combined SHA/conclusion filtering, even
-  // for old successful runs. Fetch exact-SHA runs and verify success locally.
-  assert.equal(verifiedMain(root, execute("combined-filter")).ciRunId, 42);
+  // The live API returned empty conditional listings despite successful runs.
+  // Fetch the workflow list and enforce every source/success guard locally.
+  assert.equal(verifiedMain(root, execute("unreliable-api-filters")).ciRunId, 42);
   for (const fault of ["dirty", "stale", "missing-ci", "failed-run", "wrong-sha", "wrong-branch", "wrong-event", "failed-job", "missing-job"])
     assert.throws(() => verifiedMain(root, execute(fault)));
 });

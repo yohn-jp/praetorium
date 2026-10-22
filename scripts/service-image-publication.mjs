@@ -106,7 +106,7 @@ export function verifiedMain(root, execute = (command, args) => run(root, comman
   const runs = JSON.parse(
     execute("gh", [
       "api",
-      `repos/${REPOSITORY}/actions/workflows/publish-services.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=10`,
+      `repos/${REPOSITORY}/actions/workflows/publish-services.yml/runs?per_page=100`,
     ]),
   );
   const ci = runs.workflow_runs?.find(

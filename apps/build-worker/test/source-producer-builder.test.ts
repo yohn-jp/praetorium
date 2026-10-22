@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createServer } from "node:http";
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +8,6 @@ import path from "node:path";
 import { SOURCE_PRODUCER_RESULT_MAX_BYTES } from "@praetorium/contracts";
 import {
   assertSourceProducerResultWithinBudget,
-  adaptScriptoriumV021Dockerfile,
   buildSourceRelease,
   readSourceProducerFile,
   sourceMetadataDockerfileIgnore,
@@ -37,57 +35,6 @@ async function executableOnPath(name: string): Promise<string> {
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
-});
-
-it("applies the network foundation only to the exact Scriptorium v0.2.1 Dockerfile", async () => {
-  // Byte-for-byte fixture from yohn-jp/scriptorium@3189a85bfa28ddd160600a0188ab3ccfa91755e4.
-  const original = await readFile(new URL("./fixtures/scriptorium-v0.2.1.Dockerfile", import.meta.url));
-  const adapted = adaptScriptoriumV021Dockerfile(
-    "3189a85bfa28ddd160600a0188ab3ccfa91755e4", original,
-  ).toString("utf8");
-
-  expect(adapted).toContain("NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1");
-  expect(adapted).toContain("https://deb.debian.org/debian");
-  expect(adapted).toContain("https://deb.debian.org/debian-security");
-  expect(adapted.match(/node --input-type=module -e 'import\{rootCertificates\}/gu)).toHaveLength(3);
-  expect(adapted).not.toContain("ENV NODE_USE_ENV_PROXY");
-  expect(() => adaptScriptoriumV021Dockerfile("f".repeat(40), original)).toThrow(SourceBuildVerificationError);
-  const modified = Buffer.from(original);
-  modified[0] = modified[0]! ^ 1;
-  expect(() => adaptScriptoriumV021Dockerfile(
-    "3189a85bfa28ddd160600a0188ab3ccfa91755e4", modified,
-  )).toThrow(SourceBuildVerificationError);
-});
-
-it("uses Node proxy flags with direct HTTP when no proxy variables are configured", async () => {
-  const server = createServer((_request, response) => response.end("direct"));
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  try {
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("Loopback HTTP server did not bind");
-    const child = spawn(process.execPath, [
-      "--input-type=module", "-e",
-      `const response=await fetch("http://127.0.0.1:${address.port}/");if(await response.text()!=="direct")process.exit(3);`,
-    ], {
-      cwd: tmpdir(),
-      env: { PATH: process.env.PATH, NODE_USE_ENV_PROXY: "1", NODE_USE_SYSTEM_CA: "1" },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    const code = await new Promise<number | null>((resolve, reject) => {
-      const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
-      child.once("error", (error) => { clearTimeout(timer); reject(error); });
-      child.once("close", (exitCode) => { clearTimeout(timer); resolve(exitCode); });
-    });
-    expect(code, stderr).toBe(0);
-  } finally {
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
 });
 
 it("keeps tracked .gitconfig out of Git's global configuration", async () => {

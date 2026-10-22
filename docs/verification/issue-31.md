@@ -1,3 +1,24 @@
+## Owner-requested stop — 2026-10-22
+
+**STOPPED at the owner's request; Issue #31 remains OPEN and acceptance is incomplete.** The owner rejected restricting acceptance to v0.2.1 and explicitly required the selected published v0.3.0 to work, then required removal of version-specific compatibility/hard-coded Release restrictions. v0.2.1 was an example in the Issue, not an owner-imposed selection restriction. Asking the owner to choose it instead of the selected v0.3.0 was incorrect.
+
+Production service deployment completed from verified main `9962f9de7c214414a62bbb10d00d8887df30d1c3`. The existing final Worker stage completed from verified main `0d1bb197ad91963542366636beeee5222730eb55` after [main CI39784690666](https://github.com/yohn-jp/praetorium/actions/runs/39784690666)7/7 PASS; app/package/plugin/infrastructure image inputs were unchanged between these cuts, so successful image publication and K3s stages were not repeated. Control Plane version `618b5e92-045a-4cd9-9fbb-a802b557a842` and Gateway version `495a6d9d-d459-4c68-b3b5-509e6dc50bd7` passed the existing HTTPS health/login/JWKS checks. Independent live readback found all three K3s services Ready/restart0 with pod-spec/imageID matching publication, Coordination ready with its exact receipt Digest, expected Worker binding/secret names retained, and one active matching public JWKS key. D1 has all eight receipts including0007 and the recovery columns `revision`, `admission_attempt`, `next_attempt_at`. This verifies deployment/readiness, not hosted acceptance.
+
+| Running service | OCI root Digest |
+| --- | --- |
+| provisioner | `sha256:0e33ea8780570437d10d713385d82bbd4049ec602bcc9ff6c61e2c4bafa374aa` |
+| instance-access | `sha256:8bafc0fd7cd0e6ade95b3c772ff40f9ccb043bdb0317b0f8918d0dea247cf256` |
+| build-worker | `sha256:d930c30201cb75f3216e24447ae1639cfc7bc85a3791016d5e1eb15eb6d24066` |
+| coordination | `sha256:316d53fddef0aa12296b6481238468a3c333e9802d2ee08cedf41a7915326916` |
+
+The actual hosted Source job `sr_b46aba41-1efd-4031-b5b0-91ecfe45a75a` selected published v0.3.0, GitHub Release419457497 at immutable SHA `884ac1c3a473acb5c7c8395e498b303dfbcd30eb`; it failed with `SOURCE_VERIFICATION_FAILED`, attempt1, no admitted Release. The owner reported that UI error. The existing builder unconditionally applies a v0.2.1-only SHA/Dockerfile-hash adapter and therefore rejects this revision. The source Dockerfile and resolver algorithm source are identical across these two Releases; the hosted catalog source adds `search`. The old resolver registry separately accepts only legacy/v0.2.1 source revisions and embeds the earlier eight-module set. Those are Praetorium limitations, not grounds to tell the owner to select an older Release.
+
+Checkpoint change: removed the v0.2.1-only Dockerfile adapter, its revision/hash constants, its fixture and compatibility-only tests. The selected immutable source Dockerfile is now passed unchanged; published Release/tag/clean-SHA verification, bounded file reads, isolated remote execution and signed evidence checks remain. Frozen pnpm install/full check PASS; independent read-only removal review found no blocker. **This checkpoint is not deployed, not merged, and is not the complete removal of compatibility restrictions:** the static resolver registry/vendor coupling still remains and must be replaced by the native selected-Release path without bypassing resolver/provenance checks. No replacement Release SHA was added.
+
+A separate no-push solve of the unmodified v0.3.0 Dockerfile on the same production Builder failed in Corepack's pnpm12.10.1 download. The current Builder enforces proxy networking; the native Dockerfile lacks Node proxy/system-CA opt-ins. The immutable source was not rewritten for this check. This environment failure and the internal static-resolver limitation remain unresolved; no new deployment architecture, network-policy bypass or Scriptorium source modification was made. Do not claim all compatibility code has been removed or v0.3 acceptance has passed.
+
+Hosted Producer→GHCR proof→Admission→real Canary→Stable is **FAIL/BLOCKED**, not PASS. MCP authentication/Wake, writer exclusion, stop/resume and persistence exercises remain **NOT_CHECKED**. The existing owned tenant was not subjected to lifecycle/data mutations during these attempts; independent readback found its existing Pod still Ready/restart0. No pre-credential-epoch Gateway rollback was performed. Private inventories, secrets and logs remain outside Git. Resume from this checkpoint only under the owner's next instruction; do not close Issue#31 until actual acceptance passes.
+
 # Issue #31 acceptance status
 
 ## Worker secret deployment follow-up — 2026-10-22

@@ -85,6 +85,8 @@ node scripts/deploy-platform.mjs \
 
 Optionally append `--cloudflare-token-file /root/praetorium/cloudflare-token` to both calls.
 
+If the Builder firewall permits only the Runtime VM, retain that boundary. Open an operator SSH tunnel using the existing host config, for example `ssh -N -L 127.0.0.1:16445:10.7.0.32:1234 runtime.praetorium.vm`, and append `--buildkit-address tcp://127.0.0.1:16445` to the regular apply command. This optional override accepts only an explicit loopback TCP endpoint; the original inventory Builder hostname remains the mTLS server identity, and the runtime inventory endpoint is unchanged. The existing BuildKit runner performs a bounded read-only worker-list connectivity check before publishing. Do not broaden the Builder CIDR allowlist or disable TLS to make an operator workstation reach it.
+
 The controller performs these actions in order, stopping on first failure:
 
 1. Install/build the frozen workspace; validate the existing private inputs, K3s identity/context and ownership, Kustomize bundle, Cloudflare Secret names/public JWK and compatible remote D1 history. These checks do not publish images or migrate D1. `--check` remains read-only and separately requires exact migration readback; pending known migrations therefore make `--check` fail, while `--apply` can apply them after compatible-history preflight.

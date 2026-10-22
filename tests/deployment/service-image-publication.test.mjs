@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   admitServiceInventory,
   assertSeparateRegistryCredentials,
+  buildctlConnectionArguments,
   prepareServiceImages,
   serviceBuildArguments,
   serviceImages,
@@ -346,4 +347,33 @@ test("a runtime pull credential cannot reuse the publication token even under an
     () => assertSeparateRegistryCredentials(pull, { ...pull, username: "publisher" }),
     /must be separate/u,
   );
+});
+
+test("SSH loopback transport retains Builder TLS identity and never changes the runtime endpoint", () => {
+  const value = inventory();
+  const original = structuredClone(value);
+  const secrets = {
+    buildkitClient: { caKey: "/private/ca", certKey: "/private/cert", privateKey: "/private/key" },
+  };
+  const args = buildctlConnectionArguments({
+    inventory: value,
+    secrets,
+    buildkitAddress: "tcp://127.0.0.1:16445",
+  });
+  assert.equal(args[args.indexOf("--addr") + 1], "tcp://127.0.0.1:16445");
+  assert.equal(args[args.indexOf("--tlsservername") + 1], "10.20.30.40");
+  assert.deepEqual(value, original);
+  for (const address of [
+    "tcp://10.99.0.1:1234",
+    "tcp://localhost:1234",
+    "tcp://127.0.0.1",
+    "tcp://user@127.0.0.1:1234",
+    "tcp://127.0.0.1:1234/path",
+    "tcp://127.0.0.1:1234?tls=false",
+    "http://127.0.0.1:1234",
+  ]) {
+    assert.throws(() =>
+      buildctlConnectionArguments({ inventory: value, secrets, buildkitAddress: address }),
+    );
+  }
 });

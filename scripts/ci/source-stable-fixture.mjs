@@ -840,6 +840,11 @@ async function runSourceToStable(root, kit) {
     .run(fixture.simulatedNow(), INSTANCE_ID);
 
   const promotionDependencies = { ...fixture.t11.scheduled.promotions, healthWindowMs: 0 };
+  // This disposable test has no provisioner event callback. Advance the
+  // simulated clock to the *real* durable canary-observation backstop rather
+  // than altering next_attempt_at or bypassing the observation state machine.
+  // The health and writer-absence evidence below is explicitly simulated.
+  fixture.advanceClock(5 * 60_000);
   let workflow;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     fixture.advanceClock(1_000);

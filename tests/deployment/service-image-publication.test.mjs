@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   admitServiceInventory,
+  archiveServiceSource,
   assertSeparateRegistryCredentials,
   buildctlConnectionArguments,
   prepareServiceImages,
@@ -376,4 +387,44 @@ test("SSH loopback transport retains Builder TLS identity and never changes the 
       buildctlConnectionArguments({ inventory: value, secrets, buildkitAddress: address }),
     );
   }
+});
+
+test("source archive remains readable by the configured runtime UID under private operator umask", (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "praetorium-archive-modes-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const sourceRoot = path.join(directory, "source");
+  const context = path.join(directory, "context");
+  mkdirSync(sourceRoot);
+  mkdirSync(context, { mode: 0o700 });
+  mkdirSync(path.join(sourceRoot, "app"));
+  writeFileSync(path.join(sourceRoot, "app/package.json"), '{"type":"module"}');
+  writeFileSync(path.join(sourceRoot, "app/start"), "#!/bin/sh\nexit 0\n");
+  chmodSync(path.join(sourceRoot, "app/start"), 0o755);
+  const git = (...args) => execFileSync("git", args, { cwd: sourceRoot, stdio: "pipe" });
+  git("init", "-q");
+  git("add", "app");
+  git(
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.net",
+    "commit",
+    "-qm",
+    "fixture",
+  );
+  const oldMask = process.umask(0o077);
+  try {
+    archiveServiceSource({
+      root: sourceRoot,
+      revision: "HEAD",
+      archive: path.join(directory, "source.tar"),
+      context,
+    });
+  } finally {
+    process.umask(oldMask);
+  }
+  assert.equal(statSync(path.join(context, "app/package.json")).mode & 0o777, 0o644);
+  assert.equal(statSync(path.join(context, "app/start")).mode & 0o777, 0o755);
+  assert.equal(statSync(path.join(context, "app")).mode & 0o777, 0o755);
+  assert.equal(statSync(context).mode & 0o777, 0o700);
 });

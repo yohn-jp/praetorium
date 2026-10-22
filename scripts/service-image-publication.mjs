@@ -136,6 +136,19 @@ export function verifiedMain(root, execute = (command, args) => run(root, comman
   return { revision, ciRunId: ci.id, ciUrl: ci.html_url };
 }
 
+/** Preserve tracked source modes even when the operator protects credentials with umask 077. */
+export function archiveServiceSource({ root, revision, archive, context }) {
+  run(root, "git", [
+    "-c",
+    "tar.umask=0022",
+    "archive",
+    "--format=tar",
+    `--output=${archive}`,
+    revision,
+  ]);
+  run(root, "tar", ["-xpf", archive, "-C", context]);
+}
+
 export function buildctlConnectionArguments({ inventory, secrets, buildkitAddress }) {
   if (buildkitAddress !== undefined) {
     const address = new URL(buildkitAddress);
@@ -393,8 +406,7 @@ export async function publishPlatformImages({
       await readBuildKitRegistryCredential(registryConfig, "ghcr.io"),
     );
     const archive = path.join(directory, "source.tar");
-    run(root, "git", ["archive", "--format=tar", `--output=${archive}`, source.revision]);
-    run(root, "tar", ["-xf", archive, "-C", context]);
+    archiveServiceSource({ root, revision: source.revision, archive, context });
     const runner = createBuildctlRunner({ buildctlPath });
     console.log("Checking Builder mTLS connectivity before publication...");
     await runner(

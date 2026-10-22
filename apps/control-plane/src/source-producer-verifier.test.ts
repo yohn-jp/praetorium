@@ -4,8 +4,7 @@ import type { D1Database } from "@praetorium/persistence/d1";
 import type { GhcrRegistryClient } from "@praetorium/ghcr/registry";
 import { RegistryError } from "@praetorium/ghcr/registry";
 import {
-  SourceProducerResultSchemaV1,
-  SourceProducerResultSchemaV2,
+  SourceProducerResultSchema,
   canonicalSourceProof,
   sourceProofDigest,
 } from "@praetorium/contracts";
@@ -76,7 +75,6 @@ function verifier(client: ReturnType<typeof registry>["client"],sourceProducerRe
     null as unknown as D1Database,
     client as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
     builderKeys,
-    undefined,
     sourceProducerRepository,
   );
 }
@@ -88,10 +86,11 @@ function sourceProofDatabase(resultJson:string|null) {
   } as unknown as D1Database;
 }
 
-async function legacyProof(revision=legacyRevision) {
+async function sourceProof(revision=legacyRevision) {
   const catalog=fixtureCatalog(revision);
+  const metadata={...runtimeMetadata,producerRevision:revision};
   const statement={
-    schemaVersion:1,
+    schemaVersion:3,
     jobId:job.job_id,
     githubReleaseId:job.github_release_id,
     sourceId:"scriptorium",
@@ -103,55 +102,66 @@ async function legacyProof(revision=legacyRevision) {
     runtimeBaseDigest:digestA,
     buildKitDigest:digestB,
     catalogDigest:await sourceProofDigest(catalog),
-    runtimeMetadataDigest:await sourceProofDigest(runtimeMetadata),
+    runtimeMetadataDigest:await sourceProofDigest(metadata),
+    resolverDigest, resolverProvenanceDigest:legacyProvenanceDigest,
+    nodeImage:"docker.io/library/node@"+digestA,buildEnvironmentDigest:digestB,
   };
-  return SourceProducerResultSchemaV1.parse({
+  return SourceProducerResultSchema.parse({
     statement,
     signature:{algorithm:"Ed25519",keyId:"test-builder",signature:await signedStatement(statement)},
     catalog,
-    runtimeMetadata,
+    runtimeMetadata:metadata,
+    resolver:{producerRevision:revision,resolverRevision:resolverDigest,contractVersion:"scriptorium-build/v1",provenanceDigest:legacyProvenanceDigest},
   });
 }
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("source producer proof verification", () => {
-  it("accepts the explicit legacy v1 producer and passes only the allowlisted repository path", async () => {
+  it("accepts signed native Producer evidence and passes only the allowlisted repository path", async () => {
     const {client,verifyImage}=registry();
-    const result=await verifier(client).verify(job,await legacyProof());
-    expect(result.statement.schemaVersion).toBe(1);
+    const result=await verifier(client).verify(job,await sourceProof());
+    expect(result.statement.schemaVersion).toBe(3);
     expect(verifyImage).toHaveBeenCalledTimes(2);
     expect(verifyImage).toHaveBeenCalledWith("yohn-jp/praetorium/scriptorium-producer",digestA,{os:"linux",architecture:"amd64"});
   });
 
-  it("rejects a v1 proof for a producer revision without the legacy resolver", async () => {
+  it("accepts another immutable producer revision without a release allowlist", async () => {
     const {client,verifyImage}=registry();
-    const proof=await legacyProof("3189a85bfa28ddd160600a0188ab3ccfa91755e4");
+    const proof=await sourceProof("f".repeat(40));
     await expect(verifier(client).verify({ ...job, source_revision:proof.statement.sourceRevision },proof))
+      .resolves.toMatchObject({statement:{sourceRevision:"f".repeat(40)}});
+    expect(verifyImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects obsolete unsigned-resolver proof formats", async () => {
+    const {client,verifyImage}=registry();
+    const proof=await sourceProof();
+    await expect(verifier(client).verify(job,{...proof,statement:{...proof.statement,schemaVersion:1}}))
       .rejects.toMatchObject({retryable:false,code:"SOURCE_VERIFICATION_FAILED"});
     expect(verifyImage).not.toHaveBeenCalled();
   });
 
   it("classifies a different leased source tuple as SOURCE_CHANGED", async () => {
     const {client,verifyImage}=registry();
-    await expect(verifier(client).verify({...job,source_tag:"v0.2.0"},await legacyProof()))
+    await expect(verifier(client).verify({...job,source_tag:"v0.2.0"},await sourceProof()))
       .rejects.toMatchObject({retryable:false,code:"SOURCE_CHANGED"});
     expect(verifyImage).not.toHaveBeenCalled();
   });
 
   it("rejects registry host mismatch before registry access", async () => {
     const {client,verifyImage}=registry("registry-attacker.example");
-    await expect(verifier(client).verify(job,await legacyProof()))
+    await expect(verifier(client).verify(job,await sourceProof()))
       .rejects.toMatchObject({retryable:false,code:"SOURCE_VERIFICATION_FAILED"});
     expect(verifyImage).not.toHaveBeenCalled();
   });
 
-  it("requires v2 resolver identity and signed bundle digest to match the approved static entry", async () => {
+  it("requires resolver identity, bundle and provenance digests to match signed native evidence", async () => {
     const {client,verifyImage}=registry();
     const catalog=fixtureCatalog(v021Revision);
     const metadata={...runtimeMetadata,producerRevision:v021Revision};
     const statement={
-      schemaVersion:2,
+      schemaVersion:3,
       jobId:v021Job.job_id,
       githubReleaseId:v021Job.github_release_id,
       sourceId:"scriptorium",
@@ -164,9 +174,10 @@ describe("source producer proof verification", () => {
       buildKitDigest:digestB,
       catalogDigest:await sourceProofDigest(catalog),
       runtimeMetadataDigest:await sourceProofDigest(metadata),
-      resolverDigest,
+      resolverDigest, resolverProvenanceDigest:v021ProvenanceDigest,
+      nodeImage:"docker.io/library/node@"+digestA,buildEnvironmentDigest:digestB,
     };
-    const proof=SourceProducerResultSchemaV2.parse({
+    const proof=SourceProducerResultSchema.parse({
       statement,
       signature:{algorithm:"Ed25519",keyId:"test-builder",signature:await signedStatement(statement)},
       catalog,
@@ -179,7 +190,7 @@ describe("source producer proof verification", () => {
       },
     });
     await expect(verifier(client).verify(v021Job,proof)).resolves.toMatchObject({
-      statement:{schemaVersion:2,sourceRevision:v021Revision},
+      statement:{schemaVersion:3,sourceRevision:v021Revision},
     });
     expect(verifyImage).toHaveBeenCalledTimes(2);
 
@@ -198,16 +209,16 @@ describe("source producer proof verification", () => {
     expect(verifyImage).toHaveBeenCalledTimes(2);
   });
 
-  it("fails closed on v2 when operator policy has no exact producer repository", async () => {
+  it("fails closed when operator policy has no exact producer repository", async () => {
     const {client,verifyImage}=registry();
-    const proof=await legacyProof();
+    const proof=await sourceProof();
     const statement={
       ...proof.statement,
-      schemaVersion:2,
+      schemaVersion:3,
       resolverDigest,
     };
     const catalog=proof.catalog;
-    const v2=SourceProducerResultSchemaV2.parse({
+    const v2=SourceProducerResultSchema.parse({
       statement,
       signature:{...proof.signature,signature:await signedStatement(statement)},
       catalog,
@@ -235,7 +246,7 @@ describe("source producer proof verification", () => {
       registryHost:"ghcr.io",
       verifyImage:vi.fn(async()=>{throw new RegistryError("rate_limited","private detail");}),
     };
-    await expect(verifier(transient).verify(job,await legacyProof())).rejects.toMatchObject({
+    await expect(verifier(transient).verify(job,await sourceProof())).rejects.toMatchObject({
       name:"SourceProofVerificationError",retryable:true,code:"SOURCE_VERIFICATION_FAILED",
     });
 
@@ -243,7 +254,7 @@ describe("source producer proof verification", () => {
       registryHost:"ghcr.io",
       verifyImage:vi.fn(async()=>{throw new RegistryError("not_found","private detail");}),
     };
-    await expect(verifier(missing).verify(job,await legacyProof())).rejects.toMatchObject({
+    await expect(verifier(missing).verify(job,await sourceProof())).rejects.toMatchObject({
       name:"SourceProofVerificationError",retryable:true,code:"SOURCE_VERIFICATION_FAILED",
     });
     expect(missing.verifyImage).toHaveBeenCalledTimes(2);
@@ -256,7 +267,7 @@ describe("source producer proof verification", () => {
         return {repository,manifestDigest} as unknown as Awaited<ReturnType<GhcrRegistryClient["verifyImage"]>>;
       }),
     };
-    const proof=await legacyProof();
+    const proof=await sourceProof();
     await expect(verifier(recovers).verify(job,proof)).rejects.toMatchObject({retryable:true});
     registryAvailable=true;
     await expect(verifier(recovers).verify(job,proof)).resolves.toMatchObject({statement:proof.statement});
@@ -272,7 +283,7 @@ describe("source producer proof verification", () => {
   });
 
   it("rejects invalid persisted signature evidence but leaves registry outages retryable", async () => {
-    const valid=await legacyProof();
+    const valid=await sourceProof();
     const changedSignature=Buffer.from(valid.signature.signature,"base64");
     changedSignature[0]=changedSignature[0]!^1;
     const invalid={
@@ -282,7 +293,7 @@ describe("source producer proof verification", () => {
     const {client,verifyImage}=registry();
     const permanent=new SourceProducerProofVerifier(
       sourceProofDatabase(JSON.stringify(invalid)),client as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
-      builderKeys,
+      builderKeys,SOURCE_REPOSITORY,
     );
     const proofUri=`https://control.praetorium.yohn.jp/internal/source-proofs/${job.job_id}`;
     await expect(permanent.provenance({imageDigest:digestA,signatureRef:proofUri,provenanceRef:proofUri}))
@@ -296,7 +307,7 @@ describe("source producer proof verification", () => {
     const retryable=new SourceProducerProofVerifier(
       sourceProofDatabase(JSON.stringify(valid)),
       unavailable as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
-      builderKeys,
+      builderKeys,SOURCE_REPOSITORY,
     );
     await expect(retryable.provenance({imageDigest:digestA,signatureRef:proofUri,provenanceRef:proofUri}))
       .rejects.toMatchObject({retryable:true,code:"SOURCE_VERIFICATION_FAILED"});
@@ -308,7 +319,7 @@ describe("source producer proof verification", () => {
     const verifierWithBadStoredJson=new SourceProducerProofVerifier(
       sourceProofDatabase("{"),
       client as unknown as Pick<GhcrRegistryClient,"verifyImage"|"registryHost">,
-      builderKeys,
+      builderKeys,SOURCE_REPOSITORY,
     );
     const proofUri=`https://control.praetorium.yohn.jp/internal/source-proofs/${job.job_id}`;
     await expect(verifierWithBadStoredJson.provenance({

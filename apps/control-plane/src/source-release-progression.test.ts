@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { SourceProducerResultSchemaV1 } from "@praetorium/contracts";
+import { SourceProducerResultSchema } from "@praetorium/contracts";
 import type { SourceJob } from "./source-release-builds.js";
 import { progressProducedSourceReleases } from "./source-release-progression.js";
 import catalog from "../../../plugins/scriptorium/test/fixtures/build-catalog.v1.fixture.json" with { type: "json" };
@@ -7,15 +7,18 @@ import platform from "../../../plugins/scriptorium/test/fixtures/platform.v1.fix
 
 function job(index: number): SourceJob & { result_json: string } {
   const id = "sr_11111111-1111-4111-8111-" + String(index).padStart(12, "0");
-  const proof = SourceProducerResultSchemaV1.parse({
+  const proof = SourceProducerResultSchema.parse({
     statement: {
-      schemaVersion: 1, jobId: id, githubReleaseId: index, sourceId: "scriptorium",
+      schemaVersion: 3, jobId: id, githubReleaseId: index, sourceId: "scriptorium",
       sourceRepository: "yohn-jp/scriptorium", sourceTag: "v0.1.0", sourceRevision: catalog.producerRevision,
       releaseVersion: "0.1.0", imageRepository: "ghcr.io/yohn-jp/praetorium/scriptorium-producer",
       runtimeBaseDigest: catalog.runtimeBaseDigest, buildKitDigest: catalog.buildKitDigest,
+      nodeImage:"docker.io/library/node@sha256:"+"a".repeat(64),buildEnvironmentDigest:"sha256:"+"b".repeat(64),
+      resolverDigest:"sha256:"+"c".repeat(64),resolverProvenanceDigest:"sha256:"+"d".repeat(64),
       catalogDigest: "sha256:" + "a".repeat(64), runtimeMetadataDigest: "sha256:" + "b".repeat(64),
     },
     signature: { algorithm: "Ed25519", keyId: "unit-fixture", signature: "unit-fixture" },
+    resolver:{producerRevision:catalog.producerRevision,resolverRevision:"sha256:"+"c".repeat(64),contractVersion:"scriptorium-build/v1",provenanceDigest:"sha256:"+"d".repeat(64)},
     catalog, runtimeMetadata: platform.metadata,
   });
   return {

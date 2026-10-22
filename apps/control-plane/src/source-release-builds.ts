@@ -159,7 +159,7 @@ export class D1SourceReleaseBuildQueue {
            WHERE job_id=? AND revision=? AND state='failed'
              AND failure_code IN ('SOURCE_UNAVAILABLE','SOURCE_BUILD_FAILED',
                'SOURCE_WORKER_UNAVAILABLE','SOURCE_ATTEMPTS_EXHAUSTED',
-               'SOURCE_ADMISSION_RETRIES_EXHAUSTED')
+               'SOURCE_ADMISSION_RETRIES_EXHAUSTED','SOURCE_VERIFICATION_FAILED')
              AND source_id=? AND github_release_id=? AND source_tag=?
              AND source_revision=? AND release_version=?`,
         ).bind(nextState,resumeProduced?current.attempt:0,now,jobId,
@@ -488,7 +488,7 @@ function sameSourceIdentity(job:SourceJob,input:z.infer<typeof SourceIdentity>):
 function isRetryableSourceFailure(code:string|null):boolean {
   return code!==null && ["SOURCE_UNAVAILABLE","SOURCE_BUILD_FAILED",
     "SOURCE_WORKER_UNAVAILABLE","SOURCE_ATTEMPTS_EXHAUSTED",
-    "SOURCE_ADMISSION_RETRIES_EXHAUSTED"].includes(code);
+    "SOURCE_ADMISSION_RETRIES_EXHAUSTED","SOURCE_VERIFICATION_FAILED"].includes(code);
 }
 function isTransactionAssertion(error:unknown):boolean {
   return (error instanceof Error?error.message:String(error)).includes("platform_transaction_sentinel");

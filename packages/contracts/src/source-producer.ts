@@ -9,56 +9,43 @@ export const SOURCE_PRODUCER_REQUEST_MAX_BYTES = 70 * 1024;
  * Producer evidence is signed by the existing trusted Build Worker Ed25519 key.
  * It is distinct from a composition attestation and cannot claim Stable on its own.
  */
-export const SourceProducerStatementSchemaV1 = z.strictObject({
-  schemaVersion: z.literal(1),
-  jobId: z.string().regex(/^sr_[0-9a-f-]{36}$/u),
-  githubReleaseId: z.number().int().positive().safe(),
-  sourceId: z.literal("scriptorium"),
-  sourceRepository: z.literal("yohn-jp/scriptorium"),
-  sourceTag: z.string().min(1).max(128),
-  sourceRevision: z.string().regex(/^[0-9a-f]{40}$/u),
-  releaseVersion: z.string().min(1).max(128),
-  imageRepository: z.literal("ghcr.io/yohn-jp/praetorium/scriptorium-producer"),
-  runtimeBaseDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
-  buildKitDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
-  catalogDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
-  runtimeMetadataDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
-});
 export const SourceResolverDescriptorSchema = z.strictObject({
   producerRevision: ProducerRevisionSchema,
   resolverRevision: ResolverRevisionSchema,
   contractVersion: z.literal("scriptorium-build/v1"),
   provenanceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
 });
-export const SourceProducerStatementSchemaV2 = SourceProducerStatementSchemaV1.extend({
-  schemaVersion: z.literal(2),
+export const SourceProducerStatementSchema = z.strictObject({
+  schemaVersion: z.literal(3),
+  jobId: z.string().regex(/^sr_[0-9a-f-]{36}$/u),
+  githubReleaseId: z.number().int().positive().safe(),
+  sourceId: z.literal("scriptorium"),
+  sourceRepository: z.literal("yohn-jp/scriptorium"),
+  sourceTag: z.string().min(1).max(128),
+  sourceRevision: ProducerRevisionSchema,
+  releaseVersion: z.string().min(1).max(128),
   imageRepository: z.string().max(255).regex(/^ghcr\.io\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u),
+  runtimeBaseDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  buildKitDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  catalogDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  runtimeMetadataDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  nodeImage: z.string().max(512).regex(/^(?:[a-z0-9.-]+(?::[0-9]+)?\/)+[a-z0-9._/-]+(?::[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$/u),
+  buildEnvironmentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
   resolverDigest: ResolverRevisionSchema,
+  resolverProvenanceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
 });
-export const SourceProducerStatementSchema = z.union([
-  SourceProducerStatementSchemaV1, SourceProducerStatementSchemaV2,
-]);
 const SignatureSchema = z.strictObject({
     algorithm: z.literal("Ed25519"),
     keyId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/u),
     signature: z.string().min(1).max(512),
   });
-export const SourceProducerResultSchemaV1 = z.strictObject({
-  statement: SourceProducerStatementSchemaV1,
-  signature: SignatureSchema,
-  catalog: BuildCatalogSchema,
-  runtimeMetadata: RuntimeMetadataSchema,
-});
-export const SourceProducerResultSchemaV2 = z.strictObject({
-  statement: SourceProducerStatementSchemaV2,
+export const SourceProducerResultSchema = z.strictObject({
+  statement: SourceProducerStatementSchema,
   signature: SignatureSchema,
   catalog: BuildCatalogSchema,
   runtimeMetadata: RuntimeMetadataSchema,
   resolver: SourceResolverDescriptorSchema,
 });
-export const SourceProducerResultSchema = z.union([
-  SourceProducerResultSchemaV1, SourceProducerResultSchemaV2,
-]);
 export type SourceResolverDescriptor = z.infer<typeof SourceResolverDescriptorSchema>;
 export type SourceProducerStatement = z.infer<typeof SourceProducerStatementSchema>;
 export type SourceProducerResult = z.infer<typeof SourceProducerResultSchema>;

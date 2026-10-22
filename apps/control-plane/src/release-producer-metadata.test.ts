@@ -85,13 +85,13 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe("signed Scriptorium release metadata", () => {
-  it("accepts verified Source v2 subjects only from the canonical proof location", async () => {
+  it("accepts verified Source v3 subjects only from the canonical proof location", async () => {
     const base = input();
     const reference = "https://control.praetorium.yohn.jp/internal/source-proofs/sr_11111111-1111-4111-8111-111111111111";
     const candidate = {
       ...base, signatureRef: reference, provenanceRef: reference,
       attestation: { ...base.attestation, bundleRef: reference,
-        predicateType: "https://praetorium.yohn.jp/attestation/source-build/v2" },
+        predicateType: "https://praetorium.yohn.jp/attestation/source-build/v3" },
     };
     await expect(verifyReleaseProducerMetadata(candidate)).resolves.toMatchObject({ kind: "verified" });
     const foreign = reference.replace("control.praetorium.yohn.jp", "evidence.example");

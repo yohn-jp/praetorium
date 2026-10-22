@@ -696,7 +696,7 @@ async function createRuntimeFixture(root, kit) {
 async function runSourceToStable(root, kit) {
   const fixture = await createRuntimeFixture(root, kit);
   const response = await fixture.fetch(
-    new URL("/v1/operator/source-builds/", "https://control.praetorium.fixture"),
+    new URL("/v1/operator/source-builds", "https://control.praetorium.fixture"),
     {
       method: "POST",
       headers: {

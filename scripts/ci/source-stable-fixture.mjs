@@ -793,11 +793,20 @@ async function runSourceToStable(root, kit) {
   const compositionWorker = await createBuildWorker(compositionEnvironment, {
     queue: compositionQueue,
   });
-  assert.equal(
-    await compositionWorker.runOnce(),
-    true,
-    "the admitted candidate created a real composition build",
-  );
+  const claimedComposition = await compositionWorker.runOnce();
+  if (!claimedComposition) {
+    const workflow = fixture.db.database.prepare(
+      `SELECT state, failure_code, next_attempt_at, canary_build_key
+         FROM release_candidate_workflows WHERE release_id=?`,
+    ).get(admittedJob.admitted_release_id);
+    const queued = fixture.db.database.prepare(
+      "SELECT status, COUNT(*) AS count FROM builds GROUP BY status ORDER BY status",
+    ).all();
+    throw new Error(
+      "Admitted release has no claimable composition build; workflow=" +
+      JSON.stringify(workflow ?? null) + "; buildQueue=" + JSON.stringify(queued),
+    );
+  }
 
   const builds = fixture.db.database
     .prepare(

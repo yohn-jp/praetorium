@@ -136,19 +136,26 @@ export function verifiedMain(root, execute = (command, args) => run(root, comman
   return { revision, ciRunId: ci.id, ciUrl: ci.html_url };
 }
 
-export function serviceBuildArguments({
-  inventory,
-  secrets,
-  context,
-  metadata,
-  service,
-  dockerfile,
-  tag,
-  revision,
-}) {
+export function buildctlConnectionArguments({ inventory, secrets, buildkitAddress }) {
+  if (buildkitAddress !== undefined) {
+    const address = new URL(buildkitAddress);
+    if (
+      address.protocol !== "tcp:" ||
+      !["127.0.0.1", "[::1]"].includes(address.hostname) ||
+      !address.port ||
+      address.username ||
+      address.password ||
+      address.pathname ||
+      address.search ||
+      address.hash
+    ) {
+      throw new Error("BuildKit transport override must be an explicit loopback TCP tunnel");
+    }
+  }
   return [
     "--addr",
-    inventory.buildkit.endpoint,
+    buildkitAddress ?? inventory.buildkit.endpoint,
+    // A local tunnel changes transport only. Authenticate the original Builder identity.
     "--tlsservername",
     new URL(inventory.buildkit.endpoint).hostname,
     "--tlscacert",
@@ -157,6 +164,22 @@ export function serviceBuildArguments({
     secrets.buildkitClient.certKey,
     "--tlskey",
     secrets.buildkitClient.privateKey,
+  ];
+}
+
+export function serviceBuildArguments({
+  inventory,
+  secrets,
+  buildkitAddress,
+  context,
+  metadata,
+  service,
+  dockerfile,
+  tag,
+  revision,
+}) {
+  return [
+    ...buildctlConnectionArguments({ inventory, secrets, buildkitAddress }),
     "build",
     "--progress=rawjson",
     "--frontend",
@@ -318,6 +341,7 @@ export async function publishPlatformImages({
   inventoryPath,
   secretFilesPath,
   buildctlPath,
+  buildkitAddress,
   preflight,
 }) {
   const source = verifiedMain(root);
@@ -372,6 +396,20 @@ export async function publishPlatformImages({
     run(root, "git", ["archive", "--format=tar", `--output=${archive}`, source.revision]);
     run(root, "tar", ["-xf", archive, "-C", context]);
     const runner = createBuildctlRunner({ buildctlPath });
+    console.log("Checking Builder mTLS connectivity before publication...");
+    await runner(
+      [...buildctlConnectionArguments({ inventory, secrets, buildkitAddress }), "debug", "workers"],
+      {
+        cwd: context,
+        dockerConfigDirectory,
+        temporaryDirectory: directory,
+        safePath: process.env.PATH,
+        buildTimeoutMs: 30_000,
+        maxProgressBytes: 1024 * 1024,
+        signal: AbortSignal.timeout(30_000),
+        onProgress: () => {},
+      },
+    );
     const receiptPath = `${inventoryPath}.publication-${source.revision}-${randomUUID()}.json`;
     const prepared = await prepareServiceImages({
       inventory,
@@ -386,6 +424,7 @@ export async function publishPlatformImages({
           serviceBuildArguments({
             inventory,
             secrets,
+            buildkitAddress,
             context,
             revision: source.revision,
             ...image,

@@ -13,13 +13,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = {};
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
-  if (["--inventory", "--secret-files", "--kubeconfig", "--confirm", "--cloudflare-token-file", "--buildctl", "--management-inventory"].includes(argv[i]) && argv[i + 1]) {
+  if (["--inventory", "--secret-files", "--kubeconfig", "--confirm", "--cloudflare-token-file", "--buildctl", "--buildkit-address", "--management-inventory"].includes(argv[i]) && argv[i + 1]) {
     options[argv[i]] = argv[++i];
   } else if (["--check", "--apply"].includes(argv[i])) {
     if (options.mode) throw new Error("choose one of --check or --apply");
     options.mode = argv[i];
   } else {
-    throw new Error("Usage: node scripts/deploy-platform.mjs --inventory <file> --secret-files <file> --kubeconfig <file> --confirm <cluster> [--cloudflare-token-file <file>] [--buildctl <absolute-path>] [--management-inventory <file>] [--check|--apply]");
+    throw new Error("Usage: node scripts/deploy-platform.mjs --inventory <file> --secret-files <file> --kubeconfig <file> --confirm <cluster> [--cloudflare-token-file <file>] [--buildctl <absolute-path>] [--buildkit-address <loopback-tcp-tunnel>] [--management-inventory <file>] [--check|--apply]");
   }
 }
 for (const field of ["--inventory", "--secret-files", "--kubeconfig", "--confirm"]) {
@@ -101,7 +101,7 @@ async function deploy() {
   console.log(step.stage + "...");
   if (step.script === "service-image-publication.mjs") {
     await publishPlatformImages({ root, inventoryPath: options["--inventory"],
-      secretFilesPath: options["--secret-files"], buildctlPath, preflight });
+      secretFilesPath: options["--secret-files"], buildctlPath, buildkitAddress: options["--buildkit-address"], preflight });
   } else if (step.script === "coordination") {
     coordination(options["--inventory"], false);
   } else if (step.script === "verify-work-notifications.mjs") {

@@ -283,7 +283,8 @@ ${DEBIAN_HTTPS_SOURCES}
 RUN apt-get update \\
  && apt-get install -y --no-install-recommends ca-certificates git \\
  && rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /tmp/praetorium-source-proof \\
+RUN pnpm run build:workspace \\
+ && mkdir -p /tmp/praetorium-source-proof \\
  && node scripts/build-catalog-bundle.mjs --out-dir /tmp/praetorium-source-proof/resolver \\
  && node scripts/hosted-build.mjs catalog \\
     --producer-revision "$SCRIPTORIUM_PRODUCER_REVISION" \\
@@ -370,7 +371,13 @@ export async function buildSourceRelease(
       "--metadata-file",runtimeMetadata],source,root,signal);
     const runtimeDigest=await metadataDigest(runtimeMetadata);
     const kitMetadata=path.join(root,"build-kit.json");
-    await runBuild(config,[...args,"--opt","target=buildkit",
+    // Catalog artifact identities require every shipped module, while the
+    // Producer's default build may select only its core profile. Reuse its
+    // native workspace build in an isolated derived stage, retaining its frontend.
+    await writeFile(path.join(dockerfiles,"Dockerfile"),Buffer.concat([
+      buildDockerfile,Buffer.from("\nFROM buildkit AS praetorium-buildkit\nRUN pnpm run build:workspace\n"),
+    ]),{mode:0o600});
+    await runBuild(config,[...args,"--opt","target=praetorium-buildkit",
       "--opt","build-arg:SCRIPTORIUM_DOCKERFILE_SHA256="+dockerfileDigest,
       "--output","type=image,name="+outputImage+":build-kit-"+job.source_revision+",push=true",
       "--metadata-file",kitMetadata],source,root,signal);

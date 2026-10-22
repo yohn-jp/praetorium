@@ -1,0 +1,61 @@
+{
+  "status": "BLOCKED_EXTERNAL",
+  "source": {
+    "repository": "yohn-jp/scriptorium",
+    "releaseId": 419457497,
+    "tag": "v0.3.0",
+    "revision": "884ac1c3a473acb5c7c8395e498b303dfbcd30eb",
+    "cleanCheckout": true
+  },
+  "reproduction": {
+    "executionBoundary": "existing isolated production BuildKit; no push",
+    "nativeCommand": "node scripts/hosted-build.mjs catalog",
+    "result": "exit 1",
+    "error": "Source tree contains an untrusted symlink: scripts/performance/podman",
+    "trackedEntry": {
+      "mode": "120000",
+      "blob": "0ad5a6d3375cd13107257042130ca8f48540611c",
+      "path": "scripts/performance/podman",
+      "target": "oci-c62-podman.sh",
+      "targetTracked": true
+    },
+    "precedingResolverBuild": "PASS",
+    "resolverDigest": "sha256:8f0ad40318d1ed20a9b9af700ab5d45420d8006ff9db89fce9f5cf0febb6ba70",
+    "catalogImageInputs": "syntactically valid placeholder digests for this no-push diagnostic; no image admission claimed",
+    "nativeWorkspaceBuild": "PASS",
+    "independentReview": "confirmed no native inventory/ignore/symlink override; catalog and compose share rejection"
+  },
+  "requiredExternalAction": "Correct the Scriptorium source inventory/release content so its native catalog and compose commands accept the published immutable source. Do not move the existing tag, omit tracked source, weaken source verification, or add a Praetorium Release exception. Upstream repository changes are outside the authorized Praetorium write scope.",
+  "production": {
+    "candidateDeployed": false,
+    "serviceSourceSha": "9962f9de7c214414a62bbb10d00d8887df30d1c3",
+    "workerSourceSha": "0d1bb197ad91963542366636beeee5222730eb55",
+    "runningImages": {
+      "provisioner": "sha256:0e33ea8780570437d10d713385d82bbd4049ec602bcc9ff6c61e2c4bafa374aa",
+      "instanceAccess": "sha256:8bafc0fd7cd0e6ade95b3c772ff40f9ccb043bdb0317b0f8918d0dea247cf256",
+      "buildWorker": "sha256:d930c30201cb75f3216e24447ae1639cfc7bc85a3791016d5e1eb15eb6d24066",
+      "coordination": "sha256:316d53fddef0aa12296b6481238468a3c333e9802d2ee08cedf41a7915326916"
+    },
+    "serviceReadiness": "all four ready",
+    "d1MigrationReadback": "PASS; all eight receipts including 0007",
+    "selectedJobId": "sr_b46aba41-1efd-4031-b5b0-91ecfe45a75a",
+    "selectedJobState": "failed",
+    "selectedJobFailure": "SOURCE_VERIFICATION_FAILED",
+    "selectedJobResultPresent": false,
+    "selectedJobAdmittedRelease": null,
+    "hostedSourceToStable": "BLOCKED",
+    "mcpWakeWriterStopResumePersistence": "NOT_CHECKED",
+    "issue31State": "OPEN"
+  },
+  "localChecks": {
+    "frozenInstall": "PASS",
+    "fullCheck": "PASS after workspace-build correction",
+    "deploymentTests": "57/57 PASS"
+  },
+  "initialCandidateCI": {
+    "sha": "95238c2599e763f0642ea2691ef06c36bf4a21db",
+    "run": 39792050301,
+    "githubActions": "6/7 PASS; source-stable-fixture FAIL missing module dist; workspace-build correction verified through subsequent native symlink rejection",
+    "productionAcceptance": false
+  }
+}

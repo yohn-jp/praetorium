@@ -489,6 +489,9 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       "UPDATE logical_instances SET desired_artifact_digest = ? WHERE instance_id = ?"
     ).run(`sha256:${"d".repeat(64)}`, retryBinding.instanceId);
     await expect(wake()).resolves.toBeNull();
+    db.database.prepare(
+      "UPDATE logical_instances SET desired_artifact_digest = ? WHERE instance_id = ?"
+    ).run(`sha256:${"c".repeat(64)}`, retryBinding.instanceId);
     // The build's completed attempt is still referenced by active_attempt_id;
     // a mismatched status or report digest must not issue a Canary start.
     db.database.prepare(
@@ -505,10 +508,8 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     db.database.prepare(
       "UPDATE builds SET last_report_digest = ? WHERE build_id = ?"
     ).run(`sha256:${"f".repeat(64)}`, seed.buildId);
-    // Only the exact artifact admitted by the canonical Build report can wake.
-    db.database.prepare(
-      "UPDATE logical_instances SET desired_artifact_digest = ? WHERE instance_id = ?"
-    ).run(`sha256:${"c".repeat(64)}`, retryBinding.instanceId);
+    // The exact admitted digest and the fenced completed attempt together
+    // constitute the canonical Build report evidence for this Canary.
     await expect(wake()).resolves.toBe(seed.release.id);
     expect(db.database.prepare(
       "SELECT state, revision, next_attempt_at, lease_epoch, lease_owner FROM release_candidate_workflows WHERE release_id = ?"

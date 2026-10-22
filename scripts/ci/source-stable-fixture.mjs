@@ -64,10 +64,10 @@ const BUILDKIT_SHA256 = "14813b1fb2a40082114e6d386c6fc5e7dd5298176ce7ee1a18bc33e
 const REGISTRY_IMAGE =
   "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e";
 const RELEASE = Object.freeze({
-  releaseId: 419457497,
-  sourceTag: "v0.3.0",
-  sourceRevision: "884ac1c3a473acb5c7c8395e498b303dfbcd30eb",
-  releaseVersion: "0.3.0",
+  releaseId: 420823049,
+  sourceTag: "v0.3.1",
+  sourceRevision: "fecdaf8fce7f406f94220cb32974bfdb3dedfe19",
+  releaseVersion: "0.3.1",
 });
 const INSTANCE_ID = "ins_01J9A2M4K8B7C6D5E4F3G2H1A0";
 const REPOSITORY_ID = 1938475621;

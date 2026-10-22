@@ -1,4 +1,8 @@
-## Current result: external selected-Release blocker — 2026-10-22
+## v0.3.1 acceptance resumed — 2026-10-22
+
+**IN PROGRESS; Issue #31 OPEN.** The owner published and selected v0.3.1. GitHub Release420823049 is published (not a draft), and its tag resolves directly to immutable commit `fecdaf8fce7f406f94220cb32974bfdb3dedfe19`. The disposable CI fixture now uses this selected input; production retains generic selection with no Release/SHA allowlist. The historical v0.3.0 blocker remains evidence of that exact immutable input, not a current stop instruction. Native isolated Builder validation, CI, regular deployment and real hosted acceptance are being resumed. No new production success is claimed yet.
+
+## Historical v0.3.0 selected-Release blocker — 2026-10-22
 
 **BLOCKED_EXTERNAL; Issue #31 OPEN.** The owner-required v0.3.0 selection was retained. Independent review confirmed that its own immutable source cannot pass its native hosted catalog/compose inventory. No complete production E2E success is claimed. Work stops under the owner's explicit external-blocker condition, after recording/pushing this checkpoint; this is not an owner-requested pause.
 

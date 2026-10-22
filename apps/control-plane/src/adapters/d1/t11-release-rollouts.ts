@@ -500,7 +500,7 @@ export class D1T11ReleaseRolloutStore
                AND i.desired_state = 'stopped' AND i.observed_state = 'absent'
                AND i.observed_generation IS NULL AND i.observed_runtime_epoch IS NULL
                AND i.runtime_epoch = 0 AND i.reservation_state IN ('none', 'released')
-               AND i.reservation_id IS NULL AND i.desired_artifact_digest IS NULL
+               AND i.reservation_id IS NULL AND i.desired_artifact_digest = d.artifact_digest
                AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id)
                AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id)
              ORDER BY w.next_attempt_at, w.release_id LIMIT 1

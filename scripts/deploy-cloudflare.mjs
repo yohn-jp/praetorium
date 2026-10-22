@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { renderWorkerTemplate } from "../infrastructure/scripts/worker-config.mjs";
+import { writeWorkerDeploymentSecrets } from "./worker-deployment-secrets.mjs";
 import {
   applyMigrationsWithPreflight,
   assertCompatibleMigrationHistory,
@@ -192,33 +193,14 @@ try {
       console.log("D1 migrations applied and read back; no Worker or Kubernetes workload was deployed.");
     } else {
       run("corepack", ["pnpm@11.18.0", "build"], { capture: false });
-      // Publish the same operator-supplied runtime tokens to the respective Worker
-      // that K3s reads from its namespace Secret; never ask for a second token.
-      for (const [worker, key, role] of [
-        [conf.gateway, "INSTANCE_ACCESS_SERVICE_AUTH_TOKEN", "instanceAccessServiceAuth"],
-        [conf.control, "PROVISIONER_AUTH_TOKEN", "controlPlaneCredential"],
-        [conf.control, "BUILD_WORKER_AUTH_TOKEN", "buildWorkerControlPlaneAuth"],
-        [conf.control, "REGISTRY_PULL_CREDENTIAL", "buildWorkerRegistryPull"],
-      ]) {
-        wrangler(["secret", "put", key, "--config", worker], { input: privateBytes(role), capture: true });
-      }
-      if (notificationTokenBytes) {
-        for (const [key, role] of [
-          ["PROVISIONER_WORK_NOTIFICATION_TOKEN", "provisioner"],
-          ["BUILD_WORK_NOTIFICATION_TOKEN", "build"],
-        ]) {
-          wrangler(["secret", "put", key, "--config", conf.control], {
-            input: notificationTokenBytes[role],
-            capture: true,
-          });
-        }
-      }
-      if (privateManifest.values.releaseOperatorToken) {
-        wrangler(["secret", "put", "RELEASE_OPERATOR_TOKEN", "--config", conf.control],
-          { input: privateBytes("releaseOperatorToken"), capture: true });
-      }
-      wrangler(["deploy", "--config", conf.control], { capture: false });
-      wrangler(["deploy", "--config", conf.gateway], { capture: false });
+      // Deploy the approved code and existing token bytes together. Standalone secret
+      // edits can activate code early or fail when an undeployed version exists.
+      const secretFiles = writeWorkerDeploymentSecrets({
+        directory: generated, privateBytes, notificationsEnabled,
+        hasReleaseOperatorToken: Boolean(privateManifest.values.releaseOperatorToken),
+      });
+      wrangler(["deploy", "--config", conf.control, "--secrets-file", secretFiles.control], { capture: false });
+      wrangler(["deploy", "--config", conf.gateway, "--secrets-file", secretFiles.gateway], { capture: false });
       for (const [origin, endpoint] of [
         [inventory.domains.controlPlaneUrl, "/healthz"],
         [inventory.domains.gatewayOrigin, "/healthz"],

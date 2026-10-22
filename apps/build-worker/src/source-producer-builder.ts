@@ -166,10 +166,10 @@ async function git(args:readonly string[],cwd:string,privateHome:string,signal:A
     signal.addEventListener("abort",abort,{once:true});
     child.stdout.on("data",(buf:Buffer)=>{size+=buf.length;if(size<=8192)out+=buf.toString("utf8");else child.kill("SIGKILL");});
     child.stderr.on("data",(buf:Buffer)=>{size+=buf.length;if(size>8192)child.kill("SIGKILL");});
-    child.once("error",()=>{clearTimeout(timer);signal.removeEventListener("abort",abort);reject(new Error("Git unavailable"));});
+    child.once("error",()=>{clearTimeout(timer);signal.removeEventListener("abort",abort);reject(new Error("Git "+args[0]+" executable unavailable"));});
     child.once("close",code=>{
       clearTimeout(timer);signal.removeEventListener("abort",abort);
-      if(code!==0||size>8192||signal.aborted)reject(new Error("Trusted Git fetch failed"));
+      if(code!==0||size>8192||signal.aborted)reject(new Error("Trusted Git "+args[0]+" failed (exit "+String(code)+")"));
       else resolve(out.trim());
     });
   });
@@ -218,7 +218,7 @@ async function validatePublishedRelease(job:SourceBuildClaim,signal:AbortSignal)
     );
     if(!response.ok){
       if(response.status===404)throw new SourceBuildChangedError();
-      throw new Error("GitHub Release publication unavailable");
+      throw new Error("GitHub Release publication unavailable (HTTP "+response.status+")");
     }
     const body:unknown=await response.json();
     const record=typeof body==="object"&&body!==null?body as Record<string,unknown>:{};

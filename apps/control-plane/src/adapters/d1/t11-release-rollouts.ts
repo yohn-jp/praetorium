@@ -479,7 +479,15 @@ export class D1T11ReleaseRolloutStore
               JOIN repository_bindings rb ON rb.repository_id = d.repository_id
                                           AND rb.instance_id = i.instance_id
              WHERE b.build_id = ? AND b.status = 'succeeded'
-               AND b.active_attempt_id IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM build_attempts completed
+                 WHERE completed.attempt_id = b.active_attempt_id
+                   AND completed.build_id = b.build_id
+                   AND completed.status = 'succeeded'
+                   AND completed.lease_epoch = b.lease_epoch
+                   AND completed.report_sequence = b.report_sequence
+                   AND completed.last_report_digest = b.last_report_digest
+               )
                AND c.status = 'candidate'
                AND w.state = 'canary_building' AND w.failure_code IS NULL
                AND w.next_attempt_at > ?
@@ -500,7 +508,7 @@ export class D1T11ReleaseRolloutStore
                AND i.desired_state = 'stopped' AND i.observed_state = 'absent'
                AND i.observed_generation IS NULL AND i.observed_runtime_epoch IS NULL
                AND i.runtime_epoch = 0 AND i.reservation_state IN ('none', 'released')
-               AND i.reservation_id IS NULL AND i.desired_artifact_digest IS NULL
+               AND i.reservation_id IS NULL AND i.desired_artifact_digest = d.artifact_digest
                AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id)
                AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id)
              ORDER BY w.next_attempt_at, w.release_id LIMIT 1

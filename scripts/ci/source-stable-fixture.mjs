@@ -643,7 +643,7 @@ async function createRuntimeFixture(root, kit) {
         progressAdmitted: async () => {
           await (
             await import("../../apps/control-plane/dist/scheduled.js")
-          ).runStableReleaseWork(t11.scheduled);
+          ).runStableReleaseWork(t11.scheduled, { promotionPasses: 2 });
         },
       });
     },
@@ -679,7 +679,7 @@ async function createRuntimeFixture(root, kit) {
     t11,
     sourceQueue,
     sourceConfig,
-    sourceIdentity: { registryHost, repositoryPath: producerRepository.slice("ghcr.io/".length) },
+    sourceIdentity: { host: registryHost, repositoryPath: producerRepository.slice("ghcr.io/".length) },
     workerEnvironment: workerEnv,
     simulatedNow: () => simulatedNow,
     advanceClock: (milliseconds) => {
@@ -696,7 +696,7 @@ async function createRuntimeFixture(root, kit) {
 async function runSourceToStable(root, kit) {
   const fixture = await createRuntimeFixture(root, kit);
   const response = await fixture.fetch(
-    new URL("/v1/operator/source-builds/", "https://control.praetorium.fixture"),
+    new URL("/v1/operator/source-builds", "https://control.praetorium.fixture"),
     {
       method: "POST",
       headers: {
@@ -713,7 +713,12 @@ async function runSourceToStable(root, kit) {
       }),
     },
   );
-  assert.equal(response.status, 202, `Source queue returned HTTP ${response.status}`);
+  if (response.status !== 202) {
+    // Keep the failure bound to the canonical route/status; never conflate
+    // a mount mismatch (404) with a Source build or Registry failure.
+    const diagnostic = (await response.text()).slice(0, 1024);
+    throw new Error(`Source queue POST /v1/operator/source-builds returned HTTP ${response.status}: ${diagnostic}`);
+  }
   const queued = await response.json();
   const jobId = queued.job?.id;
   assert.match(jobId ?? "", /^sr_[0-9a-f-]{36}$/u, "canonical Source queue generated job identity");
@@ -729,15 +734,27 @@ async function runSourceToStable(root, kit) {
     fetch: fixture.fetch,
   });
   let sourceResult;
+  let sourceFailure = null;
   const sourceWorker = new SourceReleaseBuildWorker(
     fixture.sourceConfig,
     sourceClient,
     async (job, config, signal) => {
-      const result = await buildSourceRelease(job, config, signal, {
-        isolatedRegistry: fixture.sourceIdentity,
-      });
-      sourceResult = result;
-      return result;
+      try {
+        const result = await buildSourceRelease(job, config, signal, {
+          isolatedRegistry: fixture.sourceIdentity,
+        });
+        sourceResult = result;
+        return result;
+      } catch (error) {
+        // This is a disposable CI fixture with synthetic credentials. The
+        // production Worker deliberately returns a bounded public error code;
+        // preserve its safe failure phase here without leaking subprocess I/O.
+        sourceFailure = sanitizeFixtureDiagnostic(
+          error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+          512,
+        );
+        throw error;
+      }
     },
   );
   assert.equal(
@@ -749,7 +766,7 @@ async function runSourceToStable(root, kit) {
   assert.equal(
     admittedJob?.state,
     "admitted",
-    `Source queue did not reach canonical Admission (${admittedJob?.failure_code ?? admittedJob?.state})`,
+    `Source queue did not reach canonical Admission (${admittedJob?.failure_code ?? admittedJob?.state}); producer: ${sourceFailure ?? "no captured failure"}`,
   );
   assert.ok(admittedJob.admitted_release_id);
   const admittedCandidate = fixture.db.database
@@ -757,11 +774,11 @@ async function runSourceToStable(root, kit) {
     .get(admittedJob.admitted_release_id);
   assert.equal(admittedCandidate?.release_id, admittedJob.admitted_release_id);
 
-  const localRepository = `${fixture.sourceIdentity.registryHost}/yohn-jp/praetorium/scriptorium-producer`;
+  const localRepository = `${fixture.sourceIdentity.host}/yohn-jp/praetorium/scriptorium-producer`;
   const compositionEnvironment = {
     ...fixture.workerEnvironment,
     PRAETORIUM_BUILDKIT_FRONTEND_REPOSITORY: localRepository,
-    PRAETORIUM_BUILDKIT_OUTPUT_REPOSITORY: `${fixture.sourceIdentity.registryHost}/yohn-jp/praetorium/candidates`,
+    PRAETORIUM_BUILDKIT_OUTPUT_REPOSITORY: `${fixture.sourceIdentity.host}/yohn-jp/praetorium/candidates`,
   };
   const compositionQueue = new BuildQueueHttpClient({
     baseUrl: fixture.sourceConfig.controlPlaneUrl,
@@ -776,11 +793,20 @@ async function runSourceToStable(root, kit) {
   const compositionWorker = await createBuildWorker(compositionEnvironment, {
     queue: compositionQueue,
   });
-  assert.equal(
-    await compositionWorker.runOnce(),
-    true,
-    "the admitted candidate created a real composition build",
-  );
+  const claimedComposition = await compositionWorker.runOnce();
+  if (!claimedComposition) {
+    const workflow = fixture.db.database.prepare(
+      `SELECT state, failure_code, next_attempt_at, canary_build_key
+         FROM release_candidate_workflows WHERE release_id=?`,
+    ).get(admittedJob.admitted_release_id);
+    const queued = fixture.db.database.prepare(
+      "SELECT status, COUNT(*) AS count FROM builds GROUP BY status ORDER BY status",
+    ).all();
+    throw new Error(
+      "Admitted release has no claimable composition build; workflow=" +
+      JSON.stringify(workflow ?? null) + "; buildQueue=" + JSON.stringify(queued),
+    );
+  }
 
   const builds = fixture.db.database
     .prepare(
@@ -794,15 +820,25 @@ async function runSourceToStable(root, kit) {
   );
   assert.match(builds?.artifact_digest ?? "", /^sha256:[a-f0-9]{64}$/u);
   const releaseId = admittedJob.admitted_release_id;
-  const startOperation = fixture.db.database
+  // A forceNewRuntime canary start is a fenced "redeploy" operation, not
+  // necessarily kind="start". Bind the assertion to this Release workflow's
+  // actual operation and admitted immutable artifact instead of a kind-only scan.
+  const canaryOperation = fixture.db.database
     .prepare(
-      "SELECT operation_id, generation, runtime_epoch, deployment_revision_id FROM operations WHERE instance_id=? AND kind='start' ORDER BY created_at DESC LIMIT 1",
+      `SELECT o.operation_id, o.kind, o.generation, o.runtime_epoch, o.deployment_revision_id
+         FROM release_candidate_workflows w
+         JOIN operations o ON o.operation_id = w.canary_operation_id
+         JOIN deployment_revisions d ON d.revision_id = o.deployment_revision_id
+        WHERE w.release_id = ? AND o.instance_id = ?
+          AND o.kind IN ('start', 'redeploy') AND d.status = 'admitted'
+          AND d.artifact_digest = ?`,
     )
-    .get(INSTANCE_ID);
+    .get(releaseId, INSTANCE_ID, builds.artifact_digest);
   assert.ok(
-    startOperation?.operation_id,
-    "T11 created the normal disposable canary start operation",
+    canaryOperation?.operation_id,
+    "T11 created a fenced canary runtime operation for the admitted digest",
   );
+  assert.equal(canaryOperation.kind, "redeploy", "forced new canary runtime uses redeploy fencing");
   fixture.db.database
     .prepare(
       `UPDATE logical_instances
@@ -814,6 +850,11 @@ async function runSourceToStable(root, kit) {
     .run(fixture.simulatedNow(), INSTANCE_ID);
 
   const promotionDependencies = { ...fixture.t11.scheduled.promotions, healthWindowMs: 0 };
+  // This disposable test has no provisioner event callback. Advance the
+  // simulated clock to the *real* durable canary-observation backstop rather
+  // than altering next_attempt_at or bypassing the observation state machine.
+  // The health and writer-absence evidence below is explicitly simulated.
+  fixture.advanceClock(5 * 60_000);
   let workflow;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     fixture.advanceClock(1_000);

@@ -1,3 +1,29 @@
+## Current production result — 2026-10-23 JST
+
+**BLOCKED_EXTERNAL; Issue #31 OPEN.** Regular production deployment completed successfully from verified main `7cc237b66e06a156563418fa1ffbb613eadb2ce5` after [CI39804404213](https://github.com/yohn-jp/praetorium/actions/runs/39804404213) 7/7 PASS. The existing deploy-platform path built/published and verified all four service images, passed staged production preflight, atomically admitted Inventory, read back all eight D1 migrations including0007, and deployed Coordination/K3s/Workers. Independent live readback confirms all four services ready, three K3s Pods Running/Ready with restart0, and Control Plane/Gateway health/login/JWKS HTTP200. The earlier f999 publication stop below is historical and was resolved by the complete workflow-list query correction.
+
+| Running service | Verified OCI root Digest |
+| --- | --- |
+| provisioner | `sha256:505081e52083a0d85feed58ed7c45f17c984234954033179db1e120a6a3ebf76` |
+| instance-access | `sha256:1e5ce12ecbc424200c8ba16d66b80770e814560c003e6147b3fed9f717134ebc` |
+| build-worker | `sha256:bfb4eec09b48e5bff065659959b7cbe6ff063bd08668318b3d61bf83b2109c81` |
+| coordination | `sha256:61687fca970571f34d1706e7397ba490bdf00ddfdc8e5e50a60b42e45bcb9260` |
+
+Control Plane Worker `1b1b8265-fff2-4a4f-892d-c84c6032e4c1` and Gateway `740d5453-41ec-4442-8d9d-7cb5a8cc1228` each serve100% traffic. Existing authentication/secret state and prior immutable image digests/Inventory backup were retained. No rollback below Gateway credential-epoch support is permitted; Source proof-v3 evidence also requires compatible Control Plane/Build Worker code.
+
+The owner's actual post-deployment selection was published **v0.3.2**, Release420896470, immutable SHA `d60fd4fa9e657c84154b74a5c9348fc278160efb`. Actual job `sr_5700bbd5-9baa-4d68-a5f9-c95b7dc2c001` failed `SOURCE_BUILD_FAILED`, attempt1, with no result or admitted Release. No older Release was substituted. A clean exact-source no-push reproduction on the existing isolated production Builder fails at the original Dockerfile step `[buildkit 2/4] RUN pnpm build`, before Praetorium's appended workspace stage:
+
+```text
+src/shells/mobile/MobileShell.tsx(375,9): error TS2322
+Property 'cssClass' does not exist on type ... IonModal ...
+```
+
+The unchanged native core build invokes the app's `tsc --noEmit -p tsconfig.json`; the compiler exits2 and pnpm build exits1. Independent read-only review confirms v0.3.2 introduced this IonModal/prop and changed no Dockerfile/build contract. This is an upstream source compile defect. **Required external correction:** Scriptorium must correct the mobile IonModal typing/usage and publish immutable source that passes its native build. Upstream writes are outside routine Praetorium scope. Rewriting the selected source, ignoring TypeScript errors, adding a Release exception, moving its tag or asking for a downgrade would not satisfy acceptance.
+
+The owner-authenticated selection reached the real Source job; the browser flow was not independently observed. Real Source build FAIL; Source GHCR output verification, Admission→Canary→Stable are BLOCKED before output/admission; Stable readback is null. MCP authentication/Wake, writer exclusion, stop/resume and Persistence acceptance remain NOT_CHECKED. CI's simulated runtime observations are not production acceptance. The owned tenant's pre-existing blocked stop still lacks quiesce/writer-absence proof; no forced retirement, manual D1 repair, data/Volume deletion or authentication reset was performed. Work stops at this confirmed external blocker under the owner's stated stop condition, with Issue #31 left OPEN.
+
+[Sanitized current deployment, D1 and exact-source failure evidence](evidence/issue-31-v032-production-blocker-20261023.json). Older sections below are historical checkpoints.
+
 ## Candidate image publication retained; CI listing correction — 2026-10-23 JST
 
 Main `f999243ebc815f4536278bc3a5159738f502a69d` passed CI39801401180 7/7 and the initial regular `verifiedMain` readback. The regular apply built/published and verified all four images and passed candidate K3s/Cloudflare/Coordination preflight. Its final CI recheck then returned an empty conditional workflow listing and stopped before Inventory admission or live rollout. Existing Inventory/service/Worker digests remain unchanged; the four newly published images remain retained, not overwritten or admitted.

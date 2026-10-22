@@ -1,0 +1,87 @@
+{
+  "status": "BLOCKED_EXTERNAL",
+  "recordedAt": "2026-10-22T15:48:06.609709+00:00",
+  "source": {
+    "repository": "yohn-jp/scriptorium",
+    "releaseId": 420896470,
+    "tag": "v0.3.2",
+    "revision": "d60fd4fa9e657c84154b74a5c9348fc278160efb",
+    "cleanCheckout": true,
+    "originalDockerfileSha256": "005b540188d5337e103bb4e5aba17c0ae4be3439c17d02b170a6b3d9a28ce350"
+  },
+  "actualHostedJob": {
+    "job_id": "sr_5700bbd5-9baa-4d68-a5f9-c95b7dc2c001",
+    "github_release_id": 420896470,
+    "source_tag": "v0.3.2",
+    "source_revision": "d60fd4fa9e657c84154b74a5c9348fc278160efb",
+    "state": "failed",
+    "attempt": 1,
+    "revision": 0,
+    "failure_code": "SOURCE_BUILD_FAILED",
+    "admitted_release_id": null,
+    "has_result": 0,
+    "proof_version": null,
+    "runtime_base_digest": null,
+    "buildkit_digest": null
+  },
+  "reproduction": {
+    "executionBoundary": "existing isolated production BuildKit; no push; no Producer scripts on operator host",
+    "nativeStep": "[buildkit 2/4] RUN pnpm build",
+    "commandChain": "scripts/root-build.mjs -> core app build -> tsc --noEmit -p tsconfig.json",
+    "exitCode": 1,
+    "compilerExitCode": 2,
+    "error": "src/shells/mobile/MobileShell.tsx(375,9): error TS2322: Property 'cssClass' does not exist on type IonModal props",
+    "failedBeforePraetoriumWorkspaceStage": true,
+    "rawPrivateBuildLogSha256": "54a7baf0fa21e0c9b0bc06480ed4ac6e3dc4a8573877b945f8e9fb0f5913f3ec",
+    "independentReadOnlyReview": "confirmed unchanged native build path and newly added v0.3.2 IonModal cssClass source; no Praetorium adapter effect"
+  },
+  "requiredExternalAction": "Correct Scriptorium mobile IonModal TypeScript props and publish immutable source whose native pnpm build passes. Upstream source writes are outside routine Praetorium scope. No Release downgrade, source rewrite, compiler bypass or version-specific exception.",
+  "production": {
+    "sourceSha": "7cc237b66e06a156563418fa1ffbb613eadb2ce5",
+    "ciRun": 39804404213,
+    "ci": "7/7 PASS; simulated runtime evidence is not hosted acceptance",
+    "regularDeploy": "PASS including publication, digest verification, candidate preflight, atomic Inventory admission, migrations, Coordination, K3s, Workers and HTTPS smoke",
+    "runningImages": {
+      "provisioner": "sha256:505081e52083a0d85feed58ed7c45f17c984234954033179db1e120a6a3ebf76",
+      "instance-access": "sha256:1e5ce12ecbc424200c8ba16d66b80770e814560c003e6147b3fed9f717134ebc",
+      "build-worker": "sha256:bfb4eec09b48e5bff065659959b7cbe6ff063bd08668318b3d61bf83b2109c81",
+      "coordination": "sha256:61687fca970571f34d1706e7397ba490bdf00ddfdc8e5e50a60b42e45bcb9260"
+    },
+    "serviceReadiness": "all four ready; three K3s services Running/Ready restart0; Coordination healthz/readyz200",
+    "workerVersions": {
+      "controlPlane": "1b1b8265-fff2-4a4f-892d-c84c6032e4c1",
+      "gateway": "740d5453-41ec-4442-8d9d-7cb5a8cc1228"
+    },
+    "workerTrafficPercent": 100,
+    "httpsSmoke": "Control Plane/Gateway health, Gateway login/JWKS HTTP200",
+    "d1Migrations": [
+      "0001_repository_platform.sql",
+      "0002_stable_release_rollouts.sql",
+      "0003_staged_configurations.sql",
+      "0004_runtime_git_credentials.sql",
+      "0005_runtime_health_observations.sql",
+      "0006_application_origins.sql",
+      "0004_source_release_builds.sql",
+      "0007_source_release_recovery.sql"
+    ],
+    "stableChannel": [
+      {
+        "channel_key": "stable",
+        "current_release_id": null,
+        "revision": 0
+      }
+    ],
+    "rollback": "prior Inventory bytes and immutable digests retained; never roll Gateway below credential epoch support; proof-v3 Source evidence requires compatible Control Plane/Build Worker",
+    "tenantSafety": "no manual D1 repair, tenant lifecycle mutation, Volume deletion or authentication reset in this deployment/reproduction",
+    "issue31State": "OPEN"
+  },
+  "acceptance": {
+    "adminOAuthAndReleaseSelection": "owner authenticated admin selection reached actual Source job; browser UI session flow not independently observed",
+    "sourceProducerBuild": "FAIL: actual selected v0.3.2 native TypeScript build",
+    "ghcrSourceDigestVerification": "BLOCKED before result; service-image publication verification passed separately",
+    "sourceAdmissionCanaryStable": "BLOCKED; actual job has no result/admitted release, Stable remains null",
+    "mcpAuthenticationWake": "NOT_CHECKED",
+    "writerExclusionStopResumePersistence": "NOT_CHECKED",
+    "preExistingTenantState": "generation5 desired stopped / observed generation4 ready; stop remains producer_quiesce_blocked without writer-absence/quiesce receipt; no safety bypass"
+  }
+}

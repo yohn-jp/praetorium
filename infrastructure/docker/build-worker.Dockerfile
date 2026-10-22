@@ -28,7 +28,10 @@ COPY tsconfig.base.json turbo.json ./
 COPY apps/ ./apps/
 COPY packages/ ./packages/
 COPY plugins/ ./plugins/
-RUN pnpm install --frozen-lockfile \
+# BuildKit proxy networking requires Node to use the injected proxy and public CA roots.
+RUN node -e 'const fs = require("node:fs"); fs.mkdirSync("/etc/ssl/certs", { recursive: true }); fs.writeFileSync("/etc/ssl/certs/ca-certificates.crt", require("node:tls").rootCertificates.join("\n") + "\n");'
+RUN export NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 \
+  && pnpm install --frozen-lockfile \
   && pnpm --filter "${SERVICE_PACKAGE}..." build \
   && pnpm --filter "$SERVICE_PACKAGE" deploy --prod --legacy /runtime
 
@@ -42,14 +45,21 @@ ENV NODE_ENV=production \
 WORKDIR /app
 # Source Producer fetches only an allowlisted GitHub Release at its verified
 # immutable SHA. Build scripts still execute exclusively in remote BuildKit.
-RUN apt-get update \
+COPY --from=build --chmod=0444 /workspace/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN chmod 0755 /etc/ssl /etc/ssl/certs \
+ && test -f /etc/apt/sources.list.d/debian.sources \
+ && sed -i \
+    -e 's|^URIs: http://deb.debian.org/debian$|URIs: https://deb.debian.org/debian|' \
+    -e 's|^URIs: http://deb.debian.org/debian-security$|URIs: https://deb.debian.org/debian-security|' \
+    /etc/apt/sources.list.d/debian.sources \
+ && grep -Fqx 'URIs: https://deb.debian.org/debian' /etc/apt/sources.list.d/debian.sources \
+ && grep -Fqx 'URIs: https://deb.debian.org/debian-security' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
  && apt-get install -y --no-install-recommends git \
  && rm -rf /var/lib/apt/lists/* \
  && git --version
 COPY --from=buildkit-client --chmod=0555 ${BUILDKIT_CLIENT_BUILDCTL_PATH} ${PRAETORIUM_BUILDKIT_BUILDCTL_PATH}
-COPY --from=build --chmod=0444 /workspace/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-RUN chmod 0755 /etc/ssl /etc/ssl/certs \
-  && node -e 'for (const key of ["NODE_RUNTIME_IMAGE", "BUILDKIT_CLIENT_IMAGE"]) { if (!/^(?:[a-z0-9.-]+(?::[0-9]+)?\/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$/.test(process.env[key] ?? "")) throw new Error(`${key} must be a repository-qualified immutable digest`); }' \
+RUN node -e 'for (const key of ["NODE_RUNTIME_IMAGE", "BUILDKIT_CLIENT_IMAGE"]) { if (!/^(?:[a-z0-9.-]+(?::[0-9]+)?\/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$/.test(process.env[key] ?? "")) throw new Error(`${key} must be a repository-qualified immutable digest`); }' \
   && test -s /etc/ssl/certs/ca-certificates.crt \
   && node -e 'const fs = require("node:fs"); const tls = require("node:tls"); const bundle = fs.readFileSync("/etc/ssl/certs/ca-certificates.crt", "utf8"); if (!bundle.includes("-----BEGIN CERTIFICATE-----")) throw new Error("CA bundle is empty"); tls.createSecureContext({ ca: bundle });' \
   && test -x "$PRAETORIUM_BUILDKIT_BUILDCTL_PATH" \

@@ -15,7 +15,10 @@ COPY tsconfig.base.json turbo.json ./
 COPY apps/ ./apps/
 COPY packages/ ./packages/
 COPY plugins/ ./plugins/
-RUN pnpm install --frozen-lockfile \
+# BuildKit proxy networking requires Node to use the injected proxy and public CA roots.
+RUN node -e 'const fs = require("node:fs"); fs.mkdirSync("/etc/ssl/certs", { recursive: true }); fs.writeFileSync("/etc/ssl/certs/ca-certificates.crt", require("node:tls").rootCertificates.join("\n") + "\n");'
+RUN export NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 \
+  && pnpm install --frozen-lockfile \
   && pnpm --filter "${SERVICE_PACKAGE}..." build \
   && pnpm --filter "$SERVICE_PACKAGE" deploy --prod --legacy /runtime
 

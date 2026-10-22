@@ -347,7 +347,7 @@ async function admitCanaryBuild(
     PRODUCER, NOW, NOW,
   );
   db.database.prepare(
-    `UPDATE builds SET status = 'succeeded', active_attempt_id = NULL,
+    `UPDATE builds SET status = 'succeeded',
          artifact_digest = ?, manifest_digest = ?, updated_at = ? WHERE build_id = ?`
   ).run(artifactDigest, DIGEST, NOW + 30_000, seed.buildId);
   db.database.prepare(
@@ -489,6 +489,22 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       "UPDATE logical_instances SET desired_artifact_digest = ? WHERE instance_id = ?"
     ).run(`sha256:${"d".repeat(64)}`, retryBinding.instanceId);
     await expect(wake()).resolves.toBeNull();
+    // The build's completed attempt is still referenced by active_attempt_id;
+    // a mismatched status or report digest must not issue a Canary start.
+    db.database.prepare(
+      "UPDATE build_attempts SET status = 'failed' WHERE attempt_id = ?"
+    ).run(seed.attemptId);
+    await expect(wake()).resolves.toBeNull();
+    db.database.prepare(
+      "UPDATE build_attempts SET status = 'succeeded' WHERE attempt_id = ?"
+    ).run(seed.attemptId);
+    db.database.prepare(
+      "UPDATE builds SET last_report_digest = ? WHERE build_id = ?"
+    ).run(`sha256:${"8".repeat(64)}`, seed.buildId);
+    await expect(wake()).resolves.toBeNull();
+    db.database.prepare(
+      "UPDATE builds SET last_report_digest = ? WHERE build_id = ?"
+    ).run(`sha256:${"f".repeat(64)}`, seed.buildId);
     // Only the exact artifact admitted by the canonical Build report can wake.
     db.database.prepare(
       "UPDATE logical_instances SET desired_artifact_digest = ? WHERE instance_id = ?"

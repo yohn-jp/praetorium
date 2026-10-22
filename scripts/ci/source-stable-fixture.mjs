@@ -734,15 +734,27 @@ async function runSourceToStable(root, kit) {
     fetch: fixture.fetch,
   });
   let sourceResult;
+  let sourceFailure = null;
   const sourceWorker = new SourceReleaseBuildWorker(
     fixture.sourceConfig,
     sourceClient,
     async (job, config, signal) => {
-      const result = await buildSourceRelease(job, config, signal, {
-        isolatedRegistry: fixture.sourceIdentity,
-      });
-      sourceResult = result;
-      return result;
+      try {
+        const result = await buildSourceRelease(job, config, signal, {
+          isolatedRegistry: fixture.sourceIdentity,
+        });
+        sourceResult = result;
+        return result;
+      } catch (error) {
+        // This is a disposable CI fixture with synthetic credentials. The
+        // production Worker deliberately returns a bounded public error code;
+        // preserve its safe failure phase here without leaking subprocess I/O.
+        sourceFailure = sanitizeFixtureDiagnostic(
+          error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+          512,
+        );
+        throw error;
+      }
     },
   );
   assert.equal(
@@ -754,7 +766,7 @@ async function runSourceToStable(root, kit) {
   assert.equal(
     admittedJob?.state,
     "admitted",
-    `Source queue did not reach canonical Admission (${admittedJob?.failure_code ?? admittedJob?.state})`,
+    `Source queue did not reach canonical Admission (${admittedJob?.failure_code ?? admittedJob?.state}); producer: ${sourceFailure ?? "no captured failure"}`,
   );
   assert.ok(admittedJob.admitted_release_id);
   const admittedCandidate = fixture.db.database

@@ -1,0 +1,152 @@
+{
+  "schema": "praetorium.issue31.production-attempt/v1",
+  "observedAt": "2026-10-22T12:36:29.709186+00:00",
+  "status": "K3S_ROLLBACK_RESTORED_SOURCE_MODE_FIX_PENDING",
+  "attemptedRevision": "95e73146c787dc1c60d7c7f51ebab4b475389077",
+  "ciRunId": 39777167681,
+  "hostedE2E": "NOT_CHECKED",
+  "failure": "ERR_INVALID_PACKAGE_CONFIG: /app/package.json permission denied; archive extraction under umask077 made source files0600; runtime UID10001 differs from image owner1000",
+  "publishedImages": {
+    "provisioner": {
+      "reference": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:a46dd5ada45e9c1c871b4bf50afff70cce9a79ffb1e9fd8d041e293a352ea628",
+      "manifestDigest": "sha256:a46dd5ada45e9c1c871b4bf50afff70cce9a79ffb1e9fd8d041e293a352ea628",
+      "platformManifestDigest": "sha256:b947721ae0b6d04e1bcd0f17c920137ec8d9e6a6a796ca97a5ef21e04ab8805e",
+      "configDigest": "sha256:fa4f9b96eaf480beceaf95721d337f5ed505d8442469bd5594fdcac2063df76a",
+      "platform": {
+        "os": "linux",
+        "architecture": "amd64"
+      }
+    },
+    "instance-access": {
+      "reference": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:fe5ba6573c7406371c7f3f50196f9fa8cb20a7b7bf72ebe76a4e8685d2159070",
+      "manifestDigest": "sha256:fe5ba6573c7406371c7f3f50196f9fa8cb20a7b7bf72ebe76a4e8685d2159070",
+      "platformManifestDigest": "sha256:3a32da87e8ac99f85569c28bcd9e6d1adc42b69568b46866e06d3ecbedeaa336",
+      "configDigest": "sha256:0031b3d8b59b351daba66ecfc9647b5e020fbc5e95b954cdae8ecdd5d28aad8b",
+      "platform": {
+        "os": "linux",
+        "architecture": "amd64"
+      }
+    },
+    "build-worker": {
+      "reference": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:556484eab81189f013027ac8632fbe5c6d2f17a8e135abadeb7821d10f73f859",
+      "manifestDigest": "sha256:556484eab81189f013027ac8632fbe5c6d2f17a8e135abadeb7821d10f73f859",
+      "platformManifestDigest": "sha256:2b276c6eb8d4b1fc3e07a8d1375da304bcb34d196df0d7775f2eac3d7a26bfcc",
+      "configDigest": "sha256:f6e7913ebc2621984c4c18deef0dc974f1882b72f67b959d8a952b5ddb79d704",
+      "platform": {
+        "os": "linux",
+        "architecture": "amd64"
+      }
+    },
+    "coordination": {
+      "reference": "ghcr.io/yohn-jp/praetorium/coordination@sha256:d1cfe6923dc4b0aa67eb25ee5d730decb6e71e4dc689b3843f5df6c253a12a11",
+      "manifestDigest": "sha256:d1cfe6923dc4b0aa67eb25ee5d730decb6e71e4dc689b3843f5df6c253a12a11",
+      "platformManifestDigest": "sha256:f49a2cbc664d8602c9a7db3e73389e8e1f2c50bcb4a1c9d7938ad2dc4460faf7",
+      "configDigest": "sha256:a4da3af8e0d6aa35aa1dcb03d163dce5c3b5f7460b89eeca89164a0bc7700c7d",
+      "platform": {
+        "os": "linux",
+        "architecture": "amd64"
+      }
+    }
+  },
+  "buildkitProvenance": "REQUESTED_NOT_INDEPENDENTLY_VERIFIED",
+  "d1Migrations": [
+    {
+      "name": "0001_repository_platform.sql"
+    },
+    {
+      "name": "0002_stable_release_rollouts.sql"
+    },
+    {
+      "name": "0003_staged_configurations.sql"
+    },
+    {
+      "name": "0004_runtime_git_credentials.sql"
+    },
+    {
+      "name": "0005_runtime_health_observations.sql"
+    },
+    {
+      "name": "0006_application_origins.sql"
+    },
+    {
+      "name": "0004_source_release_builds.sql"
+    },
+    {
+      "name": "0007_source_release_recovery.sql"
+    }
+  ],
+  "workers": {
+    "praetorium-gateway": {
+      "id": "030c49ad-4434-46e2-a35d-88903cb7f97f",
+      "source": "wrangler",
+      "versions": [
+        {
+          "version_id": "b4f46238-dbd7-4cc8-88b5-360acc58cd6a",
+          "percentage": 100
+        }
+      ],
+      "created_on": "2026-10-21T16:24:02.278588Z"
+    },
+    "praetorium-control-plane": {
+      "id": "e6e6b537-6577-4cf4-985f-54c0e1c3ea39",
+      "source": "wrangler",
+      "versions": [
+        {
+          "version_id": "50500bc7-a2e7-4025-91be-e5bc7f12ce0a",
+          "percentage": 100
+        }
+      ],
+      "created_on": "2026-10-22T10:43:13.614441Z"
+    }
+  },
+  "runningServicePods": [
+    {
+      "namespace": "praetorium-build",
+      "name": "praetorium-build-worker-96fc754cb-tf44g",
+      "runAsUser": 10001,
+      "containers": [
+        {
+          "name": "build-worker",
+          "image": "sha256:a4b930f0f2c80c484eb50e811b0bd179fcbb7abae1f533be4796ba4a5de36313",
+          "imageID": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:c8c1b08b5e1dc75213c2b8c89d4cd77135a5bc559429ccb2a6d7ea0df56a589c",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "praetorium-system",
+      "name": "praetorium-instance-access-6fff64f4d6-5g25j",
+      "runAsUser": 10001,
+      "containers": [
+        {
+          "name": "instance-access",
+          "image": "sha256:359264a6b514c8a5c8d17196b632e7335f25c8d00bf18a6cbb9675586ad97c9d",
+          "imageID": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:9e8b5acc836cb99cad78ef28762545de6fbbff134698e72af4f4d38eb32f180d",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "praetorium-system",
+      "name": "praetorium-provisioner-7bb4c6d555-gxr86",
+      "runAsUser": 10001,
+      "containers": [
+        {
+          "name": "provisioner",
+          "image": "sha256:4ea4095f6d77c8ef806e176a700e3c179381114db0017ba56ad7b8f5a94294b8",
+          "imageID": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:bee35f2f63e6b4b98d02cc41c9a793203d311e43e377ae72247fd40608cb7848",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    }
+  ],
+  "runtimeUidReadProbes": {
+    "provisioner": "PASS_UID_10001",
+    "build-worker": "PASS_UID_10001",
+    "export": "LOCAL_OCI_NO_GHCR_PUSH",
+    "input": "main95e7314 source with fixed archive permissions; verification-only USER10001 read probe appended to Dockerfile"
+  }
+}

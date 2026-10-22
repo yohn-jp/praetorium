@@ -7,18 +7,19 @@ import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { workNotificationsEnabled } from "../infrastructure/scripts/work-notifications.mjs";
 import { platformDeploymentSteps } from "./deployment-plan.mjs";
+import { privateFile, publishPlatformImages, withDeploymentLock } from "./service-image-publication.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = {};
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
-  if (["--inventory", "--secret-files", "--kubeconfig", "--confirm", "--cloudflare-token-file"].includes(argv[i]) && argv[i + 1]) {
+  if (["--inventory", "--secret-files", "--kubeconfig", "--confirm", "--cloudflare-token-file", "--buildctl", "--management-inventory"].includes(argv[i]) && argv[i + 1]) {
     options[argv[i]] = argv[++i];
   } else if (["--check", "--apply"].includes(argv[i])) {
     if (options.mode) throw new Error("choose one of --check or --apply");
     options.mode = argv[i];
   } else {
-    throw new Error("Usage: node scripts/deploy-platform.mjs --inventory <file> --secret-files <file> --kubeconfig <file> --confirm <cluster> [--cloudflare-token-file <file>] [--check|--apply]");
+    throw new Error("Usage: node scripts/deploy-platform.mjs --inventory <file> --secret-files <file> --kubeconfig <file> --confirm <cluster> [--cloudflare-token-file <file>] [--buildctl <absolute-path>] [--management-inventory <file>] [--check|--apply]");
   }
 }
 for (const field of ["--inventory", "--secret-files", "--kubeconfig", "--confirm"]) {
@@ -30,6 +31,14 @@ if (inventoryResult.errors.length || inventoryResult.blockers.length) {
   throw new Error("deployment inventory is incomplete");
 }
 const notificationsEnabled = workNotificationsEnabled(inventoryResult.inventory);
+// The KV read has no Wrangler config argument: explicitly select the same account as the inventory.
+process.env.CLOUDFLARE_ACCOUNT_ID = inventoryResult.inventory.cloudflare.accountId;
+const buildctlPath = options["--buildctl"] ?? inventoryResult.inventory.buildWorker.buildctlPath;
+if (options.mode === "--apply") {
+  if (!path.isAbsolute(buildctlPath)) throw new Error("--buildctl must be an absolute executable path");
+  if (!options["--management-inventory"]) throw new Error("--apply requires --management-inventory for the existing Coordination role");
+  privateFile(options["--management-inventory"], "Management Ansible inventory");
+}
 if (options["--cloudflare-token-file"]) {
   const filename = options["--cloudflare-token-file"];
   if (!path.isAbsolute(filename)) throw new Error("Cloudflare token file must be an absolute path");
@@ -62,12 +71,40 @@ if (revision.status !== 0 || dirty.status !== 0 || dirty.stdout.trim()) {
 }
 console.log("Deploying Git revision " + revision.stdout.trim());
 executeTool("corepack", ["pnpm@11.18.0", "install", "--frozen-lockfile"]);
+if (options.mode === "--apply") executeTool("corepack", ["pnpm@11.18.0", "build"]);
 const k3s = ["--inventory", options["--inventory"], "--secret-files", options["--secret-files"],
   "--kubeconfig", options["--kubeconfig"], "--confirm", options["--confirm"]];
 const cloudflare = ["--inventory", options["--inventory"], "--secret-files", options["--secret-files"]];
-for (const step of platformDeploymentSteps(options.mode, notificationsEnabled)) {
+function preflight(candidate) {
+  execute("deploy-k3s.mjs", ["--inventory", candidate, ...k3s.slice(2), "--check"]);
+  execute("deploy-cloudflare.mjs", ["--inventory", candidate, ...cloudflare.slice(2), "--preflight"]);
+  coordination(candidate, true);
+}
+function coordination(candidate, check) {
+  const inventory = readInventory(candidate);
+  if (inventory.errors.length || inventory.blockers.length || !inventory.inventory.images.coordination) {
+    throw new Error("Coordination requires the verified candidate inventory");
+  }
+  const args = ["-i", options["--management-inventory"],
+    path.join(root, "infrastructure/ansible/playbooks/host-bootstrap.yml"),
+    "--limit", "management", "--tags", "coordination",
+    "--extra-vars", JSON.stringify({ coordination_enabled: true, coordination_image: inventory.inventory.images.coordination }),
+    ...(check ? ["--check"] : [])];
+  const result = spawnSync("ansible-playbook", args, {
+    cwd: path.join(root, "infrastructure/ansible"), env: process.env, encoding: "utf8",
+    stdio: "inherit", timeout: 20 * 60_000,
+  });
+  if (result.error || result.status !== 0) throw new Error("Coordination Ansible " + (check ? "preflight" : "rollout") + " failed");
+}
+async function deploy() {
+ for (const step of platformDeploymentSteps(options.mode, notificationsEnabled)) {
   console.log(step.stage + "...");
-  if (step.script === "verify-work-notifications.mjs") {
+  if (step.script === "service-image-publication.mjs") {
+    await publishPlatformImages({ root, inventoryPath: options["--inventory"],
+      secretFilesPath: options["--secret-files"], buildctlPath, preflight });
+  } else if (step.script === "coordination") {
+    coordination(options["--inventory"], false);
+  } else if (step.script === "verify-work-notifications.mjs") {
     execute(step.script, [
       "--inventory", options["--inventory"],
       "--secret-files", options["--secret-files"],
@@ -76,7 +113,10 @@ for (const step of platformDeploymentSteps(options.mode, notificationsEnabled)) 
     const base = step.script === "deploy-k3s.mjs" ? k3s : cloudflare;
     execute(step.script, [...base, step.mode]);
   }
+ }
 }
+if (options.mode === "--apply") await withDeploymentLock(options["--inventory"], deploy);
+else await deploy();
 if (options.mode === "--check") {
   console.log("Both deployments passed preflight. Nothing changed.");
 } else {

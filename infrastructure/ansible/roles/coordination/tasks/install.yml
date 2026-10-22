@@ -484,6 +484,23 @@
     fail_msg: "The existing Coordination ownership marker identifies a different unit path."
   when: coordination_quadlet_ownership.results[0].stat.exists
 
+- name: Verify exact Coordination manifest access using the Management service identity
+  ansible.builtin.command:
+    chdir: "{{ coordination_service_home }}"
+    argv:
+      - runuser
+      - --user
+      - "{{ coordination_service_user }}"
+      - --
+      - podman
+      - manifest
+      - inspect
+      - "{{ coordination_image }}"
+  changed_when: false
+  check_mode: false
+  timeout: 60
+  no_log: true
+
 - name: Check whether the exact Coordination image digest is already in rootless storage
   ansible.builtin.command:
     chdir: "{{ coordination_service_home }}"

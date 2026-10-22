@@ -16,15 +16,18 @@ test("platform apply migrates and reads back D1 before Build Worker images and W
   assert.deepEqual(scriptAndMode, [
     ["deploy-k3s.mjs", "--check"],
     ["deploy-cloudflare.mjs", "--preflight"],
+    ["service-image-publication.mjs", null],
     ["deploy-cloudflare.mjs", "--migrate"],
+    ["coordination", "--apply"],
     ["deploy-k3s.mjs", "--apply"],
     ["verify-work-notifications.mjs", null],
     ["deploy-cloudflare.mjs", "--workers"],
   ]);
   const migration = steps.findIndex((step) => step.mode === "--migrate");
+  const publication = steps.findIndex((step) => step.script === "service-image-publication.mjs");
   const k3sApply = steps.findIndex((step) => step.script === "deploy-k3s.mjs" && step.mode === "--apply");
   const workerDeploy = steps.findIndex((step) => step.mode === "--workers");
-  assert.ok(migration < k3sApply && k3sApply < workerDeploy);
+  assert.ok(publication > 1 && publication < migration && migration < k3sApply && k3sApply < workerDeploy);
 });
 
 test("notification-disabled deployments skip only the notification readiness gate", () => {

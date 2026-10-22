@@ -1,0 +1,571 @@
+{
+  "schema": "praetorium.issue31.production-preflight/v1",
+  "observedAtUtc": "2026-10-22T11:07:54.327284+00:00",
+  "sourceSha": "375f8ea5bf7e90efa2c9c19b0dd47655faf6facf",
+  "productionAppliedByThisRun": false,
+  "productionAppliedSha": null,
+  "status": "PRE_PUBLICATION_SNAPSHOT",
+  "ci": {
+    "runId": 39765012106,
+    "url": "https://github.com/yohn-jp/praetorium/actions/runs/39765012106",
+    "jobsPassed": 7,
+    "jobsTotal": 7,
+    "runtimeEvidence": "SIMULATED_DISPOSABLE_FIXTURE_NOT_PRODUCTION"
+  },
+  "inventory": {
+    "originalPath": "/data/praetorium/production/inventory.json",
+    "matchingRuntimeImagePath": "/data/praetorium/production/inventory-fresh-20261020.json",
+    "originalImagesDifferFromRuntime": true,
+    "adminAndSourceFieldsAbsentFromBoth": true,
+    "liveGatewayAdminSourceConfigAvailable": true,
+    "modified": false
+  },
+  "d1": {
+    "migrationNames": [
+      "0001_repository_platform.sql",
+      "0002_stable_release_rollouts.sql",
+      "0003_staged_configurations.sql",
+      "0004_runtime_git_credentials.sql",
+      "0005_runtime_health_observations.sql",
+      "0006_application_origins.sql"
+    ],
+    "missing": [
+      "0004_source_release_builds.sql",
+      "0007_source_release_recovery.sql"
+    ],
+    "compatibleHistory": "PASS",
+    "exactReadback": "FAIL_PENDING_MIGRATIONS",
+    "readbackRowsWritten": 0,
+    "migrationsAppliedByThisRun": false
+  },
+  "workers": {
+    "praetorium-gateway": {
+      "deploymentId": "030c49ad-4434-46e2-a35d-88903cb7f97f",
+      "createdOn": "2026-10-21T16:24:02.278588Z",
+      "versions": [
+        {
+          "version_id": "b4f46238-dbd7-4cc8-88b5-360acc58cd6a",
+          "percentage": 100
+        }
+      ],
+      "bindings": [
+        {
+          "environment": "production",
+          "name": "CONTROL_PLANE",
+          "service": "praetorium-control-plane",
+          "type": "service"
+        },
+        {
+          "name": "CONTROL_PLANE_GATEWAY_AUTH",
+          "type": "secret_text"
+        },
+        {
+          "name": "CONTROL_PLANE_ORIGIN",
+          "type": "plain_text"
+        },
+        {
+          "class_name": "EphemeralCodeDurableObject",
+          "name": "EPHEMERAL_CODES",
+          "namespace_id": "67c3ac9f571f424a896305d69ceb20d2",
+          "type": "durable_object_namespace"
+        },
+        {
+          "name": "GATEWAY_ACCESS_GRANT_TTL_SECONDS",
+          "type": "plain_text"
+        },
+        {
+          "name": "GATEWAY_ALLOWED_REPOSITORY_OWNER",
+          "type": "plain_text"
+        },
+        {
+          "name": "GATEWAY_CREDENTIAL_DIGEST_PEPPER",
+          "type": "secret_text"
+        },
+        {
+          "name": "GATEWAY_ENVIRONMENT",
+          "type": "plain_text"
+        },
+        {
+          "name": "GATEWAY_GITHUB_WEBHOOK_SECRET",
+          "type": "secret_text"
+        },
+        {
+          "name": "GATEWAY_HANDOFF_DIGEST_PEPPER",
+          "type": "secret_text"
+        },
+        {
+          "name": "GATEWAY_HANDOFF_TTL_SECONDS",
+          "type": "plain_text"
+        },
+        {
+          "name": "GATEWAY_INSTANCE_HOSTNAME_SUFFIX",
+          "type": "plain_text"
+        },
+        {
+          "name": "GATEWAY_KV",
+          "namespace_id": "770c4ac60df74b019409c1203f35687d",
+          "type": "kv_namespace"
+        },
+        {
+          "name": "GATEWAY_ORIGIN",
+          "type": "plain_text"
+        },
+        {
+          "name": "GATEWAY_SESSION_DIGEST_PEPPER",
+          "type": "secret_text"
+        },
+        {
+          "name": "GATEWAY_SESSION_TTL_SECONDS",
+          "type": "plain_text"
+        },
+        {
+          "name": "GATEWAY_SIGNING_KEY",
+          "type": "secret_text"
+        },
+        {
+          "name": "GATEWAY_TOKEN_ENCRYPTION_KEY",
+          "type": "secret_text"
+        },
+        {
+          "name": "GATEWAY_TOKEN_ENCRYPTION_KEY_ID",
+          "type": "plain_text"
+        },
+        {
+          "name": "GITHUB_APP_ID",
+          "type": "plain_text"
+        },
+        {
+          "name": "GITHUB_APP_PRIVATE_KEY",
+          "type": "secret_text"
+        },
+        {
+          "name": "GITHUB_OAUTH_CLIENT_ID",
+          "type": "plain_text"
+        },
+        {
+          "name": "GITHUB_OAUTH_CLIENT_SECRET",
+          "type": "secret_text"
+        },
+        {
+          "name": "INSTANCE_ACCESS_SERVICE_AUTH_TOKEN",
+          "type": "secret_text"
+        },
+        {
+          "name": "LOGIN_RATE_LIMIT",
+          "namespace_id": "761101",
+          "simple": {
+            "limit": 10,
+            "period": 60
+          },
+          "type": "ratelimit"
+        },
+        {
+          "name": "MCP_CREDENTIAL_RATE_LIMIT",
+          "namespace_id": "761103",
+          "simple": {
+            "limit": 20,
+            "period": 60
+          },
+          "type": "ratelimit"
+        },
+        {
+          "name": "MCP_SOURCE_RATE_LIMIT",
+          "namespace_id": "761102",
+          "simple": {
+            "limit": 60,
+            "period": 60
+          },
+          "type": "ratelimit"
+        },
+        {
+          "name": "MUTATION_RECEIPT_RATE_LIMIT",
+          "namespace_id": "761106",
+          "simple": {
+            "limit": 10,
+            "period": 60
+          },
+          "type": "ratelimit"
+        },
+        {
+          "name": "PRAETORIUM_ADMIN_GITHUB_USER_IDS",
+          "type": "plain_text"
+        },
+        {
+          "name": "PRAETORIUM_ADMIN_ORIGIN",
+          "type": "plain_text"
+        },
+        {
+          "name": "PRAETORIUM_RELEASE_SOURCES_JSON",
+          "type": "plain_text"
+        },
+        {
+          "name": "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
+          "type": "secret_text"
+        },
+        {
+          "name": "RUNTIME_GIT_RATE_LIMIT",
+          "namespace_id": "761104",
+          "simple": {
+            "limit": 120,
+            "period": 60
+          },
+          "type": "ratelimit"
+        },
+        {
+          "class_name": "UserAuthStateDurableObject",
+          "name": "USER_AUTH_STATE",
+          "namespace_id": "0a6000c88fa54a8db14f1021f30320f3",
+          "type": "durable_object_namespace"
+        },
+        {
+          "name": "WAKE_RATE_LIMIT",
+          "namespace_id": "761105",
+          "simple": {
+            "limit": 10,
+            "period": 60
+          },
+          "type": "ratelimit"
+        }
+      ],
+      "publicAdminSourceConfig": {
+        "PRAETORIUM_ADMIN_GITHUB_USER_IDS": "213253858",
+        "PRAETORIUM_ADMIN_ORIGIN": "https://admin.praetorium.yohn.jp",
+        "PRAETORIUM_RELEASE_SOURCES_JSON": "[{\"id\":\"scriptorium\",\"label\":\"Scriptorium\",\"githubRepository\":\"yohn-jp/scriptorium\",\"adapter\":\"scriptorium-v1\"}]"
+      }
+    },
+    "praetorium-control-plane": {
+      "deploymentId": "e6e6b537-6577-4cf4-985f-54c0e1c3ea39",
+      "createdOn": "2026-10-22T10:43:13.614441Z",
+      "versions": [
+        {
+          "version_id": "50500bc7-a2e7-4025-91be-e5bc7f12ce0a",
+          "percentage": 100
+        }
+      ],
+      "bindings": [
+        {
+          "name": "BUILD_POLICY_JSON",
+          "type": "plain_text"
+        },
+        {
+          "name": "BUILD_WORKER_AUTH_TOKEN",
+          "type": "secret_text"
+        },
+        {
+          "name": "BUILD_WORKER_ID",
+          "type": "plain_text"
+        },
+        {
+          "name": "BUILD_WORK_NOTIFICATION_TOKEN",
+          "type": "secret_text"
+        },
+        {
+          "name": "BUILD_WORK_NOTIFICATION_URL",
+          "type": "plain_text"
+        },
+        {
+          "database_id": "08f29fef-eb9e-4541-82fb-777fa2f4aab0",
+          "id": "08f29fef-eb9e-4541-82fb-777fa2f4aab0",
+          "name": "CONTROL_PLANE_DB",
+          "type": "d1"
+        },
+        {
+          "name": "CONTROL_PLANE_GATEWAY_AUTH",
+          "type": "secret_text"
+        },
+        {
+          "name": "CONTROL_PLANE_ORIGIN",
+          "type": "plain_text"
+        },
+        {
+          "name": "COORDINATION_SERVICE",
+          "service_id": "01a158fc-ef0d-7d11-8976-af6247908574",
+          "type": "vpc_service"
+        },
+        {
+          "name": "GATEWAY_ORIGIN",
+          "type": "plain_text"
+        },
+        {
+          "environment": "production",
+          "name": "GATEWAY_SERVICE",
+          "service": "praetorium-gateway",
+          "type": "service"
+        },
+        {
+          "name": "GIT_CREDENTIAL_BROKER_LOCATOR",
+          "type": "plain_text"
+        },
+        {
+          "name": "INSTANCE_HOST_SUFFIX",
+          "type": "plain_text"
+        },
+        {
+          "name": "PROVISIONER_AUTH_TOKEN",
+          "type": "secret_text"
+        },
+        {
+          "name": "PROVISIONER_CLUSTER_ID",
+          "type": "plain_text"
+        },
+        {
+          "name": "PROVISIONER_WORKER_ID",
+          "type": "plain_text"
+        },
+        {
+          "name": "PROVISIONER_WORK_NOTIFICATION_TOKEN",
+          "type": "secret_text"
+        },
+        {
+          "name": "PROVISIONER_WORK_NOTIFICATION_URL",
+          "type": "plain_text"
+        },
+        {
+          "name": "REGISTRY_PULL_CREDENTIAL",
+          "type": "secret_text"
+        },
+        {
+          "name": "RELEASE_OPERATOR_TOKEN",
+          "type": "secret_text"
+        },
+        {
+          "name": "RELEASE_POLICY_JSON",
+          "type": "plain_text"
+        },
+        {
+          "class_name": "RepositoryCoordinator",
+          "name": "REPOSITORY_COORDINATOR",
+          "namespace_id": "0919ee92a1ef414dbdd269258371c9d2",
+          "type": "durable_object_namespace"
+        },
+        {
+          "name": "RUNTIME_CONTROL_SIGNING_KEY",
+          "type": "secret_text"
+        },
+        {
+          "name": "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
+          "type": "secret_text"
+        },
+        {
+          "name": "RUNTIME_IDENTITY_SIGNING_KEY",
+          "type": "secret_text"
+        },
+        {
+          "name": "RUNTIME_REGISTRY_HOST",
+          "type": "plain_text"
+        }
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "name": "manage",
+      "uid": "0cb90590-c42c-4417-b6d0-c8b0ca75fcaf",
+      "clusterId": "clu_01M552J5HCXXJAPCCPN480JSJN",
+      "ready": "True",
+      "version": "v1.35.9+k3s1"
+    },
+    {
+      "name": "runtime",
+      "uid": "0ceea32e-61eb-4f4d-87b1-65eb2e40cb06",
+      "clusterId": "clu_01M552J5HCXXJAPCCPN480JSJN",
+      "ready": "True",
+      "version": "v1.35.9+k3s1"
+    }
+  ],
+  "pods": [
+    {
+      "namespace": "praetorium-build",
+      "name": "praetorium-build-worker-96fc754cb-chlkt",
+      "uid": "1397b9f8-94be-401d-98f9-511ab2ce2918",
+      "node": "runtime",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "build-worker",
+          "ready": true,
+          "restartCount": 0,
+          "imageID": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:c8c1b08b5e1dc75213c2b8c89d4cd77135a5bc559429ccb2a6d7ea0df56a589c"
+        }
+      ]
+    },
+    {
+      "namespace": "praetorium-instances-01m56estantnhv8ba5j1pcnnqj",
+      "name": "arcadia-ins-01m56estantnhv8ba5j1pcnnqj-799bb95494-vgsfn",
+      "uid": "5e78235c-e177-4c26-9e91-6995aebaca72",
+      "node": "runtime",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "scriptorium",
+          "ready": true,
+          "restartCount": 0,
+          "imageID": "ghcr.io/yohn-jp/praetorium/candidates@sha256:446a6a8a6703ebe54cc2ef924f71a885eabccf35b0397be6177cebb2f776ce99"
+        }
+      ]
+    },
+    {
+      "namespace": "praetorium-observability",
+      "name": "praetorium-prometheus-b7444b566-ghm4m",
+      "uid": "2e2faa88-b384-49c9-a7c3-b336a198e5fa",
+      "node": "runtime",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "prometheus",
+          "ready": true,
+          "restartCount": 0,
+          "imageID": "docker.io/prom/prometheus@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
+        }
+      ]
+    },
+    {
+      "namespace": "praetorium-system",
+      "name": "praetorium-instance-access-6fff64f4d6-tqndw",
+      "uid": "57f7762c-e53e-4e35-a0af-8e1d6500b17f",
+      "node": "runtime",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "instance-access",
+          "ready": true,
+          "restartCount": 0,
+          "imageID": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:9e8b5acc836cb99cad78ef28762545de6fbbff134698e72af4f4d38eb32f180d"
+        }
+      ]
+    },
+    {
+      "namespace": "praetorium-system",
+      "name": "praetorium-provisioner-7bb4c6d555-cvsww",
+      "uid": "7ffcf30c-108a-459a-8300-9c085c62d747",
+      "node": "runtime",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "provisioner",
+          "ready": true,
+          "restartCount": 0,
+          "imageID": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:bee35f2f63e6b4b98d02cc41c9a793203d311e43e377ae72247fd40608cb7848"
+        }
+      ]
+    }
+  ],
+  "coordination": {
+    "runningImageAndContainer": "ghcr.io/yohn-jp/praetorium/coordination@sha256:bf43bed86b8eca82f6bd6dfe2cd6b3ad4382975b6783de2681950edfa1916ced praetorium-coordination",
+    "healthzHttp": 200,
+    "readyzHttp": 200
+  },
+  "buildkit": {
+    "host": "build.praetorium.vm",
+    "service": "praetorium-buildkit",
+    "active": true,
+    "candidateSourceBuild": "NOT_CHECKED"
+  },
+  "registry": {
+    "build-worker": {
+      "tagCount": 27,
+      "source375f8eaTags": [],
+      "latestListedSourceTags": [
+        "source-33248126af14c05ea54fdcf10c2d347aabe2180f",
+        "source-c78f678298f9ef6b5371fdf4d70df8bdedca711a",
+        "source-a4cf0096c008543b10e6cdc820c059d34d67f87a",
+        "source-fb81de593f8892f4d20f223a42860cbbe91128d1"
+      ],
+      "limitation": "Absence of a source tag does not exclude untagged manifests. No approved main-SHA production digest input was found."
+    },
+    "provisioner": {
+      "tagCount": 27,
+      "source375f8eaTags": [],
+      "latestListedSourceTags": [
+        "source-33248126af14c05ea54fdcf10c2d347aabe2180f",
+        "source-c78f678298f9ef6b5371fdf4d70df8bdedca711a",
+        "source-a4cf0096c008543b10e6cdc820c059d34d67f87a",
+        "source-fb81de593f8892f4d20f223a42860cbbe91128d1"
+      ],
+      "limitation": "Absence of a source tag does not exclude untagged manifests. No approved main-SHA production digest input was found."
+    },
+    "instance-access": {
+      "tagCount": 27,
+      "source375f8eaTags": [],
+      "latestListedSourceTags": [
+        "source-33248126af14c05ea54fdcf10c2d347aabe2180f",
+        "source-c78f678298f9ef6b5371fdf4d70df8bdedca711a",
+        "source-a4cf0096c008543b10e6cdc820c059d34d67f87a",
+        "source-fb81de593f8892f4d20f223a42860cbbe91128d1"
+      ],
+      "limitation": "Absence of a source tag does not exclude untagged manifests. No approved main-SHA production digest input was found."
+    },
+    "coordination": {
+      "tagCount": 12,
+      "source375f8eaTags": [],
+      "latestListedSourceTags": [
+        "source-33248126af14c05ea54fdcf10c2d347aabe2180f",
+        "source-c78f678298f9ef6b5371fdf4d70df8bdedca711a",
+        "source-a4cf0096c008543b10e6cdc820c059d34d67f87a",
+        "source-fb81de593f8892f4d20f223a42860cbbe91128d1"
+      ],
+      "limitation": "Absence of a source tag does not exclude untagged manifests. No approved main-SHA production digest input was found."
+    }
+  },
+  "gatewayRollback": {
+    "activeVersion": "b4f46238-dbd7-4cc8-88b5-360acc58cd6a",
+    "activeBundleContainsCredentialEpochAndFutureFenceKeys": true,
+    "compatibilityRehearsal": "NOT_CHECKED",
+    "preEpochRollback": "PROHIBITED",
+    "sourceRevisionOfActiveVersion": "NOT_PROVEN"
+  },
+  "ownedAcceptanceRepository": {
+    "fullName": "yohn-jp/praetorium-hosted-validation-20261018",
+    "repositoryId": 1423923158,
+    "instanceId": "ins_01M56ESTANTNHV8BA5J1PCNNQJ",
+    "ownerConfirmedThisRun": true
+  },
+  "hostedAcceptance": {
+    "administratorOAuthAndReleaseSelection": "BLOCKED_NO_AUTHENTICATED_BROWSER_SESSION_AVAILABLE",
+    "sourceProducerBuildkitGhcr": "NOT_CHECKED",
+    "sourceAdmissionCanaryStable": "NOT_CHECKED",
+    "mcpAuthWake": "NOT_CHECKED",
+    "writerExclusionStopResumePersistence": "NOT_CHECKED"
+  },
+  "logs": {
+    "install": {
+      "commandLog": "/tmp/praetorium-issue31-production-install.log",
+      "sha256": "8fdc2fc4b63604faf6d3162a930bdec8ee16f7f9c30a4dca44e47e8309211984",
+      "exitCode": 0
+    },
+    "check": {
+      "commandLog": "/tmp/praetorium-issue31-production-check.log",
+      "sha256": "8568cb45992ae78a8761937929cf40a29ce3f2276a6bb9b139eac89448df3576",
+      "exitCode": 0
+    },
+    "cloudflarePreflight": {
+      "commandLog": "/tmp/praetorium-issue31-cloudflare-preflight-account.log",
+      "sha256": "464aa8be4787d50472e53dde5210ffa0d0e72c1412eb4bfb17a73d41552f2a57",
+      "exitCode": 0
+    },
+    "k3sPreflight": {
+      "commandLog": "/tmp/praetorium-issue31-k3s-preflight-fresh.log",
+      "sha256": "16145e3f103b98415772579bbb4ad2fcb4f93ff4201e5cc928188caad52fac26",
+      "exitCode": 0
+    },
+    "platformCheck": {
+      "commandLog": "/tmp/praetorium-issue31-platform-check.log",
+      "sha256": "8423cd86ddeb963499ac75179225c553792eae8dd895f5e2e80a0cb9bf6f10e3",
+      "exitCode": 1
+    }
+  },
+  "blockers": [
+    {
+      "id": "B01",
+      "cause": "No approved immutable production service image set for source SHA 375f8ea is supplied by the existing inventories or CI. CI uses push:false; the regular deployment consumes existing registry digests. Production service-image publication remains separately restricted.",
+      "requiredAction": "Supply an approved main-SHA digest/provenance set via the established publication process, or explicitly authorize that process. Do not reuse older service images or create a replacement deployment mechanism."
+    },
+    {
+      "id": "B02",
+      "cause": "No authenticated administrator browser session was available to this agent. The owner identified the disposable repository, which is confirmed to match the configured Canary.",
+      "requiredAction": "Make an administrator OAuth browser session available for real browser acceptance after deployment prerequisites pass."
+    }
+  ],
+  "issue31State": "OPEN",
+  "supersedingInstruction": "Owner subsequently requested integrating service image build, GHCR publication, digest verification and inventory updates into the existing regular deploy path; B01 is no longer a final external blocker."
+}

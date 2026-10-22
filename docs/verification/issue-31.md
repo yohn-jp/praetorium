@@ -1,5 +1,63 @@
 # Issue #31 acceptance status
 
+## Regular deployment publication follow-up
+
+The latest owner instruction replaces the proposed manual GHCR publication with a minimal extension of the existing `deploy-platform` path. Its apply sequence now prepares all four service images from clean, CI-verified current main through the existing BuildKit/GHCR providers, verifies immutable digest/platform/source identity, preflights a complete staged inventory, and preserves exact prior inventory bytes before atomic admission. Publication or staged-preflight failures stop before inventory admission and before D1/Coordination/K3s/Worker mutations. Actions remains verification-only. The existing Management Coordination Ansible role is selected explicitly; no second deploy CLI, producer workflow or new runtime architecture is introduced. Implementation verification: `corepack pnpm@11.18.0 install --frozen-lockfile` and `corepack pnpm@11.18.0 check` passed in the isolated implementation worktree; `node --test tests/deployment/*.test.mjs` passed 52/52. The new failure tests cover existing-tag refusal, third-image push denial, build timeout, malformed metadata, registry outage/denial, digest/platform/source mismatch, final preflight failure, concurrent inventory edits, main/CI admission, credential separation and the deployment lock. Independent review found and corrected the raw buildctl provenance syntax and Coordination task selection; actual Ansible task listing selects pull/Quadlet/readiness while package-discovery selects only discovery. The earlier live read-only Coordination check passed with 55 OK, 0 changed and 0 failed; the added manifest-access check is being verified separately. No image publication or rollout is claimed by these code-level checks.
+
+## Production attempt — 2026-10-22
+
+**Pre-publication snapshot; Issue #31 remains OPEN. No production mutation was performed at this observation.** Target main is `375f8ea5bf7e90efa2c9c19b0dd47655faf6facf` (PR #33 merged). Its [main CI run 39765012106](https://github.com/yohn-jp/praetorium/actions/runs/39765012106) completed **7/7 PASS**. The earlier PR-head evidence below remains historical disposable evidence. [Sanitized live preflight evidence](evidence/issue-31-production-preflight-20261022.json) records current Worker versions/binding names, D1 history, running image IDs, and command-log hashes. Private inventories, credential files, OAuth tokens and downloaded Worker code are excluded.
+
+The owner authorized production deployment after preflight, using existing SSH configuration, inventories, secrets and kubeconfig. The owner identified `yohn-jp/praetorium-hosted-validation-20261018` as the disposable acceptance repository; GitHub readback confirms numeric repository ID `1423923158`, matching existing Canary instance `ins_01M56ESTANTNHV8BA5J1PCNNQJ`. No test wrote to that repository, instance, authentication state or volume.
+
+| Gate | Actual result |
+| --- | --- |
+| Source / CI | Clean checkout of current `origin/main` `375f8ea`; PR #33 merged; seven main CI jobs passed. CI images use `push: false`; simulated Runtime evidence is not production evidence. |
+| Frozen install | `corepack pnpm@11.18.0 install --frozen-lockfile`: PASS, Node `24.21.0`, pnpm `11.18.0`. |
+| Workspace check | `corepack pnpm@11.18.0 check`: PASS after using temporary Corepack shims in PATH. Initial attempt failed because nested `pnpm` resolved workstation pnpm `12.10.1`; no repository/dependency changes were needed. |
+| Existing SSH / hosts | Config aliases `manage.praetorium.vm`, `runtime.praetorium.vm`, `build.praetorium.vm` worked. Management K3s Server and Runtime K3s Agent are active; both nodes Ready, expected cluster labels, `v1.35.9+k3s1`. Builder `praetorium-buildkit` is active. |
+| Inventory | `inventory.json` contains older service digests. Existing `inventory-fresh-20261020.json` matches the current three K3s service images. Both omit Gateway admin/source fields that are present in live Worker settings; applying either unchanged would omit required configuration. Neither inventory was modified. |
+| K3s preflight | Existing `scripts/deploy-k3s.mjs ... --check` with the fresh inventory: PASS, no Kubernetes changes. Reused existing kubeconfig through an SSH-config-based localhost tunnel to Management. Existing pinned kubectl/Flux binaries were added to PATH. This check does not establish candidate image provenance, secret equality or E2E. |
+| Cloudflare preflight | Existing `scripts/deploy-cloudflare.mjs ... --preflight`: PASS with the fresh inventory and `CLOUDFLARE_ACCOUNT_ID` from that inventory. Worker secret names and one active P-256 KV public key are present; D1 history is a compatible subset. Account selection is necessary because the existing Wrangler login has multiple accounts and the KV call does not pass a config. |
+| D1 history / 0007 | Remote read-only query returned `0001_repository_platform.sql`, `0002_stable_release_rollouts.sql`, `0003_staged_configurations.sql`, `0004_runtime_git_credentials.sql`, `0005_runtime_health_observations.sql`, `0006_application_origins.sql`. `0004_source_release_builds.sql` and `0007_source_release_recovery.sql` are pending. Query reports zero rows written. No migration was applied. |
+| Full regular preflight | `scripts/deploy-platform.mjs ... --check` passed K3s and compatible Cloudflare checks, then exited 1 at exact D1 readback for the two pending migrations. This is a pending migration gate, not an unknown-history failure; the authorized regular `--apply` path would apply/read back migrations before workloads once all deployment inputs are ready. |
+| Live Worker versions | Gateway `b4f46238-dbd7-4cc8-88b5-360acc58cd6a` (2026-10-21T16:24:02Z deployment); Control Plane `50500bc7-a2e7-4025-91be-e5bc7f12ce0a` (2026-10-22T10:43:13Z deployment). These deployments pre-existed this attempt. Version metadata alone does not prove source SHA. Live D1/DO/KV/service/rate-limit bindings and Control Plane `COORDINATION_SERVICE` were read back. |
+| Rollback | Active Gateway bundle contains credential epoch, revoked-through and future-fence storage keys. That observation does not certify complete compatibility with this candidate or a rollback rehearsal. Preserve existing DO state, bindings and additive `0007`; pre-epoch Gateway rollback remains prohibited. Full rollback compatibility is NOT_CHECKED. |
+| Live availability | Gateway and Control Plane `/healthz`: strict HTTPS 200. Management Coordination `/healthz` and `/readyz`: 200. K3s service containers are Ready; the existing tenant remains Running/Ready. Unauthenticated admin navigation reaches the Gateway login flow; this is not administrator OAuth acceptance. |
+| Production apply / E2E | **NOT_CHECKED**: no target-SHA platform rollout, administrator OAuth/Release selection, Source Producer → BuildKit → GHCR digest proof, Source Admission → real Canary → Stable, MCP authentication/Wake, writer exclusion, quiesce, stop/resume or persistence exercise. |
+
+Current running service digests (observations, **not target-SHA deployment evidence**):
+
+| Service | Digest |
+| --- | --- |
+| Provisioner | `sha256:bee35f2f63e6b4b98d02cc41c9a793203d311e43e377ae72247fd40608cb7848` |
+| Build Worker | `sha256:c8c1b08b5e1dc75213c2b8c89d4cd77135a5bc559429ccb2a6d7ea0df56a589c` |
+| Instance Access | `sha256:9e8b5acc836cb99cad78ef28762545de6fbbff134698e72af4f4d38eb32f180d` |
+| Coordination (Management rootless Podman) | `sha256:bf43bed86b8eca82f6bd6dfe2cd6b3ad4382975b6783de2681950edfa1916ced` |
+| Prometheus | `sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e` |
+| Existing Canary tenant | `sha256:446a6a8a6703ebe54cc2ef924f71a885eabccf35b0397be6177cebb2f776ce99` |
+
+**Inputs missing at this snapshot (B01 superseded by the subsequent owner instruction below):**
+
+- **B01 — approved target-SHA production image inputs are unavailable.** Neither existing inventory supplies a main `375f8ea` image set. Authenticated GHCR tag readback of Provisioner, Build Worker, Instance Access and Coordination found no `375f8ea` source tag; this does not exclude untagged manifests. The seven passing CI jobs did not publish images. The regular `deploy-platform` path consumes approved immutable registry images; it does not build/publish service images. Production service-image publication remains separately restricted by the owner instructions; this attempt did not introduce a publisher or restore the retired deployment Actions path. Supply the approved target-SHA digest/provenance set through the existing publication process, or explicitly authorize that process. Then reconcile the private inventory with live admin/source configuration and preserve the VPC binding before rerunning the regular preflight/apply sequence. Do not deploy old digests as evidence of the new implementation.
+- **B02 — authenticated administrator browser acceptance is unavailable.** The disposable repository is now explicitly identified, but no authenticated administrator browser session was available to this agent. Provide an administrator OAuth session for real browser acceptance after deployment gates pass. A sessionless HTTP redirect, GitHub CLI authorization or API-only Source request is not equivalent evidence.
+
+The independent read-only Luna review checked deployment ordering, private input metadata, existing topology applicability and the credential-epoch rollback restriction. It did not run production acceptance and is not the previously pending full integrated-code review. The snapshot stopped before production mutation; acceptance conditions are unchanged and #31 must not be closed. The owner subsequently requested integration of build/GHCR publication/digest verification/inventory updates into the existing regular deploy path, explicitly keeping Actions verification-only. B01 is therefore implementation work under that latest instruction, not a final external blocker. Production work continues after that change is reviewed and verified.
+
+Exact regular command forms used (private paths are locators, not committed inputs):
+
+```sh
+corepack pnpm@11.18.0 install --frozen-lockfile
+corepack pnpm@11.18.0 check
+node scripts/deploy-k3s.mjs --inventory /data/praetorium/production/inventory-fresh-20261020.json --secret-files /data/praetorium/production/secret-files.json --kubeconfig /data/praetorium/production/secrets/k3s-fresh/kubeconfig.yaml --confirm praetorium-runtime --check
+node scripts/deploy-cloudflare.mjs --inventory /data/praetorium/production/inventory-fresh-20261020.json --secret-files /data/praetorium/production/secret-files.json --preflight
+node scripts/deploy-platform.mjs --inventory /data/praetorium/production/inventory-fresh-20261020.json --secret-files /data/praetorium/production/secret-files.json --kubeconfig /data/praetorium/production/secrets/k3s-fresh/kubeconfig.yaml --confirm praetorium-runtime --check
+```
+
+For these commands PATH included the temporary pnpm Corepack shims and the existing pinned kubectl/Flux tools; Cloudflare calls selected `CLOUDFLARE_ACCOUNT_ID` from the existing inventory without printing credential contents. The kubeconfig's `127.0.0.1:16444` endpoint used `ssh -N -L 127.0.0.1:16444:127.0.0.1:6443 manage.praetorium.vm` with existing SSH config. The tunnel is local transport, not a deployment mechanism.
+
+## Historical integrated candidate evidence
+
 Snapshot: PR #33 integration head `e4d551ea40d311abdc304f0a82d9881a07bc73e8`, 2026-10-22. The [disposable Source→Stable CI run](https://github.com/yohn-jp/praetorium/actions/runs/39762892946) passed all seven verification jobs on that exact SHA. Real pinned Source Producer/BuildKit, isolated loopback OCI/signatures, canonical Source Admission, Canary Composition and Stable CAS were exercised. Canary health and writer-absence evidence was simulated; hosted OAuth/Registry/D1/K3s and production E2E are NOT_CHECKED. This is not production acceptance closure.
 
 ## Integrated disposable CI evidence (2026-10-22)

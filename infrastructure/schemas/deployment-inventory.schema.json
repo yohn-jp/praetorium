@@ -863,6 +863,9 @@
         },
         "prometheus": {
           "$ref": "#/$defs/digestOrMissing"
+        },
+        "coordination": {
+          "$ref": "#/$defs/digestOrMissing"
         }
       }
     },

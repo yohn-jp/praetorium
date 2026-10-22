@@ -679,7 +679,7 @@ async function createRuntimeFixture(root, kit) {
     t11,
     sourceQueue,
     sourceConfig,
-    sourceIdentity: { registryHost, repositoryPath: producerRepository.slice("ghcr.io/".length) },
+    sourceIdentity: { host: registryHost, repositoryPath: producerRepository.slice("ghcr.io/".length) },
     workerEnvironment: workerEnv,
     simulatedNow: () => simulatedNow,
     advanceClock: (milliseconds) => {
@@ -774,11 +774,11 @@ async function runSourceToStable(root, kit) {
     .get(admittedJob.admitted_release_id);
   assert.equal(admittedCandidate?.release_id, admittedJob.admitted_release_id);
 
-  const localRepository = `${fixture.sourceIdentity.registryHost}/yohn-jp/praetorium/scriptorium-producer`;
+  const localRepository = `${fixture.sourceIdentity.host}/yohn-jp/praetorium/scriptorium-producer`;
   const compositionEnvironment = {
     ...fixture.workerEnvironment,
     PRAETORIUM_BUILDKIT_FRONTEND_REPOSITORY: localRepository,
-    PRAETORIUM_BUILDKIT_OUTPUT_REPOSITORY: `${fixture.sourceIdentity.registryHost}/yohn-jp/praetorium/candidates`,
+    PRAETORIUM_BUILDKIT_OUTPUT_REPOSITORY: `${fixture.sourceIdentity.host}/yohn-jp/praetorium/candidates`,
   };
   const compositionQueue = new BuildQueueHttpClient({
     baseUrl: fixture.sourceConfig.controlPlaneUrl,

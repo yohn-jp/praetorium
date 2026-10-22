@@ -356,6 +356,11 @@ async function admitCanaryBuild(
   db.database.prepare(
     "UPDATE deployment_revisions SET status = 'admitted', artifact_digest = ? WHERE revision_id = ?"
   ).run(artifactDigest, seed.revisionId);
+  // Mirror the canonical D1BuildStore success report: it binds the admitted
+  // artifact to the instance's desired revision before the wake hint runs.
+  db.database.prepare(
+    "UPDATE logical_instances SET desired_artifact_digest = ? WHERE instance_id = ?"
+  ).run(artifactDigest, retryBinding.instanceId);
   db.database.prepare(
     `UPDATE release_candidate_workflows
         SET state = 'canary_building', revision = 5, failure_code = NULL,
@@ -470,13 +475,25 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     ).run(NOW + 25_000, seed.release.id);
 
     const releases = store(db);
-    await expect(
-      releases.wakeSuccessfulCanaryBuild({
-        buildId: seed.buildId,
-        binding: retryBinding,
-        now: NOW + 30_000,
-      }),
-    ).resolves.toBe(seed.release.id);
+    const wake = () => releases.wakeSuccessfulCanaryBuild({
+      buildId: seed.buildId,
+      binding: retryBinding,
+      now: NOW + 30_000,
+    });
+    // Missing and mismatched desired digests must remain ineligible.
+    db.database.prepare(
+      "UPDATE logical_instances SET desired_artifact_digest = NULL WHERE instance_id = ?"
+    ).run(retryBinding.instanceId);
+    await expect(wake()).resolves.toBeNull();
+    db.database.prepare(
+      "UPDATE logical_instances SET desired_artifact_digest = ? WHERE instance_id = ?"
+    ).run(`sha256:${"d".repeat(64)}`, retryBinding.instanceId);
+    await expect(wake()).resolves.toBeNull();
+    // Only the exact artifact admitted by the canonical Build report can wake.
+    db.database.prepare(
+      "UPDATE logical_instances SET desired_artifact_digest = ? WHERE instance_id = ?"
+    ).run(`sha256:${"c".repeat(64)}`, retryBinding.instanceId);
+    await expect(wake()).resolves.toBe(seed.release.id);
     expect(db.database.prepare(
       "SELECT state, revision, next_attempt_at, lease_epoch, lease_owner FROM release_candidate_workflows WHERE release_id = ?"
     ).get(seed.release.id)).toEqual({

@@ -1,0 +1,64 @@
+{
+  "schema": "praetorium.issue31.production-attempt/v1",
+  "observedAt": "2026-10-22T13:03:42.658959+00:00",
+  "attemptedRevision": "9962f9de7c214414a62bbb10d00d8887df30d1c3",
+  "ciRunId": 39780909699,
+  "status": "D1_COORDINATION_K3S_READY_WORKER_SECRET_PUT_BLOCKED",
+  "d1": "ALL_EIGHT_RECEIPTS_READ_BACK_IN_REGULAR_DEPLOY",
+  "workNotifications": "PASS_REGULAR_READINESS_GATE",
+  "workerError": "Wrangler secret put: latest Worker version is not currently deployed; first edit rejected before Worker code upload",
+  "hostedE2E": "NOT_CHECKED",
+  "images": {
+    "provisioner": {
+      "reference": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:0e33ea8780570437d10d713385d82bbd4049ec602bcc9ff6c61e2c4bafa374aa",
+      "manifestDigest": "sha256:0e33ea8780570437d10d713385d82bbd4049ec602bcc9ff6c61e2c4bafa374aa",
+      "platformManifestDigest": "sha256:c797b5a900c68edcd49386bfdab912f94a659abc443da7b4ce13f0cf104da4a4",
+      "configDigest": "sha256:8fd260d36964b61cce221d90d66fe2151d5430490ead45b3f6511c4ea48d23e3"
+    },
+    "instance-access": {
+      "reference": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:8bafc0fd7cd0e6ade95b3c772ff40f9ccb043bdb0317b0f8918d0dea247cf256",
+      "manifestDigest": "sha256:8bafc0fd7cd0e6ade95b3c772ff40f9ccb043bdb0317b0f8918d0dea247cf256",
+      "platformManifestDigest": "sha256:852e66fbaaa449438bbf77b7086c12d2c72b36711afc8ed4436b798756c75b1f",
+      "configDigest": "sha256:7018aad15c55aaf39333cdb7aecb895d83b1e0fdd796f41e5138ec6066dc104d"
+    },
+    "build-worker": {
+      "reference": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:d930c30201cb75f3216e24447ae1639cfc7bc85a3791016d5e1eb15eb6d24066",
+      "manifestDigest": "sha256:d930c30201cb75f3216e24447ae1639cfc7bc85a3791016d5e1eb15eb6d24066",
+      "platformManifestDigest": "sha256:02284080f61fe1855866fa09ff0c94a455bbf3489284a17aa6d7763110bcb84c",
+      "configDigest": "sha256:f5e8c78c733bac169994addc886c195c19d5995d00342ad385869e8950b4de23"
+    },
+    "coordination": {
+      "reference": "ghcr.io/yohn-jp/praetorium/coordination@sha256:316d53fddef0aa12296b6481238468a3c333e9802d2ee08cedf41a7915326916",
+      "manifestDigest": "sha256:316d53fddef0aa12296b6481238468a3c333e9802d2ee08cedf41a7915326916",
+      "platformManifestDigest": "sha256:02217d920ae5a2ee77e76357bd27df355ed24ff1f57fae84cc22b7609530c038",
+      "configDigest": "sha256:15e65f008e4ed611e991cf1a87bdf135ffe2b51c6d5537235f7adf7cdc39c832"
+    }
+  },
+  "buildkitProvenance": "REQUESTED_NOT_INDEPENDENTLY_VERIFIED",
+  "k3s": {
+    "provisioner": {
+      "pod": "praetorium-provisioner-5974d8c6b5-pdc6r",
+      "runAsUser": 10001,
+      "specImage": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:0e33ea8780570437d10d713385d82bbd4049ec602bcc9ff6c61e2c4bafa374aa",
+      "imageID": "ghcr.io/yohn-jp/praetorium/provisioner@sha256:0e33ea8780570437d10d713385d82bbd4049ec602bcc9ff6c61e2c4bafa374aa",
+      "ready": true,
+      "restartCount": 0
+    },
+    "instance-access": {
+      "pod": "praetorium-instance-access-c4756fdc5-tf98j",
+      "runAsUser": 10001,
+      "specImage": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:8bafc0fd7cd0e6ade95b3c772ff40f9ccb043bdb0317b0f8918d0dea247cf256",
+      "imageID": "ghcr.io/yohn-jp/praetorium/instance-access@sha256:8bafc0fd7cd0e6ade95b3c772ff40f9ccb043bdb0317b0f8918d0dea247cf256",
+      "ready": true,
+      "restartCount": 0
+    },
+    "build-worker": {
+      "pod": "praetorium-build-worker-64c59cf8d-lv6rd",
+      "runAsUser": 10001,
+      "specImage": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:d930c30201cb75f3216e24447ae1639cfc7bc85a3791016d5e1eb15eb6d24066",
+      "imageID": "ghcr.io/yohn-jp/praetorium/build-worker@sha256:d930c30201cb75f3216e24447ae1639cfc7bc85a3791016d5e1eb15eb6d24066",
+      "ready": true,
+      "restartCount": 0
+    }
+  }
+}

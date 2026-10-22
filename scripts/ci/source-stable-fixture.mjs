@@ -825,10 +825,43 @@ async function runSourceToStable(root, kit) {
       "SELECT operation_id, generation, runtime_epoch, deployment_revision_id FROM operations WHERE instance_id=? AND kind='start' ORDER BY created_at DESC LIMIT 1",
     )
     .get(INSTANCE_ID);
-  assert.ok(
-    startOperation?.operation_id,
-    "T11 created the normal disposable canary start operation",
-  );
+  if (!startOperation?.operation_id) {
+    // Read only non-secret state from this disposable database. The build report
+    // callback deliberately swallows post-commit errors, so without a durable
+    // snapshot a failed wake and an ineligible promotion look identical.
+    const sql = (statement, ...parameters) =>
+      fixture.db.database.prepare(statement).get(...parameters) ?? null;
+    const diagnostic = {
+      at: fixture.simulatedNow(),
+      workflow: sql(
+        "SELECT state, revision, failure_code, next_attempt_at, lease_owner, lease_expires_at, canary_build_key, canary_artifact_digest, canary_operation_id FROM release_candidate_workflows WHERE release_id=?",
+        releaseId,
+      ),
+      build: sql(
+        "SELECT build_id, build_key, status, active_attempt_id, lease_epoch, report_sequence, last_report_digest, artifact_digest FROM builds WHERE build_id=?",
+        builds.build_id,
+      ),
+      attempt: sql(
+        "SELECT status, lease_epoch, report_sequence, last_report_digest FROM build_attempts WHERE attempt_id=(SELECT active_attempt_id FROM builds WHERE build_id=?)",
+        builds.build_id,
+      ),
+      revision: sql(
+        "SELECT revision_id, status, build_id, build_key, artifact_digest, actor_id, generation, selection_json FROM deployment_revisions WHERE build_id=?",
+        builds.build_id,
+      ),
+      instance: sql(
+        "SELECT instance_id, generation, runtime_epoch, desired_state, observed_state, observed_generation, observed_runtime_epoch, desired_revision_id, desired_artifact_digest, reservation_state, reservation_id FROM logical_instances WHERE instance_id=?",
+        INSTANCE_ID,
+      ),
+      operationCount: sql("SELECT COUNT(*) AS count FROM operations WHERE instance_id=?", INSTANCE_ID),
+      receipt: sql(
+        "SELECT response_kind, response_id FROM idempotency_records WHERE scope=? AND idempotency_key=?",
+        `repository:${REPOSITORY_ID}`, `stable-canary-plan:${releaseId}`,
+      ),
+    };
+    throw new Error("T11 canary start operation missing after admitted composition: " +
+      sanitizeFixtureDiagnostic(JSON.stringify(diagnostic), FIXTURE_EVIDENCE_MAX_BYTES));
+  }
   fixture.db.database
     .prepare(
       `UPDATE logical_instances

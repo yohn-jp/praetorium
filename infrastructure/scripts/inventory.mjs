@@ -817,8 +817,8 @@ export function validateInventory(value) {
     }
   }
 
-  exactKeys(value.images, imageKeys, "images", errors);
-  for (const name of imageKeys) {
+  exactKeys(value.images, [...imageKeys, "coordination"], "images", errors, ["coordination"]);
+  for (const name of [...imageKeys, ...(value.images?.coordination == null ? [] : ["coordination"])]) {
     const image = value.images?.[name];
     if (image === null || image === "") {
       blockers.push(`immutable ${name} image digest is not available`);

@@ -48,7 +48,7 @@ Create an owner-only inventory at `/root/praetorium/deployment.json`, starting f
 - `environment=deployment`, `ownership.provider=k3s`, `ownership.disposable=false`, exact cluster name and kubeconfig context, and numeric/opaque cluster identity;
 - the real Cloudflare account, D1 and KV IDs and the exact Gateway/Control Plane HTTPS origins;
 - the approved BuildKit endpoint, image/registry repositories, allowed network CIDRs, resource/cache bounds and producer/builder public signing keys;
-- actual **registry@sha256** identities for Provisioner, Build Worker, Instance Access and Prometheus;
+- actual **registry@sha256** identities for Provisioner, Build Worker, Instance Access and Prometheus; optional `images.coordination` records the Management service image without adding a K3s Deployment;
 - immutable release approval/canary policy and the cluster-side Secret **names and keys**; no secret bytes.
 
 The example is intentionally **not deployable**: null fields and missing cryptographic identities require resolution. Never replace unknown inputs with a fabricated manifest, a static owner token or a mutable `:latest` image.
@@ -65,6 +65,8 @@ For noninteractive Cloudflare CLI access, use an already authorized Wrangler log
 
 Run from a clean checkout of the exact released commit **on the operator workstation** that has Node 24, `kubectl`, the pinned Flux CLI and reachability to the K3s management API. The actual VM role bootstrap above is one-time. Both Cloudflare and cluster preflights run **before any remote mutation**:
 
+For `--apply`, the checkout must be **current main** with all seven expected jobs in the existing service verification workflow passing on that SHA. The workstation additionally needs authenticated read-only `gh` access for that verification, the existing mTLS BuildKit client, `ansible-playbook`, and the existing Management Ansible host inventory. GitHub Actions remains verification-only (`push: false`); the regular deploy command owns publication. No release, dispatch workflow, parallel publisher or new BuildKit daemon is needed.
+
 ```sh
 node scripts/deploy-platform.mjs \
   --inventory /root/praetorium/deployment.json \
@@ -76,6 +78,8 @@ node scripts/deploy-platform.mjs \
   --inventory /root/praetorium/deployment.json \
   --secret-files /root/praetorium/secret-files.json \
   --kubeconfig /root/praetorium/kubeconfig \
+  --management-inventory /root/praetorium/ansible/hosts.json \
+  --buildctl /usr/local/bin/buildctl \
   --confirm praetorium-runtime --apply
 ```
 
@@ -83,14 +87,16 @@ Optionally append `--cloudflare-token-file /root/praetorium/cloudflare-token` to
 
 The controller performs these actions in order, stopping on first failure:
 
-1. Validate complete inventory, all private credential file permissions, real K3s identity/context, Kustomize production bundle, canonical Owner labels, available tools and Cloudflare Secret names/public JWK.
-2. Install/build the pinned workspace packages.
-3. Upload **only** the explicitly operator-supplied cross-plane runtime secrets; apply the five remote Control Plane D1 migrations.
-4. Deploy Control Plane and Gateway from generated Wrangler JSON based on the canonical `infrastructure/workers/*.template.json`; verify HTTPS health and published Gateway JWKS against the KV key. Temporary configs contain no secret values and are deleted.
-5. Ensure the fixed Praetorium system namespaces and install Flux controllers from the pinned Flux CLI. Apply the pinned Traefik and cert-manager HelmRelease/HelmRepository declarations and wait for both to become Ready. Verify their actual API CRDs.
-6. Create missing operator-owned namespace Secrets from the named private files, refusing mismatched existing Secrets.
-7. Render the **deployment** Kustomize overlay from the same validated inventory. Run Kubernetes server dry-run, apply Admission guards first, wait for enforcement, then apply static policies and application resources using `applyGuardedBundle`.
-8. Wait for Provisioner, Instance Access, Build Worker and Prometheus Deployments to become Ready and for cert-manager's instance Certificate to report Ready.
+1. Install/build the frozen workspace; validate the existing private inputs, K3s identity/context and ownership, Kustomize bundle, Cloudflare Secret names/public JWK and compatible remote D1 history. These checks do not publish images or migrate D1. `--check` remains read-only and separately requires exact migration readback; pending known migrations therefore make `--check` fail, while `--apply` can apply them after compatible-history preflight.
+2. Verify clean current main and its seven successful verification jobs. Archive only tracked source into a private build context. Reuse the existing four service Dockerfile/package mappings and pinned Node/BuildKit images with `createBuildctlRunner` against the existing mTLS Builder. Push Provisioner, Instance Access, Build Worker and Coordination to their canonical GHCR repositories under fresh `source-<SHA>-<UUID>` tags, requesting BuildKit provenance. Existing tags/digests are retained. Registry push credentials stay in a private temporary Docker config outside the source context; raw BuildKit output and credentials are not logged.
+3. Require all four BuildKit metadata digests to match GHCR tag readback. Reuse `GhcrRegistryClient.verifyImage` to verify the immutable manifest, selected linux/amd64 manifest and config; verify the source SHA/repository labels. This checks layer descriptors and budgets, not downloaded layer bodies or independent OCI attestation verification; the receipt labels provenance as requested. Preserve a private publication receipt containing exact source, CI run, base inputs and verified digests. Partial publication can leave new unreferenced GHCR images; it never changes the old Inventory or live services.
+4. Stage all four digests in one candidate inventory. Rerun the K3s and compatible Cloudflare/D1 preflight plus the existing Management Coordination role in Ansible check mode, including a bounded exact-digest manifest read using the actual rootless service identity. Recheck current main/CI. Only after all checks pass, retain the exact previous inventory bytes in a mode-0600 `*.before-publication-*` backup and atomically replace the inventory once. A changed inventory during publication fails closed. A publication or candidate-preflight failure leaves the original inventory unchanged. Temporary credential/source files are removed. A `*.deploy-lock` prevents concurrent local publication and rollout; after an interrupted process, inspect its PID and reconcile any partial receipts before an operator removes a stale lock.
+5. Apply canonical additive D1 migrations, including the historically duplicated `0004` names and `0007_source_release_recovery.sql`, and verify exact readback before service rollout. Never down-migrate `0007` for code rollback.
+6. Use the existing Management `host-bootstrap.yml` Coordination role, limited/tagged to `management`/`coordination`, with the verified `images.coordination`; do not run host/K3s bootstrap or unrelated roles. Existing private host inputs and rootless Podman registry authorization must already be available. The role preserves its ownership guards and manages the digest-pinned Quadlet and readiness. The earlier manifest-access check proves registry authorization for that identity; layer pulling and candidate service readiness are verified during rollout.
+7. Run the existing K3s deploy: preserve namespace/Flux ownership, verify controller readiness, refuse implicit Secret rotation, server-dry-run the rendered bundle, enforce Admission guards and apply static policies/resources. Wait for Provisioner, Instance Access, Build Worker, Prometheus and certificates to become Ready. Verify work notification receivers when enabled.
+8. Upload **only** explicitly supplied cross-plane runtime secrets and deploy Control Plane/Gateway from canonical inventory-generated Wrangler configs after verified D1/K3s state. Verify HTTPS health and Gateway JWKS against the existing KV key. Temporary configs contain no secret values and are deleted. The selected Cloudflare account comes from this inventory, including KV reads without a Wrangler config argument.
+
+The inventory describes the intended release once admission succeeds. A later migration/rollout failure leaves explicit partial state; it does not automatically restore the old inventory, downgrade D1 or roll back Gateway authorization state. Keep the receipt and prior inventory for diagnosis and compatible recovery. In particular, an inventory backup is not permission to restore a pre-credential-epoch Gateway or discard Durable Object state.
 
 A complete execution reports explicit success at the *Cloudflare + static K3s deployment* layer. It is **not** the same as verified Hosted login/editor/MCP/renewal/replacement or the application's dynamic per-repository runtime rollout. Run `node scripts/verify-integration.mjs --environment ...` with the real owner inventory to establish those gates separately. Never mark the full product complete because a readiness probe passed.
 

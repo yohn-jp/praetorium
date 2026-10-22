@@ -52,4 +52,5 @@
         - coordination-package-discovery
   roles:
     - common
-    - coordination
+    - role: coordination
+      tags: [coordination]

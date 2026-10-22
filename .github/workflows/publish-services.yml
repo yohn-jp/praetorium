@@ -32,10 +32,12 @@ jobs:
           node --test tests/deployment/reproducibility.test.mjs
           node --test tests/deployment/headlamp-admin.test.mjs
           node --test tests/deployment/deployment-order.test.mjs tests/deployment/migrations.test.mjs tests/deployment/worker-projection.test.mjs
+          node --test tests/deployment/service-image-publication.test.mjs
           node --test tests/deployment/actions-verification.test.mjs
           node --test tests/deployment/fixture-process.test.mjs
           node --check scripts/deployment-migrations.mjs scripts/deployment-plan.mjs
           node --check scripts/deploy-cloudflare.mjs scripts/deploy-platform.mjs scripts/deploy-k3s.mjs
+          node --check scripts/service-image-publication.mjs
           node --check scripts/ci/source-stable-fixture.mjs
           node scripts/ci/verify-workerd-runtime-identity.mjs
 

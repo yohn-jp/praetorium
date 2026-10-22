@@ -643,7 +643,7 @@ async function createRuntimeFixture(root, kit) {
         progressAdmitted: async () => {
           await (
             await import("../../apps/control-plane/dist/scheduled.js")
-          ).runStableReleaseWork(t11.scheduled);
+          ).runStableReleaseWork(t11.scheduled, { promotionPasses: 2 });
         },
       });
     },

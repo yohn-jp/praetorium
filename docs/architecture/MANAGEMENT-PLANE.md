@@ -1,16 +1,19 @@
 # Praetorium — Management / Coordination / Execution 分離アーキテクチャ
 
-> **Status:** 2026-10-20に合意した3VM **目標アーキテクチャ**を維持し、2026-10-24に観測済みの実装を反映。**新規3VM Bootstrapは実施済み**だが、G1–G9のHosted全体受入とWork配送全経路の本番合格は未証明。本書は実装・デプロイの成功宣言ではない。
-> **Evidence cut:** [main@1930131e6858e5d9035abe1dcd82d4ae654c622d](https://github.com/yohn-jp/praetorium/tree/1930131e6858e5d9035abe1dcd82d4ae654c622d) と [新規3VM実機証拠](../verification/THREE-VM-INFRA.md) / [機械可読記録](../verification/THREE-VM-FRESH-DEPLOYMENT.json)（最終観測2026-10-20）。最新の明示的指示と[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)が上位正本。
-> **Read alongside:** [ADMINISTRATION.md](ADMINISTRATION.md)（2026-10-24固定・独立Admin Worker/全VM運用可視化）、[SYSTEM.md](SYSTEM.md)・[EXECUTION.md](EXECUTION.md)（2026-10-18時点の旧コードのスナップショット）、[INTERNAL-TRAFFIC.md](INTERNAL-TRAFFIC.md)（2026-10-20時点の通信台帳）、[MANAGEMENT-PLANE-MIGRATION.md](MANAGEMENT-PLANE-MIGRATION.md)（移行履歴/残ゲート）。
+> **Status:** ACCEPTED ARCHITECTURE. Management / Coordination / Executionの責務を固定する。実装・デプロイ・受入の成否は本書ではなく検証記録に記す。
+> **Authority:** 最新のオーナー指示と[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)。
+> **Related:** [ADMINISTRATION.md](ADMINISTRATION.md)（独立Admin Workerと運用観測）、[MANAGEMENT-PLANE-MIGRATION.md](MANAGEMENT-PLANE-MIGRATION.md)（移行・受入契約）、[実機検証記録](../verification/README.md)。
 
-## 1. 何を解決するか
+## 1. 目的と不変条件
 
-2026-10-20より前はRuntime VMがk3s **Server**とScriptorium実行を兼ね、Build Worker/ProvisionerがそのクラスタのPod、別Builder VMにrootless BuildKitという配置だった。ホスト・k3s自体の障害に対して独立した管理主体がない構成を解消するために、本3VM設計が採用された。
+PraetoriumはManagement VMにk3s Server・Coordination・インフラ観測を集約し、Runtime VMにk3s Agentとテナント、Builder VMにrootless BuildKitを配置する。Managementは実行の管理主体だが、Scriptorium WriterやBuildKit実行そのものを集約しない。
 
-**実施済みの範囲:** 2026-10-20、オーナー承認の**旧環境破棄を伴う新規Bootstrap**でManagement VMにk3s Server、Runtime VMにk3s Agent、Builder VMに独立BuildKitを配置。Management上のrootless CoordinationとTunnelはk3s停止中も稼働し、Management再起動後の復帰を実測した。これは旧Embedded etcdの同一クラスタ/CA/Writerを安全に「移設した」証拠ではない。旧テナントデータは保持されておらず、[THREE-VM-INFRA.md](../verification/THREE-VM-INFRA.md)が観測と承認範囲を記録する。
-
-**未受入の範囲:** 実Cloudflare→VPC→CoordinationのWork配送、障害時recovery、全Hosted G1–G9、運用AdminのVM可視化は、本書から完了したと推定しない。目的はVMとLogical Planeの責務を固定し、[Admin Plane](ADMINISTRATION.md)を追加したうえで、観測事実/実装/目標を分けることである。
+- 各VMの構築と構成はハイパーバイザー固有APIに依存させず、Ansibleやhost systemdで管理する。
+- Coordinatorはk3s外のrootless Podman/Quadletで起動し、k3s Server停止時にもOSレベルで診断可能とする。
+- 論理Desired State/Release/Build/Operationの正本はControl Plane/D1で維持する。Kubernetesは実Pod/Node状態の正本である。
+- 既存のGitHub認可、Writer排他、Quiesce、世代/Epoch/CAS、immutable OCI Admissionを弱めない。
+- 独立Admin WorkerはGatewayのOAuth/Session authorityを再利用し、Managementのread-only Observerからホスト状態を受け取る。詳細は[ADMINISTRATION.md](ADMINISTRATION.md)。
+- 移行履歴、検証したホスト構成、クラスタ置換時のデータ保持状況、デプロイDigestは[検証記録](../verification/README.md)にのみ記録する。
 
 ## 2. 確定済みの構成決定
 
@@ -65,7 +68,7 @@ flowchart TB
     App -->|"scoped Git credential broker (Gateway)"| Cloud
 ~~~
 
-概念図であり、`Agent #2`は将来の増設例で**設置済みではない**。`Coordination`は**独立したOSサービス**で、k3s APIが止まってもsystemd/Podmanは起動できる。ただしk3s APIに対する操作が可能とは限らない。Build execution agentの移設時期・実装方式は未確定。
+概念図であり、`Agent #2`は増設可能な実行ノードを示す。`Coordination`は**独立したOSサービス**で、k3s APIが止まってもsystemd/Podmanは起動できる。ただしk3s APIに対する操作が可能とは限らない。Build execution agentの移設時期・実装方式は未確定。
 
 ### 3.1 プレーンと配置を混同しない
 
@@ -156,7 +159,7 @@ infrastructure/ansible/
 
 - Browser→Gateway: Cloudflare Workerは公開のOAuth/Portal/制御要求を受ける。通常のScriptorium編集本文は引き続き公開アプリOrigin→k3sへ直接到達させる。
 - Gateway→Control Plane: 既存Service Bindingを維持し、公開Control Planeの管理API露出を必要最小化する。
-- Control Plane→Coordination: **Workers VPC Service Binding + Cloudflare Tunnel**は2026-10-20に専用Service/Binding・ホストCoordination稼働まで記録済み（[証拠](../verification/THREE-VM-CONTROL.md)）。ただし本番Worker経由の実Work配送・復旧全経路は未受入。Tunnelはk3s Pod非依存のホストサービスとする。Workers VPCの現行制約・課金・SLAは実装/本番適用時に再照合する。
+- Control Plane→Coordination: **Workers VPC Service Binding + Cloudflare Tunnel**は専用Service/Binding・ホストCoordinationを使う（実証結果は[検証記録](../verification/THREE-VM-CONTROL.md)）。Tunnelはk3s Pod非依存のホストサービスとする。Workers VPCの現行制約・課金・SLAは実装/本番適用時に再照合する。
 - **Admin Worker→Management Observer:** 既存Work通知Bindingとは分離した**read-onlyの専用VPC service**。Admin内のUI/APIだけがOperator認証を受けたobservability DTOを読み取る。K8s admin権限/Builder実行CredentialをAdmin Workerへ渡さない。詳細は[ADMINISTRATION.md](ADMINISTRATION.md)に固定。
 - Coordination→k3s/Builder: Private subnet内の認証済みHTTP/RPC/gRPC等を選択。Loopback/Unix socketを利用できる同一ホストなら優先。k3s API/TLS・BuildKit mTLSを維持。
 - Coordination→Control Plane: **VPC Bindingの逆方向としてVMがService Bindingを直接呼べるわけではない**。結果返却は短いRPCへの応答または独立した認証付き出口/双方向チャネルが必要。長時間処理は明示的な非同期契約とする。
@@ -247,9 +250,9 @@ CIや静的マニフェストのPASSは上記最後の3層の代わりになら�
 **プロダクションの設計目的は「外部に公開する面を減らし、内部実行の責務を明確にし、Cloudflare空振りInvocationを削減する」こと。新しいプラットフォームや状態正本を際限なく増やすことではない。**
 
 
-## 14. Admin Worker分離とVM可視化（2026-10-24追加決定）
+## 14. Admin Worker分離とVM可視化
 
-- `praetorium.yohn.jp` は一般Gateway、`admin.praetorium.yohn.jp` は別Cloudflare Workerに固定する。旧Gateway Wranglerの二重custom domainは移行対象であり、**現状ではまだ分離されていない**。
+- `praetorium.yohn.jp` は一般Gateway、`admin.praetorium.yohn.jp` は別Cloudflare Workerに固定する。Gateway Wranglerの二重custom domainは移行時に撤去する。
 - Admin Identity/Source BrokerはGateway内の非公開Service Binding RPCであり、DO/Session/GitHubトークン正本を重複させない。Admin自体はUI・認証済みOperator入口・read-only観測の合成に限定する。
 - Management VMのread-only ObserverはCoordination通知relayとは分離する。Management/Runtime/Builderを同じInventoryと鮮度モデルで観測するが、実行権限は移管しない。
 - Work通知のCloudflare Queues化はここでは決定しない。既存のD1 authority、VPC/HTTPS通知、fallback/lease/fenceを変更せず、Admin可視化を先行する。

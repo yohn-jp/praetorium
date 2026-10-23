@@ -53,7 +53,8 @@ export class AdminIdentityBroker extends WorkerEntrypoint<GatewayEnv> {
       const result = await redeemAdminHandoffCode(code, await this.context());
       return result.kind === "ok"
         ? { kind: "ok", sessionId: result.rawSessionId,
-            csrfToken: result.csrfToken, ttlSeconds: result.ttlSeconds, returnTo: result.returnTo }
+            csrfToken: result.csrfToken, ttlSeconds: result.ttlSeconds,
+            ...(result.returnTo ? { returnTo: result.returnTo } : {}) }
         : { kind: result.kind };
     } catch {
       return { kind: "unavailable" };

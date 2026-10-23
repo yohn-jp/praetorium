@@ -99,7 +99,7 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
     const operatorReleaseRoute =
       c.req.path === "/v1/operator/releases" || c.req.path === "/v1/operator/releases/" ||
       (c.req.method === "GET" && /^\/v1\/operator\/releases\/[^/]+\/?$/u.test(c.req.path)) ||
-      (c.req.method === "POST" && /^\/v1\/operator\/releases\/[^/]+\/retry\/?$/u.test(c.req.path));
+      (c.req.method === "POST" && /^\/v1\/operator\/releases\/[^/]+\/(?:retry|skip-canary-wait)\/?$/u.test(c.req.path));
     if (operatorReleaseRoute) {
       if (!deps.operatorAdmission)
         return c.json({ error: { code: "RELEASE_SERVICE_UNAVAILABLE" } }, 503);

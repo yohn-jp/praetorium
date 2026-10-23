@@ -79,6 +79,12 @@ export class SourceReleaseBuildWorker {
     )=>Promise<SourceProducerResult>=(job,config,signal,onStage)=>buildSourceRelease(job,config,signal,{onStage}),
   ){}
 
+  private diagnosticDelivery(job:SourceBuildClaim,outcome:string,stage:string):void {
+    // Record only the bounded job/epoch/stage classification; never raw exceptions.
+    process.stderr.write(JSON.stringify({component:"source-build",event:"diagnostic_delivery",
+      jobId:job.job_id,leaseEpoch:job.lease_epoch,outcome,stage})+"\n");
+  }
+
   async runOnce(shutdown?:AbortSignal):Promise<boolean>{
     if(shutdown?.aborted)return false;
     const payload=await this.client.claimSource(this.config.workerId,this.config.leaseSeconds);
@@ -92,6 +98,8 @@ export class SourceReleaseBuildWorker {
     let inflight=false;
     let executing=true;
     let reportAccepted=false;
+    let diagnosticDeliveryFailed=false;
+    let lastStage="unknown";
     let heartbeat:Promise<void>=Promise.resolve();
     const sendHeartbeat=async()=>{
       try{
@@ -115,6 +123,7 @@ export class SourceReleaseBuildWorker {
     };
     const onStage=async(input:SourceBuildDiagnostic):Promise<void>=>{
       const diagnostic=SourceBuildDiagnosticSchema.parse(sanitizeSourceDiagnostic(input));
+      lastStage=diagnostic.stage;
       try{
         const accepted=await this.client.reportDiagnostic(job,diagnostic);
         if(!accepted){
@@ -124,8 +133,9 @@ export class SourceReleaseBuildWorker {
         }
       }catch(error){
         if(error instanceof SourceBuildLeaseLostError)throw error;
-        // Telemetry outages do not fail the build. Heartbeats and final reports
-        // still fence execution and artifact acceptance.
+        diagnosticDeliveryFailed=true;
+        this.diagnosticDelivery(job,"stage_report_unavailable",diagnostic.stage);
+        // Diagnostic transport must never become independent build authority.
       }
     };
     const timer=setInterval(tick,this.config.heartbeatIntervalMs);timer.unref();
@@ -140,8 +150,14 @@ export class SourceReleaseBuildWorker {
         if(!lost&&!controller.signal.aborted){
           const code=error instanceof SourceBuildChangedError||error instanceof SourceBuildVerificationError||error instanceof SourceBuildFailureError
             ?error.code:"SOURCE_BUILD_FAILED";
-          await this.client.failSource(job,code,failureDiagnostic(error))
-            .catch(()=>({accepted:false,diagnosticRecorded:false}));
+          try {
+            const final=await this.client.failSource(job,code,failureDiagnostic(error));
+            if(!final.accepted)this.diagnosticDelivery(job,"terminal_report_rejected",lastStage);
+            else if(!final.diagnosticRecorded)this.diagnosticDelivery(job,
+              diagnosticDeliveryFailed?"stage_and_final_evidence_missing":"terminal_evidence_missing",lastStage);
+          }catch{
+            this.diagnosticDelivery(job,"terminal_report_unavailable",lastStage);
+          }
         }
         return true;
       }

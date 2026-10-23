@@ -208,6 +208,31 @@ describe("Source Release Worker lease lifecycle", () => {
     expect(client.producedSource).toHaveBeenCalledOnce();
   });
 
+  it("records safe delivery failures even when terminal Source failure is accepted without evidence", async () => {
+    const diagnostics:string[]=[];
+    const stderr=vi.spyOn(process.stderr,"write").mockImplementation((chunk)=>{
+      diagnostics.push(String(chunk)); return true;
+    });
+    try {
+      const diagnostic=sanitizeSourceDiagnostic({stage:"buildkit",reason:"build_failed",summary:"",truncated:false});
+      const client:SourceBuildQueueClient={
+        claimSource:vi.fn(async()=>JOB), heartbeatSource:vi.fn(async()=>true),
+        producedSource:vi.fn(async()=>true),
+        reportDiagnostic:vi.fn(async()=>{throw new BuildQueueHttpError(503);}),
+        failSource:vi.fn(async()=>({accepted:true,diagnosticRecorded:false})),
+      };
+      const worker=new SourceReleaseBuildWorker(CONFIG,client,async(_job,_config,_signal,onStage)=>{
+        await onStage(diagnostic);
+        throw new SourceBuildFailureError("SOURCE_BUILD_FAILED",diagnostic);
+      });
+      expect(await worker.runOnce()).toBe(true);
+      expect(client.failSource).toHaveBeenCalledOnce();
+      expect(diagnostics.some(line=>line.includes("stage_report_unavailable"))).toBe(true);
+      expect(diagnostics.some(line=>line.includes("stage_and_final_evidence_missing"))).toBe(true);
+      expect(diagnostics.join("")).toContain(JOB.job_id);
+      expect(diagnostics.join("")).not.toContain(JOB.lease_token);
+    } finally {stderr.mockRestore();}
+  });
   it("stops and never reports a result when diagnostic reporting rejects the lease fence", async () => {
     const stage:SourceBuildDiagnostic=sanitizeSourceDiagnostic({
       stage:"runtime_base",reason:"stage_started",summary:"",truncated:false,

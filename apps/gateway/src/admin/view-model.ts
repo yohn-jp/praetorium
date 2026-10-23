@@ -25,10 +25,22 @@ export interface ConsoleReleaseStatus {
     failure: { code: string; retryable: boolean } | null } | null;
 }
 export interface ConsoleAuditEvent {
-  readonly actorId: string | null;
-  readonly action: string;
-  readonly outcome: string;
+  readonly actorId: string | null; readonly action: string; readonly outcome: string;
   readonly occurredAt: number;
+  readonly eventId?: string;
+  readonly jobId?: string | null; readonly releaseId?: string | null;
+  readonly operationId?: string | null; readonly failureCode?: string | null;
+  readonly revision?: number | null; readonly leaseEpoch?: number | null;
+}
+export interface OperatorOperationDetail {
+  readonly operation: {
+    id:string; instanceId:string; generation:number; runtimeEpoch:number;
+    kind:string; status:string; phase:string; attempt:number;
+    createdAt:number; updatedAt:number;
+  };
+  readonly readinessEvidence: unknown | null;
+  readonly rollbackCompatibilityEvidence: unknown | null;
+  readonly rollbackCompatible: boolean | null;
 }
 /** Presentation only. Authorization, data loading and mutations stay in console.ts. */
 export interface ConsoleViewModel {
@@ -46,6 +58,8 @@ export interface ConsoleViewModel {
   readonly detail: ConsoleDependency<SourceBuildDetail> | null;
   readonly selectedBuildId: string | null;
   readonly selectedReleaseId?: string | null;
+  readonly selectedOperationId?: string | null;
+  readonly operationDetail?: ConsoleDependency<OperatorOperationDetail> | null;
   readonly releaseDetail?: ConsoleDependency<ConsoleReleaseStatus> | null;
   readonly buildStateFilter: string | null;
   readonly buildSort?: "recent" | "source" | "state" | "attempt";
@@ -56,4 +70,8 @@ export function consoleHref(section: ConsoleSection, mode: ConsoleMode): string 
 }
 export function buildHref(id: string, mode: ConsoleMode): string {
   return "/builds/" + encodeURIComponent(id) + "?ui=" + mode;
+}
+
+export function operationHref(id:string, mode:ConsoleMode):string {
+  return "/operations/" + encodeURIComponent(id) + "?ui=" + mode;
 }

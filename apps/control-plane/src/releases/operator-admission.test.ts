@@ -447,3 +447,65 @@ it("bounds audit cursors/search before invoking the canonical paged reader", asy
   expect(await result.json()).toEqual({ events: [], nextCursor: null });
   expect(listAuditPage).toHaveBeenCalledWith({ cursor: "123:event:5", query: "failed" });
 });
+
+describe("operator Canary wait skip", () => {
+  function fixture() {
+    const {routeDeps, status} = retryFixture();
+    const skipCanaryWait = {
+      replay: vi.fn<NonNullable<OperatorReleaseAdmissionDependencies["skipCanaryWait"]>["replay"]>(async () => null),
+      execute: vi.fn<NonNullable<OperatorReleaseAdmissionDependencies["skipCanaryWait"]>["execute"]>(async () => ({kind: "accepted", duplicate: false, status})),
+    };
+    return {routeDeps: {...routeDeps, skipCanaryWait}, skipCanaryWait, status};
+  }
+  const body = {...retryBody, reason: "Owner requested immediate release"};
+
+  it("uses operator authority and bounded reason, revalidates immutable admission and schedules normal cleanup", async () => {
+    const {routeDeps, skipCanaryWait} = fixture();
+    const afterAdmitted = vi.fn();
+    const app = createOperatorReleaseAdmissionRoutes({...routeDeps, afterAdmitted});
+    const response = await app.fetch(new Request("https://control.example/release-test/skip-canary-wait", retryRequest(body)),
+      {}, {waitUntil() {}, passThroughOnException() {}, props: {}});
+    expect(response.status).toBe(202);
+    expect(skipCanaryWait.execute).toHaveBeenCalledWith(expect.objectContaining({
+      ...body, actorId: "operator-test", releaseId: "release-test",
+    }));
+    expect(routeDeps.producerMetadata.verify).toHaveBeenCalledOnce();
+    expect(afterAdmitted).toHaveBeenCalledOnce();
+    const unauthorized = createOperatorReleaseAdmissionRoutes({...routeDeps, authorize: async () => null});
+    expect((await unauthorized.request("/release-test/skip-canary-wait", retryRequest(body))).status).toBe(403);
+    expect(skipCanaryWait.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each(["", " ", "x".repeat(201), "line\nbreak"])("rejects invalid reason %j before mutation", async reason => {
+    const {routeDeps, skipCanaryWait} = fixture();
+    expect((await createOperatorReleaseAdmissionRoutes(routeDeps).request(
+      "/release-test/skip-canary-wait", retryRequest({...body, reason}),
+    )).status).toBe(400);
+    expect(skipCanaryWait.execute).not.toHaveBeenCalled();
+  });
+
+  it("does not waive rejected evidence and returns durable replay without another mutation", async () => {
+    const {routeDeps, skipCanaryWait, status} = fixture();
+    const app = createOperatorReleaseAdmissionRoutes({...routeDeps,
+      producerMetadata: {verify: async () => ({kind: "rejected", reason: "invalid"})},
+    });
+    expect((await app.request("/release-test/skip-canary-wait", retryRequest(body))).status).toBe(422);
+    expect(skipCanaryWait.execute).not.toHaveBeenCalled();
+    skipCanaryWait.replay.mockResolvedValueOnce({kind: "accepted", duplicate: true, status});
+    expect((await app.request("/release-test/skip-canary-wait", retryRequest(body))).status).toBe(200);
+    expect(skipCanaryWait.execute).not.toHaveBeenCalled();
+  });
+
+  it("mounts under independent operator authority, rejects Gateway credential alone", async () => {
+    const {routeDeps, skipCanaryWait} = fixture();
+    const operatorToken = "o".repeat(40), gatewaySecret = "g".repeat(40);
+    const operatorAdmission = createOperatorReleaseAdmissionRoutes({...routeDeps,
+      authorize: async headers => headers.get("Authorization") === `Bearer ${operatorToken}` ? {actorId: "operator-test"} : null});
+    const app = createControlPlaneApp({registry: {} as ControlPlaneDependencies["registry"],
+      instances: {} as ControlPlaneDependencies["instances"], gatewaySecret, operatorToken, operatorAdmission});
+    const path = "/v1/operator/releases/release-test/skip-canary-wait";
+    expect((await app.request(path, {...retryRequest(body), headers: {"X-Control-Plane-Gateway-Auth": gatewaySecret}})).status).toBe(403);
+    expect(skipCanaryWait.execute).not.toHaveBeenCalled();
+    expect((await app.request(path, {...retryRequest(body), headers: {Authorization: `Bearer ${operatorToken}`}})).status).toBe(202);
+  });
+});

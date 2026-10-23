@@ -55,7 +55,7 @@ describe("desktop operator composition", () => {
     expect(html).toContain('<option value="failed" selected>failed</option>');
     expect(html).toContain("v0.3.3");
     expect(html).toContain("a".repeat(40));
-    expect(html).toContain("Retry available on detail");
+    expect(html).toContain("Inspect failure / retry");
   });
 
   it("shows attempt-scoped evidence and emits only the canonical revision-fenced retry fields", () => {
@@ -90,7 +90,7 @@ describe("desktop operator composition", () => {
       detail: dependency("GET /v1/operator/source-builds/:id", detail),
     }));
 
-    expect(html).toContain("Attempt and stage timeline");
+    expect(html).toContain("Attempts and last recorded stage");
     expect(html).toContain("buildkit");
     expect(html).toContain("View sanitized diagnostic excerpt");
     expect(html).toContain("Sanitized phase: &lt;script&gt;untrusted&lt;/script&gt;");

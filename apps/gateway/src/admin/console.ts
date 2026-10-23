@@ -5,9 +5,10 @@ import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
 import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type ConsoleOperationEvidence } from "./view-model.js";
 import { page } from "../ui/views/document.js";
+import { requireSession } from "../http/session.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
-  logoutAdmin,
+  logoutAdmin, isAdmin,
 } from "./session.js";
 import {
   dispatchPublishedRelease, listRegisteredSources, revalidateSourceRetryIdentity,
@@ -237,6 +238,10 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
 
   const session = await authenticateAdmin(request, context);
   if (!session) {
+    // A signed-in non-operator must be rejected rather than redirected into a login loop.
+    const ordinarySession=await requireSession(request,context);
+    if(ordinarySession.ok && !isAdmin(context,ordinarySession.session.actor.userId))
+      return response(403,"Operator authorization required");
     // No operator data, application state or Control Plane calls before authentication.
     if (request.method === "GET" &&
         (url.pathname === "/" || url.pathname === "/builds" || url.pathname === "/releases" ||

@@ -44,8 +44,9 @@ function fixture() {
         ? {items:[],stableChannel:{currentReleaseId:null,revision:0}}
         : {items:[]});
     }},
-    INFRASTRUCTURE: {fetch: async request => {
+    INFRASTRUCTURE: {fetch: async (input, init) => {
       calls.observer++;
+      const request = new Request(input, init);
       assert.equal(request.headers.get("Authorization"), "Bearer " + "d".repeat(48));
       const url = new URL(request.url);
       const id = url.pathname.split("/")[3];

@@ -119,7 +119,7 @@ export function composeReleaseServices(input: {
     authorizeOperator: (headers) => authorizeConfiguredReleaseOperator(headers, {
       operatorToken: input.operatorToken,
       gatewayServiceSecret: input.gatewayServiceSecret,
-      adminServiceSecret: input.adminServiceSecret,
+      ...(input.adminServiceSecret ? {adminServiceSecret: input.adminServiceSecret} : {}),
       operatorActorId: policy.operatorActorId,
     }),
     registry: input.builds.registry,

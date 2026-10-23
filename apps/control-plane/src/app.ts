@@ -54,6 +54,7 @@ export type ControlPlaneDependencies = {
   registry: RepositoryRegistryService;
   instances: InstanceService;
   gatewaySecret: string;
+  adminSecret?: string;
   provisioner?: ProvisionerRoutesDependencies & { secret: string };
   controlJwks?: () => Promise<unknown>;
   management?: ManagementDependencies;
@@ -78,6 +79,7 @@ export type ControlPlaneDependencies = {
 export function createControlPlaneApp(deps: ControlPlaneDependencies) {
   const serviceSecrets = [
     deps.gatewaySecret,
+    deps.adminSecret,
     deps.provisioner?.secret,
     deps.builds?.serviceToken,
     deps.operatorToken,
@@ -124,8 +126,11 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
     const candidate = provisioner
       ? (c.req.header("Authorization") ?? "").replace(/^Bearer /, "")
       : (c.req.header("X-Control-Plane-Gateway-Auth") ?? "");
+    const adminCandidate = c.req.header("X-Control-Plane-Admin-Auth") ?? "";
+    const adminAllowed = c.req.path.startsWith("/v1/operator/") && !!deps.adminSecret &&
+      !!adminCandidate && await equalSecret(adminCandidate, deps.adminSecret);
     const secret = provisioner ? (deps.provisioner?.secret ?? "") : deps.gatewaySecret;
-    if (!secret || !(await equalSecret(candidate, secret)))
+    if (!adminAllowed && (!secret || !(await equalSecret(candidate, secret))))
       return c.json({ error: { code: "UNAUTHORIZED" } }, 401);
     if (Number(c.req.header("Content-Length") ?? 0) > 65536)
       return c.json({ error: { code: "REQUEST_TOO_LARGE" } }, 413);

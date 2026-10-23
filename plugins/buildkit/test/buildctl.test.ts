@@ -72,7 +72,10 @@ describe("remote buildctl execution", () => {
     await expect(runner(["-e", script], options)).rejects.toMatchObject({ code: "BUILD_FAILED" });
   });
 
-  it("keeps the failed vertex's bounded compiler excerpt after filtering secrets and commands", async () => {
+  it.each([
+    { stream: "stdout", newline: true }, { stream: "stderr", newline: true },
+    { stream: "stdout", newline: false }, { stream: "stderr", newline: false },
+  ])("keeps failed-vertex compiler evidence from $stream (final newline: $newline)", async ({stream,newline}) => {
     const options = await makeOptions();
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });
     const vertex = "sha256:failed";
@@ -93,7 +96,7 @@ describe("remote buildctl execution", () => {
       }),
       JSON.stringify({ vertexes: [{ digest: vertex, error: 'process "/bin/sh -c pnpm run build" failed: exit code 1' }] }),
     ].join("\n");
-    const script = `process.stdout.write(${JSON.stringify(events + "\n")}); process.exitCode = 1;`;
+    const script = `process.${stream}.write(${JSON.stringify(events + (newline ? "\n" : ""))}); process.exitCode = 1;`;
     let diagnostic: unknown;
     try {
       await runner(["-e", script], options);

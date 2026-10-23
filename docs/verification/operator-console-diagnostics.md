@@ -24,6 +24,8 @@ Desktop has independent Overview/Releases/Builds/Audit screens, a persistent nav
 
 ## Verification results
 
+BuildKit transport regression: upstream [`buildctl` sends its progress printer to stderr](https://github.com/moby/buildkit/blob/master/cmd/buildctl/build.go), and the raw JSON display encodes the typed SolveStatus events ([display implementation](https://github.com/moby/buildkit/blob/master/util/progress/progressui/display.go)). The previous adapter parsed only stdout and flushed an unterminated last event only on success. A child-process regression reproducing stdout/stderr and final-newline/no-final-newline combinations failed 3/4 cases before the fix (`diagnostic: undefined`) and passed all four afterward. The complete Buildctl test file passed 10/10. Streams now have separate bounded UTF-8 framing; non-JSON stderr and raw command text are never returned as diagnostics.
+
 Results will be finalized on the integrated PR HEAD. Local fixtures establish implementation behavior only; they do not certify hosted producer, registry or browser acceptance.
 
 ## Deployment and remaining production acceptance

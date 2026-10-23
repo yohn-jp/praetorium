@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type { BuildProgress } from "@praetorium/application/builds";
 import { sanitizeSourceDiagnostic } from "@praetorium/contracts";
 import {
@@ -360,7 +361,11 @@ export function createBuildctlRunner(
       });
 
       let totalBytes = 0;
-      let lineBuffer = "";
+      // buildctl writes rawjson progress to stderr; retain separate framing so
+      // stdout bytes cannot be joined into a diagnostic event from stderr.
+      const buffers = { stdout: "", stderr: "" };
+      const decoders = { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") };
+      type OutputStream = keyof typeof buffers;
       let terminalReason: "timeout" | "canceled" | "output-limit" | null = null;
       const diagnostics = new BuildKitDiagnosticCapture();
       let killTimer: NodeJS.Timeout | undefined;
@@ -383,37 +388,37 @@ export function createBuildctlRunner(
       const timeoutTimer = setTimeout(() => terminate("timeout"), options.buildTimeoutMs);
       timeoutTimer.unref();
 
-      const consume = (chunk: Buffer, isStdout: boolean): void => {
+      const consumeLine = (line: string): void => {
+        if (Buffer.byteLength(line, "utf8") > 64 * 1024) {
+          terminate("output-limit");
+          return;
+        }
+        const parsed = parseProgressLine(line);
+        if (parsed) {
+          diagnostics.consume(parsed.value);
+          if (parsed.progress) options.onProgress(parsed.progress);
+        }
+      };
+      const consume = (chunk: Buffer, stream: OutputStream): void => {
         totalBytes += chunk.byteLength;
         if (totalBytes > options.maxProgressBytes) {
           terminate("output-limit");
           return;
         }
-        if (!isStdout) return;
-        lineBuffer += chunk.toString("utf8");
-        if (lineBuffer.length > 64 * 1024 && !lineBuffer.includes("\n")) {
-          terminate("output-limit");
-          return;
-        }
-        let newline = lineBuffer.indexOf("\n");
+        buffers[stream] += decoders[stream].write(chunk);
+        let newline = buffers[stream].indexOf("\n");
         while (newline >= 0) {
-          const line = lineBuffer.slice(0, newline);
-          lineBuffer = lineBuffer.slice(newline + 1);
-          if (line.length > 64 * 1024) {
-            terminate("output-limit");
-            return;
-          }
-          const parsed = parseProgressLine(line);
-          if (parsed) {
-            diagnostics.consume(parsed.value);
-            if (parsed.progress) options.onProgress(parsed.progress);
-          }
-          newline = lineBuffer.indexOf("\n");
+          const line = buffers[stream].slice(0, newline);
+          buffers[stream] = buffers[stream].slice(newline + 1);
+          consumeLine(line);
+          if (terminalReason !== null) return;
+          newline = buffers[stream].indexOf("\n");
         }
+        if (Buffer.byteLength(buffers[stream], "utf8") > 64 * 1024) terminate("output-limit");
       };
 
-      child.stdout.on("data", (chunk: Buffer) => consume(chunk, true));
-      child.stderr.on("data", (chunk: Buffer) => consume(chunk, false));
+      child.stdout.on("data", (chunk: Buffer) => consume(chunk, "stdout"));
+      child.stderr.on("data", (chunk: Buffer) => consume(chunk, "stderr"));
       child.once("error", () => {
         clearTimeout(timeoutTimer);
         if (killTimer) clearTimeout(killTimer);
@@ -425,6 +430,10 @@ export function createBuildctlRunner(
         if (killTimer) clearTimeout(killTimer);
         options.signal.removeEventListener("abort", onAbort);
         if (settled) return;
+        for (const stream of ["stdout", "stderr"] as const) {
+          buffers[stream] += decoders[stream].end();
+          if (buffers[stream]) consumeLine(buffers[stream]);
+        }
         if (terminalReason === "timeout") {
           failOnce(new BuildKitAttemptError("BUILD_TIMEOUT", true, diagnostics.read()));
         } else if (terminalReason === "canceled" || options.signal.aborted) {
@@ -435,17 +444,6 @@ export function createBuildctlRunner(
             "BUILD_FAILED", terminalReason === "output-limit", diagnostics.read(), exitCode,
           ));
         } else {
-          if (lineBuffer.length > 0) {
-            if (lineBuffer.length > 64 * 1024) {
-              failOnce(new BuildKitAttemptError("BUILD_FAILED", true));
-              return;
-            }
-            const parsed = parseProgressLine(lineBuffer);
-            if (parsed) {
-              diagnostics.consume(parsed.value);
-              if (parsed.progress) options.onProgress(parsed.progress);
-            }
-          }
           resolve();
         }
       });

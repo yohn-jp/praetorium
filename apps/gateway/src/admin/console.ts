@@ -3,7 +3,7 @@ import { escapeHtml, resolvePresentation } from "../ui/presentation.js";
 import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDetail } from "@praetorium/contracts";
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
-import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus } from "./view-model.js";
+import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
 import { page } from "../ui/views/document.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
@@ -377,8 +377,9 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   if (request.method !== "GET") return response(405, "Method not allowed");
   const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
+  const operationMatch = /^\/operations\/(op_[A-Za-z0-9_.:-]{1,124})$/u.exec(url.pathname);
   const section: ConsoleSection | null = url.pathname === "/" ? "overview"
-    : url.pathname === "/releases" || releaseMatch ? "releases"
+    : url.pathname === "/releases" || releaseMatch || operationMatch ? "releases"
     : url.pathname === "/builds" || detailMatch ? "builds"
     : url.pathname === "/audit" ? "audit" : null;
   if (!section) return response(404, "Not found");
@@ -394,6 +395,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   if (auditQuery.length > 100 || [...auditQuery].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return response(400, "Invalid audit search");
   const selectedBuildId = detailMatch?.[1] ?? null;
   const selectedReleaseId = releaseMatch?.[1] ?? null;
+  const selectedOperationId = operationMatch?.[1] ?? null;
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
   const sourceParams = new URLSearchParams({sort});
   if (state) sourceParams.set("state", state);
@@ -440,12 +442,23 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
               typeof objectValue(build.failure)?.code === "string")));
       }) : Promise.resolve(null),
   ]);
+  const operationDetail = selectedOperationId ? await controlPlaneSection(context, session.actor.userId,
+    "GET /v1/operations/" + selectedOperationId + "/evidence",
+    "/v1/operations/" + encodeURIComponent(selectedOperationId) + "/evidence",
+    (value): value is OperatorOperationDetail => {
+      const body=objectValue(value),op=objectValue(body?.operation);
+      return !!op && op.id===selectedOperationId && typeof op.instanceId==="string" &&
+        ["kind","status","phase"].every(key=>typeof op[key]==="string") &&
+        ["generation","runtimeEpoch","attempt","createdAt","updatedAt"].every(key=>Number.isSafeInteger(op[key]) && Number(op[key])>=0) &&
+        (body?.rollbackCompatible===null || typeof body?.rollbackCompatible==="boolean") &&
+        "readinessEvidence" in (body ?? {}) && "rollbackCompatibilityEvidence" in (body ?? {});
+    }) : null;
   const model: ConsoleViewModel = {
     section, mode, csrf: session.csrfToken, notice: url.searchParams.get("notice")?.slice(0, 200) ?? null,
     catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, releaseDetail, buildStateFilter: state,
-    buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery,
+    buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery, selectedOperationId, operationDetail,
   };
-  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedReleaseId ? "Release status" : section),
+  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedOperationId ? "Operation evidence" : selectedReleaseId ? "Release status" : section),
     mode === "mobile" ? renderMobileConsole(model) : renderDesktopConsole(model),
     { layout: "handoff", presentation: { mode } });
 }

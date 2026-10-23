@@ -71,7 +71,7 @@ async function fixture(userId = "213253858") {
       );
     }
     if (path === "/v1/operator/releases/audit") return Response.json({ events: [] });
-    if (path === "/v1/operator/releases/rel_test/retry")
+    if (path === "/v1/operator/releases/rel_test/retry" || path === "/v1/operator/releases/rel_test/skip-canary-wait")
       return Response.json({ status: "queued" }, { status: 202 });
     return Response.json({ error: { code: "NOT_FOUND" } }, { status: 404 });
   });
@@ -680,6 +680,23 @@ describe("operator-only admin origin", () => {
     expect(html.match(/Retry Canary build/g)).toHaveLength(1);
     expect(html).toContain("/releases/rel_eligible/retry?ui=desktop");
     expect(html).not.toContain("/releases/rel_ineligible/retry?ui=desktop");
+  });
+
+  it("binds wait skip to the authenticated admin and rejects cross-origin, missing reason and caller authority", async () => {
+    const f = await fixture();
+    const {complete} = await login(f);
+    const cookies = cookiesFrom(await complete());
+    const body = {expectedRevision: "5", idempotencyKey: "wait-skip-1", reason: "Owner requested release"};
+    const path = "/releases/rel_test/skip-canary-wait";
+    expect((await handleAdminHost(post(path, cookies, body, "https://attacker.test"), f.context)).status).toBe(403);
+    expect((await handleAdminHost(post(path, cookies, {...body, reason: ""}), f.context)).status).toBe(400);
+    expect((await handleAdminHost(post(path, cookies, {...body, actorId: "other"}), f.context)).status).toBe(400);
+    expect(f.gatewayCalls).toHaveLength(0);
+    expect((await handleAdminHost(post(path, cookies, body), f.context)).status).toBe(303);
+    expect(f.gatewayCalls).toHaveLength(1);
+    expect(f.gatewayCalls[0]?.path).toBe("/v1/operator/releases/rel_test/skip-canary-wait");
+    expect(f.gatewayCalls[0]?.body).toEqual({...body, expectedRevision: 5});
+    expect(f.gatewayCalls[0]?.headers.get("X-Praetorium-Admin-Actor")).toBe("213253858");
   });
 
   it("removes browser raw-manifest authority while keeping canonical CSRF-gated Canary retry", async () => {

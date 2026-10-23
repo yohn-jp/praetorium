@@ -3,7 +3,7 @@ import { metadataFailureReason } from "../http-failure.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { readBoundedJson, RequestTooLargeError } from "@praetorium/contracts";
-import type { ReleaseRetryCommand, ReleaseRetryResult, ReleaseRetryStatus } from "./retry-contract.js";
+import type { CanaryWaitSkipCommand, ReleaseRetryCommand, ReleaseRetryResult, ReleaseRetryStatus } from "./retry-contract.js";
 import {
   createRegistryBackedReleaseVerifier,
   ingestReleaseCandidate,
@@ -43,12 +43,19 @@ export interface OperatorReleaseAdmissionDependencies
     replay(input: Pick<ReleaseRetryCommand, "releaseId" | "idempotencyKey" | "requestHash">): Promise<ReleaseRetryResult | null>;
     execute(input: Omit<ReleaseRetryCommand, "canary">): Promise<ReleaseRetryResult>;
   };
+  readonly skipCanaryWait?: {
+    replay(input: Pick<CanaryWaitSkipCommand, "releaseId" | "idempotencyKey" | "requestHash">): Promise<ReleaseRetryResult | null>;
+    execute(input: CanaryWaitSkipCommand): Promise<ReleaseRetryResult>;
+  };
 }
 
 const ReleaseId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u);
 const RetryRequest = z.strictObject({
   expectedRevision: z.number().int().nonnegative().safe(),
   idempotencyKey: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u),
+});
+const WaitSkipRequest = RetryRequest.extend({
+  reason: z.string().trim().min(1).max(200).refine(value => ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)),
 });
 
 /**
@@ -124,6 +131,48 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
         : c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
     } catch {
       return c.json({ error: { code: "RELEASE_STATUS_UNAVAILABLE" } }, 503);
+    }
+  });
+
+  app.post("/:releaseId/skip-canary-wait", async (c) => {
+    if (!deps.skipCanaryWait) return c.json({ error: { code: "CANARY_WAIT_SKIP_UNAVAILABLE" } }, 503);
+    const id = ReleaseId.safeParse(c.req.param("releaseId"));
+    if (!id.success) return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
+    let request: z.infer<typeof WaitSkipRequest>;
+    try { request = WaitSkipRequest.parse(await readBoundedJson(c.req.raw, 2048)); }
+    catch (error) {
+      return c.json({ error: { code: error instanceof RequestTooLargeError ? "REQUEST_TOO_LARGE" : "INVALID_REQUEST" } },
+        error instanceof RequestTooLargeError ? 413 : 400);
+    }
+    try {
+      const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
+        JSON.stringify({ action: "skip-canary-wait", releaseId: id.data,
+          expectedRevision: request.expectedRevision, reason: request.reason }),
+      )));
+      const command: CanaryWaitSkipCommand = { ...request, releaseId: id.data,
+        actorId: c.get("operatorPrincipal").actorId,
+        requestId: validRequestId(c.req.header("X-Request-Id")) ?? newRequestId(),
+        requestHash: `sha256:${Array.from(hash, byte => byte.toString(16).padStart(2, "0")).join("")}`,
+        now: deps.clock.nowMs() };
+      const replay = await deps.skipCanaryWait.replay(command);
+      if (replay?.kind === "accepted") return c.json({ ...replay.status, duplicate: true });
+      if (replay?.kind === "conflict") return c.json({ error: { code: "CANARY_WAIT_SKIP_CONFLICT", reason: replay.reason } }, 409);
+      if (replay?.kind === "not_found") return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
+      const candidate = await deps.releases.findById(id.data);
+      if (!candidate) return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
+      const verification = await verifier.verify({ schemaVersion: 1, version: candidate.version,
+        imageRepository: candidate.imageRepository, catalog: candidate.catalog,
+        runtimeMetadata: candidate.runtimeMetadata, signatureRef: candidate.signatureRef,
+        provenanceRef: candidate.provenanceRef });
+      if (verification.kind === "retry") return c.json({ error: { code: "RELEASE_EVIDENCE_UNAVAILABLE" } }, 503);
+      if (verification.kind !== "verified") return c.json({ error: { code: "RELEASE_CANDIDATE_DENIED" } }, 422);
+      const result = await deps.skipCanaryWait.execute(command);
+      if (result.kind === "not_found") return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
+      if (result.kind === "conflict") return c.json({ error: { code: "CANARY_WAIT_SKIP_CONFLICT", reason: result.reason } }, 409);
+      try { deps.afterAdmitted?.(candidate, c.executionCtx); } catch { /* Durable workflow recovery remains active. */ }
+      return c.json({ ...result.status, duplicate: result.duplicate }, result.duplicate ? 200 : 202);
+    } catch (error) {
+      return c.json({ error: { code: "CANARY_WAIT_SKIP_UNAVAILABLE", reason: metadataFailureReason(error) } }, 503);
     }
   });
 

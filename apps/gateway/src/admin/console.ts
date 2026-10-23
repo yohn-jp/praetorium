@@ -7,12 +7,13 @@ import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection
 import { page } from "../ui/views/document.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
-  logoutAdmin,
+  logoutAdmin, isAdmin, adminReturnPath,
 } from "./session.js";
 import {
   dispatchPublishedRelease, listRegisteredSources, revalidateSourceRetryIdentity,
   type SourceReleaseView, type SourceBuildStatus,
 } from "./release-sources.js";
+import { requireSession } from "../http/session.js";
 
 const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 
@@ -243,8 +244,16 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   const session = await authenticateAdmin(request, context);
   if (!session) {
     // No operator data, application state or Control Plane calls before authentication.
-    if (url.pathname === "/" && request.method === "GET") {
-      return localRedirect(context.config.origin + "/_admin/entry");
+    if (request.method === "GET") {
+      const target = adminReturnPath(url.pathname + "?ui=" + mode);
+      if (target !== "/" || url.pathname === "/") {
+        // An authenticated non-admin is denied; only an expired/missing session re-enters OAuth.
+        const gatewaySession = await requireSession(request, context);
+        if (gatewaySession.ok && !isAdmin(context, gatewaySession.session.actor.userId))
+          return response(403, "Operator authorization required");
+        return localRedirect(context.config.origin + "/_admin/entry" +
+          (target === "/" ? "" : "?return_to=" + encodeURIComponent(target)));
+      }
     }
     return response(403, "Operator authorization required");
   }

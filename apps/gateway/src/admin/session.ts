@@ -16,7 +16,24 @@ type Handoff = {
   readonly gatewaySessionDigest: string;
   readonly expiresAt: number;
   readonly audience: string;
+  readonly returnTo?: string;
 };
+/** Allow only known read-only Admin pages, never off-origin or mutation destinations. */
+export function adminReturnPath(value: string | null | undefined): string {
+  if (!value || value.length > 480 || !value.startsWith("/") ||
+      value.startsWith("//") || value.includes("\\") || value.includes("#")) return "/";
+  try {
+    const url = new URL(value, "https://admin.invalid");
+    if (url.origin !== "https://admin.invalid" ||
+        !/^\/(?:builds(?:\/sr_[0-9a-f-]{36})?|releases(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})?|operations\/op_[A-Za-z0-9_.:-]{1,124}|audit|infrastructure(?:\/hosts\/[a-z][a-z0-9-]{0,63}|\/dependencies)?)?$/u.test(url.pathname)) return "/";
+    const keys = [...url.searchParams.keys()];
+    if (keys.some(key => key !== "ui") || url.searchParams.getAll("ui").length > 1) return "/";
+    const ui = url.searchParams.get("ui");
+    if (ui !== null && ui !== "desktop" && ui !== "mobile") return "/";
+    return url.pathname + (ui === null ? "" : "?ui=" + ui);
+  } catch { return "/"; }
+}
+
 const HANDOFF_TTL_MS = 60_000;
 const ADMIN_SESSION_TTL_SECONDS = 3600;
 const MAX_FORM_BYTES = 4096;
@@ -88,10 +105,12 @@ export function isAdmin(context: GatewayContext, userId: string): boolean {
 export async function enterAdminFromGateway(request: Request, context: GatewayContext): Promise<Response> {
   if (new URL(request.url).origin !== context.config.origin || request.method !== "GET" ||
       !context.config.adminOrigin) return noStore(404, "Not found");
+  const returnTo = adminReturnPath(new URL(request.url).searchParams.get("return_to"));
+  const entry = "/_admin/entry" + (returnTo === "/" ? "" : "?return_to=" + encodeURIComponent(returnTo));
   const session = await requireSession(request, context);
   if (!session.ok) {
     const url = new URL("/auth/login", context.config.origin);
-    url.searchParams.set("redirect_to", "/_admin/entry");
+    url.searchParams.set("redirect_to", entry);
     return redirect(url.toString());
   }
   if (!isAdmin(context, session.session.actor.userId)) return noStore(403, "Operator access denied");
@@ -103,6 +122,7 @@ export async function enterAdminFromGateway(request: Request, context: GatewayCo
       gatewaySessionDigest: session.session.resolved.digest,
       expiresAt: Date.parse(context.requestNow) + HANDOFF_TTL_MS,
       audience: context.config.adminOrigin,
+      returnTo,
     });
     // A one-use POST transfers the authenticated identity, not a Gateway
     // cookie. The raw code is never sent in a redirect URL or referrer.
@@ -139,7 +159,7 @@ export async function completeAdminHandoff(request: Request, context: GatewayCon
     const result = await redeemAdminHandoffCode(codes[0]!, context);
     if (result.kind === "expired") return noStore(401, "Admin handoff expired");
     if (result.kind === "limit") return noStore(503, "Admin session limit reached");
-    const response = redirect("/");
+    const response = redirect(adminReturnPath(result.returnTo));
     response.headers.append("Set-Cookie",
       buildSessionCookie({ name: SESSION_COOKIE_NAME, ttlSeconds: result.ttlSeconds },
         result.rawSessionId));
@@ -195,7 +215,7 @@ export async function logoutAdmin(
 export { boundedForm };
 
 export type AdminHandoffRedemption =
-  | { readonly kind: "ok"; readonly rawSessionId: string; readonly csrfToken: string; readonly ttlSeconds: number }
+  | { readonly kind: "ok"; readonly rawSessionId: string; readonly csrfToken: string; readonly ttlSeconds: number; readonly returnTo?: string }
   | { readonly kind: "expired" }
   | { readonly kind: "limit" };
 
@@ -228,5 +248,6 @@ export async function redeemAdminHandoffCode(
   });
   if (!created.ok) return { kind: "limit" };
   return { kind: "ok", rawSessionId: created.value.rawSessionId,
-    csrfToken: await sessionCsrfToken(context, created.value.rawSessionId), ttlSeconds };
+    csrfToken: await sessionCsrfToken(context, created.value.rawSessionId), ttlSeconds,
+    returnTo: adminReturnPath(record.returnTo) };
 }

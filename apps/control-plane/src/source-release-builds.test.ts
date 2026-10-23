@@ -8,6 +8,7 @@ import {
   SOURCE_PRODUCER_REQUEST_MAX_BYTES,
   SOURCE_PRODUCER_RESULT_MAX_BYTES,
   SourceProducerResultSchema,
+  SourceBuildDetailSchema,
   sourceProducerResultByteLength,
   sourceProofDigest,
 } from "@praetorium/contracts";
@@ -552,6 +553,49 @@ describe("source Release build queue against migrated SQLite D1", () => {
     expect(await h.queue.byId(created.job.id)).toMatchObject({
       state: "building", result_json: null, lease_epoch: claim.lease_epoch,
     });
+  });
+
+  it("returns strict detail for a pre-diagnostics failure without inventing attempt evidence", async () => {
+    const h = harness();
+    // Identity/state read from production D1; the legacy deployed handler returned only {job}.
+    // This is a local regression fixture, not an authenticated production response capture.
+    const jobId = "sr_730c616f-329c-4d2f-aabb-d143eaa2db01";
+    const input: SourceJobInput = {
+      sourceId: "scriptorium", githubReleaseId: 422035682,
+      sourceTag: "v0.3.4", sourceRevision: "588eddcfff20fa2fc76aa8eae54c9551e0c6048b",
+      releaseVersion: "0.3.4",
+    };
+    const created = await h.queue.enqueue(input, ACTOR);
+    h.db.database.prepare(
+      `UPDATE source_release_builds SET job_id=?,state='failed',attempt=1,lease_epoch=1,
+         failure_code='SOURCE_BUILD_FAILED' WHERE job_id=?`,
+    ).run(jobId, created.job.id);
+    const app = createSourceReleaseOperatorRoutes({ queue: h.queue, operatorActorId: ACTOR });
+    const response = await app.request(`/${jobId}?limit=10`, {
+      headers: { "X-Praetorium-Admin-Actor": ACTOR },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(SourceBuildDetailSchema.safeParse(body).success).toBe(true);
+    expect(body).toEqual({
+      job: {
+        id: jobId, sourceId: input.sourceId, releaseId: input.githubReleaseId,
+        tag: input.sourceTag, commit: input.sourceRevision, version: input.releaseVersion,
+        state: "failed", attempt: 1, revision: 0, error: "SOURCE_BUILD_FAILED",
+        admittedReleaseId: null, retryable: true,
+      },
+      attempts: [], nextCursor: null, evidence: "not_recorded",
+    });
+    const legacy = SourceBuildDetailSchema.safeParse({ job: body.job });
+    expect(legacy.success).toBe(false);
+    if (legacy.success) throw new Error("Legacy detail must not satisfy the strict contract");
+    expect(legacy.error.issues.map(issue => issue.path)).toEqual([
+      ["attempts"], ["nextCursor"], ["evidence"],
+    ]);
+    expect(h.db.database.prepare(
+      "SELECT count(*) AS count FROM source_release_build_attempts WHERE job_id=?",
+    ).get(jobId)).toEqual({ count: 0 });
+    expect((await h.queue.byId(jobId))?.revision).toBe(0);
   });
 
   it("serves the immutable retry identity and explicit retry through the operator route", async () => {

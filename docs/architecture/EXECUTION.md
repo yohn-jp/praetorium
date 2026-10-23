@@ -1,7 +1,6 @@
 # Praetorium — エンドツーエンド経路・状態遷移・実行契機
 
-> **種別:** **2026-10-18コード時点の履歴トレース**。以下の旧Polling間隔・配置・コード行番号を2026-10-24の本番稼働状態とみなさない。
-> **基準:** `ecabf265693e395c40bfcf9be8279c1baf4740ff`。最新の3VM/Coordination構成は[MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)、本番観測の範囲は[THREE-VM-INFRA.md](../verification/THREE-VM-INFRA.md)/[THREE-VM-CONTROL.md](../verification/THREE-VM-CONTROL.md)、Admin Workerの確定目標は[ADMINISTRATION.md](ADMINISTRATION.md)。本書は現在の実行経路の成功を証明しない。上位要件は[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)。
+> **種別:** LEGACY EXECUTION REFERENCE。旧実装経路・Polling例の台帳であり、現在の設計や稼働を規定しない。正規設計は[MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)と[ADMINISTRATION.md](ADMINISTRATION.md)。実測・commitは[検証記録](../verification/README.md)に保存する。上位要件は[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)。
 
 旧コードの各経路について、**Trigger（なぜ発生するか）→ Authority（誰が決定するか）→ Effect（何を変更するか）→ Evidence（成功の根拠）**の順で記す。タイマーの存在自体を要求と解釈しない。
 

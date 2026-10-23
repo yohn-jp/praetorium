@@ -1,4 +1,5 @@
 import { generateToken } from "@praetorium/auth";
+import { canaryWaitSkipForm } from "./canary-wait-action.js";
 import type {
   SourceBuildAttempt,
   SourceBuildDetail,
@@ -750,7 +751,7 @@ function releaseDetail(model: ConsoleViewModel): string {
         "</code></p>"
       : '<p class="admin-mobile-empty-inline">No workflow failure code is recorded.</p>') +
     '</section><section class="admin-mobile-action-region" aria-label="Canary recovery action">' +
-    releaseDetailRetry(status, model.csrf) +
+    releaseDetailRetry(status, model.csrf) + canaryWaitSkipForm(status, model.csrf, "mobile") +
     "</section>"
   );
 }

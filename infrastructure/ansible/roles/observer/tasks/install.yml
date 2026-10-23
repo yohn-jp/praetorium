@@ -1,0 +1,180 @@
+---
+- name: Require dedicated Management role and strictly bounded immutable Observer configuration
+  ansible.builtin.assert:
+    that:
+      - praetorium_host_role == 'management'
+      - observer_service_uid | int > 999
+      - observer_subid_start | int > 65535
+      - observer_subid_size | int >= 65536
+      - observer_image is match('^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[a-f0-9]{64}$')
+      - observer_targets is sequence
+      - observer_targets | length > 0
+      - observer_targets | length <= 25
+      - observer_auth_token_src | length > 0
+      - observer_memory_limit is match('^[1-9][0-9]*[mMgG]$')
+      - observer_cpu_limit is match('^0\\.[1-9][0-9]*$|^[1-9][0-9]*(\\.[0-9]+)?$')
+      - observer_pids_limit | int > 0
+    fail_msg: "Observer requires an immutable image, fixed private inventory and protected token."
+
+- name: Require rootless Podman to have been provisioned independently
+  ansible.builtin.command:
+    argv: [podman, --version]
+  register: observer_podman_version
+  check_mode: false
+  changed_when: false
+
+- name: Verify unified cgroup v2
+  ansible.builtin.stat:
+    path: /sys/fs/cgroup/cgroup.controllers
+  register: observer_cgroup
+- name: Reject Observer setup without cgroup v2
+  ansible.builtin.assert:
+    that:
+      - observer_cgroup.stat.exists
+
+- name: Check existing Observer identity is not another account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ observer_service_uid }}"
+  register: observer_uid_state
+  failed_when: false
+  changed_when: false
+  check_mode: false
+- name: Reject existing UID if it does not belong to the Observer
+  ansible.builtin.assert:
+    that:
+      - (observer_uid_state.ansible_facts.getent_passwd | default({}))[observer_service_uid | string] is not defined or
+        (observer_uid_state.ansible_facts.getent_passwd | default({}))[observer_service_uid | string][0] == observer_service_user
+
+- name: Create isolated Observer service identity
+  ansible.builtin.group:
+    name: "{{ observer_service_group }}"
+    system: true
+- name: Create isolated non-login Observer user
+  ansible.builtin.user:
+    name: "{{ observer_service_user }}"
+    uid: "{{ observer_service_uid }}"
+    group: "{{ observer_service_group }}"
+    home: "{{ observer_service_home }}"
+    create_home: true
+    system: true
+    shell: /usr/sbin/nologin
+    password: "!"
+    state: present
+- name: Restrict Observer home
+  ansible.builtin.file:
+    path: "{{ observer_service_home }}"
+    state: directory
+    owner: "{{ observer_service_user }}"
+    group: "{{ observer_service_group }}"
+    mode: "0700"
+
+- name: Read subordinate UID and GID ranges
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop: [/etc/subuid, /etc/subgid]
+  register: observer_existing_subids
+- name: Parse subordinate range registrations
+  ansible.builtin.set_fact:
+    observer_subid_ranges: >-
+      {{ observer_existing_subids.results |
+         map(attribute='content') | map('b64decode') |
+         map('regex_findall', '(?m)^.+$') | flatten |
+         map('split', ':') | list }}
+- name: Fail if Observer subordinate ranges overlap another identity
+  ansible.builtin.assert:
+    that:
+      - item | length == 3 and item[1] is match('^[0-9]+$') and item[2] is match('^[0-9]+$') and
+        ((item[0] == observer_service_user and item[1] | int == observer_subid_start | int and item[2] | int == observer_subid_size | int) or
+         (item[0] != observer_service_user and
+          (observer_subid_start | int + observer_subid_size | int <= item[1] | int or
+           observer_subid_start | int >= item[1] | int + item[2] | int)))
+  loop: "{{ observer_subid_ranges }}"
+- name: Register nonoverlapping rootless user namespace ranges
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    line: "{{ observer_service_user }}:{{ observer_subid_start }}:{{ observer_subid_size }}"
+    create: false
+    mode: "0644"
+  loop: [/etc/subuid, /etc/subgid]
+
+- name: Enable boot-time rootless Observer user manager
+  ansible.builtin.command:
+    argv: [loginctl, enable-linger, "{{ observer_service_user }}"]
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Ensure isolated Observer credentials
+  ansible.builtin.file:
+    path: /var/lib/praetorium/credentials/observer
+    state: directory
+    owner: "{{ observer_service_user }}"
+    group: "{{ observer_service_group }}"
+    mode: "0700"
+
+- name: Check operator-owned read-only Observer token source
+  ansible.builtin.stat:
+    path: "{{ observer_auth_token_src }}"
+    follow: false
+  register: observer_src
+- name: Reject symlink or exposed Observer credentials
+  ansible.builtin.assert:
+    that:
+      - observer_src.stat.exists
+      - observer_src.stat.isreg
+      - not observer_src.stat.islnk
+      - observer_src.stat.mode == '0600'
+- name: Copy isolated Observer token without revealing it
+  ansible.builtin.copy:
+    src: "{{ observer_auth_token_src }}"
+    dest: "{{ observer_token_path }}"
+    remote_src: true
+    owner: "{{ observer_service_user }}"
+    group: "{{ observer_service_group }}"
+    mode: "0400"
+  no_log: true
+  register: observer_token_changed
+- name: Write allowlisted Observer inventory without runtime credentials
+  ansible.builtin.copy:
+    dest: "{{ observer_targets_path }}"
+    content: "{{ observer_targets | to_json }}\n"
+    owner: "{{ observer_service_user }}"
+    group: "{{ observer_service_group }}"
+    mode: "0400"
+  register: observer_inventory_changed
+
+- name: Create rootless Observer Quadlet directory
+  ansible.builtin.file:
+    path: "{{ observer_quadlet_root }}/{{ observer_service_uid }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+- name: Install read-only Observer Quadlet
+  ansible.builtin.template:
+    src: praetorium-observer.container.j2
+    dest: "{{ observer_quadlet_root }}/{{ observer_service_uid }}/praetorium-observer.container"
+    owner: root
+    group: root
+    mode: "0644"
+  register: observer_unit_changed
+
+- name: Reload independent rootless Observer user manager
+  ansible.builtin.systemd_service:
+    scope: user
+    daemon_reload: true
+  become_user: "{{ observer_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ observer_service_uid }}"
+  when: not ansible_check_mode
+
+- name: Start or restart independent Observer only after configuration is valid
+  ansible.builtin.systemd_service:
+    scope: user
+    name: praetorium-observer.service
+    enabled: true
+    state: "{{ 'restarted' if (observer_token_changed.changed or observer_inventory_changed.changed or observer_unit_changed.changed) else 'started' }}"
+  become_user: "{{ observer_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ observer_service_uid }}"
+  when: not ansible_check_mode

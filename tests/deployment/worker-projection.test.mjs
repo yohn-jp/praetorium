@@ -125,3 +125,31 @@ test("inventory Control Plane projection keeps the direct Source Producer trust 
   );
   assert.deepEqual(generated.routes, directVars.routes);
 });
+
+test("Admin Worker alone owns operator domain and retains private Gateway broker binding", () => {
+  const inventory = JSON.parse(readFileSync(
+    path.join(root, "infrastructure/test/disposable-inventory.json"), "utf8",
+  ));
+  inventory.gateway.adminOrigin = "https://admin.praetorium.test";
+  inventory.domains.gatewayOrigin = "https://praetorium.test";
+  const adminTemplate = readFileSync(
+    path.join(root, "infrastructure/workers/admin.template.json"), "utf8",
+  );
+  const gatewayTemplate = readFileSync(
+    path.join(root, "infrastructure/workers/gateway.template.json"), "utf8",
+  );
+  const admin = JSON.parse(renderWorkerTemplate(adminTemplate, inventory, "admin"));
+  const gateway = JSON.parse(renderWorkerTemplate(gatewayTemplate, inventory, "gateway"));
+  assert.deepEqual(admin.routes, [{pattern: "admin.praetorium.test", custom_domain: true}]);
+  assert.deepEqual(gateway.routes, [{pattern: "praetorium.test", custom_domain: true}]);
+  assert.equal(admin.vars.ADMIN_ORIGIN, inventory.gateway.adminOrigin);
+  assert.equal(admin.vars.GATEWAY_ORIGIN, inventory.domains.gatewayOrigin);
+  assert.ok(admin.services.some(item =>
+    item.service === "praetorium-gateway" && item.binding === "ADMIN_IDENTITY" &&
+    item.entrypoint === "AdminIdentityBroker"));
+  assert.ok(admin.services.some(item =>
+    item.service === "praetorium-control-plane" && item.binding === "CONTROL_PLANE"));
+  assert.ok(!JSON.stringify(admin).includes("GATEWAY_SESSION_DIGEST_PEPPER"));
+  assert.throws(() => renderWorkerTemplate(adminTemplate, {...inventory,
+    gateway: {...inventory.gateway, adminOrigin: null}}, "admin"), /Admin origin/u);
+});

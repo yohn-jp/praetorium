@@ -4,6 +4,7 @@
   become: true
   roles:
     - common
+    - telemetry
 
 - name: Configure Management host services
   hosts: management
@@ -11,6 +12,7 @@
   roles:
     - management
     - coordination
+    - observer
 
 - name: Configure Runtime host membership
   hosts: runtime

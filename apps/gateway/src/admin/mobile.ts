@@ -7,6 +7,7 @@ import type {
 import { escapeHtml } from "../ui/presentation.js";
 import {
   buildHref,
+  operationHref,
   consoleHref,
   type ConsoleDependency,
   type ConsoleRelease,
@@ -80,6 +81,7 @@ function timeElement(timestamp: number | null): string {
 }
 
 function modeHref(model: ConsoleViewModel, mode: "desktop" | "mobile"): string {
+  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode);
   if (model.selectedReleaseId) {
     return "/releases/" + encodeURIComponent(model.selectedReleaseId) + "?ui=" + mode;
   }
@@ -735,9 +737,9 @@ function releaseDetail(model: ConsoleViewModel): string {
         "</code></dd></div>"
       : "") +
     (status.workflow.canaryOperationId
-      ? "<div><dt>Canary operation</dt><dd><code>" +
+      ? '<div><dt>Canary operation</dt><dd><a href="' + value(operationHref(status.workflow.canaryOperationId, "mobile")) + '">' +
         value(status.workflow.canaryOperationId) +
-        "</code></dd></div>"
+        "</a></dd></div>"
       : "") +
     '</dl><section class="admin-mobile-section"><h2>Failure evidence</h2>' +
     (failureCode
@@ -899,7 +901,27 @@ function audit(model: ConsoleViewModel): string {
   );
 }
 
+function operationDetail(model: ConsoleViewModel): string {
+  const dependency=model.operationDetail,detail=dependency?.value;
+  if(!detail)return pageHeading("Operation evidence unavailable","No current verified operation response.") +
+    (dependency?sectionUnavailable("Operation evidence",dependency):"");
+  if(detail.operation.id!==model.selectedOperationId)
+    return '<p class="admin-mobile-unavailable">Operation identity mismatch.</p>';
+  const op=detail.operation;
+  return '<a class="admin-mobile-back" href="' + value(consoleHref("releases","mobile")) + '">Back to Releases</a>' +
+    pageHeading("Canary / runtime operation", op.id) +
+    '<section class="admin-mobile-section"><h2>' + value(op.status) + " · " + value(op.phase) + "</h2>" +
+    '<dl class="admin-mobile-detail-facts"><div><dt>Instance</dt><dd>' + value(op.instanceId) + "</dd></div>" +
+    "<div><dt>Kind</dt><dd>" + value(op.kind) + "</dd></div>" +
+    "<div><dt>Generation</dt><dd>" + value(op.generation) + "</dd></div>" +
+    "<div><dt>Runtime epoch</dt><dd>" + value(op.runtimeEpoch) + "</dd></div>" +
+    "<div><dt>Updated</dt><dd>" + timeElement(op.updatedAt) + "</dd></div>" +
+    "<div><dt>Readiness evidence</dt><dd>" + (detail.readinessEvidence===null?"Not recorded":"Recorded") + "</dd></div>" +
+    "<div><dt>Rollback evidence</dt><dd>" + (detail.rollbackCompatibilityEvidence===null?"Not recorded":"Recorded") + "</dd></div>" +
+    "</dl><p>An absent proof is not a successful operation.</p></section>";
+}
 function content(model: ConsoleViewModel): string {
+  if (model.selectedOperationId) return operationDetail(model);
   if (model.selectedReleaseId) return releaseDetail(model);
   if (model.selectedBuildId) return buildDetail(model);
   if (model.section === "overview")

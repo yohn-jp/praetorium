@@ -396,10 +396,10 @@ describe("mobile operator console", () => {
 
 it("filters only the current bounded build page and preserves navigation to older jobs and releases", () => {
   const builds = renderMobileConsole(model({ buildStateFilter: "building",
-    builds: dependency({ items: [sourceJob], nextCursor: "older.page" }, "queue") }));
+    builds: dependency({ items: [], nextCursor: "older.page" }, "queue") }));
   expect(builds).toContain("No Source builds match the selected state.");
   expect(builds).not.toContain('href="/builds/' + sourceJob.id);
-  expect(builds).toContain('href="/builds?ui=mobile&amp;cursor=older.page&amp;state=building"');
+  expect(builds).toContain('href="/builds?ui=mobile&amp;sort=recent&amp;cursor=older.page&amp;state=building"');
   const releases = renderMobileConsole(model({ section: "releases",
     catalog: dependency({ items: [], nextCursor: "older.release", stableChannel: null }, "catalog") }));
   expect(releases).toContain('href="/releases?ui=mobile&amp;cursor=older.release"');

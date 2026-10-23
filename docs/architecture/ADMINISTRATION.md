@@ -53,6 +53,7 @@ flowchart TB
     subgraph R[Runtime VM]
         KA[k3s Agent]
         SR[Scriptorium + Instance Access + Traefik]
+        BW[Build Worker / Provisioner Pods]
     end
     subgraph X[Builder VM]
         BK[rootless BuildKit]
@@ -69,14 +70,16 @@ flowchart TB
     OB -->|read-only host + scoped API| KS
     OB -->|private host metrics| KA
     OB -->|private host metrics, bounded status| HE
-    CO -->|existing authenticated execution hint| KS
+    CO -->|existing authenticated work hints| BW
+    CP -->|canonical D1 claim / report| BW
     KS --> KA
     KA --> SR
-    SR -->|private BuildKit usage is not a UI responsibility| BK
+    KA --> BW
+    BW -->|mTLS verified build request| BK
     U -.->|direct tenant HTTPS origin; not proxied by Admin/Gateway| SR
 ~~~
 
-この図は**目標通信契約**であり、本番観測ではない。BuilderのBuildKit実行は既存Build Worker経路を維持し、図中のObserverがBuildKitの実行コマンドを発行するわけではない。Service Bindingは秘密鍵/永続正本の移転手段ではない。
+この図は**目標通信契約**であり、本番観測ではない。BuilderのBuildKit実行は既存Build Worker経路を維持し、図中のObserverがBuildKitの実行コマンドを発行するわけではない。Service Bindingは秘密鍵/永続正本の移転手段ではない。既存Build Worker/Provisionerの最終配置を動かす決定でもない。
 
 | 主体 | 所有してよいもの | 所有・実行してはならないもの |
 | --- | --- | --- |
@@ -236,7 +239,13 @@ Issue #26のRelease ConsoleとIssue #41のSource Build診断は**既存実装資
 
 過去のHeadlamp導入・非公開運用手順の履歴は [2026-10-21以前の旧文書](https://github.com/yohn-jp/praetorium/blob/1930131e6858e5d9035abe1dcd82d4ae654c622d/docs/architecture/ADMINISTRATION.md) と [Headlamp addon](../../infrastructure/kubernetes/addons/headlamp/) に保存する。かつての「Admin Consoleは将来構想のみ」という節は**本書の決定により上書きされる**。
 
-## 11. 残課題と採用しない推論
+## 11. Cloudflare公式仕様への依存
+
+- [Workers Service Bindings RPC / named WorkerEntrypoint](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/): 同一アカウント内で公開URLを使わない名前付きRPCを提供できる。実装ではGatewayの既存default fetchを保持したままnamed entrypointを追加する。
+- [Workers VPC Services](https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/): Service IDごとにプライベート接続先を固定する。2026-10-24時点Betaのため、実際のService作成・binding・料金・機能制限は導入時に再確認する。
+- [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/): `custom_domain=true`の単一ホストを各Workerの独立Deploy設定から管理する。GatewayとAdminで同じDomainを宣言し続けず、移行時のreadback/rollbackを検証する。
+
+## 12. 残課題と採用しない推論
 
 - Cloudflare Queuesによるwork hint配送は**未採用**。現行のVPC通知、既存のHTTPS fallback、D1のclaim/lease/reconcileはこの分離では変更しない。Queuesは配送耐障害性の改善根拠が出た時点で、独立した変更として比較する。
 - AdminログインはGatewayの認証Brokerに依存するため、Gateway全面障害中の管理者データ閲覧を保証しない。独立Workerの価値はデプロイ/運用UI/認可境界の分離、Management停止時の切り分けであり、完全な認証独立ではない。

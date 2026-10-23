@@ -101,7 +101,9 @@ flowchart TB
 5. 以後Adminの**各read/mutation**でBrokerが既存Session Storeを参照し、現在の失効・有効期限・数値ID allowlistを検証する。Admin Workerは検証済みOperator actorしか下流へ渡さず、GETはno-store、POSTにはOrigin・CSRF・Content-Type・サイズ上限、変更系にrevision/idempotencyを要求する。
 6. LogoutはBrokerを通じて当該Admin sessionを失効させ、Admin host cookieのみを消す。Gatewayの一般ユーザーSessionを不用意にログアウトさせない。短命のSession検証キャッシュで失効を遅延させない。
 
-**Brokerは公開fetchルートではなく、専用named Service Binding RPCに限定する。** Gateway Workerに新しいパブリックOperator APIを増やさない。ブラウザへのサービス認証Secret/OAuth token/長命credential露出、クロスドメインCookie共有、Access等の第二のIdPの無断導入を禁止する。独立WorkerがGateway Service Bindingに依存することは明示的な可用性上のトレードオフである（後述）。
+**Brokerは公開fetchルートではなく、専用named Service Binding RPCに限定する。** Gateway Workerに新しいパブリックOperator APIを増やさない。Brokerメソッドは `redeemAdminHandoff`、`verifyAdminSession`、`revokeAdminSession`、`listApprovedSourceReleases`、`resolvePublishedRelease`、`revalidateRetrySource` のような**列挙された型付き操作だけ**を提供し、任意URL fetch/任意Secret読み出し/任意Control Plane mutationは許可しない。内部RPCで渡された `actorId` は認可の正本ではなく、必ず既存Sessionから導出する。専用サービス権限・binding設定の静的検証とOperator allowlistを組み合わせ、同一Cloudflareアカウントの任意Workerからの呼出しを自動的に信頼しない。
+
+Admin handoff・ログイン・read/mutationのRate Limitingは既存Workers Rate Limiting/WAF方針と整合させ、認可エラーとBackend unavailableを区別する。ブラウザへのサービス認証Secret/OAuth token/長命credential露出、クロスドメインCookie共有、Access等の第二のIdPの無断導入を禁止する。独立WorkerがGateway Service Bindingに依存することは明示的な可用性上のトレードオフである（後述）。
 
 ### 4.2 Operator業務操作の信頼連鎖
 

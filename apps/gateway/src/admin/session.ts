@@ -196,7 +196,8 @@ export { boundedForm };
 
 export type AdminHandoffRedemption =
   | { readonly kind: "ok"; readonly rawSessionId: string; readonly csrfToken: string; readonly ttlSeconds: number }
-  | { readonly kind: "expired" | "limit" };
+  | { readonly kind: "expired" }
+  | { readonly kind: "limit" };
 
 /** Shared atomically-consumed handoff authority for the existing host and the private RPC entrypoint. */
 export async function redeemAdminHandoffCode(

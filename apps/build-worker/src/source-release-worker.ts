@@ -92,6 +92,7 @@ export class SourceReleaseBuildWorker {
     let inflight=false;
     let executing=true;
     let reportAccepted=false;
+    let diagnosticDeliveryFailed=false;
     let heartbeat:Promise<void>=Promise.resolve();
     const sendHeartbeat=async()=>{
       try{
@@ -124,8 +125,9 @@ export class SourceReleaseBuildWorker {
         }
       }catch(error){
         if(error instanceof SourceBuildLeaseLostError)throw error;
-        // Telemetry outages do not fail the build. Heartbeats and final reports
-        // still fence execution and artifact acceptance.
+        diagnosticDeliveryFailed=true;
+        process.stderr.write(`Source diagnostic transport unavailable job=${job.job_id} epoch=${job.lease_epoch}\n`);
+        // A telemetry outage must not bypass lease fences or reject a valid build.
       }
     };
     const timer=setInterval(tick,this.config.heartbeatIntervalMs);timer.unref();
@@ -140,8 +142,13 @@ export class SourceReleaseBuildWorker {
         if(!lost&&!controller.signal.aborted){
           const code=error instanceof SourceBuildChangedError||error instanceof SourceBuildVerificationError||error instanceof SourceBuildFailureError
             ?error.code:"SOURCE_BUILD_FAILED";
-          await this.client.failSource(job,code,failureDiagnostic(error))
-            .catch(()=>({accepted:false,diagnosticRecorded:false}));
+          try {
+            const outcome=await this.client.failSource(job,code,failureDiagnostic(error));
+            if(!outcome.accepted || !outcome.diagnosticRecorded || diagnosticDeliveryFailed)
+              process.stderr.write(`Source failure diagnostics incomplete job=${job.job_id} epoch=${job.lease_epoch} accepted=${outcome.accepted} recorded=${outcome.diagnosticRecorded}\n`);
+          } catch {
+            process.stderr.write(`Source failure report unavailable job=${job.job_id} epoch=${job.lease_epoch}\n`);
+          }
         }
         return true;
       }

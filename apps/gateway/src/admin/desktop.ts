@@ -332,7 +332,7 @@ function buildTable(model: ConsoleViewModel): string {
       (job.admittedReleaseId ? `<span class="desktop-table-identity">Admitted Platform release</span>` +
         `<a class="desktop-platform-release-link" href="/releases/${encodeURIComponent(job.admittedReleaseId)}?ui=${model.mode}">${escapeHtml(job.admittedReleaseId)}</a>` : "") +
       `</td><td>${job.state === "failed"
-        ? job.retryable ? `<span class="desktop-policy-available">Retry available on detail</span>` : `<span class="desktop-muted">Retry not permitted</span>`
+        ? job.retryable ? `<a class="desktop-policy-available" href="${escapeHtml(buildHref(job.id, model.mode))}">Inspect failure / retry</a>` : `<span class="desktop-muted">Retry not permitted</span>`
         : `<span class="desktop-muted">Not applicable</span>`}</td></tr>`).join("") + `</tbody></table></div>`;
 }
 
@@ -387,7 +387,7 @@ function attemptTimeline(detail: SourceBuildDetail): string {
     const stageTone = statusTone(attempt.state);
     return `<li class="desktop-attempt" aria-labelledby="attempt-title-${index}">` +
       `<div class="desktop-attempt-rail" aria-hidden="true"><span class="desktop-attempt-dot desktop-attempt-dot-${stageTone}"></span></div>` +
-      `<div class="desktop-attempt-content"><div class="desktop-attempt-heading"><div><p class="desktop-eyebrow">ATTEMPT ${attempt.attempt}</p>` +
+      `<div class="desktop-attempt-content"><div class="desktop-attempt-heading"><div><p class="desktop-eyebrow">REVISION ${attempt.revision} · ATTEMPT ${attempt.attempt} · EPOCH ${attempt.leaseEpoch}</p>` +
       `<h3 id="attempt-title-${index}">${escapeHtml(stage)}</h3></div>${badge(attemptStateLabel(attempt), attempt.state)}</div>` +
       `<p class="desktop-attempt-id">Attempt ID <code>${escapeHtml(attempt.id)}</code></p>` +
       `<dl class="desktop-facts"><div><dt>Started</dt><dd>${escapeHtml(dateTime(attempt.startedAt))}</dd></div>` +
@@ -438,8 +438,8 @@ function buildDetail(model: ConsoleViewModel): string {
       ? `<a class="desktop-text-link" href="/releases/${encodeURIComponent(job.admittedReleaseId)}?ui=${model.mode}">Open Platform release ${escapeHtml(job.admittedReleaseId)}</a>`
       : "Not admitted"}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-attempts-title"><div class="desktop-section-heading">` +
-    `<div><p class="desktop-eyebrow">RECORDED EXECUTION</p><h2 id="desktop-attempts-title">Attempt and stage timeline</h2></div></div>` +
-    `<p class="desktop-section-intro">Each entry is tied to its attempt revision and lease epoch. Missing evidence is shown as unavailable.</p>` +
+    `<div><p class="desktop-eyebrow">RECORDED EXECUTION</p><h2 id="desktop-attempts-title">Attempts and last recorded stage</h2></div></div>` +
+    `<p class="desktop-section-intro">Each entry records the last known stage, not every intermediate stage. Missing evidence is shown as unavailable.</p>` +
     attemptTimeline(detail) +
     (detail.nextCursor ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}&amp;cursor=${encodeURIComponent(detail.nextCursor)}">Older attempts</a></p>` : "") +
     `</section>`;
@@ -450,10 +450,13 @@ function audit(model: ConsoleViewModel): string {
     notice(model.notice) + dependencyUnavailable("Operator audit", model.audit);
   const query = model.auditQuery.trim().toLocaleLowerCase();
   const events = model.audit.value.events.filter((event) => !query ||
-    [event.actorId, event.action, event.outcome, dateTime(event.occurredAt)].some((value) => value?.toLocaleLowerCase().includes(query)));
+    [event.actorId, event.jobId, event.failureCode, event.action, event.outcome, dateTime(event.occurredAt)].some((value) => value?.toLocaleLowerCase().includes(query)));
   const rows = events.length ? events.map((event) => `<tr><td>${escapeHtml(dateTime(event.occurredAt))}</td>` +
     `<th scope="row">${escapeHtml(event.action)}</th><td>${badge(humanize(event.outcome), event.outcome)}</td>` +
-    `<td>${escapeHtml(event.actorId ?? "System")}</td></tr>`).join("") : "";
+    `<td>${escapeHtml(event.actorId ?? "System")}</td><td>${event.jobId
+      ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>`
+      : "—"}${event.failureCode ? ` <small>${escapeHtml(event.failureCode)}</small>` : ""}
+      ${event.leaseEpoch !== null && event.leaseEpoch !== undefined ? ` <small>Epoch ${event.leaseEpoch}</small>` : ""}</td></tr>`).join("") : "";
   const cursor = model.audit.value.nextCursor;
   const nextQuery = new URLSearchParams({ ui: model.mode });
   if (cursor && cursor.length <= 512) nextQuery.set("cursor", cursor);
@@ -463,10 +466,10 @@ function audit(model: ConsoleViewModel): string {
     `<section class="desktop-section" aria-labelledby="desktop-audit-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">AUDIT EVENTS</p><h2 id="desktop-audit-title">Recent operator activity</h2></div></div>` +
     `<form method="get" action="/audit" class="desktop-audit-search"><input type="hidden" name="ui" value="${model.mode}">` +
-    `<label for="desktop-audit-query">Search audit events</label><input id="desktop-audit-query" name="q" type="search" maxlength="120" value="${escapeHtml(model.auditQuery)}">` +
+    `<label for="desktop-audit-query">Search audit events</label><input id="desktop-audit-query" name="q" type="search" maxlength="100" value="${escapeHtml(model.auditQuery)}">` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Search</button></form>` +
     (events.length ? `<div class="desktop-table-scroll"><table class="desktop-audit-table"><caption class="desktop-sr-only">${events.length} audit events on this page</caption>` +
-      `<thead><tr><th scope="col">Time (UTC)</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Actor</th></tr></thead>` +
+      `<thead><tr><th scope="col">Time (UTC)</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Actor</th><th scope="col">Source job</th></tr></thead>` +
       `<tbody>${rows}</tbody></table></div>` : `<p class="desktop-empty">${model.audit.value.events.length
         ? "No events on this page match the search."
         : "No operator events are recorded on this page."}</p>`) +

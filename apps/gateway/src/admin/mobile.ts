@@ -862,7 +862,10 @@ function audit(model: ConsoleViewModel): string {
             "</time></div>" +
             "<h2>" +
             value(event.action) +
-            "</h2><p>Actor: " +
+            "</h2>" + (event.jobId ? '<p><a href="' + value(buildHref(event.jobId, "mobile")) + '">' +
+              value(event.jobId) + '</a></p>' : '') +
+            (event.failureCode ? '<p>Failure: ' + value(event.failureCode) + '</p>' : '') +
+            "<p>Actor: " +
             value(event.actorId ?? "Unavailable") +
             "</p></article></li>"
           );

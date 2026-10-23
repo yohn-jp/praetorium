@@ -29,6 +29,9 @@ export interface ConsoleAuditEvent {
   readonly action: string;
   readonly outcome: string;
   readonly occurredAt: number;
+  readonly jobId?: string | null;
+  readonly failureCode?: string | null;
+  readonly leaseEpoch?: number | null;
 }
 /** Presentation only. Authorization, data loading and mutations stay in console.ts. */
 export interface ConsoleViewModel {

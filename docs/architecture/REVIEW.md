@@ -1,7 +1,6 @@
 # Praetorium — 要件との乖離・設計負債・決定待ち
 
-> **種別:** **2026-10-18ソースcutの要件監査履歴**。ここで列挙した事象はそのcutにおける観測であり、2026-10-24のmainや稼働環境でなお再現するとは断定しない。提案は独立したauthorityを持たない。
-> **検査対象:** `yohn-jp/praetorium@ecabf265693e395c40bfcf9be8279c1baf4740ff`。後続の3VM/Coordination変更は[MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)と[実機証拠](../verification/THREE-VM-INFRA.md)、Admin Worker分離の確定目標は[ADMINISTRATION.md](ADMINISTRATION.md)。  
+> **種別:** LEGACY AUDIT REFERENCE。観測したソースとその問題仮説の履歴であり、現在も再現するという主張ではない。正規構成は[MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)、管理機能の設計は[ADMINISTRATION.md](ADMINISTRATION.md)。実際の調査証拠は検証記録とcommit履歴へ保存する。
 > **要件基準:** [Epic #1](https://github.com/yohn-jp/praetorium/issues/1)、最新の明示的なオーナー指示（**CI許可**を含む）。  
 > **用語:** **事象**＝ソースで確認済み、**問題**＝元の受入契約との衝突または測定可能な無駄、**提案**＝変更案、**要判断**＝仕様選択が必要。  
 > 各主体の役割は[SYSTEM.md](SYSTEM.md)、HTTP/状態遷移は[EXECUTION.md](EXECUTION.md)。

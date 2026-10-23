@@ -422,13 +422,23 @@ function buildDetail(model: ConsoleViewModel): string {
   const job = detail.job;
   if (model.selectedBuildId && model.selectedBuildId !== job.id)
     return `<p class="desktop-unavailable" role="status">Build detail is unavailable because the returned job identity did not match the requested job.</p>`;
+  const recent = [...detail.attempts].sort((a,b)=>b.leaseEpoch-a.leaseEpoch)[0];
+  const reason = recent?.diagnostic?.summary ?? (recent?.evidence === "expired"
+    ? "Diagnostic evidence expired. The failure cause is unavailable."
+    : "Diagnostic evidence was not recorded. Confirm Worker delivery before attempting another build.");
+  const incident = job.state === "failed" ?
+    `<section class="desktop-section" aria-labelledby="desktop-build-incident"><p class="desktop-eyebrow">INVESTIGATE FIRST</p>` +
+    `<h2 id="desktop-build-incident">Failure: ${escapeHtml(job.error ?? "Unknown")}</h2>` +
+    `<p>${escapeHtml(reason)}</p><p>Last recorded stage: ${escapeHtml(recent?.stage ?? "unknown")}` +
+    ` · Evidence: ${escapeHtml(recent?.evidence ?? "not_recorded")}</p>` +
+    `<a class="desktop-text-link" href="#desktop-attempts-title">Inspect recorded attempt</a></section>` : "";
   return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">BUILD DETAIL / ${escapeHtml(job.id)}</p>` +
     `<h1>${escapeHtml(job.sourceId)} / ${escapeHtml(job.tag)}</h1><p>Attempt history and bounded diagnostics for this immutable Source job.</p>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Back to Builds</a> ` +
-    `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) +
+    `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) + incident +
     `<section class="desktop-job-summary" aria-labelledby="desktop-job-summary-title"><div class="desktop-job-heading">` +
     `<div><p class="desktop-eyebrow">AUTHORITATIVE JOB STATE</p><h2 id="desktop-job-summary-title">${badge(humanize(job.state), job.state)}</h2>` +
-    `<code>${escapeHtml(job.id)}</code></div><div>${retryForm(job, model)}</div></div>` +
+    `<code>${escapeHtml(job.id)}</code></div></div>` +
     `<dl class="desktop-facts desktop-job-facts"><div><dt>Source</dt><dd>${escapeHtml(job.sourceId)}</dd></div>` +
     `<div><dt>Published tag</dt><dd>${escapeHtml(job.tag)}</dd></div><div><dt>Version</dt><dd>${escapeHtml(job.version)}</dd></div>` +
     `<div><dt>GitHub Release ID</dt><dd>${job.releaseId}</dd></div><div class="desktop-fact-wide"><dt>Immutable source commit</dt><dd><code>${escapeHtml(job.commit)}</code></dd></div>` +
@@ -442,7 +452,7 @@ function buildDetail(model: ConsoleViewModel): string {
     `<p class="desktop-section-intro">Each entry is tied to its attempt revision and lease epoch. Missing evidence is shown as unavailable.</p>` +
     attemptTimeline(detail) +
     (detail.nextCursor ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}&amp;cursor=${encodeURIComponent(detail.nextCursor)}">Older attempts</a></p>` : "") +
-    `</section>`;
+    `</section>` + (job.state === "failed" ? `<section class="desktop-section" aria-label="Source retry after investigation">${retryForm(job, model)}</section>` : "");
 }
 
 function audit(model: ConsoleViewModel): string {

@@ -157,7 +157,14 @@ export async function completeAdminHandoff(request: Request, context: GatewayCon
     });
     if (!created.ok) return noStore(503, "Admin session limit reached");
     const csrf = await sessionCsrfToken(context, created.value.rawSessionId);
-    const response = redirect("/");
+    const candidate=readCookie(request,"__Host-praetorium_admin_return");
+    const destination=candidate && candidate.length<=512 && candidate.startsWith("/") &&
+      !candidate.startsWith("//") && !/[\r\n]/u.test(candidate) &&
+      /^(?:\/|\/builds(?:\/sr_[0-9a-f-]{36})?|\/releases(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})?|\/audit)(?:\?[^#]*)?$/u.test(candidate)
+      ? candidate : "/";
+    const response = redirect(destination);
+    response.headers.append("Set-Cookie",
+      "__Host-praetorium_admin_return=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0");
     response.headers.append("Set-Cookie",
       buildSessionCookie({ name: SESSION_COOKIE_NAME,
         ttlSeconds: Math.min(ADMIN_SESSION_TTL_SECONDS, context.config.sessionTtlSeconds) },

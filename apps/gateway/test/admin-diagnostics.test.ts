@@ -206,7 +206,9 @@ describe("operator Source diagnostics routes", () => {
   it("authorizes reads before calling the internal Control Plane binding", async () => {
     const unauthenticated = await fixture({ initialDetail: detail(job("failed", 1, 2, true)) });
     const denied = await handleAdminHost(get(`/builds/${JOB_ID}`), unauthenticated.context);
-    expect(denied.status).toBe(403);
+    expect(denied.status).toBe(303);
+    expect(denied.headers.get("Location")).toBe(GATEWAY+"/_admin/entry");
+    expect(denied.headers.get("Set-Cookie")).toContain("admin_return");
     expect(unauthenticated.calls).toHaveLength(0);
 
     const nonAdmin = await fixture({

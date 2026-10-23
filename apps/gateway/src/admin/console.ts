@@ -238,8 +238,17 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   const session = await authenticateAdmin(request, context);
   if (!session) {
     // No operator data, application state or Control Plane calls before authentication.
-    if (url.pathname === "/" && request.method === "GET") {
-      return localRedirect(context.config.origin + "/_admin/entry");
+    if (request.method === "GET" &&
+        (url.pathname === "/" || url.pathname === "/builds" || url.pathname === "/releases" ||
+         url.pathname === "/audit" || /^\/builds\/sr_[0-9a-f-]{36}$/u.test(url.pathname) ||
+         /^\/releases\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(url.pathname))) {
+      const destination=url.pathname+url.search;
+      const redirect=localRedirect(context.config.origin + "/_admin/entry");
+      if (destination.length<=512 && !/[\r\n]/u.test(destination))
+        redirect.headers.append("Set-Cookie",
+          "__Host-praetorium_admin_return="+encodeURIComponent(destination)+
+          "; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=300");
+      return redirect;
     }
     return response(403, "Operator authorization required");
   }

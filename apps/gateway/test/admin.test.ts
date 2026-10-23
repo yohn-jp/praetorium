@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSession, type UserId } from "@praetorium/auth";
 import { createInMemorySessionStore } from "@praetorium/auth/testing";
 import type { GatewayContext } from "../src/context.js";
-import { enterAdminFromGateway, completeAdminHandoff } from "../src/admin/session.js";
+import { enterAdminFromGateway, completeAdminHandoff, adminReturnPath } from "../src/admin/session.js";
 import { handleAdminHost } from "../src/admin/console.js";
 
 const NOW = "2026-10-21T10:00:00.000Z";
@@ -196,6 +196,26 @@ describe("operator-only admin origin", () => {
     expect(nonadmin.gatewayCalls).toHaveLength(0);
   });
 
+  it("restores a validated read-only job after the one-use OAuth handoff", async () => {
+    const f = await fixture();
+    const job = "sr_730c616f-329c-4d2f-aabb-d143eaa2db01";
+    const returnTo = `/builds/${job}?ui=mobile`;
+    const entry = await enterAdminFromGateway(
+      new Request(GATEWAY + "/_admin/entry?return_to=" + encodeURIComponent(returnTo),
+        { headers: { Cookie: f.gatewaySession } }), f.context);
+    expect(entry.status).toBe(200);
+    const code = /name="code" value="([A-Za-z0-9_-]+)"/u.exec(await entry.text())?.[1];
+    expect(code).toBeTruthy();
+    const done = await completeAdminHandoff(new Request(ADMIN + "/_admin/handoff", {
+      method: "POST", headers: { Origin: GATEWAY, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ code: code! }),
+    }), f.context);
+    expect(done.status).toBe(303);
+    expect(done.headers.get("Location")).toBe(returnTo);
+    for (const input of ["//evil.example/", "https://evil.example/", "/source-builds/invalid/retry",
+      "/builds/../../secrets", "/builds?ui=desktop&redirect=https://evil.example"])
+      expect(adminReturnPath(input)).toBe("/");
+  });
   it("requires the exact Gateway origin, consumes handoff once and isolates admin cookies", async () => {
     const f = await fixture();
     const { code, complete } = await login(f);

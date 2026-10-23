@@ -25,10 +25,12 @@ export interface ConsoleReleaseStatus {
     failure: { code: string; retryable: boolean } | null } | null;
 }
 export interface ConsoleAuditEvent {
-  readonly actorId: string | null;
-  readonly action: string;
-  readonly outcome: string;
+  readonly actorId: string | null; readonly action: string; readonly outcome: string;
   readonly occurredAt: number;
+  readonly eventId?: string;
+  readonly jobId?: string | null; readonly releaseId?: string | null;
+  readonly operationId?: string | null; readonly failureCode?: string | null;
+  readonly revision?: number | null; readonly leaseEpoch?: number | null;
 }
 /** Presentation only. Authorization, data loading and mutations stay in console.ts. */
 export interface ConsoleViewModel {

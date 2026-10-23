@@ -325,6 +325,12 @@ export class D1SourceReleaseBuildQueue {
       evidence:page[0]?.evidence??"not_recorded",
     };
   }
+  async diagnosticRecorded(jobId:string,leaseEpoch:number):Promise<boolean> {
+    const row=await this.db.prepare(
+      "SELECT diagnostic_json FROM source_release_build_attempts WHERE job_id=? AND lease_epoch=?",
+    ).bind(jobId,leaseEpoch).first<{diagnostic_json:string|null}>();
+    return row?.diagnostic_json!==undefined&&row.diagnostic_json!==null;
+  }
   async reportDiagnostic(jobId:string,request:z.infer<typeof DiagnosticReportRequest>):Promise<boolean> {
     if(!ID.test(jobId))throw new TypeError("Invalid source job ID");
     const checked=DiagnosticReportRequest.parse(request);
@@ -874,8 +880,11 @@ export function createSourceReleaseWorkerRoutes(input:{
       await readBoundedJson(c.req.raw,SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES),
     );
     if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
-    const accepted=await input.queue.fail(c.req.param("jobId"),data);
-    return c.json({accepted});
+    const jobId=c.req.param("jobId");
+    const accepted=await input.queue.fail(jobId,data);
+    // A successful terminal state is not evidence of diagnostic persistence.
+    const diagnosticRecorded=accepted&&await input.queue.diagnosticRecorded(jobId,data.leaseEpoch);
+    return c.json({accepted,diagnosticRecorded});
   });
   app.onError((e,c)=>e instanceof RequestTooLargeError
     ?c.json({error:{code:"REQUEST_TOO_LARGE"}},413)

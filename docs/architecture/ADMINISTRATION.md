@@ -1,9 +1,8 @@
 # Praetorium — Admin Plane / Infrastructure Operations Architecture
 
-> **Status: ACCEPTED TARGET DESIGN (2026-10-24).** オーナー合意を実装の設計正本として固定する。本書をコミットしても Worker分離・監視API・本番DNS変更が実装またはデプロイされたことにはならない。
+> **Status: ACCEPTED TARGET ARCHITECTURE.** オーナー合意を実装の設計正本として固定する。本書をコミットしても Worker分離・監視API・本番DNS変更が実装またはデプロイされたことにはならない。
 > **Authority:** 最新のオーナー指示 > [Epic #1](https://github.com/yohn-jp/praetorium/issues/1)・該当Issue（既存Release Consoleは[#26](https://github.com/yohn-jp/praetorium/issues/26)、診断は[#41](https://github.com/yohn-jp/praetorium/issues/41)） > 本設計 > 実装。Hosted G1–G9とSource→Stableの受入条件を変更しない。
-> **Reference cut:** `main@1930131e6858e5d9035abe1dcd82d4ae654c622d`。構成の観測証拠は [THREE-VM-INFRA.md](../verification/THREE-VM-INFRA.md)、[THREE-VM-FRESH-DEPLOYMENT.json](../verification/THREE-VM-FRESH-DEPLOYMENT.json)、[THREE-VM-CONTROL.md](../verification/THREE-VM-CONTROL.md)。稼働証拠は記載された観測時点に限る。
-> **Companions:** [MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)（物理/実行責務）、[MANAGEMENT-PLANE-MIGRATION.md](MANAGEMENT-PLANE-MIGRATION.md)（履歴と残ゲート）、[SYSTEM.md](SYSTEM.md)（旧コードの主体台帳）、[Operator Console UX](../design/OPERATOR-CONSOLE-DIAGNOSTICS-UX-PLAN.md)（既存Desktop/Mobile体験）。
+> **Companions:** [MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)（物理/実行責務）、[MANAGEMENT-PLANE-MIGRATION.md](MANAGEMENT-PLANE-MIGRATION.md)（移行・受入ゲート）、[SYSTEM.md](SYSTEM.md)（責務台帳）、[Operator Console UX](../design/OPERATOR-CONSOLE-DIAGNOSTICS-UX-PLAN.md)（既存Desktop/Mobile体験）。
 
 ## 1. 決定・目的・非目標
 
@@ -20,19 +19,18 @@ Praetorium Adminは、運営者が **Platform → VM → Service → Work/Releas
 
 目標の管理対象はManagement/Runtime/Builder、k3sとScriptorium Workload、BuildKit/Build Worker、Coordination、Cloudflare Worker/D1/DO/KV、GHCR、Release/Build/Operation、ネットワークと依存関係。表示対象であることは書き込み権限付与を意味しない。
 
-## 2. 現行観測と完成形の区別
+## 2. 現行実装と目標の分離
 
-| 対象 | 現行コード/観測で確認済み | 固定した完成形（未実装） |
-| --- | --- | --- |
-| 3VM | 2026-10-20、新規BootstrapでManagement k3s Server・Runtime Agent・Builder BuildKitを確認。Coordination/Tunnelはk3s停止中も稼働、Management再起動後に復帰 | 各VMの状態をAdminから収集・区別して表示 |
-| Browser Admin | `apps/gateway/src/admin/*` のUI/Session。Gateway WranglerにGateway/Admin両ドメイン | `apps/admin` の単独Worker、Admin domainはここだけ |
-| Admin identity | Gateway OAuth・DO・one-use admin handoff、GitHub数値IDのoperator allowlist、host-only Admin Cookie | Gatewayの非公開Auth Broker経由で同じ正本を使用 |
-| Source/Release | AdminがGatewayのControl Plane Service BindingとGitHubユーザートークン処理を利用 | Admin UI独立、GitHubトークン処理はGateway Broker、操作の正本はControl Plane |
-| Coordination | `apps/coordination` はwork hintのrelay。Management VPC ServiceはWork通知用 | **別のread-only観測境界**を提供。既存relayを任意コマンドAPIにしない |
-| Infra monitoring | 一部Headlamp、ホスト/Builder/Control Plane個別の検証記録が存在 | Adminの統合Inventory/Health/Diagnostics/依存関係 |
-| Hosted受入 | 2026-10-20の3VM証拠・2026-10-23のIssue #41局所検証は存在。G1–G9全面合格の証明ではない | 監視画面の完成とHosted E2E合格を別々に判定 |
+本書は**あるべきアーキテクチャ**を定義する。現在の実装がすべて満たすとは仮定しない。構成の現況・移行実施結果・障害時の実測は [検証記録](../verification/README.md) にまとめ、ここへ観測日時や固定commitを転記しない。
 
-現行稼働がこのcutから変わったかどうかは別途ライブ観測で確定する。未検証の状態を「Healthy」「導入済み」に置き換えない。
+| 領域 | 固定した設計契約 |
+| --- | --- |
+| VM責務 | Managementがk3s Server/Coordination/監視を担当し、Runtimeがk3s Agent/テナント、Builderがrootless BuildKitを担当 |
+| Admin入口 | 専用 `apps/admin` Workerが `admin.praetorium.yohn.jp` のみを担当し、Gatewayとの独立デプロイを可能にする |
+| Identity | GatewayがOAuth/DO/SessionとGitHub Source Brokerの正本を維持。Adminは非公開RPCで問い合わせる |
+| Operator操作 | Control Plane/D1がRelease/Source/Build/OperationとAdmissionの正本を維持 |
+| Infrastructure | Managementに専用read-only Observerを設け、Work配送用Coordinationとは権限・接続を分離 |
+| 受入 | ホスト・サービス観測の成功とHosted G1–G9全体の成功を混同しない |
 
 ## 3. 論理境界と通信
 
@@ -148,8 +146,8 @@ URLはAdmin Worker内の画面/API境界の固定契約。Observerとの具体�
   "schemaVersion": 1,
   "inventoryId": "management",
   "role": "management",
-  "observedAt": "2026-10-24T00:00:00Z",
-  "receivedAt": "2026-10-24T00:00:01Z",
+  "observedAt": "RFC3339_UTC_TIMESTAMP",
+  "receivedAt": "RFC3339_UTC_TIMESTAMP",
   "state": "healthy",
   "freshness": "fresh",
   "sources": [{"provider": "systemd", "status": "ok"}],
@@ -239,15 +237,15 @@ Headlampは `infrastructure/kubernetes/addons/headlamp/` にある**独立した
 
 Issue #26のRelease ConsoleとIssue #41のSource Build診断は**既存実装資産**として、新Workerへ外形・挙動を維持して移す。Admin可視化の導入を理由にSource→Stable、MCP/Wake、安全なWriter Lifecycleの受入条件を下げない。
 
-過去のHeadlamp導入・非公開運用手順の履歴は [2026-10-21以前の旧文書](https://github.com/yohn-jp/praetorium/blob/1930131e6858e5d9035abe1dcd82d4ae654c622d/docs/architecture/ADMINISTRATION.md) と [Headlamp addon](../../infrastructure/kubernetes/addons/headlamp/) に保存する。かつての「Admin Consoleは将来構想のみ」という節は**本書の決定により上書きされる**。
+Headlampの配置・RBACは [Headlamp addon](../../infrastructure/kubernetes/addons/headlamp/) に従う。過去の設計判断と運用記録はGit履歴・検証記録に保持し、本書の規範を上書きしない。
 
 ## 11. Cloudflare公式仕様への依存
 
 - [Workers Service Bindings RPC / named WorkerEntrypoint](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/): 同一アカウント内で公開URLを使わない名前付きRPCを提供できる。実装ではGatewayの既存default fetchを保持したままnamed entrypointを追加する。
-- [Workers VPC Services](https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/): Service IDごとにプライベート接続先を固定する。2026-10-24時点Betaのため、実際のService作成・binding・料金・機能制限は導入時に再確認する。
+- [Workers VPC Services](https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/): Service IDごとにプライベート接続先を固定する。提供状況が変化し得るため、実際のService作成・binding・料金・機能制限は導入時に再確認する。
 - [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/): `custom_domain=true`の単一ホストを各Workerの独立Deploy設定から管理する。GatewayとAdminで同じDomainを宣言し続けず、移行時のreadback/rollbackを検証する。
 
-## 12. 残課題と採用しない推論
+## 12. 非採用事項と未確定の実装詳細
 
 - Cloudflare Queuesによるwork hint配送は**未採用**。現行のVPC通知、既存のHTTPS fallback、D1のclaim/lease/reconcileはこの分離では変更しない。Queuesは配送耐障害性の改善根拠が出た時点で、独立した変更として比較する。
 - AdminログインはGatewayの認証Brokerに依存するため、Gateway全面障害中の管理者データ閲覧を保証しない。独立Workerの価値はデプロイ/運用UI/認可境界の分離、Management停止時の切り分けであり、完全な認証独立ではない。

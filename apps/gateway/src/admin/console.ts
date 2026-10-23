@@ -3,7 +3,7 @@ import { escapeHtml, resolvePresentation } from "../ui/presentation.js";
 import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDetail } from "@praetorium/contracts";
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
-import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection } from "./view-model.js";
+import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus } from "./view-model.js";
 import { page } from "../ui/views/document.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
@@ -332,30 +332,17 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
         });
       if (![200, 202].includes(accepted.status))
         return actionError(errorCode(accepted.data), accepted.status);
-      return localRedirect("/releases?ui=" + mode + "&notice=" + encodeURIComponent("Retry accepted for " + id));
+      return localRedirect("/releases/" + encodeURIComponent(id) + "?ui=" + mode + "&notice=" + encodeURIComponent("Retry accepted for " + id));
     } catch {
       return actionError("Control Plane unavailable", 503);
     }
   }
 
   if (request.method !== "GET") return response(405, "Method not allowed");
-  if (url.pathname.startsWith("/releases/")) {
-    const id = url.pathname.slice("/releases/".length);
-    if (!RELEASE_ID.test(id)) return response(404, "Not found");
-    try {
-      const record = await controlPlane(context, session.actor.userId, "GET",
-        "/v1/operator/releases/" + encodeURIComponent(id));
-      if (record.status !== 200) return actionError(errorCode(record.data), record.status);
-      return adminPage("Release " + id,
-        '<p><a class="button button-secondary" href="/releases?ui=' + mode + '">Back to release ledger</a></p>' +
-        '<section class="admin-section"><span class="admin-kicker">CANONICAL RELEASE STATUS</span>' +
-        '<pre class="admin-json">' + escapeHtml(JSON.stringify(record.data, null, 2)) + '</pre></section>',
-        session.csrfToken, mode);
-    } catch { return actionError("Control Plane unavailable", 503); }
-  }
+  const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
   const section: ConsoleSection | null = url.pathname === "/" ? "overview"
-    : url.pathname === "/releases" ? "releases"
+    : url.pathname === "/releases" || releaseMatch ? "releases"
     : url.pathname === "/builds" || detailMatch ? "builds"
     : url.pathname === "/audit" ? "audit" : null;
   if (!section) return response(404, "Not found");
@@ -370,10 +357,11 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   const auditQuery = url.searchParams.get("q") ?? "";
   if (auditQuery.length > 100 || [...auditQuery].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return response(400, "Invalid audit search");
   const selectedBuildId = detailMatch?.[1] ?? null;
+  const selectedReleaseId = releaseMatch?.[1] ?? null;
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
   const empty = <T>(value: T): OperatorSection<T> => ({ endpoint: "", status: 200, code: null, value });
-  const [catalog, audit, builds, sourceViews, detail] = await Promise.all([
-    section === "overview" || section === "releases"
+  const [catalog, audit, builds, sourceViews, detail, releaseDetail] = await Promise.all([
+    section === "overview" || (section === "releases" && !selectedReleaseId)
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases",
         "/v1/operator/releases" + (section === "releases" ? withCursor : ""), isCatalog)
       : Promise.resolve(empty({ items: [] as Summary[], stableChannel: null })),
@@ -381,11 +369,11 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases/audit",
         "/v1/operator/releases/audit" + withCursor + (auditQuery ? (cursor ? "&" : "?") + "q=" + encodeURIComponent(auditQuery) : ""), isAudit)
       : Promise.resolve(empty({ events: [] as Audit[] })),
-    section !== "audit" && !selectedBuildId
+    section !== "audit" && !selectedBuildId && !selectedReleaseId
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/source-builds",
         "/v1/operator/source-builds" + (section === "builds" ? withCursor : ""), isSourceBuilds)
       : Promise.resolve(empty({ items: [] as SourceBuildStatus[] })),
-    section === "releases" ? listRegisteredSources(context, session.actor.userId).then(
+    section === "releases" && !selectedReleaseId ? listRegisteredSources(context, session.actor.userId).then(
       (value): OperatorSection<readonly SourceReleaseView[]> =>
         ({ endpoint: "GitHub Releases / configured sources", status: 200, code: null, value }),
       (): OperatorSection<readonly SourceReleaseView[]> => ({ endpoint: "GitHub Releases / configured sources", status: null,
@@ -397,13 +385,28 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
         const parsed = SourceBuildDetailSchema.safeParse(value);
         return parsed.success && parsed.data.job.id === selectedBuildId;
       }) : Promise.resolve(null),
+    selectedReleaseId ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases/" + selectedReleaseId,
+      "/v1/operator/releases/" + encodeURIComponent(selectedReleaseId),
+      (value): value is ConsoleReleaseStatus => {
+        const data = objectValue(value), release = objectValue(data?.release), workflow = objectValue(data?.workflow);
+        const build = objectValue(data?.build);
+        return release?.id === selectedReleaseId && typeof release.version === "string" &&
+          typeof release.status === "string" && typeof release.imageDigest === "string" &&
+          !!workflow && typeof workflow.state === "string" && Number.isSafeInteger(workflow.revision) &&
+          Number.isSafeInteger(workflow.attempts) &&
+          (workflow.failureCode === null || typeof workflow.failureCode === "string") &&
+          (workflow.nextAttemptAt === null || Number.isSafeInteger(workflow.nextAttemptAt)) &&
+          (data?.build === null || (!!build && typeof build.id === "string" && typeof build.status === "string" &&
+            Number.isSafeInteger(build.attemptCount) && (build.failure === null ||
+              typeof objectValue(build.failure)?.code === "string")));
+      }) : Promise.resolve(null),
   ]);
   const model: ConsoleViewModel = {
     section, mode, csrf: session.csrfToken, notice: url.searchParams.get("notice")?.slice(0, 200) ?? null,
-    catalog, audit, builds, sourceViews, detail, selectedBuildId, buildStateFilter: state,
+    catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, releaseDetail, buildStateFilter: state,
     buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery,
   };
-  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : section),
+  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedReleaseId ? "Release status" : section),
     mode === "mobile" ? renderMobileConsole(model) : renderDesktopConsole(model),
     { layout: "handoff", presentation: { mode } });
 }

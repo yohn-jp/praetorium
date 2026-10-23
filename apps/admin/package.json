@@ -1,0 +1,23 @@
+{
+  "name": "@praetorium/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test",
+    "clean": "node ../../scripts/clean-workspace.mjs",
+    "deploy": "wrangler deploy",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@praetorium/auth": "workspace:*",
+    "@praetorium/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260801.1",
+    "wrangler": "4.118.0"
+  }
+}

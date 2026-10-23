@@ -713,6 +713,20 @@ describe("source Release build queue against migrated SQLite D1", () => {
       leaseEpoch: claim.lease_epoch, code: "SOURCE_BUILD_FAILED", diagnostic,
     });
     expect(accepted).toBe(true);
+    expect(await h.queue.diagnosticRecorded(claim.job_id, claim.lease_epoch)).toBe(true);
+    const route = createSourceReleaseWorkerRoutes({
+      queue: h.queue, workerId: SOURCE_WORKER, serviceToken: SOURCE_TOKEN,
+    });
+    const duplicate = await route.request(`/${claim.job_id}/fail`, {
+      method: "POST", headers: {
+        Authorization: `Bearer ${SOURCE_TOKEN}`, "content-type": "application/json",
+      }, body: JSON.stringify({
+        workerId: claim.lease_worker, leaseToken: claim.lease_token,
+        leaseEpoch: claim.lease_epoch, code: "SOURCE_BUILD_FAILED", diagnostic,
+      }),
+    });
+    expect(duplicate.status).toBe(200);
+    expect(await duplicate.json()).toEqual({ accepted: true, diagnosticRecorded: true });
 
     const raw = h.db.database.prepare(
       "SELECT state,stage,failure_code,diagnostic_json,evidence_expires_at FROM source_release_build_attempts WHERE job_id=? AND lease_epoch=?",
@@ -755,6 +769,7 @@ describe("source Release build queue against migrated SQLite D1", () => {
       "SELECT diagnostic_json,evidence_expires_at FROM source_release_build_attempts WHERE job_id=? AND lease_epoch=?",
     ).get(created.job.id, claim.lease_epoch) as {diagnostic_json:string|null;evidence_expires_at:number|null};
     expect(expiredRow).toMatchObject({diagnostic_json:null,evidence_expires_at:h.now()-1});
+    expect(await h.queue.diagnosticRecorded(claim.job_id, claim.lease_epoch)).toBe(false);
   });
 
   it("records every claimed epoch and rejects a diagnostic callback from an expired lease", async () => {

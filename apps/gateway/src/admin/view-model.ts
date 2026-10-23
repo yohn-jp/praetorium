@@ -17,6 +17,13 @@ export interface ConsoleRelease {
     build: { status: string; failure: { code: string } | null } | null;
   } | null;
 }
+export interface ConsoleReleaseStatus {
+  readonly release: { id: string; version: string; imageDigest: string; status: string };
+  readonly workflow: { state: string; revision: number; failureCode: string | null; attempts: number;
+    nextAttemptAt: number | null; canaryBuildKey?: string | null; canaryOperationId?: string | null };
+  readonly build: { id: string; status: string; attemptCount: number;
+    failure: { code: string; retryable: boolean } | null } | null;
+}
 export interface ConsoleAuditEvent {
   readonly actorId: string | null;
   readonly action: string;
@@ -38,6 +45,8 @@ export interface ConsoleViewModel {
   readonly audit: ConsoleDependency<{ events: ConsoleAuditEvent[]; nextCursor?: string | null }>;
   readonly detail: ConsoleDependency<SourceBuildDetail> | null;
   readonly selectedBuildId: string | null;
+  readonly selectedReleaseId?: string | null;
+  readonly releaseDetail?: ConsoleDependency<ConsoleReleaseStatus> | null;
   readonly buildStateFilter: string | null;
   readonly buildSort?: "recent" | "source" | "state" | "attempt";
   readonly auditQuery: string;

@@ -385,7 +385,7 @@ export async function buildSourceRelease(
   const metadataDockerfiles=path.join(root,"dockerfile-metadata");
   const metadata=path.join(root,"metadata");
   const privateGitHome=path.join(root,"git-home");
-  let activeStage:SourceBuildStage|null=null;
+  let activeStage:SourceBuildStage|null="build_environment";
   const onStage=async(value:SourceBuildDiagnostic):Promise<void>=>{
     if(value.reason==="stage_started"){
       if(activeStage===value.stage)return;
@@ -394,11 +394,13 @@ export async function buildSourceRelease(
     await options.onStage?.(value);
   };
   try{
-    await mkdir(source);
-    await mkdir(dockerfiles);
-    await mkdir(metadataDockerfiles);
-    await mkdir(metadata);
-    await mkdir(privateGitHome,{mode:0o700});
+    await runSourceStage("build_environment",onStage,async()=>{
+      await mkdir(source);
+      await mkdir(dockerfiles);
+      await mkdir(metadataDockerfiles);
+      await mkdir(metadata);
+      await mkdir(privateGitHome,{mode:0o700});
+    });
     await runSourceStage("release_check",onStage,()=>validatePublishedRelease(job,signal));
     await runSourceStage("source_checkout",onStage,()=>checkout(job,source,privateGitHome,signal));
     const {dockerfile,nodeImage,dockerfileDigest}=await runSourceStage("verification",onStage,async()=>{

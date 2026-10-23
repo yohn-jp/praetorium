@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import * as fsPromises from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -16,6 +17,11 @@ import {
   SourceBuildVerificationError,
   sourceGitEnvironment,
 } from "../src/source-producer-builder.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fsPromises>();
+  return { ...actual, mkdir: vi.fn(actual.mkdir) };
+});
 
 const directories: string[] = [];
 const sourceRepository="ghcr.io/yohn-jp/praetorium/scriptorium-producer";
@@ -220,4 +226,23 @@ it("attributes workspace allocation failure to infrastructure without inventing 
       stage: "build_environment", reason: "infrastructure_unavailable",
     } });
   expect(onStage).toHaveBeenCalledWith(expect.objectContaining({ stage: "build_environment", reason: "stage_started" }));
+});
+
+
+it("attributes workspace subdirectory creation failure to the setup stage", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "praetorium-source-workspace-mkdir-"));
+  directories.push(root);
+  const job = {
+    job_id: "sr_11111111-1111-4111-8111-111111111111", source_id: "scriptorium" as const,
+    source_repository: "yohn-jp/scriptorium" as const, github_release_id: 416422590,
+    source_tag: "v0.3.3", source_revision: "a".repeat(40), release_version: "0.3.3", actor_id: "source-test",
+    lease_worker: "source-test", lease_token: "11111111-1111-4111-8111-111111111111",
+    lease_epoch: 1, lease_expires_at: Date.now() + 60_000,
+  };
+  const config = { buildKit: { temporaryDirectory: root, buildkitRepository: sourceRepository } } as never;
+  vi.mocked(fsPromises.mkdir).mockRejectedValueOnce(Object.assign(new Error("ENOSPC"), { code: "ENOSPC" }));
+  await expect(buildSourceRelease(job, config, new AbortController().signal))
+    .rejects.toMatchObject({ code: "SOURCE_BUILD_FAILED", diagnostic: {
+      stage: "build_environment", reason: "infrastructure_unavailable",
+    } });
 });

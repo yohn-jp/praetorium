@@ -610,9 +610,12 @@ function retryAction(job: SourceBuildSummary, csrf: string): string {
     Number.isSafeInteger(job.revision) &&
     job.revision >= 0
   ) {
+    const admission = job.error === "SOURCE_ADMISSION_RETRIES_EXHAUSTED";
+    const label = admission ? "Retry admission" : "Retry Source build";
+    const copy = admission ? "This rechecks the existing produced result for admission without starting another Source build."
+      : "This requests a new build attempt. The recorded failure remains available and the job is not complete until a later state is recorded.";
     return (
-      '<div class="admin-mobile-action-copy"><strong>Retry is permitted</strong>' +
-      "<span>This requests a new attempt. The recorded failure remains available and the job is not complete until a later state is recorded.</span></div>" +
+      '<div class="admin-mobile-action-copy"><strong>Retry is permitted</strong><span>' + copy + '</span></div>' +
       '<form method="post" action="/source-builds/' +
       value(encodeURIComponent(job.id)) +
       '/retry?ui=mobile"><input type="hidden" name="csrfToken" value="' +
@@ -621,7 +624,7 @@ function retryAction(job: SourceBuildSummary, csrf: string): string {
       value(job.revision) +
       '"><input type="hidden" name="idempotencyKey" value="' +
       value(generateToken(128)) +
-      '"><button type="submit">Retry Source build</button></form>'
+      '"><button type="submit">' + label + '</button></form>'
     );
   }
   const copy =
@@ -781,7 +784,11 @@ function buildDetail(model: ConsoleViewModel): string {
     : "";
   const noAttempts =
     detail.evidence === "not_recorded"
-      ? "No detailed attempt snapshot was recorded. The canonical job summary retains the known attempt and failure; stage and diagnostic evidence are unavailable."
+      ? job.error
+        ? "No detailed attempt snapshot was recorded. The canonical job summary retains the known attempt and failure; stage and diagnostic evidence are unavailable."
+        : job.attempt > 0
+          ? "No detailed attempt snapshot was recorded. The canonical job summary retains the known attempt state; stage and diagnostic evidence are unavailable."
+          : "No Worker attempt has started. Stage and diagnostic evidence are not recorded."
       : detail.evidence === "expired"
         ? "No retained attempt history is available. Diagnostic evidence may have expired."
         : "No attempt history is available.";

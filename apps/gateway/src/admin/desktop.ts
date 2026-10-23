@@ -126,7 +126,7 @@ function overview(model: ConsoleViewModel): string {
     `<li><a href="${escapeHtml(buildHref(job.id, model.mode))}">${escapeHtml(job.sourceId)} ${escapeHtml(job.tag)}</a>${badge(humanize(job.state), job.state)}</li>`).join("")}</ul>` : "";
   const releases = model.catalog.value?.items ?? [];
   const blocked = releases.filter((item) => ["blocked", "failed"].includes(item.workflow?.workflow.state ?? "")).length;
-  return `<section class="desktop-page-heading"><p class="desktop-eyebrow">OPERATOR / CONTROL PLANE</p>` +
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">OPERATOR / CONTROL PLANE</p>` +
     `<h1>Overview</h1><p>See current release health, active work, and actionable failures.</p></section>` +
     notice(model.notice) + stablePanel(model) +
     `<section class="desktop-section" aria-labelledby="desktop-incidents-title"><div class="desktop-section-heading">` +
@@ -217,7 +217,7 @@ function releases(model: ConsoleViewModel): string {
       ? model.catalog.value.items.map((item) => releaseRow(item, model.csrf, model.mode)).join("")
       : `<p class="desktop-empty">No Platform releases are available.</p>`
     : dependencyUnavailable("Platform release ledger", model.catalog);
-  return `<section class="desktop-page-heading"><p class="desktop-eyebrow">IMMUTABLE SOURCE AND PLATFORM ARTIFACTS</p>` +
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">IMMUTABLE SOURCE AND PLATFORM ARTIFACTS</p>` +
     `<h1>Releases</h1><p>Select a published source release, then inspect the pinned commit and admitted image digest.</p></section>` +
     notice(model.notice) + stablePanel(model) +
     `<section class="desktop-section" aria-labelledby="desktop-source-releases-title"><div class="desktop-section-heading">` +
@@ -234,9 +234,9 @@ function releaseDetail(model: ConsoleViewModel): string {
   const selectedId = model.selectedReleaseId;
   const detail = model.releaseDetail;
   const back = `<a class="desktop-text-link" href="${consoleHref("releases", model.mode)}">Back to Releases</a>`;
-  if (!selectedId) return `<section class="desktop-page-heading"><p class="desktop-eyebrow">RELEASE STATUS</p><h1>Release unavailable</h1>${back}</section>`;
+  if (!selectedId) return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">RELEASE STATUS</p><h1>Release unavailable</h1>${back}</section>`;
   if (!detail || !detail.value)
-    return `<section class="desktop-page-heading"><p class="desktop-eyebrow">RELEASE STATUS</p><h1>Release ${escapeHtml(selectedId)}</h1>${back}</section>` +
+    return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">RELEASE STATUS</p><h1>Release ${escapeHtml(selectedId)}</h1>${back}</section>` +
       notice(model.notice) + (detail ? dependencyUnavailable("Canonical release status", detail) :
         `<p class="desktop-unavailable" role="status">Canonical release status was not loaded.</p>`);
   const value = detail.value;
@@ -257,7 +257,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     : workflow.state === "blocked" || workflow.state === "failed"
       ? `<p class="desktop-muted">Retry is unavailable under the current canonical workflow policy.</p>` : "";
   const failureCode = workflow.failureCode ?? build?.failure?.code ?? null;
-  return `<section class="desktop-page-heading"><p class="desktop-eyebrow">CANONICAL RELEASE STATUS</p>` +
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">CANONICAL RELEASE STATUS</p>` +
     `<h1>Release ${escapeHtml(value.release.version)}</h1><p>Admission, Canary execution, and promotion status from the Control Plane.</p>${back}</section>` +
     notice(model.notice) +
     `<section class="desktop-job-summary" aria-labelledby="desktop-release-summary-title"><div class="desktop-job-heading">` +
@@ -343,7 +343,7 @@ function builds(model: ConsoleViewModel): string {
   const cursor = model.builds.value?.nextCursor;
   const nextQuery = new URLSearchParams({ ui: model.mode, sort, ...(cursor ? { cursor } : {}) });
   if (state) nextQuery.set("state", state);
-  return `<section class="desktop-page-heading"><p class="desktop-eyebrow">SOURCE BUILDER</p><h1>Builds</h1>` +
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">SOURCE BUILDER</p><h1>Builds</h1>` +
     `<p>Track accepted jobs by authoritative queue state and immutable source identity.</p></section>` + notice(model.notice) +
     `<section class="desktop-section" aria-labelledby="desktop-build-list-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">QUEUE</p><h2 id="desktop-build-list-title">Source build jobs</h2></div></div>` +
@@ -401,12 +401,16 @@ function attemptTimeline(detail: SourceBuildDetail): string {
 
 function retryForm(job: SourceBuildSummary, model: ConsoleViewModel): string {
   if (job.state !== "failed" || !job.retryable) return "";
+  const admission = job.error === "SOURCE_ADMISSION_RETRIES_EXHAUSTED";
+  const label = admission ? "Retry admission" : "Retry Source build";
+  const copy = admission ? "Control Plane rechecks the existing produced result for admission; this does not start another Source build."
+    : "Control Plane rechecks the current revision and canonical retry policy before accepting a new build attempt.";
   return `<form method="post" action="/source-builds/${encodeURIComponent(job.id)}/retry?ui=${model.mode}" class="desktop-retry-form">` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(model.csrf)}">` +
     `<input type="hidden" name="expectedRevision" value="${job.revision}">` +
     `<input type="hidden" name="idempotencyKey" value="${escapeHtml(generateToken(128))}">` +
-    `<button class="desktop-button" type="submit">Retry Source build</button>` +
-    `<p>Control Plane will recheck the current revision and canonical retry policy before accepting a new attempt.</p></form>`;
+    `<button class="desktop-button" type="submit">${label}</button>` +
+    `<p>${copy}</p></form>`;
 }
 
 function buildDetail(model: ConsoleViewModel): string {
@@ -418,7 +422,7 @@ function buildDetail(model: ConsoleViewModel): string {
   const job = detail.job;
   if (model.selectedBuildId && model.selectedBuildId !== job.id)
     return `<p class="desktop-unavailable" role="status">Build detail is unavailable because the returned job identity did not match the requested job.</p>`;
-  return `<section class="desktop-page-heading"><p class="desktop-eyebrow">BUILD DETAIL / ${escapeHtml(job.id)}</p>` +
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">BUILD DETAIL / ${escapeHtml(job.id)}</p>` +
     `<h1>${escapeHtml(job.sourceId)} / ${escapeHtml(job.tag)}</h1><p>Attempt history and bounded diagnostics for this immutable Source job.</p>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Back to Builds</a> ` +
     `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) +
@@ -442,7 +446,7 @@ function buildDetail(model: ConsoleViewModel): string {
 }
 
 function audit(model: ConsoleViewModel): string {
-  if (!model.audit.value) return `<section class="desktop-page-heading"><p class="desktop-eyebrow">OPERATOR ACTION HISTORY</p><h1>Audit</h1></section>` +
+  if (!model.audit.value) return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">OPERATOR ACTION HISTORY</p><h1>Audit</h1></section>` +
     notice(model.notice) + dependencyUnavailable("Operator audit", model.audit);
   const query = model.auditQuery.trim().toLocaleLowerCase();
   const events = model.audit.value.events.filter((event) => !query ||
@@ -454,7 +458,7 @@ function audit(model: ConsoleViewModel): string {
   const nextQuery = new URLSearchParams({ ui: model.mode });
   if (cursor && cursor.length <= 512) nextQuery.set("cursor", cursor);
   if (model.auditQuery) nextQuery.set("q", model.auditQuery);
-  return `<section class="desktop-page-heading"><p class="desktop-eyebrow">OPERATOR ACTION HISTORY</p>` +
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">OPERATOR ACTION HISTORY</p>` +
     `<h1>Audit</h1><p>Bounded, read-only operator events from the existing audit authority.</p></section>` + notice(model.notice) +
     `<section class="desktop-section" aria-labelledby="desktop-audit-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">AUDIT EVENTS</p><h2 id="desktop-audit-title">Recent operator activity</h2></div></div>` +

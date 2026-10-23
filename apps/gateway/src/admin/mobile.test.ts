@@ -406,3 +406,21 @@ it("filters only the current bounded build page and preserves navigation to olde
   expect(releases).toContain("Status unavailable");
   expect(releases).not.toContain("No release promoted yet");
 });
+
+
+it("does not invent a prior failure for a never-claimed queued job", () => {
+  const html = renderMobileConsole(model({ selectedBuildId: sourceJob.id,
+    detail: dependency({ job: { ...sourceJob, state: "queued", attempt: 0, error: null, retryable: false },
+      attempts: [], nextCursor: null, evidence: "not_recorded" }, "detail") }));
+  expect(html).toContain("No Worker attempt has started.");
+  expect(html).not.toContain("known attempt and failure");
+});
+
+it("describes admission recovery without promising another source build attempt", () => {
+  const html = renderMobileConsole(model({ selectedBuildId: sourceJob.id,
+    detail: dependency({ job: { ...sourceJob, error: "SOURCE_ADMISSION_RETRIES_EXHAUSTED" },
+      attempts: [], evidence: "not_recorded", nextCursor: null }, "detail") }));
+  expect(html).toContain('type="submit">Retry admission</button>');
+  expect(html).toContain("existing produced result");
+  expect(html).not.toContain('type="submit">Retry Source build</button>');
+});

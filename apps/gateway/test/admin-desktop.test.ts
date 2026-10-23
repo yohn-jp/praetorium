@@ -244,3 +244,12 @@ it("keeps bounded build and release pages reachable while preserving the selecte
     catalog: dependency("catalog", { items: [], nextCursor: "older.release", stableChannel: null }) }));
   expect(releases).toContain('href="/releases?ui=desktop&amp;cursor=older.release"');
 });
+
+it("describes an admission retry as re-verifying the existing output", () => {
+  const html = renderDesktopConsole(view({ selectedBuildId: job.id,
+    detail: dependency("detail", { job: { ...job, error: "SOURCE_ADMISSION_RETRIES_EXHAUSTED" },
+      attempts: [], evidence: "not_recorded", nextCursor: null }) }));
+  expect(html).toContain('type="submit">Retry admission</button>');
+  expect(html).toContain("existing produced result");
+  expect(html).not.toContain('type="submit">Retry Source build</button>');
+});

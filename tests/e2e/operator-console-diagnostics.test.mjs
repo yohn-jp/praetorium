@@ -533,10 +533,14 @@ test("operator console browser diagnostics contract uses local fixture data", { 
       viewportWidth: window.innerWidth,
       documentWidth: document.documentElement.scrollWidth,
       hasSidebar: document.querySelector(".desktop-operator-sidebar") !== null,
+      headingWidth: document.querySelector("h1")?.getBoundingClientRect().width ?? 0,
+      headingHeight: document.querySelector("h1")?.getBoundingClientRect().height ?? 0,
       hasTableOrDetail: document.querySelector(".desktop-attempt-timeline, .desktop-build-table") !== null,
     }));
     assert.ok(desktop.documentWidth <= 1441, `desktop horizontal overflow: ${JSON.stringify(desktop)}`);
     assert.equal(desktop.hasSidebar, true);
+    assert.ok(desktop.headingWidth > 600, "the desktop title must retain its own readable row");
+    assert.ok(desktop.headingHeight < 90, "a short desktop title must not wrap into a narrow column");
     assert.equal(desktop.hasTableOrDetail, true);
     await currentPage.screenshot({
       path: path.join(EVIDENCE_DIR, "operator-console-desktop-1440.png"),

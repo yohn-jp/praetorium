@@ -29,10 +29,10 @@ body:has(.desktop-operator-console) .page-shell{padding:0;max-width:none;min-hei
 .desktop-button-secondary:hover{border-color:#87a18c;background:#edf3e9;color:#183f30}
 .desktop-button:focus-visible,.desktop-operator-console a:focus-visible,.desktop-operator-console select:focus-visible,.desktop-operator-console input:focus-visible{outline:3px solid #c06b36;outline-offset:3px}
 .desktop-operator-content{width:min(100%,1320px);margin:0 auto;padding:38px clamp(24px,4.5vw,66px) 72px}
-.desktop-page-heading{padding:5px 0 23px;border-bottom:1px solid var(--desktop-line)}
-.desktop-page-heading h1{margin:8px 0 8px;color:#163d2e;font-size:clamp(30px,3.1vw,43px);font-weight:680;letter-spacing:-.055em;line-height:1.08}
-.desktop-page-heading>p:last-of-type{max-width:720px;margin:0;color:var(--desktop-muted);font-size:13px;line-height:1.65}
-.desktop-page-heading>.desktop-text-link{display:inline-block;margin-top:13px}
+.desktop-operator-heading{padding:5px 0 23px;border-bottom:1px solid var(--desktop-line)}
+.desktop-operator-heading h1{margin:8px 0 8px;color:#163d2e;font-size:clamp(30px,3.1vw,43px);font-weight:680;letter-spacing:-.055em;line-height:1.08}
+.desktop-operator-heading>p:last-of-type{max-width:720px;margin:0;color:var(--desktop-muted);font-size:13px;line-height:1.65}
+.desktop-operator-heading>.desktop-text-link{display:inline-block;margin-top:13px}
 .desktop-eyebrow{margin:0;color:#728879;font:700 9px/1.4 ui-monospace,SFMono-Regular,monospace;letter-spacing:.12em;text-transform:uppercase}
 .desktop-muted{color:var(--desktop-muted);font-size:11px;line-height:1.55;overflow-wrap:anywhere}
 .desktop-text-link{color:#245f46;font-size:12px;font-weight:650;text-decoration:none}

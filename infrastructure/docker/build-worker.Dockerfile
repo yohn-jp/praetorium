@@ -9,14 +9,13 @@ ARG PRAETORIUM_BUILDKIT_BUILDCTL_PATH
 FROM ${BUILDKIT_CLIENT_IMAGE} AS buildkit-client
 
 FROM ${NODE_BUILD_IMAGE} AS build
-ARG SERVICE_PACKAGE
 ARG NODE_BUILD_IMAGE
 ARG NODE_RUNTIME_IMAGE
 ARG BUILDKIT_CLIENT_IMAGE
 ARG BUILDKIT_CLIENT_BUILDCTL_PATH
 ARG PRAETORIUM_BUILDKIT_BUILDCTL_PATH
 WORKDIR /workspace
-RUN node -e 'const digest = /^(?:[a-z0-9.-]+(?::[0-9]+)?\/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$/; for (const key of ["NODE_BUILD_IMAGE", "NODE_RUNTIME_IMAGE", "BUILDKIT_CLIENT_IMAGE"]) { if (!digest.test(process.env[key] ?? "")) throw new Error(`${key} must be a repository-qualified immutable digest`); } if (process.env.SERVICE_PACKAGE !== "@praetorium/build-worker") throw new Error("SERVICE_PACKAGE must be @praetorium/build-worker"); for (const key of ["BUILDKIT_CLIENT_BUILDCTL_PATH", "PRAETORIUM_BUILDKIT_BUILDCTL_PATH"]) { const value = process.env[key] ?? ""; if (!/^\/(?:[a-zA-Z0-9._-]+\/)*[a-zA-Z0-9._-]+$/.test(value) || value.split("/").includes("..")) throw new Error(`${key} must be a normalized absolute path`); }' \
+RUN node -e 'const digest = /^(?:[a-z0-9.-]+(?::[0-9]+)?\/)+[a-z0-9._/-]+@sha256:[a-f0-9]{64}$/; for (const key of ["NODE_BUILD_IMAGE", "NODE_RUNTIME_IMAGE", "BUILDKIT_CLIENT_IMAGE"]) { if (!digest.test(process.env[key] ?? "")) throw new Error(`${key} must be a repository-qualified immutable digest`); } for (const key of ["BUILDKIT_CLIENT_BUILDCTL_PATH", "PRAETORIUM_BUILDKIT_BUILDCTL_PATH"]) { const value = process.env[key] ?? ""; if (!/^\/(?:[a-zA-Z0-9._-]+\/)*[a-zA-Z0-9._-]+$/.test(value) || value.split("/").includes("..")) throw new Error(`${key} must be a normalized absolute path`); }' \
   && corepack enable
 # Go buildctl needs the system CA bundle; derive public roots from the same
 # caller-pinned Node build image without installing packages or updating a base.
@@ -24,14 +23,21 @@ RUN node -e 'const { rootCertificates } = require("node:tls"); if (!Array.isArra
   > /workspace/ca-certificates.crt \
   && test -s /workspace/ca-certificates.crt
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# Lockfile patches must be present for the dependency-only fetch.
+COPY plugins/ghcr/patches/@sigstore__core@4.0.1.patch ./plugins/ghcr/patches/@sigstore__core@4.0.1.patch
+# Use the pinned Node image's public CA roots for BuildKit's outbound proxy.
+RUN node -e 'const fs = require("node:fs"); fs.mkdirSync("/etc/ssl/certs", { recursive: true }); fs.writeFileSync("/etc/ssl/certs/ca-certificates.crt", require("node:tls").rootCertificates.join("\n") + "\n");'
+RUN --mount=type=cache,id=praetorium-pnpm-store,target=/pnpm/store,sharing=locked \
+    NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 pnpm fetch --store-dir=/pnpm/store
 COPY tsconfig.base.json turbo.json ./
 COPY apps/ ./apps/
 COPY packages/ ./packages/
 COPY plugins/ ./plugins/
-# BuildKit proxy networking requires Node to use the injected proxy and public CA roots.
-RUN node -e 'const fs = require("node:fs"); fs.mkdirSync("/etc/ssl/certs", { recursive: true }); fs.writeFileSync("/etc/ssl/certs/ca-certificates.crt", require("node:tls").rootCertificates.join("\n") + "\n");'
-RUN export NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 \
-  && pnpm install --frozen-lockfile \
+ARG SERVICE_PACKAGE
+RUN --mount=type=cache,id=praetorium-pnpm-store,target=/pnpm/store,sharing=locked \
+    node -e 'if (process.env.SERVICE_PACKAGE !== "@praetorium/build-worker") throw new Error("SERVICE_PACKAGE must be @praetorium/build-worker");' \
+  && export NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 \
+  && pnpm install --offline --frozen-lockfile --store-dir=/pnpm/store --package-import-method=copy \
   && pnpm --filter "${SERVICE_PACKAGE}..." build \
   && pnpm --filter "$SERVICE_PACKAGE" deploy --prod --legacy /runtime
 

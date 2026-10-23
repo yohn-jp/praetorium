@@ -267,7 +267,13 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
       headers: { "Cache-Control":"no-store", "X-Content-Type-Options":"nosniff" },
     });
   }
-  const actionError = (message: string, status: number) => renderError(context, session.csrfToken, message, status, mode);
+  const sourceError = /^\/source-builds\/(sr_[0-9a-f-]{36})\/retry$/u.exec(url.pathname);
+  const releaseError = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/(?:retry|skip-canary-wait)$/u.exec(url.pathname);
+  const returnHref = sourceError ? buildHref(sourceError[1]!, mode) : releaseError
+    ? "/releases/" + encodeURIComponent(releaseError[1]!) + "?ui=" + mode
+    : "/releases?ui=" + mode;
+  const actionError = (message: string, status: number) =>
+    renderError(context, session.csrfToken, message, status, mode, returnHref);
   if (url.pathname === "/logout" && request.method === "POST") {
     const form = await boundedForm(request);
     if (!form || !(await adminFormCsrf(request, context, session, form))) return response(403, "CSRF rejected");
@@ -503,10 +509,13 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
     { layout: "handoff", presentation: { mode } });
 }
 
-function renderError(context: AdminContext, csrf: string, message: string, status: number, mode: ConsoleMode): Response {
+function renderError(context: AdminContext, csrf: string, message: string, status: number,
+  mode: ConsoleMode, returnHref: string): Response {
   const pageResult = adminPage("Operator action unavailable",
     '<p class="alert" role="alert">' + escapeHtml(message) + '</p>' +
-    '<p><a class="button button-secondary" href="/releases?ui=' + mode + '">Return to release ledger</a></p>', csrf, mode);
+    '<p>Request was not confirmed. Read the authoritative state before attempting another action.</p>' +
+    '<p><a class="button button-secondary" href="' + escapeHtml(returnHref) +
+    '">Return to the affected record</a></p>', csrf, mode);
   void context;
   return new Response(pageResult.body, { status, headers: pageResult.headers });
 }

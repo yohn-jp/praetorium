@@ -5,6 +5,22 @@ const SESSION = "__Host-praetorium_session";
 const CSRF = "__Host-praetorium_csrf";
 const MAX_FORM = 4096;
 
+/** Strictly same-origin navigation targets across the one-use Gateway handoff. */
+export function adminReturnPath(value: string | null | undefined): string {
+  if (!value || value.length > 480 || !value.startsWith("/") ||
+      value.startsWith("//") || value.includes("\\") || value.includes("#")) return "/";
+  try {
+    const url = new URL(value, "https://admin.invalid");
+    if (url.origin !== "https://admin.invalid" ||
+        !/^\/(?:builds(?:\/sr_[0-9a-f-]{36})?|releases(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})?|operations\/op_[A-Za-z0-9_.:-]{1,124}|audit|infrastructure(?:\/hosts\/[a-z][a-z0-9-]{0,63}|\/dependencies)?)?$/u.test(url.pathname)) return "/";
+    const keys = [...url.searchParams.keys()];
+    if (keys.some(key => key !== "ui") || url.searchParams.getAll("ui").length > 1) return "/";
+    const ui = url.searchParams.get("ui");
+    if (ui !== null && ui !== "desktop" && ui !== "mobile") return "/";
+    return url.pathname + (ui === null ? "" : "?ui=" + ui);
+  } catch { return "/"; }
+}
+
 export interface AdminSession {
   readonly actor: { readonly userId: string };
   readonly rawSessionId: string;
@@ -65,7 +81,7 @@ export async function completeAdminHandoff(request: Request, context: AdminConte
   if (result.kind === "expired") return respond(401, "Admin handoff expired");
   if (result.kind !== "ok") return respond(503, "Admin handoff unavailable");
   const response = new Response(null, { status: 303, headers: {
-    Location: "/", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+    Location: adminReturnPath(result.returnTo), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
   } });
   response.headers.append("Set-Cookie", SESSION + "=" + encodeURIComponent(result.sessionId) +
     "; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=" + result.ttlSeconds);

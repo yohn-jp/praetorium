@@ -308,7 +308,7 @@ function buildTable(model: ConsoleViewModel): string {
   if (!model.builds.value) return dependencyUnavailable("Source build queue", model.builds);
   const sort = buildSort(model);
   const jobs = model.builds.value.items; // Server filters and orders before LIMIT.
-  if (!jobs.length) return `<p class="desktop-empty">${model.builds.value.items.length
+  if (!jobs.length) return `<p class="desktop-empty">${model.buildStateFilter
     ? "No Source builds match the selected state."
     : "No Source builds are available on this page."}</p>`;
   const header = (name: string, key: BuildSort) => `<th scope="col"${sort === key ? ` aria-sort="${["source", "state"].includes(sort) ? "ascending" : "descending"}"` : ""}>` +

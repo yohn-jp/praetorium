@@ -85,7 +85,7 @@ export function sanitizeSourceDiagnostic(input: SourceBuildDiagnostic): SourceBu
     }
     const line = raw.replace(/[\u0000-\u0008\u000b-\u001f\u007f\u001b]/gu, "").trim();
     if (!line) continue;
-    if (/authorization|bearer|basic\s+[A-Za-z0-9+/]|password|passwd|secret|token|credential|cookie|private.?key|\b(?:ENV|ARG|RUN)\b|(?:^|\s)(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=|https?:\/\/|ssh:\/\/|git@|\/run\/secrets|\/\.?(?:ssh|aws|config)\//iu.test(line) ||
+    if (/authorization|bearer|\bcommand\b|\bprocess\b.*(?:execute|running)|(?:^|\s)(?:sh|bash|curl|wget|printenv|env)\s|basic\s+[A-Za-z0-9+/]|password|passwd|secret|token|credential|cookie|private.?key|\b(?:ENV|ARG|RUN)\b|(?:^|\s)(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=|https?:\/\/|ssh:\/\/|git@|\/run\/secrets|\/\.?(?:ssh|aws|config)\//iu.test(line) ||
         !/(?:\berror\b|\bfailed\b|\bfatal\b|\btimeout\b|\bcanceled\b|\bcancelled\b|\bnot found\b|\bnot resolve\b|\bdenied\b|\bexit code\b|\bERR_[A-Z_]+\b|\bTS[0-9]{4}\b|npm ERR!)/iu.test(line)) {
       dropped = true;
       continue;

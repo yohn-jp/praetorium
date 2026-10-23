@@ -237,7 +237,7 @@ describe("desktop operator composition", () => {
 it("keeps bounded build and release pages reachable while preserving the selected state and sort", () => {
   const builds = renderDesktopConsole(view({ buildStateFilter: "building", buildSort: "state",
     builds: dependency("queue", { items: [job], nextCursor: "older.page" }) }));
-  expect(builds).toContain("No Source builds on this page match this state filter.");
+  expect(builds).toContain("No Source builds match the selected state.");
   expect(builds).toContain('href="/builds?ui=desktop&amp;sort=state&amp;cursor=older.page&amp;state=building"');
   expect(builds).not.toContain('href="/builds/' + job.id);
   const releases = renderDesktopConsole(view({ section: "releases",

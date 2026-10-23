@@ -22,6 +22,7 @@ import {
 } from "@praetorium/application/rollouts";
 import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
 import type {
+  CanaryWaitSkipCommand,
   ReleaseRetryCommand,
   ReleaseRetryResult,
   ReleaseRetryStatus,
@@ -551,6 +552,97 @@ export class D1T11ReleaseRolloutStore
       .bind(releaseId)
       .first<OperatorRetryStatusRow>();
     return row ? operatorRetryStatus(row) : null;
+  }
+
+  async findCanaryWaitSkip(
+    input: Pick<CanaryWaitSkipCommand, "releaseId" | "idempotencyKey" | "requestHash">,
+  ): Promise<ReleaseRetryResult | null> {
+    const prior = await this.readRetryIdempotency(`release-wait:${input.releaseId}`, input.idempotencyKey);
+    if (!prior) return null;
+    if (prior.request_hash !== input.requestHash || prior.response_kind !== "release-canary-wait-skip" ||
+        prior.response_id !== input.releaseId) return { kind: "conflict", reason: "idempotency_key_reused" };
+    const status = await this.getReleaseRetryStatus(input.releaseId);
+    return status ? { kind: "accepted", duplicate: true, status } : { kind: "not_found" };
+  }
+
+  /** Atomically records an operator exception, then uses normal stop/absence/promotion. */
+  async skipCanaryWait(input: CanaryWaitSkipCommand): Promise<ReleaseRetryResult> {
+    const prior = await this.findCanaryWaitSkip(input);
+    if (prior) return prior;
+    const status = await this.getReleaseRetryStatus(input.releaseId);
+    if (!status) return { kind: "not_found" };
+    const row = await this.db.prepare(
+      "SELECT last_health_evidence_json FROM release_candidate_workflows WHERE release_id = ?",
+    ).bind(input.releaseId).first<{ last_health_evidence_json: string | null }>();
+    const parsed = CanaryHealthEvidenceSchema.safeParse(
+      row?.last_health_evidence_json ? parseJson(row.last_health_evidence_json) : null,
+    );
+    if (!parsed.success || parsed.data.observedAt > input.now ||
+        input.now - parsed.data.observedAt > 10 * 60_000)
+      return { kind: "conflict", reason: "fresh_healthy_canary_required" };
+    const evidence = parsed.data;
+    const statements = [
+      this.db.prepare(`UPDATE release_candidate_workflows
+        SET state = 'canary_cleanup', cleanup_disposition = 'promote', next_attempt_at = ?,
+            revision = revision + 1, updated_at = ?, lease_owner = NULL,
+            lease_epoch = lease_epoch + CASE WHEN lease_owner IS NULL THEN 0 ELSE 1 END,
+            lease_expires_at = NULL
+        WHERE release_id = ? AND state = 'canary_observing' AND revision = ?
+          AND failure_code IS NULL AND canary_cleanup_complete = 0
+          AND (lease_owner IS NULL OR lease_expires_at <= ?)
+          AND last_health_evidence_json = ? AND last_healthy_at = ?
+          AND canary_artifact_digest = ? AND canary_runtime_id = ? AND canary_operation_id = ?
+          AND EXISTS (SELECT 1 FROM release_candidates c
+                      WHERE c.release_id = release_candidate_workflows.release_id AND c.status = 'candidate')
+          AND EXISTS (
+            SELECT 1 FROM runtime_health_observations h
+            JOIN logical_instances i ON i.instance_id = h.instance_id AND i.repository_id = h.repository_id
+            JOIN repository_bindings b ON b.instance_id = i.instance_id AND b.repository_id = i.repository_id
+            JOIN operations o ON o.operation_id = h.operation_id AND o.instance_id = i.instance_id
+            JOIN runtime_reservations r ON r.reservation_id = i.reservation_id
+            WHERE h.instance_id = canary_runtime_id AND h.operation_id = canary_operation_id
+              AND h.provider_observation_id = ? AND h.observed_at = ?
+              AND i.desired_state = 'running' AND i.observed_state = 'ready' AND b.suspended = 0
+              AND i.generation = h.generation AND i.observed_generation = h.generation
+              AND i.runtime_epoch = h.runtime_epoch AND i.observed_runtime_epoch = h.runtime_epoch
+              AND h.runtime_epoch = ? AND o.runtime_epoch = h.runtime_epoch AND o.generation = h.generation
+              AND o.repository_id = i.repository_id AND o.cluster_id = h.cluster_id
+              AND o.status = 'succeeded' AND o.kind IN ('start', 'update', 'redeploy')
+              AND o.deployment_revision_id = i.observed_revision_id
+              AND r.instance_id = i.instance_id AND r.repository_id = i.repository_id
+              AND r.generation = h.generation AND r.runtime_epoch = h.runtime_epoch
+              AND r.cluster_id = h.cluster_id AND r.status IN ('reserved', 'allocated')
+              AND NOT EXISTS (SELECT 1 FROM operations active WHERE active.instance_id = i.instance_id
+                              AND active.status IN ('pending', 'claimed', 'running'))
+          )`).bind(input.now, input.now, input.releaseId, input.expectedRevision, input.now,
+            row!.last_health_evidence_json, evidence.observedAt, evidence.artifactDigest,
+            evidence.runtimeId, evidence.operationId, evidence.providerObservationId,
+            evidence.observedAt, evidence.runtimeEpoch),
+      this.assertOneChange(),
+      this.db.prepare(`INSERT INTO idempotency_records
+        (scope, idempotency_key, request_hash, response_kind, response_id, created_at)
+        VALUES (?, ?, ?, 'release-canary-wait-skip', ?, ?)`)
+        .bind(`release-wait:${input.releaseId}`, input.idempotencyKey, input.requestHash, input.releaseId, input.now),
+      this.assertOneChange(),
+      this.db.prepare(`INSERT INTO audit_events
+        (event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
+         action, outcome, request_id, metadata_json, occurred_at)
+        VALUES (?, NULL, ?, ?, ?, 'operator', 'release.canary-wait.skipped', 'accepted', ?, ?, ?)`)
+        .bind(`aud_canary_wait_${crypto.randomUUID()}`, evidence.runtimeId, evidence.operationId,
+          input.actorId, input.requestId, JSON.stringify({releaseId: input.releaseId, reason: input.reason,
+            previousWorkflowRevision: input.expectedRevision, healthObservedAt: evidence.observedAt,
+            elapsedWindowSkipped: true}), input.now),
+      this.assertOneChange(),
+    ];
+    try { await this.db.batch(statements); }
+    catch (error) {
+      const raced = await this.findCanaryWaitSkip(input);
+      if (raced) return raced;
+      if (isTransactionAssertion(error)) return { kind: "conflict", reason: "stale_or_ineligible" };
+      throw error;
+    }
+    const updated = await this.getReleaseRetryStatus(input.releaseId);
+    return updated ? { kind: "accepted", duplicate: false, status: updated } : { kind: "not_found" };
   }
 
   /** Resolves an accepted retry receipt without requiring external evidence verification. */

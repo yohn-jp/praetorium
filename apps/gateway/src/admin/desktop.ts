@@ -1,4 +1,5 @@
 import { generateToken } from "@praetorium/auth";
+import { canaryWaitSkipForm } from "./canary-wait-action.js";
 import type {
   SourceBuildAttempt, SourceBuildDetail, SourceBuildSummary,
 } from "@praetorium/contracts";
@@ -262,7 +263,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     notice(model.notice) +
     `<section class="desktop-job-summary" aria-labelledby="desktop-release-summary-title"><div class="desktop-job-heading">` +
     `<div><p class="desktop-eyebrow">AUTHORITATIVE WORKFLOW</p><h2 id="desktop-release-summary-title">${badge(humanize(workflow.state), workflow.state)}</h2>` +
-    `<code>${escapeHtml(value.release.id)}</code></div><div>${retry}</div></div>` +
+    `<code>${escapeHtml(value.release.id)}</code></div><div>${retry}${canaryWaitSkipForm(value, model.csrf, model.mode)}</div></div>` +
     `<dl class="desktop-facts desktop-job-facts"><div><dt>Release status</dt><dd>${badge(humanize(value.release.status), value.release.status)}</dd></div>` +
     `<div><dt>Workflow revision</dt><dd>${workflow.revision}</dd></div><div><dt>Workflow attempts</dt><dd>${workflow.attempts}</dd></div>` +
     `<div class="desktop-fact-wide"><dt>Immutable OCI digest</dt><dd><code>${escapeHtml(value.release.imageDigest)}</code></dd></div>` +

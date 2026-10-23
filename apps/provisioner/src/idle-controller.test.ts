@@ -271,6 +271,7 @@ function harness(
   options: {
     readonly candidate?: ProvisionerIdleCandidate;
     readonly status?: ProducerStatus;
+    readonly statusRead?: () => ProducerStatus;
     readonly managed?: ReturnType<typeof managedRuntime>;
     readonly runtimeObservation?: RuntimeObservation;
     readonly runtimePages?: readonly RuntimePage<ManagedRuntimeSummary>[];
@@ -410,6 +411,7 @@ function harness(
       expect(new Headers(init?.headers).get("authorization")).toBe(
         "Bearer signed-observation-token",
       );
+      if (options.statusRead) return Response.json(options.statusRead());
       const value =
         options.status ??
         status({
@@ -976,6 +978,26 @@ describe("ProvisionerIdleController", () => {
     expect(verifyObserved).toHaveBeenCalledOnce();
     expect(recordHealth).toHaveBeenCalledOnce();
     expect(h.createIdleStop).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("joins a due Canary census with at most two extra reads (completes=%s)", async completes => {
+    const authProbe = { available: true, withEndpointResolver: () => authProbe,
+      verify: async () => verifiedHealthEvidence(), verifyObserved: async () => verifiedHealthEvidence(),
+      forLease: () => ({}) as never } as unknown as RuntimeAuthAcceptanceProbe;
+    const unknown = { ...verifiedProducerStatus(), lastConfirmedRemoteRevision: null,
+      persistence: { state: "unknown" as const, observedRemoteCommit: null, formats: [] } };
+    const statusRead = vi.fn().mockReturnValueOnce(verifiedProducerStatus()).mockReturnValueOnce(unknown)
+      .mockReturnValue(completes ? verifiedProducerStatus() : unknown);
+    const recordHealth = vi.fn(async () => ({recorded: true as const}));
+    const h = harness({candidate: candidate({activeCanaryHealth: true, healthNextCheckAt: now - 1}),
+      statusRead, runtimeObservation: providerObservation({imageDigest: platformDigest}), authProbe, recordHealth,
+      canaryHealthDue: async currentNow => ({active: true, nextCheckAt: currentNow + 300_000,
+        sampleDueAt: now - 1_000, healthOperationId: "op_slow_census"})});
+    await h.controller.scanOnce();
+    expect(statusRead).toHaveBeenCalledOnce();
+    await h.controller.processDueOnce();
+    expect(statusRead).toHaveBeenCalledTimes(completes ? 3 : 4);
+    expect(recordHealth).toHaveBeenCalledTimes(completes ? 1 : 0);
   });
 
   it("refreshes the overdue idle candidate after canary health ends without a notification", async () => {

@@ -868,6 +868,9 @@ export class ProvisionerIdleController {
           resolveEndpoint: (runtimeAssignment, endpointSignal) =>
             inspector.controlEndpoint(runtimeAssignment, endpointSignal),
           now: this.now,
+          // A due Canary check may join the producer's still-running remote
+          // census. Ordinary idle observation remains a single request.
+          unknownPersistenceRetries: healthTrigger?.kind === "canary" ? 2 : 0,
           ...(this.options.fetch === undefined ? {} : { fetch: this.options.fetch }),
         },
         new IdleObservationRuntimeControlCredentialProvider(

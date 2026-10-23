@@ -254,10 +254,29 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   if (request.method === "POST") {
     const isSourceDeploy = url.pathname === "/source-releases/deploy";
     const retryMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/retry$/u.exec(url.pathname);
+    const waitSkipMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/skip-canary-wait$/u.exec(url.pathname);
     const sourceRetryMatch = /^\/source-builds\/(sr_[0-9a-f-]{36})\/retry$/u.exec(url.pathname);
-    if (!isSourceDeploy && !retryMatch && !sourceRetryMatch) return response(404, "Not found");
+    if (!isSourceDeploy && !retryMatch && !sourceRetryMatch && !waitSkipMatch) return response(404, "Not found");
     const form = await boundedForm(request);
     if (!form || !(await adminFormCsrf(request, context, session, form))) return response(403, "CSRF rejected");
+    if (waitSkipMatch) {
+      const revisions = form.getAll("expectedRevision"), keys = form.getAll("idempotencyKey"), reasons = form.getAll("reason");
+      if (revisions.length !== 1 || !/^(0|[1-9][0-9]*)$/u.test(revisions[0]!) ||
+          !Number.isSafeInteger(Number(revisions[0])) || keys.length !== 1 || !RELEASE_ID.test(keys[0]!) ||
+          reasons.length !== 1 || !reasons[0]!.trim() || reasons[0]!.length > 200 || [...reasons[0]!].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
+          [...form.keys()].some(key => !["csrfToken", "expectedRevision", "idempotencyKey", "reason"].includes(key)))
+        return response(400, "Invalid Canary wait skip command");
+      const id = waitSkipMatch[1]!;
+      try {
+        const accepted = await controlPlane(context, session.actor.userId, "POST",
+          "/v1/operator/releases/" + encodeURIComponent(id) + "/skip-canary-wait", {
+            expectedRevision: Number(revisions[0]), idempotencyKey: keys[0], reason: reasons[0]!.trim(),
+          });
+        if (![200, 202].includes(accepted.status)) return actionError(errorCode(accepted.data), accepted.status);
+        return localRedirect("/releases/" + encodeURIComponent(id) + "?ui=" + mode + "&notice=" +
+          encodeURIComponent("Canary wait skipped. Safe stop and promotion are continuing."));
+      } catch { return actionError("Canary wait skip unavailable", 503); }
+    }
     if (sourceRetryMatch) {
       const revision = form.getAll("expectedRevision");
       const idempotencyKey = form.getAll("idempotencyKey");

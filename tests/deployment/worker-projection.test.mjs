@@ -153,3 +153,22 @@ test("Admin Worker alone owns operator domain and retains private Gateway broker
   assert.throws(() => renderWorkerTemplate(adminTemplate, {...inventory,
     gateway: {...inventory.gateway, adminOrigin: null}}, "admin"), /Admin origin/u);
 });
+
+test("Admin observer private VPC binding is projected only from explicit inventory", () => {
+  const input = JSON.parse(readFileSync(
+    path.join(root, "infrastructure/test/disposable-inventory.json"), "utf8",
+  ));
+  input.gateway.adminOrigin = "https://admin.praetorium.test";
+  input.gateway.adminObserverVpcServiceId = "01a158fc-ef0d-7d11-8976-af6247908575";
+  const template = readFileSync(
+    path.join(root, "infrastructure/workers/admin.template.json"), "utf8",
+  );
+  const result = JSON.parse(renderWorkerTemplate(template, input, "admin"));
+  assert.deepEqual(result.vpc_services, [{
+    binding:"INFRASTRUCTURE",
+    service_id:input.gateway.adminObserverVpcServiceId,
+  }]);
+  assert.equal(result.services.length, 2);
+  delete input.gateway.adminObserverVpcServiceId;
+  assert.equal(JSON.parse(renderWorkerTemplate(template, input, "admin")).vpc_services, undefined);
+});

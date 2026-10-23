@@ -1,4 +1,4 @@
-import type { InfraDependencies, InfraHosts, InfraServices, HostObservation } from "../infrastructure.js";
+import type { InfraDependencies, InfraServices, HostObservation } from "../infrastructure.js";
 import { escapeHtml } from "../presentation.js";
 import type { ConsoleDependency, ConsoleMode, ConsoleViewModel } from "./view-model.js";
 
@@ -14,11 +14,6 @@ function tone(state: string): string {
 function metric(value: number | null, denominator: number | null): string {
   return value !== null && denominator !== null && denominator > 0
     ? Math.round(value / denominator * 100) + "%" : "Not collected";
-}
-function units(bytes: number | null): string {
-  return bytes === null ? "Not collected" : bytes >= 1073741824
-    ? (bytes / 1073741824).toFixed(2) + " GiB" :
-    (bytes / 1048576).toFixed(1) + " MiB";
 }
 function safeTime(timestamp: string): string {
   return '<time datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(timestamp.replace("T", " ").replace("Z", " UTC")) + "</time>";

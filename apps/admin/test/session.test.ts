@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AdminIdentityRpc, AdminContext } from "../src/context.js";
+import type { AdminIdentityRpc } from "../src/context.js";
 import { createAdminContext } from "../src/context.js";
 import { authenticateAdmin, adminFormCsrf, completeAdminHandoff, logoutAdmin } from "../src/session.js";
 import { handleAdminHost } from "../src/admin/console.js";

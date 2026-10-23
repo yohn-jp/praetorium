@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4/config-schema.json",
+  "name": "praetorium-admin",
+  "main": "../../apps/admin/src/worker.ts",
+  "compatibility_date": "2026-07-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "services": [
+    { "binding": "ADMIN_IDENTITY", "service": "praetorium-gateway", "entrypoint": "AdminIdentityBroker" },
+    { "binding": "CONTROL_PLANE", "service": "praetorium-control-plane" }
+  ],
+  "vars": {
+    "ADMIN_ORIGIN": "@@ADMIN_ORIGIN@@",
+    "GATEWAY_ORIGIN": "@@GATEWAY_ORIGIN@@"
+  }
+}

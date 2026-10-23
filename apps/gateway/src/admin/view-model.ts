@@ -39,6 +39,7 @@ export interface ConsoleViewModel {
   readonly detail: ConsoleDependency<SourceBuildDetail> | null;
   readonly selectedBuildId: string | null;
   readonly buildStateFilter: string | null;
+  readonly buildSort?: "recent" | "source" | "state" | "attempt";
   readonly auditQuery: string;
 }
 export function consoleHref(section: ConsoleSection, mode: ConsoleMode): string {

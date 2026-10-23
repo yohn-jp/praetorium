@@ -1,9 +1,9 @@
 # Praetorium — エンドツーエンド経路・状態遷移・実行契機
 
-> **種別:** 現行実装のトレースと要件上必要な動作の比較（設計変更の承認ではない）  
-> **ソース:** `ecabf265693e395c40bfcf9be8279c1baf4740ff`。全体の主体・正本は[SYSTEM.md](SYSTEM.md)、解消すべき差分は[REVIEW.md](REVIEW.md)。初期要件は[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)。
+> **種別:** **2026-10-18コード時点の履歴トレース**。以下の旧Polling間隔・配置・コード行番号を2026-10-24の本番稼働状態とみなさない。
+> **基準:** `ecabf265693e395c40bfcf9be8279c1baf4740ff`。最新の3VM/Coordination構成は[MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)、本番観測の範囲は[THREE-VM-INFRA.md](../verification/THREE-VM-INFRA.md)/[THREE-VM-CONTROL.md](../verification/THREE-VM-CONTROL.md)、Admin Workerの確定目標は[ADMINISTRATION.md](ADMINISTRATION.md)。本書は現在の実行経路の成功を証明しない。上位要件は[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)。
 
-各経路について、**Trigger（なぜ発生するか）→ Authority（誰が決定するか）→ Effect（何を変更するか）→ Evidence（成功の根拠）**の順で記す。タイマーの存在自体を要求と解釈しない。
+旧コードの各経路について、**Trigger（なぜ発生するか）→ Authority（誰が決定するか）→ Effect（何を変更するか）→ Evidence（成功の根拠）**の順で記す。タイマーの存在自体を要求と解釈しない。
 
 ## 1. 認証・リポジトリ解決・初回起動
 

@@ -18,7 +18,7 @@ export interface BrokerPrincipal {
 }
 
 export type BrokerRedemption =
-  | { readonly kind: "ok"; readonly sessionId: string; readonly csrfToken: string; readonly ttlSeconds: number }
+  | { readonly kind: "ok"; readonly sessionId: string; readonly csrfToken: string; readonly ttlSeconds: number; readonly returnTo?: string }
   | { readonly kind: "expired" | "limit" | "unavailable" };
 
 export type PreparedSource =
@@ -53,7 +53,7 @@ export class AdminIdentityBroker extends WorkerEntrypoint<GatewayEnv> {
       const result = await redeemAdminHandoffCode(code, await this.context());
       return result.kind === "ok"
         ? { kind: "ok", sessionId: result.rawSessionId,
-            csrfToken: result.csrfToken, ttlSeconds: result.ttlSeconds }
+            csrfToken: result.csrfToken, ttlSeconds: result.ttlSeconds, returnTo: result.returnTo }
         : { kind: result.kind };
     } catch {
       return { kind: "unavailable" };

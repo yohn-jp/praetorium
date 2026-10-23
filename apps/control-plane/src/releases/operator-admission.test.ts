@@ -435,3 +435,15 @@ it("rejects unauthorized catalog and audit reads before contacting D1", async ()
   expect(listCandidates).not.toHaveBeenCalled();
   expect(listAudit).not.toHaveBeenCalled();
 });
+
+it("bounds audit cursors/search before invoking the canonical paged reader", async () => {
+  const listAuditPage = vi.fn(async () => ({ events: [], nextCursor: null }));
+  const route = createOperatorReleaseAdmissionRoutes(deps({ listAuditPage }));
+  expect((await route.request("/audit?cursor=invalid")).status).toBe(400);
+  expect((await route.request("/audit?q=" + "x".repeat(101))).status).toBe(400);
+  expect(listAuditPage).not.toHaveBeenCalled();
+  const result = await route.request("/audit?cursor=123:event:5&q=failed");
+  expect(result.status).toBe(200);
+  expect(await result.json()).toEqual({ events: [], nextCursor: null });
+  expect(listAuditPage).toHaveBeenCalledWith({ cursor: "123:event:5", query: "failed" });
+});

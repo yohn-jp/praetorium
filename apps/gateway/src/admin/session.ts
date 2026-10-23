@@ -25,7 +25,7 @@ export function adminReturnPath(value: string | null | undefined): string {
   try {
     const url = new URL(value, "https://admin.invalid");
     if (url.origin !== "https://admin.invalid" ||
-        !/^\/(?:builds(?:\/sr_[0-9a-f-]{36})?|releases(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})?|audit)?$/u.test(url.pathname)) return "/";
+        !/^\/(?:builds(?:\/sr_[0-9a-f-]{36})?|releases(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})?|operations\/op_[A-Za-z0-9_.:-]{1,124}|audit)?$/u.test(url.pathname)) return "/";
     const keys = [...url.searchParams.keys()];
     if (keys.some(key => key !== "ui") || url.searchParams.getAll("ui").length > 1) return "/";
     const ui = url.searchParams.get("ui");

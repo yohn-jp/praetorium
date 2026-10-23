@@ -26,7 +26,23 @@ Desktop has independent Overview/Releases/Builds/Audit screens, a persistent nav
 
 BuildKit transport regression: upstream [`buildctl` sends its progress printer to stderr](https://github.com/moby/buildkit/blob/master/cmd/buildctl/build.go), and the raw JSON display encodes the typed SolveStatus events ([display implementation](https://github.com/moby/buildkit/blob/master/util/progress/progressui/display.go)). The previous adapter parsed only stdout and flushed an unterminated last event only on success. A child-process regression reproducing stdout/stderr and final-newline/no-final-newline combinations failed 3/4 cases before the fix (`diagnostic: undefined`) and passed all four afterward. The complete Buildctl test file passed 10/10. Streams now have separate bounded UTF-8 framing; non-JSON stderr and raw command text are never returned as diagnostics.
 
-Results will be finalized on the integrated PR HEAD. Local fixtures establish implementation behavior only; they do not certify hosted producer, registry or browser acceptance.
+Implementation reviewed and verified at `383fee0d09c8dda713438dffc49625d02a374fdf`; keyboard/touch browser assertions were then committed as `1019f10e297b3bee3a54c83926204f1d26c6dbc9` without changing implementation. The PR's required CI checks bind the final delivery HEAD, including this evidence record. Local fixtures establish implementation behavior only; they do not certify hosted producer, registry or browser acceptance.
+
+| Gate | Actual result |
+| --- | --- |
+| Node / pnpm | Node `v24.21.0`, pnpm `11.18.0` |
+| `corepack pnpm@11.18.0 install --frozen-lockfile` | PASS; lockfile unchanged |
+| `corepack pnpm@11.18.0 check` | PASS: build, lint, typecheck, 1,023 tests, provider boundaries and generated JSON-schema parity. Changed packages: Gateway 229, Control Plane 225, Worker 49, BuildKit 24, contracts 21. |
+| `node --test tests/deployment/*.test.mjs` | PASS 58/58; additive 0008 preserves existing rows, historical receipt order and migration preflight. |
+| `node --test tests/e2e/operator-console-diagnostics.test.mjs` | PASS; both independent modes perform published Release selection → queued → building → failed → explicit retry → admitted → canonical release workflow. Desktop uses keyboard activation; mobile uses touch activation. Back/forward/reload, escaped diagnostics, status-unavailable distinction and non-displacing notices are checked. |
+| Rendered widths | PASS: Mobile 320/375/390/430px and Desktop 1440px, no horizontal overflow. Final desktop heading is 1,062px wide and 46px high; the portal CSS name collision seen during visual inspection was fixed and guarded by browser geometry assertions. |
+| Independent review | Read-only Luna Max review of `383fee0`; no remaining actual blocker. The reviewer ran no tests. Findings corrected: sanitizer short-credential exclusion, reachable bounded history, accurate filter/legacy/queued copy, setup-stage failures and admission-only retry copy. |
+| Production incident readback | PASS read-only; exact job/SHA/code/attempt/epoch persisted, zero writes. Underlying failure cause remains unavailable. |
+| Hosted producer / registry / OAuth / Canary / Stable / lifecycle | BLOCKED / NOT_CHECKED as listed below; neither unit fixtures nor CI are hosted acceptance. |
+
+The exact Corepack check initially exposed the machine's outer-v11/nested-v12 pnpm dispatch mismatch in isolated workers. The integrated run prepended temporary Corepack shims under `/data/praetorium-console-bin` so nested scripts also use 11.18.0; it then passed with the literal required command. No repository package-manager version or engine check was relaxed. BuildCTL transport regression results are recorded above.
+
+Committed [browser measurements and screenshot hashes](operator-console-browser-20261024.json) label the synthetic boundary. Local screenshots/results are in `/data/praetorium-console-verification/browser`; CI runs the same browser command and uploads a synthetic evidence artifact with seven-day retention. Full local logs are under `/data/praetorium-console-verification`. The authoritative final HEAD/check-run links are included in the PR.
 
 ## Deployment and remaining production acceptance
 

@@ -1,0 +1,96 @@
+{
+  "proof": "local-server-rendered operator diagnostics browser contract",
+  "hostedAcceptance": "NOT_CHECKED",
+  "viewports": [
+    {
+      "mode": "mobile",
+      "width": 320,
+      "viewportWidth": 320,
+      "documentWidth": 320,
+      "bodyWidth": 320,
+      "headingVisible": true,
+      "navVisible": true
+    },
+    {
+      "mode": "mobile",
+      "width": 375,
+      "viewportWidth": 375,
+      "documentWidth": 375,
+      "bodyWidth": 375,
+      "headingVisible": true,
+      "navVisible": true
+    },
+    {
+      "mode": "mobile",
+      "width": 390,
+      "viewportWidth": 390,
+      "documentWidth": 390,
+      "bodyWidth": 390,
+      "headingVisible": true,
+      "navVisible": true
+    },
+    {
+      "mode": "mobile",
+      "width": 430,
+      "viewportWidth": 430,
+      "documentWidth": 430,
+      "bodyWidth": 430,
+      "headingVisible": true,
+      "navVisible": true
+    },
+    {
+      "mode": "desktop",
+      "width": 1440,
+      "viewportWidth": 1440,
+      "documentWidth": 1440,
+      "hasSidebar": true,
+      "headingWidth": 1062.40625,
+      "headingHeight": 46.4375,
+      "hasTableOrDetail": true
+    }
+  ],
+  "states": [
+    "desktop: release selected and source build queued",
+    "desktop: building",
+    "desktop: failed with escaped diagnostic",
+    "desktop: retry accepted with prior failure retained",
+    "desktop: admitted build follows canonical release status",
+    "desktop: keyboard activation passed",
+    "mobile: release selected and source build queued",
+    "mobile: building",
+    "mobile: failed with escaped diagnostic",
+    "mobile: retry accepted with prior failure retained",
+    "mobile: admitted build follows canonical release status",
+    "mobile: touch activation passed",
+    "status outage distinct from failed"
+  ],
+  "implementationCommit": "383fee0d09c8dda713438dffc49625d02a374fdf",
+  "command": "PRAETORIUM_OPERATOR_EVIDENCE_DIR=<owned artifact directory> node --test tests/e2e/operator-console-diagnostics.test.mjs",
+  "recordedAt": "2026-10-23T15:08:12.693739+00:00",
+  "screenshots": [
+    {
+      "file": "operator-console-desktop-1440.png",
+      "sha256": "7e317ea69d6d5bb7290fcbd27d6ee16c2184cb1249eb8720007414c01e1ac563"
+    },
+    {
+      "file": "operator-console-mobile-320.png",
+      "sha256": "24bf1e5adbd5b287e3cde33a6b8b489b539d4d24c29d83ce807f3bfdf4b420b7"
+    },
+    {
+      "file": "operator-console-mobile-375.png",
+      "sha256": "4dc40819ba8a1dbc3daffea133d3ab26fd355c467d7c002052d9276ba35e0593"
+    },
+    {
+      "file": "operator-console-mobile-390.png",
+      "sha256": "68b203f6e4b8cdaf57e99d5f0615adc61aec2888bb10cf3bcbde6d0e5dd88251"
+    },
+    {
+      "file": "operator-console-mobile-430.png",
+      "sha256": "e6319dec66df24943b6d63f74693354ec090cee08d25da5e3e7cc3d2e6504e1b"
+    }
+  ],
+  "limitations": [
+    "Synthetic authenticated Gateway session and Control Plane binding; no hosted OAuth or production Source mutation.",
+    "No production Worker activation, D1 migration apply, registry publication or hosted Canary/Stable certification."
+  ]
+}

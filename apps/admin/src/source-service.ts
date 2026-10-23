@@ -22,7 +22,9 @@ export async function revalidateSourceRetryIdentity(
 
 export type DispatchReleaseResult =
   | { readonly kind: "queued"; readonly job: SourceBuildStatus; readonly duplicate: boolean }
-  | { readonly kind: "forbidden" | "conflict" | "unavailable" };
+  | { readonly kind: "forbidden" }
+  | { readonly kind: "conflict" }
+  | { readonly kind: "unavailable" };
 
 /** Only the Gateway broker can resolve an authenticated GitHub source identity.
  * Only the canonical Control Plane can enqueue the immutable build. */

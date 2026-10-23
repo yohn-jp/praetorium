@@ -71,6 +71,9 @@ async function listen(env) {
         if (typeof v==="string") headers.set(k,v);
         else if (Array.isArray(v)) headers.set(k,v.join(","));
       }
+      // Browser fixture models an already-authorized HTTPS Admin session.
+      // Real host-only Secure cookies are exercised by the Worker/session tests.
+      headers.set("Cookie","__Host-praetorium_session="+AUTH);
       const request = new Request(ADMIN+(req.url??"/"),{method:req.method??"GET",headers});
       const response = await worker.fetch(request,env);
       res.writeHead(response.status,Object.fromEntries(response.headers.entries()));
@@ -107,7 +110,6 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
   const browser=await chromium.launch({headless:true,args:["--no-sandbox","--disable-background-networking"]});
   t.after(()=>browser.close());
   const context=await browser.newContext();
-  await context.addCookies([{name:"__Host-praetorium_session",value:AUTH,url:origin,secure:true,httpOnly:true}]);
   const page=await context.newPage();
   const errors=[];
   page.on("pageerror",error=>errors.push(String(error)));

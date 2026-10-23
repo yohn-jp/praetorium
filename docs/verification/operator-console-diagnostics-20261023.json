@@ -1,0 +1,36 @@
+{
+  "scope": "operator console implementation; no production deployment or retry",
+  "observedAt": "2026-10-23",
+  "source": "Remote authoritative D1 SELECT via existing Wrangler configuration, account selected from existing production inventory",
+  "query": {
+    "job": "SELECT job_id, source_tag, source_revision, state, attempt, revision, lease_epoch, failure_code, progress_json, created_at, updated_at FROM source_release_builds WHERE job_id='sr_54a61e4d-088c-453e-98ca-6be8588a4e1f'",
+    "audit": "SELECT action, outcome, metadata_json, occurred_at FROM audit_events WHERE request_id='sr_54a61e4d-088c-453e-98ca-6be8588a4e1f' OR (action LIKE 'source-release-build.%' AND metadata_json LIKE '%sr_54a61e4d-088c-453e-98ca-6be8588a4e1f%') ORDER BY occurred_at LIMIT 25"
+  },
+  "job": {
+    "job_id": "sr_54a61e4d-088c-453e-98ca-6be8588a4e1f",
+    "source_tag": "v0.3.3",
+    "source_revision": "2656531a098591fa2691e258f9a927f9f4da2c96",
+    "state": "failed",
+    "attempt": 1,
+    "revision": 0,
+    "lease_epoch": 1,
+    "failure_code": "SOURCE_BUILD_FAILED",
+    "progress_json": null,
+    "created_at": 1792763757816,
+    "updated_at": 1792763799726
+  },
+  "audit": [{
+    "action": "source-release-build.failed",
+    "outcome": "failed",
+    "metadata": { "failureCode": "SOURCE_BUILD_FAILED", "attempt": 1, "leaseEpoch": 1 },
+    "occurred_at": 1792763799726
+  }],
+  "readback": { "jobRowsRead": 1, "auditRowsRead": 129, "rowsWritten": 0, "changedDb": false },
+  "finding": "Evidence unavailable: the pre-diagnostics implementation persisted no stage or BuildKit error. The underlying v0.3.3 failure cause cannot be established from retained queue/audit evidence. Do not infer another release's failure cause or automatically retry this job.",
+  "productionAcceptance": {
+    "newDiagnosticReadback": "NOT_CHECKED: implementation has not been deployed",
+    "nextExplicitAttempt": "NOT_CHECKED: no production retry authorized or executed",
+    "sourceToStable": "BLOCKED: failed source job; no successful producer/registry/admission/canary/stable evidence for this job",
+    "oauthBrowserAndLifecycle": "NOT_CHECKED: no hosted OAuth/browser, writer/quiesce, wake/resume or persistence exercise performed"
+  }
+}

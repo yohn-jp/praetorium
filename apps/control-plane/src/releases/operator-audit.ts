@@ -16,7 +16,7 @@ export function parseAuditCursor(cursor: string | null): { time: number; id: str
 /** Read existing release AND source events, with deterministic keyset pagination. */
 export async function readOperatorAudit(db: D1Database, input: OperatorAuditQuery): Promise<OperatorAuditPage> {
   const cursor = parseAuditCursor(input.cursor);
-  if (input.query.length > 100 || /[\u0000-\u001f\u007f]/u.test(input.query)) throw new TypeError("Invalid audit search");
+  if (input.query.length > 100 || [...input.query].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) throw new TypeError("Invalid audit search");
   const rows = await db.prepare(
     `SELECT event_id, actor_id, action, outcome, occurred_at FROM audit_events
      WHERE (action LIKE 'release.%' OR action LIKE 'source-release-build.%')

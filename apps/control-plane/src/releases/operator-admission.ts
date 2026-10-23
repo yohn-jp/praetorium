@@ -103,7 +103,7 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
       const cursor = c.req.query("cursor") ?? null;
       const query = c.req.query("q") ?? "";
       try { parseAuditCursor(cursor); } catch { return c.json({ error: { code: "INVALID_CURSOR" } }, 400); }
-      if (query.length > 100 || /[\u0000-\u001f\u007f]/u.test(query))
+      if (query.length > 100 || [...query].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
         return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
       return deps.listAuditPage
         ? c.json(await deps.listAuditPage({ cursor, query }))

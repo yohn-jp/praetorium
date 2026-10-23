@@ -83,7 +83,7 @@ export function sanitizeSourceDiagnostic(input: SourceBuildDiagnostic): SourceBu
       if (/-----END .*PRIVATE KEY-----/u.test(raw)) privateKey = false;
       continue;
     }
-    const line = raw.replace(/[\u0000-\u0008\u000b-\u001f\u007f\u001b]/gu, "").trim();
+    const line = [...raw].filter(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127).join("").trim();
     if (!line) continue;
     if (/\bauth(?:entication|orization)?\b|signature|\b(?:api[ _-]?)?key\b|bearer|\bcommand\b|\bprocess\b.*(?:execute|running)|(?:^|\s)(?:sh|bash|curl|wget|printenv|env)\s|basic\s+[A-Za-z0-9+/]|password|passwd|secret|token|credential|cookie|private.?key|\b(?:ENV|ARG|RUN)\b|(?:^|\s)(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=|https?:\/\/|ssh:\/\/|git@|\/run\/secrets|\/\.?(?:ssh|aws|config)\//iu.test(line) ||
         !/(?:\berror\b|\bfailed\b|\bfatal\b|\btimeout\b|\bcanceled\b|\bcancelled\b|\bnot found\b|\bnot resolve\b|\bdenied\b|\bexit code\b|\bERR_[A-Z_]+\b|\bTS[0-9]{4}\b|npm ERR!)/iu.test(line)) {
@@ -91,7 +91,7 @@ export function sanitizeSourceDiagnostic(input: SourceBuildDiagnostic): SourceBu
       continue;
     }
     // Opaque keys, encoded payloads and credential-shaped strings are excluded.
-    if (/[A-Za-z0-9_+\/-]{40,}={0,2}/u.test(line) || /gh[pousr]_|github_pat_|AKIA[0-9A-Z]/u.test(line)) {
+    if (/[A-Za-z0-9_+/-]{40,}={0,2}/u.test(line) || /gh[pousr]_|github_pat_|AKIA[0-9A-Z]/u.test(line)) {
       dropped = true;
       continue;
     }

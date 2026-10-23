@@ -1,92 +1,97 @@
-# Praetorium — Management VM移行・Coordination導入の検証計画
+# Praetorium — Three-VM Bootstrap履歴・残受入ゲート・Admin分離移行
 
-> **状態:** [目標アーキテクチャ](MANAGEMENT-PLANE.md)に伴う移行設計。**本番操作用の実行手順や実施許可ではない**。現行main（確認時 `7194bb43275ccb7295b8f7e7f577450ea91aeabe`）からの段階移行のゲートのみを定義する。Ansible Role・Podman Quadlet・k3s移行コードはこのPRでは作成しない。
->
-> **現状:** Runtime VM上にk3s Server + Provisioner / Build Worker Pod + Scriptorium、別Builder VMにrootless BuildKit。新Management VM、Server→Agent切替、VPC経路は未適用。
+> **Status:** 2026-10-24現在の**設計とゲート台帳**。2026-10-20の3VM構築は既に実施。旧「Runtime ServerからManagement Serverへ同一クラスタを移す」計画は**実施手順ではなく履歴**であり、現行の目標復旧手順として再利用しない。
+> **Authority:** 最新オーナー指示 > [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) / [docs/GOAL.md](../GOAL.md) / [Issue #31](https://github.com/yohn-jp/praetorium/issues/31) > [Management Architecture](MANAGEMENT-PLANE.md)と[Admin Architecture](ADMINISTRATION.md)。実装の受入は実機観測を必須とする。
+> **Evidence cut:** [main@1930131e](https://github.com/yohn-jp/praetorium/tree/1930131e6858e5d9035abe1dcd82d4ae654c622d)。最新の記録済み3VM実測は**2026-10-20**（[THREE-VM-INFRA.md](../verification/THREE-VM-INFRA.md) / [FRESH-DEPLOYMENT.json](../verification/THREE-VM-FRESH-DEPLOYMENT.json)）。この時点以降のライブ状態は本書から推定しない。
+> **Scope:** 設計と既存記録に基づく整理のみ。VM/Cloudflare/D1/DNS/Secret/イメージ/公開環境をこの文書の更新で変更しない。
 
-## 1. 移行の不変条件
+## 1. 実施された3VM構成（旧文書の現状記述を上書き）
 
-1. GitHub repository ID、既存D1 Binding/Desired State、Runtime Epoch/Generation、OCI Digest、公開Scriptorium Originは変更しない。新VMを建てることを論理アプリ移行や新規Repositoryに見せない。
-2. Gitにpush済みでないScriptoriumの仕事、待機中Checkpoint、PVCとアプリ内部データを破棄しない。**新ノードがReadyでも旧Writer死亡の証明ではない**。
-3. Existing k3s cluster ID、CA、クラスタDatastore、Server/Agent joining token、cert-managerの鍵/SecretとTraefikのルーティングを追跡する。変更後の識別一致を検証するまで既存Serverを削除しない。
-4. 未確認のDatastore形式（SQLite/embedded etcd/external）に対し、`k3s server`を`agent`に切り替えるだけの汎用的な移行手順を作らない。**最初に方式を発見し、実際の復元をリハーサルする**。
-5. Management VMがk3s Serverを稼働しているかどうかとは独立してCoordinationがsystemdで起動できる。k3s依存のPod/IngressをCoordinationの唯一の保守入口にしない。
-6. 旧Claim/Heartbeat/Report経路を無効化するまでは**新Coordinatorで同一Workを二重実行しない**。shadow観測は副作用なし。
-7. 本番DNS・Proxmox設定・Secret回転・既存Work削除・新VM作成・旧VM解体はPRのマージで許可される操作ではない。
+2026-10-20より前のTopologyはRuntime VM上のk3s ServerとBuilder上の独立BuildKitだった。実施後は次の**新規Bootstrap**に変わっている。旧Embedded-etcd datastoreとCAの継続、古いPod/Writer IDや未公開データの移行に成功したことを意味しない。
 
-## 2. フェーズとゲート
-
-| 順番 | 作業（実装時） | 事前/完了ゲート | 失敗時 |
-| --- | --- | --- | --- |
-| 0: Inventory | Runtime/BuilderのOS、現k3sのバージョン/Datastore/cluster ID、join token/CA、API SAN、Node、Static Add-on、PVC/StorageClass、Ingress、Secret、各System PodとWork状態を採取 | 稼働している実物に対する読み取り物証と対応するcommit SHAがある | **STOP**。仮定のまま移行方法を選ばない |
-| 1: Backup | クラスタDatastore、token/CA/証明書、K8s manifest/Volume、D1の既存正本、重要Persistent Dataを切り分け、オフホストへ保護コピー | **別環境で復元を実証**。復元したクラスタID/Secret/Node/manifestと必要なPVC復旧性を確認 | **STOP**。バックアップファイルの存在だけでは不合格 |
-| 2: Host provisioning | 新Management VMをオペレーターが準備。Ansible common/management roleによってsystemd、ネットワーク、K3s binary/config、監視、管理ユーザー等を構成 | Hypervisor非依存、再実行で非破壊収束、Cluster/token mismatchを拒否。まだ既存Serverは維持 | 新VMだけ停止し旧系継続 |
-| 3: Coordination bootstrap | 管理用専用UID、rootless Podman、Quadlet、user systemd linger、Health/readiness、ログ、Digest pinning。既存Workの**read-only shadow**観測だけ | K3s停止中にQuadletが起動でき、不要なroot権限・cluster-admin資格情報を持たない | Coordinationのみ停止 |
-| 4: Server migration | **確認したDatastoreに応じた個別移行**でk3s ServerをManagementへ移す。移行前のAPI/Pod状態をfreezeするかは安全契約に従う | 新Management ServerのAPI/Datastore/CA・Token/Cluster ID/Network設定が一致し、実Pod/Secret/CRD/Volumeが期待どおり | 旧Serverの復旧/戻し手順で停止。独立Serverを二重稼働させない |
-| 5: Runtime as Agent | 旧Runtime VMをAgentにし、Management Serverを既定APIへ。後に2台目Agentを追加できるラベル/配置を構成 | Runtime Node Ready、正規の既存PVCと全Writerを保護。管理NodeにTenant Podが誤配置されない | Workload移動禁止。必要なら旧Server構成へ戻す |
-| 6: Infra reconciling | Traefik/Flux/cert-manager/Ingress/Certificateの設定と所有者、k3s Server移設後のPrivate API接続、Caddy公開パススルーを照合 | Scriptorium公開Host/証明書/Handoff/停止FallbackとK3s ClusterIP/NetworkPolicyが正常。Static applyが二重所有でない | 公開移行を停止、旧Ingress/証明書/ルーティングを保護 |
-| 7: Transport cutover | Workers VPC Serviceと認証済みManagement受信APIを検証。CoordinationからWorker/Provisioner/Builderへの指示、結果返却、未配達Work回収を実装 | 通知失敗・重複・再接続・再起動でWork欠落も二重実行も起きず、D1フェンス・GitHub権限は維持 | 現行の唯一のActive実行経路へ戻す |
-| 8: Decommission legacy | 旧公開内部Webhook/Claim再試行を段階的に削減、不要なSecretや古いホストロールを計画的に撤去 | 実ログで旧経路の利用が0、コスト/復旧時間とBackout手順を確認 | 残存利用があれば削除延期 |
-
-これらのゲートは**実装/導入フェーズごとに独立承認**する。すべて一度に動かす「一括移行」は採らない。
-
-## 3. K3s Datastore別の判断（方式を決める前の調査）
-
-| 実際に見つかったDatastore | 選択肢の扱い | 必須確認 |
+| 主体 | 2026-10-20実測（根拠） | 現行デザインの責務 |
 | --- | --- | --- |
-| Single Server SQLite | 古いServerから新Managementへ復元を伴う計画移行、または事前にEtcdへ移行したうえでServer参加を検討。**SQLiteを保持したまま別のServerを通常joinさせるとは想定しない** | shutdown/backup/restore整合、tokenとCA、同一Datastoreへ二重writer不可 |
-| Embedded etcd | K3s公式手順に沿ってServer参加・member更新・退役を検討。HAとは別に一時的なmulti-serverを要する可能性 | Peer member、quorum、Network/Token一致、旧Serverの退役条件 |
-| 外部DB | 外部Datastoreの権限・Endpointとバックアップを別途検証 | 同一クラスタ/CAの再接続、DBとk3s versionの整合 |
+| Management VM | `manage.praetorium.vm`: `k3s.service` active、k3s Server Node Ready、管理Node taint。rootless Coordination/Tunnel active、k3s停止中のhealth検証と管理VM再起動後復帰を確認 | Cluster/Host管理、独立Coordination、VM横断read-only Observability |
+| Runtime VM | `runtime.praetorium.vm`: 旧Server unit撤去、`k3s-agent.service` active、Runtime Node Ready、Scriptorium Pod Readyの観測 | k3s Agent、テナント実行、Ingress。Management Nodeにテナント配置しない |
+| Builder VM | 独立rootless BuildKit + cache/cgroup/GCのサンプルを記録 | 信頼済みOCI artifact build。K3s Server/Agentや管理者SSHの代用にしない |
+| Cloudflare | Management向けTunnel/VPC Serviceの作成、Coordinationへのlocalhost配送probeとControl Plane用Binding構成記録あり | Gateway/Control Plane/D1の既存権限と非公開Work通知、Admin専用read-only VPCを追加する目標 |
+| Admin | `apps/gateway` がGatewayとAdmin両Originをホスト（2026-10-24 main確認） | 独立 `apps/admin` Workerで `admin.praetorium.yohn.jp` のみを担当 |
 
-**禁止:** `k3s-uninstall.sh`やデータディレクトリ消去で手早くAgent化したことにする、Cluster-IDだけ合わせた独立クラスタを作って旧クラスタに接続済みとみなす、古いServerで残存するWriterの確認を飛ばす。
+旧環境の破棄は**個別のオーナー承認に基づく過去の操作**であり、今後の一般的なテナントデータ破棄を承認するものではない。旧WriterへのQuiesce成功/旧Workの完全復元は主張しない。残された旧クラスターの暗号化バックアップは過去記録の扱いであり、現行クラスタの自動Rollback先ではない。
 
-公式: [K3s Architecture](https://docs.k3s.io/architecture)、[Backup/Restore](https://docs.k3s.io/datastore/backup-restore)、[Server/Agent Token](https://docs.k3s.io/cli/token)。
+## 2. 検証済みと未確認を混ぜない
 
-## 4. Ansibleが提供すべき検証とインターフェース
-
-- 同一Playbookは既存Linux VM、Proxmox guest、VMware guest、ベアメタルの**共通ホストロール**として動くこと。新規VM作成は入力条件であり変更対象外。
-- `management` roleはピン留めk3s Server version、private bind/SAN、systemd、datastore/Token backupとhealth、管理ポート許可を持つ。rootless Podmanの要件は`coordination` roleに分離する。
-- `runtime` roleはK3s Serverを起動せず、保護Token/EndpointでAgent join。Node role Labelと管理NodeのTaint/Runtime nodeAffinityが合うこと。
-- `builder` roleはrootless BuildKitと既存mTLS/キャッシュ/リソース限界を維持し、K3s admin権限を渡さない。
-- Ansible/OSの二重管理を避ける。既存NixOS Role利用時の設定権威は別に固定し、Ubuntu/Debian系への収束と同じセキュリティ契約を満たす。
-- 結果に変更対象、実施/非実施、失敗時の残存状態、source version、host identityを記録する。資格情報や個人データはログ禁止。
-
-## 5. Coordination Protocolの受入条件
-
-### 5.1 Delivery
-
-- D1にcommit済みのWorkだけを配送する。受領ACKと実行成功ACKを別に管理する。
-- 通知の損失、ネットワーク断、Coordinator再起動でWorkが失われず、復帰後に未処理Workを再取得できる。
-- Dispatcher重複や再送が発生しても`idempotencyKey`・`operationId`・`attempt`・`leaseEpoch`等の既存フェンスが有効。
-- Public Control Planeが自発的にPrivate Management VMへ通信する時の第1候補はVPC Service。別のVMがWorker間Service Bindingを直接使用できると誤認しない。
-
-### 5.2 Execution
-
-- Build Worker/Provisionerが独立した認証主体で、任意の指示をK3s adminやBuildKit権限として実行しない。事前AdmissionとArtifact immutable identityを照合する。
-- 長時間BuildのCPU/HeartbeatはVM側RPCに寄せる余地があるが、Cloudflare D1の状態確定とWriter排他は維持。
-- Coordinatorがクラッシュした時点で、すでに発生した外部副作用をなかったことにしない。未知の結果は観測/照合してから再試行する。
-
-### 5.3 Results
-
-- VM側からの結果返却には、短い応答、認証済みoutbound callback、または再接続を伴う双方向経路のいずれかが必要。**採用方式は未確定。**
-- 結果受信Workerはリポジトリの現行Epoch/Generationと署名/証拠を照合してD1に確定。通知元を信じて認可やWriter不在を省略しない。
-- VPCのBindingは公開API露出削減に効くが、それだけでWorker InvocationやD1 query数が減るとは主張しない。
-
-## 6. 非機能受入と撤退条件
-
-| ケース | 実際に試すこと | 不合格 |
+| 項目 | 記録された判定 | 根拠/残条件 |
 | --- | --- | --- |
-| Management VM再起動 | rootless Quadletがログイン不要で再起動、k3s Server/APIとCoordinationの起動関係が循環しない | Kubernetesが停止したためCoordinationまで起動不能 |
-| k3s API停止 | Coordinator healthは応答、K3s操作は明示失敗、OperatorがSSH/Ansibleから診断可能 | Pod内UIやAPI経由以外に復旧入口がない |
-| Runtime Node 1→2台 | k3s Agent join後、2台で対象Workloadを適切にスケジュール。PVC移動可否を確認 | Agent追加でWriter二重化/PVC損失 |
-| Builder切断 | Workは確定状態を保持し再試行、終了済み部分結果を成功扱いしない | ビルドが永久未解決/二重公開 |
-| VPC/Tunnel断 | private ingress閉塞を検出し、復帰後Workを回収 | インターネット公開に逃がす/Work消失 |
-| Cloudflare D1断 | Coordinatorは第二のDesired Stateを書かず、未報告Workの確定を保留 | 誤って成功扱い/再配布 |
-| HTTPS/TLS | `*.scriptorium.yohn.jp`へのBrowser SNIがcert-manager/Traefikまで保たれる | Caddyが再度独自TLS終端/誤HostでHandoff不能 |
-| アイドル負荷 | 無Work/Runtime 0、Runtime 1/N、Build中、ブラウザ操作のWorkers Requests/Scheduled/D1を分けて測定 | 固定リクエスト増・コストだけで改善を宣言 |
+| Management k3s Server / Runtime Agentの役割 | **VERIFIED 2026-10-20** | Node label/UID、Host systemd、Agent URL、旧Server unit不在。FRESH-DEPLOYMENT |
+| Management Tenant除外 | **VERIFIED 2026-10-20 topology** | management taint + runtime label。アプリ各種の新規Placementは個別の実Workload観測を要する |
+| Coordinationのk3s停止時独立 | **VERIFIED BOUNDED** | k3s停止約1秒、rootless Quadlet/Tunnel継続。長時間障害soakではない |
+| Management VM reboot recovery | **VERIFIED BOUNDED** | k3s/Coordination/Tunnel復帰、両Node Readyと既存Pod UIDを再観測 |
+| VPC Service/Tunnelの資源/Config | **VERIFIED by config/deploy evidence** | 2026-10-20リソース作成と配備記録。現在のCloudflare live readback・外部Worker発通知成功は別 |
+| Control Plane→VPC→Management→Worker実配送 | **NOT_CHECKED / full-path** | Source/Operation双方の本番通知、重複/欠落/再起動→再照合 |
+| D1 Work/Releaseの安全な完全E2E | **NOT_CHECKED** | 実Release→BuildKit→署名Admission→Canary→Stable、G1–G9・Issue #31 |
+| Admin独立Worker/Domain owner | **NOT_IMPLEMENTED at source cut** | Gateway Wrangler二つのcustom domain、`apps/admin` 未作成 |
+| Admin 3VM observability | **NOT_IMPLEMENTED at source cut** | Observer/VPC/DTO/UIをこれから実装する |
+| Cloudflare idle/active request実測 | **NOT_CHECKED** | Workers/D1/DOの実リクエスト/コスト。性能数値の推定不可 |
 
-## 7. 制限・承認待ち
+各検証の正確なTimestamp、CPU/Memory、UID、Secret漏洩を防いだ収集手順は[THREE-VM-INFRA.md](../verification/THREE-VM-INFRA.md)、[THREE-VM-CONTROL.md](../verification/THREE-VM-CONTROL.md)、[THREE-VM-ACCEPTANCE.md](../verification/THREE-VM-ACCEPTANCE.md)を参照。後者には**新規Bootstrap前の未完了ゲート表も残る**ため、必ず観測日時を合わせる。
 
-本PRでは移行対象VMの実数/OS、K3s Datastore種別、ライブPVC/Workload、通信VPCアカウント権限、Server endpoint、RPO/RTO、Ansible初期Roleの完全な受入値を確定していない。これらは**適用前の証拠とオーナー判断が必要**。この計画だけを根拠に変更を実行することは認めない。
+## 3. 今後のMigration対象は「Server移設」ではない
 
-最初の実装タスクは**読み取り専用のホスト現況調査とDatastore/Token/PVCの復旧演習**であり、Coordination VMのリリースやK3s Server移設をいきなり行うことではない。
+旧文書のStage 0–8（Inventory→Backup→Management新設→Coordination→Datastore移設→Runtime Agent→Infra→通知→旧環境撤去）は、初期設計の**歴史的な代替ルート**だった。2026-10-20にはオーナー承認のfresh bootstrapが採用され、旧cluster/datastore継続の移行計画は実行しなかった。旧ルートを後追いで「全Stage PASS」としてはいけない。
+
+残る作業は **いま稼働する新構成を前提とした運用とプロダクトの受入** である。
+
+| 順序 | 作業 | 必須完了条件 |
+| --- | --- | --- |
+| 1. Live readback | 現行main、3VM systemd/Podman/k3s・Node/Pod、現行Cloudflare Workers/Tunnel/VPCの設定とorigin所有をread-only照合 | 現存Inventory・ソースcut・配備Digestが一致。2026-10-20の古い証拠を現時刻として表示しない |
+| 2. Work delivery | 既存のD1永続要求→VPC/HTTPS hint→Coordination→Build Worker/Provisioner→claim/lease/reportを本番で検証 | 通知失敗・重複・順序違い・宛先停止・復旧後にWork欠落/二重実行がない。D1 fencing維持 |
+| 3. Runtime/Build operational | 実Scriptorium/BuildKit・OCI・Releaseと元Workデータの安全性を検査 | [GOAL.md](../GOAL.md) G1–G9と[Issue #31](https://github.com/yohn-jp/praetorium/issues/31)の固定受入。UnverifiedとPASSを区別 |
+| 4. Admin Worker split | [Admin Architecture](ADMINISTRATION.md) Gate A–C: 非公開Gateway Auth/Source Broker、新 `apps/admin`、service認証、custom domain切替 | Admin/Gateway Domain独立、セッション・CSRF・Service Binding・Source/Releaseと通常Gateway回帰。旧Gatewayへrollback可能 |
+| 5. Read-only Observability | Admin Gate D–E: Management Observer・VPC・3VM Inventory/Host/Service/Dependencies・Desktop/Mobile | VM停止/部分障害/観測不能/stale、Failure Evidenceへの導線、Adminへのインフラ特権なし |
+| 6. End-to-end operations | Admin Gate F: 実時間メトリクス/停止テスト/原状回復/コスト確認 | 最終Release cutに対する本番Worker/VM・ブラウザ結果、Rollback再演習、Idle常時Pollingコストの増加なし |
+
+**独立タスクは並列に進められる。** ただし同じdomain route、認証契約、D1 migration、Worker config generatorの共有変更は単一の統合担当が所有する。ジョブ配送のQueues化をAdmin分離の前提にしない。
+
+## 4. 変更不能なデータ・権限の境界
+
+- D1がRepository Binding、Desired State、Build/Operation/Release、Auditの正本。k3s APIがPod/Node/Resourceの実状態の正本。GitHubが既に公開済みの原稿/権限の正本。Admin/Observerはこれらを複製して第二の正本にしない。
+- 認証主体はGitHub OAuth/既存Gateway Session Storeのまま。Adminの独立Domainと独立WorkerはユーザーACLの独立実装を意味しない。Operator許可と一般Repository Adminを厳密に分ける。
+- 最新のGeneration/Epoch、D1 CAS・Lease・Idempotency・署名/Artifact provenance、QuiesceとWriter absent evidenceを引き続き強制。古いNode/Pod UID、期限切れLease、Cloudflare通知ACKでは実行成功を確定しない。
+- 動的Kubernetes resourceの所有はProvisioner、静的インフラ構成は既存のAnsible/Flux責務。Adminから任意 `kubectl`、systemd操作、BuildKit command、D1 UPDATEを行う経路を作らない。
+- Build Worker→BuildKitのmTLS、Runtime Git credential、管理者用観測/Service Credentialは相互に分離し、それぞれの権限を狭くする。
+- 旧環境の復元は現行クラスタのRollback操作ではない。現行クラスタに変更を伴う時は**その時点のDatastore/token/証明書とWork/Snapshotを取得して独立restoreで検証**する。
+
+## 5. 通信・障害の受入マトリクス
+
+| 障害/シナリオ | 期待動作 | 禁止される事象 |
+| --- | --- | --- |
+| Cloudflare通知が欠落 | D1の未処理Workを後続の再照合で回収。通知は実行権限でない | Work消失・永続滞留・再送による二重効果 |
+| VPC/Tunnel Down | 管理者へUnavailable/stale表示、既存安全なfallback/recoveryに従う | 公開Management hostnameへの迂回・正本不整合 |
+| Management k3s Server Down | Coordination/Observerは独立に起動しOS診断、Kubernetes操作は明示失敗 | k3s APIの通信失敗をWorker失敗/VM停止と同一視 |
+| Management全停止 | 独立Admin UIで管理VMの観測不能と最後の取得時刻を表示（Auth Broker稼働時） | 偽Healthy・ブラウザのroot host credentials保持 |
+| Runtime/Builder Down | Host別に障害表示、D1の未完了Workと実結果を分離 | Build成功/Writer absentを未観測で断定 |
+| Gateway/Auth Broker Down | Adminはセッション認証不能ならfail closed、公開health等以外のデータを隠す | 認証抜き診断や第二ユーザーDBへの自動切替 |
+| Control Plane/D1 Down | Canonical Release/Work操作を停止、観測可能なHost telemetryはそのまま別セクションで表示 | 失敗を空結果とする、直接D1書込 |
+| Admin Worker Down | Gatewayの通常ユーザー/Scriptoriumは継続。break-glassは別入口 | Gatewayへ管理操作を無条件戻す |
+| Browser失効/CSRF誤り | 明示的401/403・再ログイン、mutation副作用ゼロ | CSRF/Originバイパス、token漏えい |
+
+Runtimeに2台目Agentを追加する際は、Managementのk3s Server/APIが単一点であること、Nodeの役割ラベル、Storage/PVC移動可能性、WorkloadのWriter排他、Ingress複数ノード、バックアップを別途検証する。**Agent増設はHA control-planeを意味しない。**
+
+## 6. 実際に確認する証拠の最小セット
+
+1. ソースmain HEAD、実デプロイWorkerのscript/version/hash、Gateway/Admin/Control Planeそれぞれのcustom domain所有者、設定生成物とCloudflare読戻し、operator allowlistとSecretの**名前**（値は出さない）。
+2. 3VMのrole・Kernel・systemd/Podman/BuildKit/k3s/Node/Pod・Capacity、時刻付きCPU/Memory/Disk/GC、暗号化Datastoreバックアップ/復元可能性。read-only検証の実行時刻、環境、期待/実際。
+3. 管理画面のGuest/非Admin/期限切れ/リプレイ/CSRF/正当Operator、Release/Source Retry、通常GatewayのOAuth、公開Scriptoriumの編集・Wake/Logoutの実操作。
+4. VPC直接通知/HTTPS fallback/Build Worker・Provisioner停止→復旧/重複/古いAttemptの拒否、進捗と結果のD1 readback。
+5. Browser desktop/mobile (320/375/390/430/1440)、最終観測時刻、サービス・ホストの部分故障、stable header、操作中のFocus/scroll維持、秘密情報非表示。
+6. 新旧Cloudflare idle/active件数、D1 reads/writes/DO、Worker CPU、VM計測負荷とBrowserネットワーク。結果が欠けた項目はNOT_CHECKED。
+
+本書は将来作業の完了判定を自動でPASSにしない。ライブ未確認の範囲はIssue/実行報告へ残し、設計と実装と本番の状態を一括して「完了」としない。
+
+## 7. 履歴と参照
+
+- 2026-10-20以前の旧移設計画: [旧Management Migration版](https://github.com/yohn-jp/praetorium/blob/1930131e6858e5d9035abe1dcd82d4ae654c622d/docs/architecture/MANAGEMENT-PLANE-MIGRATION.md)（当時の停止条件/Datastore別選択肢/Host構成。現在に適用しない）。
+- 証拠: [THREE-VM-INFRA.md](../verification/THREE-VM-INFRA.md)、[THREE-VM-FRESH-DEPLOYMENT.json](../verification/THREE-VM-FRESH-DEPLOYMENT.json)、[THREE-VM-CONTROL.md](../verification/THREE-VM-CONTROL.md)、[THREE-VM-ACCEPTANCE.md](../verification/THREE-VM-ACCEPTANCE.md)。
+- 固定設計: [MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)、[ADMINISTRATION.md](ADMINISTRATION.md)。
+- 製品受入: [GOAL.md](../GOAL.md)、[Issue #31](https://github.com/yohn-jp/praetorium/issues/31)、[Issue #26](https://github.com/yohn-jp/praetorium/issues/26)。

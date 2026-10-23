@@ -8,6 +8,7 @@ export function writeWorkerDeploymentSecrets({
   notificationsEnabled,
   hasReleaseOperatorToken,
   hasAdminCredential = false,
+  hasObserverCredential = false,
 }) {
   // Match the prior Wrangler secret-put stdin normalization exactly.
   const value = (role) => privateBytes(role).toString("utf8").trimEnd();
@@ -28,7 +29,10 @@ export function writeWorkerDeploymentSecrets({
     ...(hasAdminCredential ? { ADMIN_CONTROL_PLANE_AUTH: value("adminControlPlaneAuth") } : {}),
   };
   const files = {};
-  const admin = hasAdminCredential ? { ADMIN_CONTROL_PLANE_AUTH: value("adminControlPlaneAuth") } : null;
+  const admin = hasAdminCredential ? {
+    ADMIN_CONTROL_PLANE_AUTH: value("adminControlPlaneAuth"),
+    ...(hasObserverCredential ? { ADMIN_OBSERVER_AUTH: value("adminObserverToken") } : {}),
+  } : null;
   for (const [worker, secrets] of Object.entries({ gateway, control,
     ...(admin ? { admin } : {}),
   })) {

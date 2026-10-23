@@ -315,10 +315,10 @@ export function validateInventory(value) {
   exactKeys(
     value.gateway,
     ["allowedRepositoryOwner", "githubAppId", "githubOauthClientId", "tokenEncryptionKeyId",
-      "adminOrigin", "adminGithubUserIds", "releaseSources"],
+      "adminOrigin", "adminGithubUserIds", "releaseSources", "adminObserverVpcServiceId"],
     "gateway",
     errors,
-    ["adminOrigin", "adminGithubUserIds", "releaseSources"],
+    ["adminOrigin", "adminGithubUserIds", "releaseSources", "adminObserverVpcServiceId"],
   );
   for (const field of [
     "allowedRepositoryOwner",
@@ -358,6 +358,12 @@ export function validateInventory(value) {
     errors.push("gateway.tokenEncryptionKeyId must be a safe key identifier");
   }
 
+  if (value.gateway?.adminObserverVpcServiceId !== undefined &&
+      value.gateway.adminObserverVpcServiceId !== null &&
+      (typeof value.gateway.adminObserverVpcServiceId !== "string" ||
+       !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.gateway.adminObserverVpcServiceId))) {
+    errors.push("gateway.adminObserverVpcServiceId must be a valid dedicated VPC service ID");
+  }
   const adminOrigin = value.gateway?.adminOrigin ?? null;
   const adminIds = value.gateway?.adminGithubUserIds ?? [];
   const releaseSources = value.gateway?.releaseSources ?? [];

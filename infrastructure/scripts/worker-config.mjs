@@ -95,6 +95,12 @@ export function renderWorkerTemplate(template, inventory, worker) {
     config.routes = [{
       pattern: new URL(inventory.gateway.adminOrigin).hostname, custom_domain: true,
     }];
+    if (inventory.gateway.adminObserverVpcServiceId) {
+      config.vpc_services = [{
+        binding: "INFRASTRUCTURE",
+        service_id: inventory.gateway.adminObserverVpcServiceId,
+      }];
+    }
     return `${JSON.stringify(config, null, 2)}\n`;
   }
   if (worker === "control-plane") {

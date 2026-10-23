@@ -123,6 +123,8 @@ try {
     }
     writeFileSync(conf[key], JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
   }
+  if (inventory.gateway.adminObserverVpcServiceId && !privateManifest.values.adminObserverToken)
+    throw new Error("Admin observer VPC requires the independent adminObserverToken source");
   const required = {
     [conf.gateway]: [
       "GITHUB_APP_PRIVATE_KEY", "GITHUB_OAUTH_CLIENT_SECRET", "GATEWAY_GITHUB_WEBHOOK_SECRET",
@@ -131,7 +133,10 @@ try {
       "GATEWAY_CREDENTIAL_DIGEST_PEPPER", "GATEWAY_HANDOFF_DIGEST_PEPPER",
       "GATEWAY_TOKEN_ENCRYPTION_KEY",
     ],
-    [conf.admin]: ["ADMIN_CONTROL_PLANE_AUTH"],
+    [conf.admin]: [
+      "ADMIN_CONTROL_PLANE_AUTH",
+      ...(inventory.gateway.adminObserverVpcServiceId ? ["ADMIN_OBSERVER_AUTH"] : []),
+    ],
     [conf.control]: [
       "ADMIN_CONTROL_PLANE_AUTH", "CONTROL_PLANE_GATEWAY_AUTH", "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
       "RUNTIME_CONTROL_SIGNING_KEY", "RUNTIME_IDENTITY_SIGNING_KEY",
@@ -202,6 +207,7 @@ try {
         directory: generated, privateBytes, notificationsEnabled,
         hasReleaseOperatorToken: Boolean(privateManifest.values.releaseOperatorToken),
         hasAdminCredential: Boolean(privateManifest.values.adminControlPlaneAuth),
+        hasObserverCredential: Boolean(privateManifest.values.adminObserverToken),
       });
       if (!secretFiles.admin) throw new Error("Admin dedicated service credential is required");
       wrangler(["deploy", "--config", conf.control, "--secrets-file", secretFiles.control], { capture: false });

@@ -83,6 +83,20 @@ function setStringVariable(variables, key, value) {
 
 export function renderWorkerTemplate(template, inventory, worker) {
   const config = JSON.parse(template);
+  if (!["control-plane", "gateway", "admin"].includes(worker))
+    throw new TypeError("Unknown Worker projection role");
+  if (worker === "admin") {
+    if (!inventory.gateway.adminOrigin)
+      throw new TypeError("Admin origin is required by the independent Worker");
+    config.vars = {
+      ADMIN_ORIGIN: inventory.gateway.adminOrigin,
+      GATEWAY_ORIGIN: inventory.domains.gatewayOrigin,
+    };
+    config.routes = [{
+      pattern: new URL(inventory.gateway.adminOrigin).hostname, custom_domain: true,
+    }];
+    return `${JSON.stringify(config, null, 2)}\n`;
+  }
   if (worker === "control-plane") {
     const variables = {};
     setStringVariable(variables, "CONTROL_PLANE_ORIGIN", inventory.domains.controlPlaneUrl);
@@ -147,7 +161,7 @@ export function renderWorkerTemplate(template, inventory, worker) {
   }
   const origins = worker === "control-plane"
     ? [inventory.domains.controlPlaneUrl]
-    : [inventory.domains.gatewayOrigin, inventory.gateway.adminOrigin];
+    : [inventory.domains.gatewayOrigin];
   config.routes = origins.filter(Boolean).map(origin => ({
     pattern: new URL(origin).hostname, custom_domain: true,
   }));

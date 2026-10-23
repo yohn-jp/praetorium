@@ -332,7 +332,7 @@ function buildTable(model: ConsoleViewModel): string {
       (job.admittedReleaseId ? `<span class="desktop-table-identity">Admitted Platform release</span>` +
         `<a class="desktop-platform-release-link" href="/releases/${encodeURIComponent(job.admittedReleaseId)}?ui=${model.mode}">${escapeHtml(job.admittedReleaseId)}</a>` : "") +
       `</td><td>${job.state === "failed"
-        ? job.retryable ? `<span class="desktop-policy-available">View diagnostics and recovery</span>` : `<span class="desktop-muted">Retry not permitted</span>`
+        ? job.retryable ? `<a class="desktop-policy-available" href="${escapeHtml(buildHref(job.id, model.mode))}">View diagnostics and recovery</a>` : `<span class="desktop-muted">Retry not permitted</span>`
         : `<span class="desktop-muted">Not applicable</span>`}</td></tr>`).join("") + `</tbody></table></div>`;
 }
 
@@ -448,12 +448,18 @@ function buildDetail(model: ConsoleViewModel): string {
 function audit(model: ConsoleViewModel): string {
   if (!model.audit.value) return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">OPERATOR ACTION HISTORY</p><h1>Audit</h1></section>` +
     notice(model.notice) + dependencyUnavailable("Operator audit", model.audit);
-  const query = model.auditQuery.trim().toLocaleLowerCase();
-  const events = model.audit.value.events.filter((event) => !query ||
-    [event.actorId, event.action, event.outcome, dateTime(event.occurredAt)].some((value) => value?.toLocaleLowerCase().includes(query)));
-  const rows = events.length ? events.map((event) => `<tr><td>${escapeHtml(dateTime(event.occurredAt))}</td>` +
-    `<th scope="row">${escapeHtml(event.action)}</th><td>${badge(humanize(event.outcome), event.outcome)}</td>` +
-    `<td>${escapeHtml(event.actorId ?? "System")}</td></tr>`).join("") : "";
+  const events = model.audit.value.events; // Authenticated Control Plane already filtered this page.
+  const rows = events.length ? events.map((event) => {
+    const target = event.jobId ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>`
+      : event.releaseId ? `<a href="/releases/${encodeURIComponent(event.releaseId)}?ui=${model.mode}">${escapeHtml(event.releaseId)}</a>`
+      : event.operationId ? `<code>${escapeHtml(event.operationId)}</code>` : "No linked target";
+    const evidence = [event.failureCode, event.revision == null ? null : "revision " + event.revision,
+      event.leaseEpoch == null ? null : "epoch " + event.leaseEpoch].filter(Boolean).join(" · ");
+    return `<tr><td>${escapeHtml(dateTime(event.occurredAt))}</td>` +
+      `<th scope="row">${escapeHtml(event.action)}</th><td>${badge(humanize(event.outcome), event.outcome)}</td>` +
+      `<td>${target}${evidence ? `<div class="desktop-muted">${escapeHtml(evidence)}</div>` : ""}</td>` +
+      `<td>${escapeHtml(event.actorId ?? "System")}</td></tr>`;
+  }).join("") : "";
   const cursor = model.audit.value.nextCursor;
   const nextQuery = new URLSearchParams({ ui: model.mode });
   if (cursor && cursor.length <= 512) nextQuery.set("cursor", cursor);
@@ -466,7 +472,7 @@ function audit(model: ConsoleViewModel): string {
     `<label for="desktop-audit-query">Search audit events</label><input id="desktop-audit-query" name="q" type="search" maxlength="100" value="${escapeHtml(model.auditQuery)}">` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Search</button></form>` +
     (events.length ? `<div class="desktop-table-scroll"><table class="desktop-audit-table"><caption class="desktop-sr-only">${events.length} audit events on this page</caption>` +
-      `<thead><tr><th scope="col">Time (UTC)</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Actor</th></tr></thead>` +
+      `<thead><tr><th scope="col">Time (UTC)</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Target / evidence</th><th scope="col">Actor</th></tr></thead>` +
       `<tbody>${rows}</tbody></table></div>` : `<p class="desktop-empty">${model.audit.value.events.length
         ? "No events on this page match the search."
         : "No operator events are recorded on this page."}</p>`) +

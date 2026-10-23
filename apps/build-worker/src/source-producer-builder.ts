@@ -378,7 +378,8 @@ export async function buildSourceRelease(
     throw new TypeError("Configured Producer repository is not an approved GHCR repository");
   repositoryPathForHost(imageRepository,"ghcr.io");
   const outputImage=outputRepository(options,imageRepository);
-  const root=await mkdtemp(path.join(config.buildKit.temporaryDirectory,"source-producer-"));
+  const root=await runSourceStage("build_environment",options.onStage,
+    ()=>mkdtemp(path.join(config.buildKit.temporaryDirectory,"source-producer-")));
   const source=path.join(root,"source");
   const dockerfiles=path.join(root,"dockerfile-source");
   const metadataDockerfiles=path.join(root,"dockerfile-metadata");

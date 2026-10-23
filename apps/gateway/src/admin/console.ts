@@ -154,19 +154,35 @@ async function controlPlaneSection<T>(
   }
 }
 
+function validPageCursor(value: unknown): boolean {
+  const cursor = objectValue(value)?.nextCursor;
+  return cursor === undefined || cursor === null || (typeof cursor === "string" && cursor.length <= 512 &&
+    /^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(cursor));
+}
 function isCatalog(value: unknown): value is {
   items: Summary[]; nextCursor?: string | null;
   stableChannel?: { currentReleaseId: string | null; revision: number } | null;
 } {
-  if (!value || typeof value !== "object") return false;
-  const v = value as { items?: unknown };
-  return Array.isArray(v.items) && v.items.length <= 25 && v.items.every(item => {
+  const data = objectValue(value);
+  if (!data || !validPageCursor(value) || !Array.isArray(data.items) || data.items.length > 25) return false;
+  const stable = objectValue(data.stableChannel);
+  if (data.stableChannel !== undefined && data.stableChannel !== null &&
+      (!stable || !(stable.currentReleaseId === null || typeof stable.currentReleaseId === "string") ||
+        !Number.isSafeInteger(stable.revision))) return false;
+  return data.items.every(item => {
     const row = objectValue(item), release = objectValue(row?.release);
-    return release && ["id", "version", "imageDigest", "status", "createdAt"].every(key => typeof release[key] === "string");
+    if (!release || !["id", "version", "imageDigest", "status", "createdAt"].every(key => typeof release[key] === "string")) return false;
+    if (row?.workflow === null) return true;
+    const status = objectValue(row?.workflow), workflow = objectValue(status?.workflow), build = objectValue(status?.build);
+    return !!workflow && typeof workflow.state === "string" && Number.isSafeInteger(workflow.revision) &&
+      Number.isSafeInteger(workflow.attempts) && (workflow.failureCode === null || typeof workflow.failureCode === "string") &&
+      (workflow.nextAttemptAt === null || Number.isSafeInteger(workflow.nextAttemptAt)) &&
+      (status?.build === null || (!!build && typeof build.status === "string" &&
+        (build.failure === null || typeof objectValue(build.failure)?.code === "string")));
   });
 }
 function isAudit(value: unknown): value is { events: Audit[]; nextCursor?: string | null } {
-  return !!value && typeof value === "object" &&
+  return !!value && typeof value === "object" && validPageCursor(value) &&
     Array.isArray((value as { events?: unknown }).events) &&
     (value as { events: unknown[] }).events.length <= 25 &&
     (value as { events: unknown[] }).events.every(item => {
@@ -176,7 +192,7 @@ function isAudit(value: unknown): value is { events: Audit[]; nextCursor?: strin
     });
 }
 function isSourceBuilds(value: unknown): value is { items: SourceBuildStatus[]; nextCursor?: string | null } {
-  return !!value && typeof value === "object" &&
+  return !!value && typeof value === "object" && validPageCursor(value) &&
     Array.isArray((value as { items?: unknown }).items) &&
     (value as {items: unknown[]}).items.length <= 40 &&
     (value as {items: unknown[]}).items.every(item => SourceBuildSummarySchema.safeParse(item).success);

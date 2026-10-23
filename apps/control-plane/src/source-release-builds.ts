@@ -274,7 +274,10 @@ export class D1SourceReleaseBuildQueue {
     const rows=attention
       ?await this.db.prepare(
           `SELECT * FROM source_release_builds
-            WHERE state IN ('failed','building','queued','produced')
+            WHERE state IN ('building','queued','produced') OR job_id IN (
+              SELECT job_id FROM source_release_builds WHERE state='failed'
+               ORDER BY updated_at DESC,job_id DESC LIMIT 5
+            )
             ORDER BY CASE state WHEN 'failed' THEN 0 WHEN 'building' THEN 1
               WHEN 'queued' THEN 2 WHEN 'produced' THEN 3 ELSE 4 END,
               updated_at DESC,job_id DESC LIMIT ?`,

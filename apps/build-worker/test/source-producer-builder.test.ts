@@ -162,7 +162,10 @@ it("reports an unpublished Source Release as an immutable source change", async 
     name:"SourceBuildChangedError",code:"SOURCE_CHANGED",
     diagnostic:{stage:"release_check",reason:"source_changed",summary:expect.stringContaining("published source identity")},
   });
-  expect(stages).toEqual([expect.objectContaining({stage:"release_check",reason:"stage_started"})]);
+  expect(stages).toEqual([
+    expect.objectContaining({stage:"build_environment",reason:"stage_started"}),
+    expect.objectContaining({stage:"release_check",reason:"stage_started"}),
+  ]);
 });
 
 it("rejects non-loopback physical output mappings before contacting GitHub", async () => {
@@ -197,4 +200,24 @@ it("uses only the native immutable NODE_IMAGE parameter without Release-specific
     expect(() => sourceNodeImage(Buffer.from("ARG NODE_IMAGE=" + value + "\nFROM ${NODE_IMAGE}\n"))).toThrow(SourceBuildVerificationError);
   }
   expect(() => sourceNodeImage(Buffer.from("ARG NODE_IMAGE=x\nARG NODE_IMAGE=y\nFROM x\n"))).toThrow(SourceBuildVerificationError);
+});
+
+
+it("attributes workspace allocation failure to infrastructure without inventing a BuildKit cause", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "praetorium-source-no-workspace-"));
+  directories.push(root);
+  const job = {
+    job_id: "sr_11111111-1111-4111-8111-111111111111", source_id: "scriptorium" as const,
+    source_repository: "yohn-jp/scriptorium" as const, github_release_id: 416422590,
+    source_tag: "v0.3.3", source_revision: "a".repeat(40), release_version: "0.3.3", actor_id: "source-test",
+    lease_worker: "source-test", lease_token: "11111111-1111-4111-8111-111111111111",
+    lease_epoch: 1, lease_expires_at: Date.now() + 60_000,
+  };
+  const config = { buildKit: { temporaryDirectory: path.join(root, "missing-parent"), buildkitRepository: sourceRepository } } as never;
+  const onStage = vi.fn(async () => undefined);
+  await expect(buildSourceRelease(job, config, new AbortController().signal, { onStage }))
+    .rejects.toMatchObject({ code: "SOURCE_BUILD_FAILED", diagnostic: {
+      stage: "build_environment", reason: "infrastructure_unavailable",
+    } });
+  expect(onStage).toHaveBeenCalledWith(expect.objectContaining({ stage: "build_environment", reason: "stage_started" }));
 });

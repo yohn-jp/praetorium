@@ -241,9 +241,8 @@ function overview(model: ConsoleViewModel): string {
         value(consoleHref("releases", "mobile")) +
         '">Open Releases</a></section>';
 
-  const stable = model.catalog.value
-    ? (model.catalog.value.stableChannel?.currentReleaseId ?? "No release promoted yet")
-    : "Unavailable";
+  const channel = model.catalog.value?.stableChannel;
+  const stable = channel ? channel.currentReleaseId ?? "No release promoted yet" : "Status unavailable";
   const blockedReleases =
     model.catalog.value?.items.filter((item) => item.release.status !== "available").slice(0, 3) ??
     [];
@@ -268,7 +267,8 @@ function overview(model: ConsoleViewModel): string {
           "</ul>"
         : '<p class="admin-mobile-empty-inline">No blocked releases in the current ledger page.</p>';
 
-  const recent = model.builds.value?.items.slice(0, 4) ?? [];
+  const activeJobs = jobs.filter(job => ["queued", "building", "produced"].includes(job.state));
+  const recent = (activeJobs.length ? activeJobs : jobs).slice(0, 4);
   return (
     incident +
     '<section class="admin-mobile-section"><div class="admin-mobile-section-heading">' +
@@ -285,7 +285,7 @@ function overview(model: ConsoleViewModel): string {
     releases +
     "</section>" +
     '<section class="admin-mobile-section"><div class="admin-mobile-section-heading">' +
-    '<h2>Recent builds</h2><a href="' +
+    '<h2>Build activity</h2><a href="' +
     value(consoleHref("builds", "mobile")) +
     '">All builds</a></div>' +
     (model.builds.value
@@ -293,7 +293,7 @@ function overview(model: ConsoleViewModel): string {
         ? '<div class="admin-mobile-job-list">' +
           recent.map((job) => jobCard(job, true)).join("") +
           "</div>"
-        : '<p class="admin-mobile-empty-inline">No Source builds have been queued.</p>'
+        : '<p class="admin-mobile-empty-inline">No active Source builds in this view.</p>'
       : "") +
     "</section>"
   );
@@ -462,9 +462,8 @@ function releases(model: ConsoleViewModel): string {
             .join("") +
           "</div>"
         : '<p class="admin-mobile-empty-inline">No admitted platform releases yet.</p>';
-  const stable = model.catalog.value
-    ? (model.catalog.value.stableChannel?.currentReleaseId ?? "No release promoted yet")
-    : "Unavailable";
+  const channel = model.catalog.value?.stableChannel;
+  const stable = channel ? channel.currentReleaseId ?? "No release promoted yet" : "Status unavailable";
   return (
     pageHeading(
       "Releases",
@@ -479,6 +478,8 @@ function releases(model: ConsoleViewModel): string {
     '<div class="admin-mobile-section-heading"><div><span class="admin-kicker">ADMISSION / PROMOTION</span>' +
     '<h2 id="platform-release-ledger">Platform release ledger</h2></div></div>' +
     platformContent +
+    (model.catalog.value?.nextCursor ? '<a class="button button-secondary admin-mobile-older" href="' +
+      value(consoleHref("releases", "mobile") + "&cursor=" + encodeURIComponent(model.catalog.value.nextCursor)) + '">Older releases</a>' : "") +
     "</section>"
   );
 }
@@ -514,10 +515,13 @@ function buildFilter(model: ConsoleViewModel): string {
 }
 
 function builds(model: ConsoleViewModel): string {
-  const jobs = model.builds.value?.items ?? [];
+  const jobs = (model.builds.value?.items ?? []).filter(job => !model.buildStateFilter || job.state === model.buildStateFilter);
+  const cursor = model.builds.value?.nextCursor;
+  const nextQuery = new URLSearchParams({ ui: "mobile", ...(cursor ? { cursor } : {}) });
+  if (model.buildStateFilter) nextQuery.set("state", model.buildStateFilter);
   const empty = model.buildStateFilter
-    ? "No Source builds match this state filter."
-    : "No Source builds have been queued.";
+    ? "No Source builds on this page match this state filter."
+    : "No Source builds are available on this page.";
   return (
     pageHeading("Builds", "Review Source jobs, recorded attempts and permitted recovery actions.") +
     buildFilter(model) +
@@ -527,7 +531,9 @@ function builds(model: ConsoleViewModel): string {
         ? '<div class="admin-mobile-job-list" aria-label="Source builds">' +
           jobs.map((job) => jobCard(job)).join("") +
           "</div>"
-        : '<p class="admin-mobile-empty">' + value(empty) + "</p>")
+        : '<p class="admin-mobile-empty">' + value(empty) + "</p>") +
+    (cursor ? '<a class="button button-secondary admin-mobile-older" href="/builds?' + value(nextQuery.toString()) + '">Older builds</a>' : "") +
+    '<p class="admin-subtext">State filtering applies to this bounded page.</p>'
   );
 }
 
@@ -636,14 +642,13 @@ function releaseDetailRetry(status: ConsoleReleaseStatus, csrf: string): string 
     !Number.isSafeInteger(workflow.revision) ||
     workflow.revision < 0 ||
     !preRuntimeFailure ||
-    status.build?.status !== "failed" ||
-    status.build.failure?.retryable !== true
+    status.build?.status !== "failed"
   ) {
     return '<p class="admin-mobile-action-copy">No retry is currently permitted by the Canary queue.</p>';
   }
   return (
-    '<div class="admin-mobile-action-copy"><strong>Canary retry is permitted</strong>' +
-    "<span>This requests a new fenced attempt. The current failure remains in the audit history.</span></div>" +
+    '<div class="admin-mobile-action-copy"><strong>Request a Canary retry</strong>' +
+    "<span>Control Plane rechecks eligibility and the current workflow revision. The recorded failure remains available.</span></div>" +
     '<form method="post" action="/releases/' +
     value(encodeURIComponent(status.release.id)) +
     '/retry?ui=mobile"><input type="hidden" name="csrfToken" value="' +
@@ -737,9 +742,6 @@ function releaseDetail(model: ConsoleViewModel): string {
         value(failureCode) +
         "</code></p>"
       : '<p class="admin-mobile-empty-inline">No workflow failure code is recorded.</p>') +
-    (build?.failure?.retryable === false
-      ? '<p class="admin-mobile-evidence-unavailable" role="status">The Canary queue marks this failure as not retryable.</p>'
-      : "") +
     '</section><section class="admin-mobile-action-region" aria-label="Canary recovery action">' +
     releaseDetailRetry(status, model.csrf) +
     "</section>"
@@ -764,7 +766,7 @@ function buildDetail(model: ConsoleViewModel): string {
       value(consoleHref("builds", "mobile")) +
       '">Back to Builds</a>' +
       pageHeading("Build detail unavailable", "The current Source job status is not available.") +
-      unavailable
+      unavailable + (model.selectedBuildId ? '<p><a class="button button-secondary" href="' + value(buildHref(model.selectedBuildId, "mobile")) + '">Refresh status</a></p>' : "")
     );
   }
   const detail: SourceBuildDetail = dependency.value;
@@ -779,7 +781,7 @@ function buildDetail(model: ConsoleViewModel): string {
     : "";
   const noAttempts =
     detail.evidence === "not_recorded"
-      ? "No attempt history was recorded. Stage and diagnostic evidence are unavailable."
+      ? "No detailed attempt snapshot was recorded. The canonical job summary retains the known attempt and failure; stage and diagnostic evidence are unavailable."
       : detail.evidence === "expired"
         ? "No retained attempt history is available. Diagnostic evidence may have expired."
         : "No attempt history is available.";
@@ -805,7 +807,7 @@ function buildDetail(model: ConsoleViewModel): string {
     value(job.version) +
     '</p><code class="admin-mobile-job-id">' +
     value(job.id) +
-    "</code></header>" +
+    '</code><a class="button button-secondary" href="' + value(buildHref(job.id, "mobile")) + '">Refresh status</a></header>' +
     '<dl class="admin-mobile-detail-facts"><div><dt>Immutable source commit</dt><dd><code>' +
     value(job.commit) +
     "</code></dd></div><div><dt>Current attempt</dt><dd>" +

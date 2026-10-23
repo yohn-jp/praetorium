@@ -257,7 +257,7 @@ describe("mobile operator console", () => {
       }),
     );
     expect(html).toContain(
-      "No attempt history was recorded. Stage and diagnostic evidence are unavailable.",
+      "No detailed attempt snapshot was recorded. The canonical job summary retains the known attempt and failure; stage and diagnostic evidence are unavailable.",
     );
   });
 
@@ -322,7 +322,7 @@ describe("mobile operator console", () => {
         id: "build-canary-123",
         status: "failed",
         attemptCount: 1,
-        failure: { code: "CANARY_BUILD_FAILED", retryable: true },
+        failure: { code: "BUILD_FAILED", retryable: false },
       },
     };
     const html = renderMobileConsole(
@@ -392,4 +392,17 @@ describe("mobile operator console", () => {
     expect(MOBILE_ADMIN_STYLES).toContain("env(safe-area-inset-bottom)");
     expect(MOBILE_ADMIN_STYLES).toContain("word-break:break-word");
   });
+});
+
+it("filters only the current bounded build page and preserves navigation to older jobs and releases", () => {
+  const builds = renderMobileConsole(model({ buildStateFilter: "building",
+    builds: dependency({ items: [sourceJob], nextCursor: "older.page" }, "queue") }));
+  expect(builds).toContain("No Source builds on this page match this state filter.");
+  expect(builds).not.toContain('href="/builds/' + sourceJob.id);
+  expect(builds).toContain('href="/builds?ui=mobile&amp;cursor=older.page&amp;state=building"');
+  const releases = renderMobileConsole(model({ section: "releases",
+    catalog: dependency({ items: [], nextCursor: "older.release", stableChannel: null }, "catalog") }));
+  expect(releases).toContain('href="/releases?ui=mobile&amp;cursor=older.release"');
+  expect(releases).toContain("Status unavailable");
+  expect(releases).not.toContain("No release promoted yet");
 });

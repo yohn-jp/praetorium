@@ -801,5 +801,16 @@ describe("source Release build queue against migrated SQLite D1", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({items:[{id:failed.job.id,state:"failed"}],nextCursor:null});
+
+    const failures = await Promise.all(Array.from({length:45},(_,index)=>h.queue.enqueue({
+      ...JOB,githubReleaseId:JOB.githubReleaseId+100+index,
+    },ACTOR)));
+    for (const item of failures) h.db.database.prepare(
+      "UPDATE source_release_builds SET state='failed',failure_code='SOURCE_BUILD_FAILED' WHERE job_id=?",
+    ).run(item.job.id);
+    const active = await h.queue.enqueue({...JOB,githubReleaseId:JOB.githubReleaseId+200},ACTOR);
+    const visible = await h.queue.list(40,undefined,true);
+    expect(visible.items.filter(job=>job.state==="failed")).toHaveLength(5);
+    expect(visible.items).toContainEqual(expect.objectContaining({id:active.job.id,state:"queued"}));
   });
 });

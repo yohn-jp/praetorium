@@ -120,7 +120,10 @@ function activeIncidents(model: ConsoleViewModel): string {
 
 function overview(model: ConsoleViewModel): string {
   const jobs = model.builds.value?.items ?? [];
-  const active = jobs.filter((job) => ["queued", "building"].includes(job.state)).length;
+  const activeJobs = jobs.filter((job) => ["queued", "building", "produced"].includes(job.state));
+  const active = activeJobs.length;
+  const activity = activeJobs.length ? `<ul class="desktop-incident-list">${activeJobs.slice(0, 6).map(job =>
+    `<li><a href="${escapeHtml(buildHref(job.id, model.mode))}">${escapeHtml(job.sourceId)} ${escapeHtml(job.tag)}</a>${badge(humanize(job.state), job.state)}</li>`).join("")}</ul>` : "";
   const releases = model.catalog.value?.items ?? [];
   const blocked = releases.filter((item) => ["blocked", "failed"].includes(item.workflow?.workflow.state ?? "")).length;
   return `<section class="desktop-page-heading"><p class="desktop-eyebrow">OPERATOR / CONTROL PLANE</p>` +
@@ -134,7 +137,7 @@ function overview(model: ConsoleViewModel): string {
     `<div><p class="desktop-eyebrow">CURRENT WORK</p><h2 id="desktop-activity-title">Build activity</h2></div>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">View build queue</a></div>` +
     (model.builds.value
-      ? `<div class="desktop-overview-metrics"><article><strong>${active}</strong><span>Queued or building</span></article>` +
+      ? activity + `<div class="desktop-overview-metrics"><article><strong>${active}</strong><span>Visible active jobs</span></article>` +
         `<article><strong>${blocked}</strong><span>Blocked releases</span></article>` +
         `<article><strong>${jobs.length}</strong><span>Visible Source builds</span></article></div>`
       : dependencyUnavailable("Build activity", model.builds)) + `</section>`;
@@ -142,7 +145,8 @@ function overview(model: ConsoleViewModel): string {
 
 function canaryRetryForm(item: ConsoleRelease, csrf: string, mode: ConsoleViewModel["mode"]): string {
   const workflow = item.workflow?.workflow;
-  const retryableState = workflow?.state === "blocked" && workflow.failureCode === "canary_build_failed";
+  const retryableState = (workflow?.state === "blocked" && workflow.failureCode === "canary_build_failed") ||
+    (workflow?.state === "canary_building" && workflow.failureCode === null);
   const revision = workflow?.revision;
   if (!retryableState || !Number.isSafeInteger(revision) || item.workflow?.build?.status !== "failed") return "";
   return `<form method="post" action="/releases/${encodeURIComponent(item.release.id)}/retry?ui=${mode}" class="desktop-inline-form">` +
@@ -222,7 +226,8 @@ function releases(model: ConsoleViewModel): string {
     sourceContent + `</section>` +
     `<section class="desktop-section" aria-labelledby="desktop-platform-releases-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">ADMISSION AND PROMOTION</p><h2 id="desktop-platform-releases-title">Platform release ledger</h2></div></div>` +
-    releaseRows + `</section>`;
+    releaseRows + (model.catalog.value?.nextCursor
+      ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="${escapeHtml(consoleHref("releases", model.mode) + "&cursor=" + encodeURIComponent(model.catalog.value.nextCursor))}">Older releases</a></p>` : "") + `</section>`;
 }
 
 function releaseDetail(model: ConsoleViewModel): string {
@@ -241,7 +246,7 @@ function releaseDetail(model: ConsoleViewModel): string {
   const build = value.build;
   const preRuntimeFailure = (workflow.state === "blocked" && workflow.failureCode === "canary_build_failed") ||
     (workflow.state === "canary_building" && workflow.failureCode === null);
-  const retryable = preRuntimeFailure && build?.status === "failed" && build.failure?.retryable === true;
+  const retryable = preRuntimeFailure && build?.status === "failed" && Number.isSafeInteger(workflow.revision) && workflow.revision >= 0;
   const retry = retryable
     ? `<form method="post" action="/releases/${encodeURIComponent(value.release.id)}/retry?ui=${model.mode}" class="desktop-retry-form">` +
       `<input type="hidden" name="csrfToken" value="${escapeHtml(model.csrf)}">` +
@@ -312,8 +317,8 @@ function buildTable(model: ConsoleViewModel): string {
   const filtered = model.builds.value.items.filter((job) => !model.buildStateFilter || job.state === model.buildStateFilter);
   const jobs = sortBuilds(filtered, sort);
   if (!jobs.length) return `<p class="desktop-empty">${model.builds.value.items.length
-    ? "No Source builds match this state filter."
-    : "No Source builds have been accepted."}</p>`;
+    ? "No Source builds on this page match this state filter."
+    : "No Source builds are available on this page."}</p>`;
   const header = (name: string, key: BuildSort) => `<th scope="col"${sort === key ? ` aria-sort="${["source", "state"].includes(sort) ? "ascending" : "descending"}"` : ""}>` +
     `<a href="${buildSortHref(model, key)}">${escapeHtml(name)}${sort === key ? '<span class="desktop-sr-only">, current sort</span>' : ""}</a></th>`;
   return `<div class="desktop-table-scroll"><table class="desktop-build-table"><caption class="desktop-sr-only">Source builds, ordered by ${escapeHtml(sortLabel(sort))}</caption>` +
@@ -335,6 +340,9 @@ function builds(model: ConsoleViewModel): string {
   const state = model.buildStateFilter && BUILD_STATES.includes(model.buildStateFilter as (typeof BUILD_STATES)[number])
     ? model.buildStateFilter : "";
   const sort = buildSort(model);
+  const cursor = model.builds.value?.nextCursor;
+  const nextQuery = new URLSearchParams({ ui: model.mode, sort, ...(cursor ? { cursor } : {}) });
+  if (state) nextQuery.set("state", state);
   return `<section class="desktop-page-heading"><p class="desktop-eyebrow">SOURCE BUILDER</p><h1>Builds</h1>` +
     `<p>Track accepted jobs by authoritative queue state and immutable source identity.</p></section>` + notice(model.notice) +
     `<section class="desktop-section" aria-labelledby="desktop-build-list-title"><div class="desktop-section-heading">` +
@@ -344,7 +352,8 @@ function builds(model: ConsoleViewModel): string {
     `<select id="desktop-build-state" name="state"><option value="">All states</option>${BUILD_STATES.map((value) =>
       `<option value="${value}"${state === value ? " selected" : ""}>${escapeHtml(humanize(value))}</option>`).join("")}</select>` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Apply filter</button></form>` + buildTable(model) +
-    `<p class="desktop-table-footnote">A queued job is accepted work. Status unavailable means the queue dependency did not respond; it does not mean a build failed.</p></section>`;
+    (cursor ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="/builds?${escapeHtml(nextQuery.toString())}">Older builds</a></p>` : "") +
+    `<p class="desktop-table-footnote">Sorting and filtering apply to this bounded page. A queued job is accepted work. Status unavailable means the queue dependency did not respond; it does not mean a build failed.</p></section>`;
 }
 
 function attemptStateLabel(attempt: SourceBuildAttempt): string {
@@ -367,7 +376,7 @@ function attemptTimeline(detail: SourceBuildDetail): string {
   if (!detail.attempts.length) {
     const failure = detail.job.error
       ? `<p class="desktop-empty">Canonical failure code <code>${escapeHtml(detail.job.error)}</code> is recorded; no attempt-level stage is available.</p>`
-      : `<p class="desktop-empty">No build attempts have been recorded.</p>`;
+      : `<p class="desktop-empty">No detailed attempt snapshot was recorded. The canonical job summary retains the known attempt state.</p>`;
     const evidence = detail.evidence === "expired" ? "Diagnostic evidence has expired."
       : detail.evidence === "not_recorded" ? "Diagnostic evidence was not recorded for this job." : "";
     return failure + (evidence ? `<p class="desktop-evidence-state" role="status">${evidence}</p>` : "");
@@ -403,14 +412,16 @@ function retryForm(job: SourceBuildSummary, model: ConsoleViewModel): string {
 function buildDetail(model: ConsoleViewModel): string {
   const detailSection = model.detail;
   if (!detailSection) return `<p class="desktop-empty">Select a build from the queue to inspect its attempts.</p>`;
-  if (!detailSection.value) return dependencyUnavailable("Build detail", detailSection);
+  if (!detailSection.value) return dependencyUnavailable("Build detail", detailSection) +
+    (model.selectedBuildId ? `<p><a class="desktop-button desktop-button-secondary" href="${buildHref(model.selectedBuildId, model.mode)}">Refresh status</a></p>` : "");
   const detail = detailSection.value;
   const job = detail.job;
   if (model.selectedBuildId && model.selectedBuildId !== job.id)
     return `<p class="desktop-unavailable" role="status">Build detail is unavailable because the returned job identity did not match the requested job.</p>`;
   return `<section class="desktop-page-heading"><p class="desktop-eyebrow">BUILD DETAIL / ${escapeHtml(job.id)}</p>` +
     `<h1>${escapeHtml(job.sourceId)} / ${escapeHtml(job.tag)}</h1><p>Attempt history and bounded diagnostics for this immutable Source job.</p>` +
-    `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Back to Builds</a></section>` + notice(model.notice) +
+    `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Back to Builds</a> ` +
+    `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) +
     `<section class="desktop-job-summary" aria-labelledby="desktop-job-summary-title"><div class="desktop-job-heading">` +
     `<div><p class="desktop-eyebrow">AUTHORITATIVE JOB STATE</p><h2 id="desktop-job-summary-title">${badge(humanize(job.state), job.state)}</h2>` +
     `<code>${escapeHtml(job.id)}</code></div><div>${retryForm(job, model)}</div></div>` +

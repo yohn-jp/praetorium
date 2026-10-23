@@ -193,7 +193,7 @@ describe("desktop operator composition", () => {
       },
       build: {
         id: "build_canary", status: "failed", attemptCount: 1,
-        failure: { code: "CANARY_BUILD_FAILED", retryable: true },
+        failure: { code: "BUILD_FAILED", retryable: false },
       },
     };
     const base = view({ section: "releases" });
@@ -219,7 +219,7 @@ describe("desktop operator composition", () => {
       ...extended,
       releaseDetail: dependency("GET /v1/operator/releases/rel_canary", {
         ...releaseDetail,
-        build: { ...releaseDetail.build, failure: { code: "CANARY_BUILD_FAILED", retryable: false } },
+        workflow: { ...releaseDetail.workflow, state: "promoted", failureCode: null },
       }),
     });
     expect(denied).not.toContain('name="idempotencyKey"');
@@ -232,4 +232,15 @@ describe("desktop operator composition", () => {
     expect(DESKTOP_ADMIN_STYLES).toContain("#f5f3eb");
     expect(DESKTOP_ADMIN_STYLES).toContain("#194937");
   });
+});
+
+it("keeps bounded build and release pages reachable while preserving the selected state and sort", () => {
+  const builds = renderDesktopConsole(view({ buildStateFilter: "building", buildSort: "state",
+    builds: dependency("queue", { items: [job], nextCursor: "older.page" }) }));
+  expect(builds).toContain("No Source builds on this page match this state filter.");
+  expect(builds).toContain('href="/builds?ui=desktop&amp;sort=state&amp;cursor=older.page&amp;state=building"');
+  expect(builds).not.toContain('href="/builds/' + job.id);
+  const releases = renderDesktopConsole(view({ section: "releases",
+    catalog: dependency("catalog", { items: [], nextCursor: "older.release", stableChannel: null }) }));
+  expect(releases).toContain('href="/releases?ui=desktop&amp;cursor=older.release"');
 });

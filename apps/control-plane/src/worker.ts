@@ -102,7 +102,7 @@ function composeServices(env: ControlPlaneEnv) {
           policyJson: env.RELEASE_POLICY_JSON,
           operatorToken: required(env.RELEASE_OPERATOR_TOKEN),
           gatewayServiceSecret: required(env.CONTROL_PLANE_GATEWAY_AUTH),
-          adminServiceSecret: env.ADMIN_CONTROL_PLANE_AUTH,
+          ...(env.ADMIN_CONTROL_PLANE_AUTH ? {adminServiceSecret: env.ADMIN_CONTROL_PLANE_AUTH} : {}),
           notifyWorkAvailable: notifyWork,
         })
       : undefined;

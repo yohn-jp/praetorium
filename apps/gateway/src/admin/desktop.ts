@@ -355,7 +355,7 @@ function builds(model: ConsoleViewModel): string {
       `<option value="${value}"${state === value ? " selected" : ""}>${escapeHtml(humanize(value))}</option>`).join("")}</select>` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Apply filter</button></form>` + buildTable(model) +
     (cursor ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="/builds?${escapeHtml(nextQuery.toString())}">Older builds</a></p>` : "") +
-    `<p class="desktop-table-footnote">Sorting and filtering apply to this bounded page. A queued job is accepted work. Status unavailable means the queue dependency did not respond; it does not mean a build failed.</p></section>`;
+    `<p class="desktop-table-footnote">State filtering applies across the queue; sorting applies to the displayed page. A queued job is accepted work. Status unavailable means the queue dependency did not respond; it does not mean a build failed.</p></section>`;
 }
 
 function attemptStateLabel(attempt: SourceBuildAttempt): string {

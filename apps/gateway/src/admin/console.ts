@@ -405,7 +405,9 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
       : Promise.resolve(empty({ events: [] as Audit[] })),
     section !== "audit" && !selectedBuildId && !selectedReleaseId
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/source-builds",
-        "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" ? withCursor : ""), isSourceBuilds)
+        "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds"
+          ? (withCursor || (state ? "?state=" + encodeURIComponent(state) : "")) +
+            (withCursor && state ? "&state=" + encodeURIComponent(state) : "") : ""), isSourceBuilds)
       : Promise.resolve(empty({ items: [] as SourceBuildStatus[] })),
     section === "releases" && !selectedReleaseId ? listRegisteredSources(context, session.actor.userId).then(
       (value): OperatorSection<readonly SourceReleaseView[]> =>

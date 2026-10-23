@@ -266,10 +266,11 @@ export class D1SourceReleaseBuildQueue {
     if(!updated)throw new Error("Retried source build disappeared");
     return {job:publicSourceJob(updated),duplicate:false};
   }
-  async list(limit=40,cursor?:SourceBuildListCursor,attention=false):Promise<{
+  async list(limit=40,cursor?:SourceBuildListCursor,attention=false,state?:PublicJob["state"]):Promise<{
     readonly items:readonly PublicJob[];readonly nextCursor:string|null;
   }> {
-    if(!Number.isSafeInteger(limit)||limit<1||limit>40||(attention&&cursor!==undefined))
+    if(!Number.isSafeInteger(limit)||limit<1||limit>40||(attention&&(cursor!==undefined||state!==undefined))||
+      (state!==undefined&&!["queued","building","produced","admitted","failed"].includes(state)))
       throw new TypeError("Invalid source build page size");
     const rows=attention
       ?await this.db.prepare(
@@ -285,12 +286,14 @@ export class D1SourceReleaseBuildQueue {
       :cursor
       ?await this.db.prepare(
           `SELECT * FROM source_release_builds
-            WHERE created_at<? OR (created_at=? AND job_id<?)
+            WHERE (? IS NULL OR state=?) AND
+              (created_at<? OR (created_at=? AND job_id<?))
             ORDER BY created_at DESC,job_id DESC LIMIT ?`,
-        ).bind(cursor.createdAt,cursor.createdAt,cursor.jobId,limit+1).all<SourceJob>()
+        ).bind(state??null,state??null,cursor.createdAt,cursor.createdAt,cursor.jobId,limit+1).all<SourceJob>()
       :await this.db.prepare(
-          "SELECT * FROM source_release_builds ORDER BY created_at DESC,job_id DESC LIMIT ?",
-        ).bind(limit+1).all<SourceJob>();
+          `SELECT * FROM source_release_builds WHERE (? IS NULL OR state=?)
+           ORDER BY created_at DESC,job_id DESC LIMIT ?`,
+        ).bind(state??null,state??null,limit+1).all<SourceJob>();
     const hasMore=rows.results.length>limit;
     const page=rows.results.slice(0,limit);
     const last=page.at(-1);
@@ -742,7 +745,10 @@ export function createSourceReleaseOperatorRoutes(input:{
     const cursor=parseSourceBuildListCursor(rawCursor);
     const attention=c.req.query("attention");
     if(attention!==undefined&&attention!=="1")throw new TypeError("Invalid source build view");
-    return c.json(await input.queue.list(limit,cursor,attention==="1"));
+    const state=c.req.query("state");
+    if(state!==undefined&&!["queued","building","produced","admitted","failed"].includes(state))
+      throw new TypeError("Invalid Source state filter");
+    return c.json(await input.queue.list(limit,cursor,attention==="1",state as PublicJob["state"]|undefined));
   });
   app.get("/:jobId",async(c)=>{
     const limit=readPageLimit(c.req.query("limit"),10,25);

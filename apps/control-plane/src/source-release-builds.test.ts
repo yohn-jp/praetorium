@@ -876,6 +876,12 @@ describe("source Release build queue against migrated SQLite D1", () => {
     const history=await h.queue.list(40);
     expect(history.items).toHaveLength(40);
     expect(history.items.some(job=>job.id===failed.job.id)).toBe(false);
+    // A queue-wide state predicate must find a failure older than the first 40 jobs.
+    const filtered=await h.queue.list(40,undefined,false,"failed");
+    expect(filtered.items).toHaveLength(1);
+    expect(filtered.items[0]?.id).toBe(failed.job.id);
+    expect(filtered.nextCursor).toBeNull();
+
     const attention=await h.queue.list(40,undefined,true);
     expect(attention.items).toHaveLength(1);
     expect(attention.items[0]).toMatchObject({id:failed.job.id,state:"failed"});
@@ -887,6 +893,17 @@ describe("source Release build queue against migrated SQLite D1", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({items:[{id:failed.job.id,state:"failed"}],nextCursor:null});
+    const filteredResponse=await app.request("/?state=failed",{
+      headers:{"X-Praetorium-Admin-Actor":ACTOR},
+    });
+    expect(filteredResponse.status).toBe(200);
+    expect(await filteredResponse.json()).toMatchObject({
+      items:[{id:failed.job.id,state:"failed"}],nextCursor:null,
+    });
+    expect((await app.request("/?state=invalid",{
+      headers:{"X-Praetorium-Admin-Actor":ACTOR},
+    })).status).toBe(400);
+
 
     const failures = await Promise.all(Array.from({length:45},(_,index)=>h.queue.enqueue({
       ...JOB,githubReleaseId:JOB.githubReleaseId+100+index,

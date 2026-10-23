@@ -5,13 +5,21 @@ import { SourceProofVerificationError } from "./source-producer-verifier.js";
 import { metadataFailureReason } from "./http-failure.js";
 import {
   SourceProducerResultSchema,
+  SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES,
+  SOURCE_DIAGNOSTIC_RETENTION_MS,
   SOURCE_PRODUCER_RESULT_MAX_BYTES,
   SOURCE_PRODUCER_REQUEST_MAX_BYTES,
+  SourceBuildDiagnosticSchema,
+  sanitizeSourceDiagnostic,
   sourceProducerResultByteLength,
   readBoundedJson,
   RequestTooLargeError,
   canonicalSourceProof,
   sourceProofDigest,
+  type SourceBuildAttempt,
+  type SourceBuildDetail,
+  type SourceBuildDiagnostic,
+  type SourceBuildSummary,
   type SourceProducerResult,
 } from "@praetorium/contracts";
 
@@ -53,6 +61,13 @@ const FailureRequest = z.strictObject({
   leaseToken: z.string().uuid(),
   leaseEpoch: z.number().int().positive().safe(),
   code: z.enum(["SOURCE_UNAVAILABLE","SOURCE_CHANGED","SOURCE_BUILD_FAILED","SOURCE_VERIFICATION_FAILED","SOURCE_WORKER_UNAVAILABLE"]),
+  diagnostic: SourceBuildDiagnosticSchema.optional(),
+});
+const DiagnosticReportRequest = z.strictObject({
+  workerId: z.string().regex(WORKER),
+  leaseToken: z.string().uuid(),
+  leaseEpoch: z.number().int().positive().safe(),
+  diagnostic: SourceBuildDiagnosticSchema,
 });
 export type SourceJobInput = z.infer<typeof NewJob>;
 
@@ -80,26 +95,72 @@ export interface SourceJob {
   created_at: number;
   updated_at: number;
 }
-type PublicJob = {
-  readonly id: string;
-  readonly sourceId: string;
-  readonly releaseId: number;
-  readonly tag: string;
-  readonly commit: string;
-  readonly version: string;
-  readonly state: SourceJob["state"];
-  readonly attempt: number;
-  readonly revision: number;
-  readonly error: string|null;
-  readonly admittedReleaseId: string|null;
-  readonly retryable: boolean;
+type PublicJob = SourceBuildSummary;
+type SourceBuildAttemptRow = {
+  job_id:string; lease_epoch:number; attempt:number; revision:number;
+  state:SourceBuildAttempt["state"]; stage:SourceBuildAttempt["stage"];
+  started_at:number|null; finished_at:number|null; failure_code:string|null;
+  diagnostic_json:string|null; evidence_expires_at:number|null;
 };
+type SourceBuildListCursor = {createdAt:number;jobId:string};
 export function publicSourceJob(job: SourceJob): PublicJob {
   return { id:job.job_id,sourceId:job.source_id,releaseId:job.github_release_id,
     tag:job.source_tag,commit:job.source_revision,version:job.release_version,
     state:job.state,attempt:job.attempt,revision:job.revision,error:job.failure_code,
     admittedReleaseId:job.admitted_release_id,
     retryable:job.state==="failed" && isRetryableSourceFailure(job.failure_code) };
+}
+function storedDiagnostic(value:SourceBuildDiagnostic):string {
+  let safe=sanitizeSourceDiagnostic(SourceBuildDiagnosticSchema.parse(value));
+  let encoded=JSON.stringify(safe);
+  while(new TextEncoder().encode(encoded).byteLength>SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES && safe.excerpt) {
+    const points=Array.from(safe.excerpt);
+    points.splice(Math.max(0,points.length-256));
+    const excerpt=points.join("");
+    safe={
+      stage:safe.stage,reason:safe.reason,summary:safe.summary,
+      ...(excerpt?{excerpt}:{}),truncated:true,
+    };
+    encoded=JSON.stringify(safe);
+  }
+  if(new TextEncoder().encode(encoded).byteLength>SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES)
+    throw new TypeError("Sanitized source diagnostic exceeds bound");
+  return encoded;
+}
+function publicSourceBuildAttempt(row:SourceBuildAttemptRow,now:number):SourceBuildAttempt {
+  const expired=row.evidence_expires_at!==null && row.evidence_expires_at<=now;
+  let diagnostic:SourceBuildDiagnostic|null=null;
+  if(row.diagnostic_json!==null && !expired) {
+    try {
+      diagnostic=sanitizeSourceDiagnostic(
+        SourceBuildDiagnosticSchema.parse(JSON.parse(row.diagnostic_json)),
+      );
+    } catch {
+      // Invalid stored evidence is never sent back to the operator.
+      diagnostic=null;
+    }
+  }
+  const evidence=diagnostic!==null?"available":expired?"expired":"not_recorded";
+  return {
+    id:`${row.job_id}:epoch:${row.lease_epoch}`,
+    attempt:row.attempt,revision:row.revision,leaseEpoch:row.lease_epoch,
+    state:row.state,stage:row.stage,startedAt:row.started_at,finishedAt:row.finished_at,
+    failureCode:row.failure_code,evidence,
+    expiresAt:evidence==="not_recorded"?null:row.evidence_expires_at,
+    diagnostic,
+  };
+}
+function encodeSourceBuildListCursor(cursor:SourceBuildListCursor):string {
+  return `${cursor.createdAt}.${cursor.jobId}`;
+}
+function parseSourceBuildListCursor(value:string|undefined):SourceBuildListCursor|undefined {
+  if(value===undefined)return undefined;
+  if(value.length>128)throw new TypeError("Invalid source build cursor");
+  const match=/^(0|[1-9][0-9]{0,15})\.(sr_[0-9a-f-]{36})$/u.exec(value);
+  if(!match)throw new TypeError("Invalid source build cursor");
+  const createdAt=Number(match[1]);
+  if(!Number.isSafeInteger(createdAt))throw new TypeError("Invalid source build cursor");
+  return {createdAt,jobId:match[2]!};
 }
 export class D1SourceReleaseBuildQueue {
   constructor(private readonly db:D1Database,private readonly now:()=>number=Date.now){}
@@ -152,6 +213,18 @@ export class D1SourceReleaseBuildQueue {
     try {
       await this.db.batch([
         this.db.prepare(
+          `INSERT OR IGNORE INTO source_release_build_attempts
+             (job_id,lease_epoch,attempt,revision,state,stage,started_at,finished_at,
+              failure_code,diagnostic_json,evidence_expires_at)
+           SELECT job_id,lease_epoch,attempt,revision,'failed','unknown',NULL,updated_at,
+                  failure_code,NULL,NULL
+             FROM source_release_builds
+            WHERE job_id=? AND state='failed' AND revision=? AND attempt>0
+              AND lease_epoch>0 AND source_id=? AND github_release_id=?
+              AND source_tag=? AND source_revision=? AND release_version=?`,
+        ).bind(jobId,checked.expectedRevision,checked.sourceId,checked.githubReleaseId,
+          checked.sourceTag,checked.sourceRevision,checked.releaseVersion),
+        this.db.prepare(
           `UPDATE source_release_builds SET state=?,attempt=?,revision=revision+1,
              admission_attempt=0,next_attempt_at=NULL,failure_code=NULL,
              result_json=CASE WHEN failure_code='SOURCE_ADMISSION_RETRIES_EXHAUSTED'
@@ -193,11 +266,98 @@ export class D1SourceReleaseBuildQueue {
     if(!updated)throw new Error("Retried source build disappeared");
     return {job:publicSourceJob(updated),duplicate:false};
   }
-  async list():Promise<readonly PublicJob[]> {
-    const rows=await this.db.prepare(
-      "SELECT * FROM source_release_builds ORDER BY created_at DESC LIMIT 40"
-    ).all<SourceJob>();
-    return rows.results.map(publicSourceJob);
+  async list(limit=40,cursor?:SourceBuildListCursor,attention=false):Promise<{
+    readonly items:readonly PublicJob[];readonly nextCursor:string|null;
+  }> {
+    if(!Number.isSafeInteger(limit)||limit<1||limit>40||(attention&&cursor!==undefined))
+      throw new TypeError("Invalid source build page size");
+    const rows=attention
+      ?await this.db.prepare(
+          `SELECT * FROM source_release_builds
+            WHERE state IN ('building','queued','produced') OR job_id IN (
+              SELECT job_id FROM source_release_builds WHERE state='failed'
+               ORDER BY updated_at DESC,job_id DESC LIMIT 5
+            )
+            ORDER BY CASE state WHEN 'failed' THEN 0 WHEN 'building' THEN 1
+              WHEN 'queued' THEN 2 WHEN 'produced' THEN 3 ELSE 4 END,
+              updated_at DESC,job_id DESC LIMIT ?`,
+        ).bind(limit+1).all<SourceJob>()
+      :cursor
+      ?await this.db.prepare(
+          `SELECT * FROM source_release_builds
+            WHERE created_at<? OR (created_at=? AND job_id<?)
+            ORDER BY created_at DESC,job_id DESC LIMIT ?`,
+        ).bind(cursor.createdAt,cursor.createdAt,cursor.jobId,limit+1).all<SourceJob>()
+      :await this.db.prepare(
+          "SELECT * FROM source_release_builds ORDER BY created_at DESC,job_id DESC LIMIT ?",
+        ).bind(limit+1).all<SourceJob>();
+    const hasMore=rows.results.length>limit;
+    const page=rows.results.slice(0,limit);
+    const last=page.at(-1);
+    return {
+      items:page.map(publicSourceJob),
+      nextCursor:!attention&&hasMore&&last
+        ?encodeSourceBuildListCursor({createdAt:last.created_at,jobId:last.job_id})
+        :null,
+    };
+  }
+  async detail(jobId:string,limit=25,beforeLeaseEpoch?:number):Promise<SourceBuildDetail|null> {
+    const job=await this.byId(jobId);
+    if(!job)return null;
+    if(!Number.isSafeInteger(limit)||limit<1||limit>25||
+      (beforeLeaseEpoch!==undefined&&(!Number.isSafeInteger(beforeLeaseEpoch)||beforeLeaseEpoch<1)))
+      throw new TypeError("Invalid source build attempt page");
+    const rows=beforeLeaseEpoch===undefined
+      ?await this.db.prepare(
+          `SELECT * FROM source_release_build_attempts WHERE job_id=?
+           ORDER BY lease_epoch DESC LIMIT ?`,
+        ).bind(jobId,limit+1).all<SourceBuildAttemptRow>()
+      :await this.db.prepare(
+          `SELECT * FROM source_release_build_attempts WHERE job_id=? AND lease_epoch<?
+           ORDER BY lease_epoch DESC LIMIT ?`,
+        ).bind(jobId,beforeLeaseEpoch,limit+1).all<SourceBuildAttemptRow>();
+    const hasMore=rows.results.length>limit;
+    const page=rows.results.slice(0,limit).map(row=>publicSourceBuildAttempt(row,this.now()));
+    const last=page.at(-1);
+    return {
+      job:publicSourceJob(job),attempts:page,
+      nextCursor:hasMore&&last?String(last.leaseEpoch):null,
+      evidence:page[0]?.evidence??"not_recorded",
+    };
+  }
+  async reportDiagnostic(jobId:string,request:z.infer<typeof DiagnosticReportRequest>):Promise<boolean> {
+    if(!ID.test(jobId))throw new TypeError("Invalid source job ID");
+    const checked=DiagnosticReportRequest.parse(request);
+    const diagnostic=storedDiagnostic(checked.diagnostic);
+    const now=this.now();
+    const result=await this.db.prepare(
+      `UPDATE source_release_build_attempts
+          SET stage=?,diagnostic_json=?,evidence_expires_at=?
+        WHERE job_id=? AND lease_epoch=? AND state='building'
+          AND EXISTS (
+            SELECT 1 FROM source_release_builds AS job
+             WHERE job.job_id=source_release_build_attempts.job_id
+               AND job.state='building' AND job.lease_worker=? AND job.lease_token=?
+               AND job.lease_epoch=source_release_build_attempts.lease_epoch
+               AND job.revision=source_release_build_attempts.revision
+               AND job.lease_expires_at>?
+          )`,
+    ).bind(checked.diagnostic.stage,diagnostic,now+SOURCE_DIAGNOSTIC_RETENTION_MS,
+      jobId,checked.leaseEpoch,checked.workerId,checked.leaseToken,now).run();
+    return (result.meta.changes??0)===1;
+  }
+  async expireDiagnostics(limit=100):Promise<number> {
+    if(!Number.isSafeInteger(limit)||limit<1||limit>1000)
+      throw new TypeError("Invalid source diagnostic cleanup limit");
+    const result=await this.db.prepare(
+      `UPDATE source_release_build_attempts SET diagnostic_json=NULL
+        WHERE rowid IN (
+          SELECT rowid FROM source_release_build_attempts
+           WHERE diagnostic_json IS NOT NULL AND evidence_expires_at<=?
+           ORDER BY evidence_expires_at,job_id,lease_epoch LIMIT ?
+        )`,
+    ).bind(this.now(),limit).run();
+    return result.meta.changes??0;
   }
   async claim(workerId:string,leaseSeconds:number):Promise<SourceJob|null>{
     LeaseRequest.parse({workerId,leaseSeconds});
@@ -222,6 +382,26 @@ export class D1SourceReleaseBuildQueue {
             AND updated_at=? AND attempt>=?`,
       ).bind(now,MAX_ATTEMPTS),
       this.db.prepare(
+        `UPDATE source_release_build_attempts AS attempt SET
+           state=CASE WHEN EXISTS (
+             SELECT 1 FROM source_release_builds AS job
+              WHERE job.job_id=attempt.job_id AND job.lease_epoch=attempt.lease_epoch
+                AND job.state='failed' AND job.failure_code='SOURCE_ATTEMPTS_EXHAUSTED'
+           ) THEN 'failed' ELSE 'lease_expired' END,
+           failure_code=CASE WHEN EXISTS (
+             SELECT 1 FROM source_release_builds AS job
+              WHERE job.job_id=attempt.job_id AND job.lease_epoch=attempt.lease_epoch
+                AND job.state='failed' AND job.failure_code='SOURCE_ATTEMPTS_EXHAUSTED'
+           ) THEN 'SOURCE_ATTEMPTS_EXHAUSTED' ELSE NULL END,
+           finished_at=?
+         WHERE attempt.state='building' AND EXISTS (
+           SELECT 1 FROM source_release_builds AS job
+            WHERE job.job_id=attempt.job_id AND job.lease_epoch=attempt.lease_epoch
+              AND ((job.state='failed' AND job.failure_code='SOURCE_ATTEMPTS_EXHAUSTED')
+                OR (job.state='building' AND job.lease_expires_at<=?))
+         )`,
+      ).bind(now,now),
+      this.db.prepare(
         `UPDATE source_release_builds SET state='building',lease_worker=?,
            lease_token=?,lease_epoch=lease_epoch+1,lease_expires_at=?,
            attempt=attempt+1,updated_at=?
@@ -234,8 +414,17 @@ export class D1SourceReleaseBuildQueue {
          AND (state='queued' OR (state='building' AND lease_expires_at<=? AND attempt<?))
          RETURNING *`,
       ).bind(workerId,token,now+leaseSeconds*1000,now,now,MAX_ATTEMPTS,now,MAX_ATTEMPTS),
+      this.db.prepare(
+        `INSERT OR IGNORE INTO source_release_build_attempts
+           (job_id,lease_epoch,attempt,revision,state,stage,started_at,finished_at,
+            failure_code,diagnostic_json,evidence_expires_at)
+         SELECT job_id,lease_epoch,attempt,revision,'building','unknown',?,NULL,NULL,NULL,NULL
+           FROM source_release_builds
+          WHERE state='building' AND lease_worker=? AND lease_token=?
+            AND lease_expires_at>?`,
+      ).bind(now,workerId,token,now),
     ]);
-    return (result[2]?.results[0] as SourceJob|undefined)??null;
+    return (result[3]?.results[0] as SourceJob|undefined)??null;
   }
   async heartbeat(jobId:string,request:z.infer<typeof HeartbeatRequest>):Promise<boolean>{
     if(!ID.test(jobId))throw new TypeError("Invalid source job id");
@@ -312,13 +501,25 @@ export class D1SourceReleaseBuildQueue {
       return false;
     }
     const now=this.now();
-    const response=await this.db.prepare(
-      `UPDATE source_release_builds SET state='produced', result_json=?,
-         lease_worker=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
-       WHERE job_id=? AND state='building' AND lease_worker=? AND lease_token=?
-         AND lease_epoch=? AND lease_expires_at>?`
-    ).bind(json,now,jobId,input.workerId,input.leaseToken,input.leaseEpoch,now).run();
-    return (response.meta.changes??0)===1;
+    try {
+      const response=await this.db.batch([
+        this.db.prepare(
+          `UPDATE source_release_builds SET state='produced', result_json=?,
+             lease_worker=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
+           WHERE job_id=? AND state='building' AND lease_worker=? AND lease_token=?
+             AND lease_epoch=? AND lease_expires_at>?`,
+        ).bind(json,now,jobId,input.workerId,input.leaseToken,input.leaseEpoch,now),
+        this.assertOneChange(),
+        this.db.prepare(
+          `UPDATE source_release_build_attempts SET state='produced',finished_at=?,failure_code=NULL
+            WHERE job_id=? AND lease_epoch=? AND state='building'`,
+        ).bind(now,jobId,input.leaseEpoch),
+      ]);
+      return (response[0]?.meta.changes??0)===1;
+    } catch(error) {
+      if(isTransactionAssertion(error))return false;
+      throw error;
+    }
   }
   async listProduced():Promise<readonly (SourceJob&{result_json:string})[]>{
     const rows=await this.db.prepare(
@@ -415,6 +616,7 @@ export class D1SourceReleaseBuildQueue {
   async fail(jobId:string,request:z.infer<typeof FailureRequest>):Promise<boolean>{
     if(!ID.test(jobId))throw new TypeError("Invalid source job id");
     const checked=FailureRequest.parse(request);
+    const diagnostic=checked.diagnostic?storedDiagnostic(checked.diagnostic):null;
     const current=await this.byId(jobId);
     if(!current)return false;
     if(current.state==="failed" && current.lease_epoch===checked.leaseEpoch &&
@@ -429,6 +631,15 @@ export class D1SourceReleaseBuildQueue {
              AND lease_epoch=? AND lease_expires_at>?`,
         ).bind(checked.code,now,jobId,checked.workerId,checked.leaseToken,checked.leaseEpoch,now),
         this.assertOneChange(),
+        this.db.prepare(
+          `UPDATE source_release_build_attempts SET state='failed',finished_at=?,failure_code=?,
+             stage=COALESCE(?,stage),
+             diagnostic_json=CASE WHEN ? IS NULL THEN diagnostic_json ELSE ? END,
+             evidence_expires_at=CASE WHEN ? IS NULL THEN evidence_expires_at ELSE ? END
+           WHERE job_id=? AND lease_epoch=? AND state='building'`,
+        ).bind(now,checked.code,checked.diagnostic?.stage??null,
+          diagnostic,diagnostic,diagnostic,diagnostic===null?null:now+SOURCE_DIAGNOSTIC_RETENTION_MS,
+          jobId,checked.leaseEpoch),
         this.db.prepare(
           `INSERT INTO audit_events
              (event_id,repository_id,instance_id,operation_id,actor_id,actor_kind,
@@ -496,6 +707,22 @@ function isTransactionAssertion(error:unknown):boolean {
 function isConstraintError(error:unknown):boolean {
   return /unique constraint|constraint failed/iu.test(error instanceof Error?error.message:String(error));
 }
+function readPageLimit(value:string|undefined,fallback:number,max:number):number {
+  if(value===undefined)return fallback;
+  if(value.length>3||!/^[1-9][0-9]*$/u.test(value))
+    throw new TypeError("Invalid page size");
+  const limit=Number(value);
+  if(!Number.isSafeInteger(limit)||limit>max)throw new TypeError("Invalid page size");
+  return limit;
+}
+function readAttemptCursor(value:string|undefined):number|undefined {
+  if(value===undefined)return undefined;
+  if(value.length>16||!/^[1-9][0-9]*$/u.test(value))
+    throw new TypeError("Invalid source attempt cursor");
+  const cursor=Number(value);
+  if(!Number.isSafeInteger(cursor))throw new TypeError("Invalid source attempt cursor");
+  return cursor;
+}
 
 export function createSourceReleaseOperatorRoutes(input:{
   readonly queue:D1SourceReleaseBuildQueue;
@@ -509,10 +736,19 @@ export function createSourceReleaseOperatorRoutes(input:{
       return c.json({error:{code:"OPERATOR_AUTH_REQUIRED"}},403);
     await next();
   });
-  app.get("/",async(c)=>c.json({items:await input.queue.list()}));
+  app.get("/",async(c)=>{
+    const limit=readPageLimit(c.req.query("limit"),40,40);
+    const rawCursor=c.req.query("cursor");
+    const cursor=parseSourceBuildListCursor(rawCursor);
+    const attention=c.req.query("attention");
+    if(attention!==undefined&&attention!=="1")throw new TypeError("Invalid source build view");
+    return c.json(await input.queue.list(limit,cursor,attention==="1"));
+  });
   app.get("/:jobId",async(c)=>{
-    const job=await input.queue.byId(c.req.param("jobId"));
-    return job?c.json({job:publicSourceJob(job)}):c.json({error:{code:"SOURCE_BUILD_NOT_FOUND"}},404);
+    const limit=readPageLimit(c.req.query("limit"),10,25);
+    const beforeLeaseEpoch=readAttemptCursor(c.req.query("cursor"));
+    const detail=await input.queue.detail(c.req.param("jobId"),limit,beforeLeaseEpoch);
+    return detail?c.json(detail):c.json({error:{code:"SOURCE_BUILD_NOT_FOUND"}},404);
   });
   app.post("/",async(c)=>{
     const body=NewJob.parse(await readBoundedJson(c.req.raw,2048));
@@ -580,6 +816,14 @@ export function createSourceReleaseWorkerRoutes(input:{
     const accepted=await input.queue.heartbeat(c.req.param("jobId"),data);
     return c.json({accepted});
   });
+  app.post("/:jobId/diagnostics",async c=>{
+    const data=DiagnosticReportRequest.parse(
+      await readBoundedJson(c.req.raw,SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES),
+    );
+    if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
+    const accepted=await input.queue.reportDiagnostic(c.req.param("jobId"),data);
+    return c.json({accepted});
+  });
   app.post("/:jobId/produced",async c=>{
     if(!input.verifyProduced)return c.json({error:{code:"SOURCE_PRODUCER_UNAVAILABLE"}},503);
     const data=z.strictObject({
@@ -626,7 +870,9 @@ export function createSourceReleaseWorkerRoutes(input:{
     return c.json({accepted});
   });
   app.post("/:jobId/fail",async c=>{
-    const data=FailureRequest.parse(await readBoundedJson(c.req.raw,1024));
+    const data=FailureRequest.parse(
+      await readBoundedJson(c.req.raw,SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES),
+    );
     if(data.workerId!==input.workerId)return c.json({error:{code:"UNAUTHORIZED"}},401);
     const accepted=await input.queue.fail(c.req.param("jobId"),data);
     return c.json({accepted});

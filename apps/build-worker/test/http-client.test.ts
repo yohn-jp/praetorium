@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { buildKey } from "@praetorium/contracts";
-import type { BuildInput, SourceProducerResult } from "@praetorium/contracts";
+import { buildKey, sanitizeSourceDiagnostic } from "@praetorium/contracts";
+import type { BuildInput, SourceBuildDiagnostic, SourceProducerResult } from "@praetorium/contracts";
 import type { SourceBuildClaim } from "../src/source-producer-builder.js";
 import {
   BuildQueueHttpClient,
@@ -104,6 +104,77 @@ describe("Build Control Plane HTTP adapter", () => {
       workerId: "worker-1", leaseToken: sourceJob.lease_token,
       leaseEpoch: sourceJob.lease_epoch, leaseSeconds: 15,
     });
+  });
+
+  it("reports a sanitized Source stage under the active lease fence", async () => {
+    const job={job_id:"sr_00000000-0000-4000-8000-000000000001",lease_worker:"worker-1",
+      lease_token:"00000000-0000-4000-8000-000000000002",lease_epoch:3} as SourceBuildClaim;
+    const diagnostic:SourceBuildDiagnostic=sanitizeSourceDiagnostic({
+      stage:"buildkit",reason:"build_failed",summary:"ignored summary",
+      excerpt:"src/app.ts:12:7 - error TS2307: Cannot find module '@praetorium/contracts'",
+      truncated:false,
+    });
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify({accepted:true})));
+    const queue=client(fetchMock as typeof fetch);
+
+    await expect(queue.reportDiagnostic(job,diagnostic)).resolves.toBe(true);
+    const [url,init]=fetchMock.mock.calls[0]!;
+    expect((url as URL).pathname).toBe("/internal/builds/source/"+job.job_id+"/diagnostics");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      workerId:job.lease_worker,leaseToken:job.lease_token,leaseEpoch:job.lease_epoch,
+      diagnostic,
+    });
+  });
+
+  it("removes the configured worker credential before diagnostic transport", async () => {
+    const job={job_id:"sr_00000000-0000-4000-8000-000000000001",lease_worker:"worker-1",
+      lease_token:"00000000-0000-4000-8000-000000000002",lease_epoch:3} as SourceBuildClaim;
+    const diagnostic:SourceBuildDiagnostic={
+      stage:"buildkit",reason:"build_failed",summary:"ignored summary",
+      excerpt:"src/app.ts:12 - error TS2307: "+token,
+      truncated:false,
+    };
+    const fetchMock=vi.fn(async()=>new Response(JSON.stringify({accepted:true})));
+    const queue=client(fetchMock as typeof fetch);
+
+    await expect(queue.reportDiagnostic(job,diagnostic)).resolves.toBe(true);
+    const body=String(fetchMock.mock.calls[0]?.[1]?.body);
+    expect(body).not.toContain(token);
+    expect(JSON.parse(body).diagnostic).not.toHaveProperty("excerpt");
+  });
+
+  it("retries a diagnostic failure report once without evidence when an older CP rejects its field", async () => {
+    const job={job_id:"sr_00000000-0000-4000-8000-000000000001",lease_worker:"worker-1",
+      lease_token:"00000000-0000-4000-8000-000000000002",lease_epoch:3} as SourceBuildClaim;
+    const diagnostic:SourceBuildDiagnostic=sanitizeSourceDiagnostic({
+      stage:"buildkit",reason:"build_failed",summary:"ignored summary",
+      excerpt:"src/app.ts:12 - error TS2307: Cannot find module 'x'",
+      truncated:false,
+    });
+    const responses=[new Response("invalid request",{status:400}),new Response(JSON.stringify({accepted:true}))];
+    const fetchMock=vi.fn(async()=>responses.shift()!);
+    const queue=client(fetchMock as typeof fetch);
+
+    await expect(queue.failSource(job,"SOURCE_BUILD_FAILED",diagnostic)).resolves.toEqual({
+      accepted:true,diagnosticRecorded:false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first=JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string,unknown>;
+    const second=JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<string,unknown>;
+    expect(first).toMatchObject({workerId:job.lease_worker,leaseToken:job.lease_token,leaseEpoch:job.lease_epoch,code:"SOURCE_BUILD_FAILED",diagnostic});
+    expect(second).toEqual({workerId:job.lease_worker,leaseToken:job.lease_token,leaseEpoch:job.lease_epoch,code:"SOURCE_BUILD_FAILED"});
+    expect(fetchMock.mock.calls[0]?.[0]).toEqual(fetchMock.mock.calls[1]?.[0]);
+  });
+
+  it.each([401,409])("does not retry diagnostic failure reports after HTTP %i", async (status) => {
+    const job={job_id:"sr_00000000-0000-4000-8000-000000000001",lease_worker:"worker-1",
+      lease_token:"00000000-0000-4000-8000-000000000002",lease_epoch:3} as SourceBuildClaim;
+    const diagnostic=sanitizeSourceDiagnostic({stage:"buildkit",reason:"build_failed",summary:"",truncated:false});
+    const fetchMock=vi.fn(async()=>new Response("opaque",{status}));
+    const queue=client(fetchMock as typeof fetch);
+
+    await expect(queue.failSource(job,"SOURCE_BUILD_FAILED",diagnostic)).rejects.toMatchObject({status});
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("keeps the Produced proof request bounded by its longer verification budget", async () => {

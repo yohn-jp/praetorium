@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createControlPlaneApp, type ControlPlaneDependencies } from "./app.js";
 import { D1SourceReleaseBuildQueue, createSourceReleaseOperatorRoutes, createSourceReleaseWorkerRoutes } from "./source-release-builds.js";
+import { SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES } from "@praetorium/contracts";
 
 const jobId = "sr_11111111-1111-4111-8111-111111111111";
 const token = "a".repeat(40);
@@ -72,7 +73,9 @@ describe("Source HTTP body admission", () => {
   it.each([
     ["operator", "/", 2048], ["operator", `/${jobId}/retry`, 2048],
     ["worker", "/claim", 1024], ["worker", `/${jobId}/heartbeat`, 1024],
-    ["worker", `/${jobId}/fail`, 1024], ["worker", `/${jobId}/produced`, 70 * 1024],
+    ["worker", `/${jobId}/fail`, SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES],
+    ["worker", `/${jobId}/diagnostics`, SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES],
+    ["worker", `/${jobId}/produced`, 70 * 1024],
   ] as const)("bounds actual streamed bytes on %s %s before JSON or database work", async (kind, path, limit) => {
     const prepare = vi.fn(() => { throw new Error("database must not be reached"); });
     const queue = new D1SourceReleaseBuildQueue({ prepare, batch: vi.fn() });

@@ -27,6 +27,7 @@ test("deployment migration order includes all source migrations and preserves du
     "0005_runtime_health_observations.sql",
     "0006_application_origins.sql",
     "0007_source_release_recovery.sql",
+    "0008_source_build_diagnostics.sql",
   ]);
   assert.ok(compareMigrationNames("0004_runtime_git_credentials.sql", "0004_source_release_builds.sql") < 0);
 });
@@ -42,6 +43,7 @@ test("Wrangler JSON readback accepts complete historical receipts with duplicate
     "0006_application_origins.sql",
     "0004_source_release_builds.sql",
     "0007_source_release_recovery.sql",
+    "0008_source_build_diagnostics.sql",
   ];
   const output = JSON.stringify([{ success: true, results: historicReceipts.map((name) => ({ name })) }]);
   const applied = parseAppliedMigrationReadback(output);
@@ -142,4 +144,27 @@ test("0007 adds recovery defaults to an existing row written with the 0004 schem
     },
   );
   db.close();
+});
+
+
+test("diagnostic migration preserves old failed jobs without inventing historical evidence", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(readFileSync(path.join(migrationDirectory, "0004_source_release_builds.sql"), "utf8"));
+    db.exec(readFileSync(path.join(migrationDirectory, "0007_source_release_recovery.sql"), "utf8"));
+    db.prepare(`INSERT INTO source_release_builds(job_id,source_id,github_release_id,source_repository,
+      source_tag,source_revision,release_version,actor_id,state,attempt,lease_epoch,failure_code,created_at,updated_at)
+      VALUES(?, 'scriptorium',1,'yohn-jp/scriptorium','v0.3.3',?,'0.3.3','71','failed',1,1,'SOURCE_BUILD_FAILED',1,2)`)
+      .run("sr_54a61e4d-088c-453e-98ca-6be8588a4e1f", "a".repeat(40));
+    const before = db.prepare("SELECT * FROM source_release_builds").all();
+    db.exec(readFileSync(path.join(migrationDirectory, "0008_source_build_diagnostics.sql"), "utf8"));
+    assert.deepEqual(db.prepare("SELECT * FROM source_release_builds").all(), before);
+    assert.equal(db.prepare("SELECT count(*) AS count FROM source_release_build_attempts").get().count, 0);
+    const expected = orderedMigrationFiles(migrationDirectory);
+    assert.equal(assertCompatibleMigrationHistory(expected, expected.slice(0, -1)), true);
+    const misplaced = [...expected];
+    misplaced.splice(misplaced.indexOf("0007_source_release_recovery.sql"), 1);
+    misplaced.push("0007_source_release_recovery.sql");
+    assert.throws(() => assertCompatibleMigrationHistory(expected, misplaced), /precedes prerequisite/u);
+  } finally { db.close(); }
 });

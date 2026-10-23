@@ -5,7 +5,11 @@ import {
   BuildClaimSchema,
   BuildHeartbeatRequestSchema,
   BuildReportRequestSchema,
+  sanitizeSourceDiagnostic,
+  SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES,
+  SourceBuildDiagnosticSchema,
 } from "@praetorium/contracts";
+import type { SourceBuildDiagnostic } from "@praetorium/contracts";
 import type { SourceBuildClaim } from "./source-producer-builder.js";
 import type { SourceProducerResult } from "@praetorium/contracts";
 import type {
@@ -159,13 +163,55 @@ export class BuildQueueHttpClient implements BuildQueuePort {
     );
     return z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
   }
-  async failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"|"SOURCE_CHANGED"):Promise<boolean>{
+  async reportDiagnostic(job:SourceBuildClaim,diagnostic:SourceBuildDiagnostic):Promise<boolean>{
+    const safe=this.safeDiagnostic(diagnostic);
     const response=await this.post(
-      "/internal/builds/source/"+encodeURIComponent(job.job_id)+"/fail",
+      "/internal/builds/source/"+encodeURIComponent(job.job_id)+"/diagnostics",
       {workerId:job.lease_worker,leaseToken:job.lease_token,
-        leaseEpoch:job.lease_epoch,code},
+        leaseEpoch:job.lease_epoch,diagnostic:safe},
     );
     return z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
+  }
+  async failSource(
+    job:SourceBuildClaim,
+    code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"|"SOURCE_CHANGED",
+    diagnostic?:SourceBuildDiagnostic,
+  ):Promise<{accepted:boolean;diagnosticRecorded:boolean}>{
+    const path="/internal/builds/source/"+encodeURIComponent(job.job_id)+"/fail";
+    const credentials={workerId:job.lease_worker,leaseToken:job.lease_token,leaseEpoch:job.lease_epoch,code};
+    const safe=diagnostic===undefined?undefined:this.safeDiagnostic(diagnostic);
+    if(safe===undefined){
+      const response=await this.post(path,credentials);
+      return {accepted:z.strictObject({accepted:z.boolean()}).parse(response.value).accepted,diagnosticRecorded:false};
+    }
+    try{
+      const response=await this.post(path,{...credentials,diagnostic:safe});
+      const accepted=z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
+      return {accepted,diagnosticRecorded:accepted};
+    }catch(error){
+      // During a CP-first rollout an older strict FailureRequest rejects the
+      // additive diagnostic field. Retry once with the same lease fence and
+      // canonical failure code; the typed result tells the caller evidence was
+      // omitted. Authorization and conflict responses never take this path.
+      if(!(error instanceof BuildQueueHttpError)||error.status!==400)throw error;
+      const response=await this.post(path,credentials);
+      return {
+        accepted:z.strictObject({accepted:z.boolean()}).parse(response.value).accepted,
+        diagnosticRecorded:false,
+      };
+    }
+  }
+
+  private safeDiagnostic(input:SourceBuildDiagnostic):SourceBuildDiagnostic{
+    const checked=SourceBuildDiagnosticSchema.parse(input);
+    const excerpt=checked.excerpt?.split(this.options.serviceToken).join("[credential redacted]");
+    const safe=SourceBuildDiagnosticSchema.parse(sanitizeSourceDiagnostic({
+      ...checked,
+      ...(excerpt===undefined?{}:{excerpt,truncated:checked.truncated||excerpt!==checked.excerpt}),
+    }));
+    if(Buffer.byteLength(JSON.stringify(safe),"utf8")>SOURCE_DIAGNOSTIC_REQUEST_MAX_BYTES)
+      throw new TypeError("Source diagnostic request exceeds its byte limit");
+    return safe;
   }
 
   private async post(

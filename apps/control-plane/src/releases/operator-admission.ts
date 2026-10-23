@@ -1,3 +1,4 @@
+import { parseAuditCursor, type OperatorAuditPage, type OperatorAuditQuery } from "./operator-audit.js";
 import { metadataFailureReason } from "../http-failure.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -32,6 +33,7 @@ export interface OperatorReleaseAdmissionDependencies
     candidate: ReleaseCandidate,
     context: ReleaseAdmissionExecutionContext,
   ) => void;
+  readonly listAuditPage?: (query: OperatorAuditQuery) => Promise<OperatorAuditPage>;
   readonly listAudit?: () => Promise<readonly {
     action: string; outcome: string; actorId: string | null; occurredAt: number;
   }[]>;
@@ -96,9 +98,16 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
   });
 
   app.get("/audit", async (c) => {
-    if (!deps.listAudit) return c.json({ error: { code: "RELEASE_AUDIT_UNAVAILABLE" } }, 503);
+    if (!deps.listAudit && !deps.listAuditPage) return c.json({ error: { code: "RELEASE_AUDIT_UNAVAILABLE" } }, 503);
     try {
-      return c.json({ events: await deps.listAudit() });
+      const cursor = c.req.query("cursor") ?? null;
+      const query = c.req.query("q") ?? "";
+      try { parseAuditCursor(cursor); } catch { return c.json({ error: { code: "INVALID_CURSOR" } }, 400); }
+      if (query.length > 100 || [...query].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
+        return c.json({ error: { code: "INVALID_REQUEST" } }, 400);
+      return deps.listAuditPage
+        ? c.json(await deps.listAuditPage({ cursor, query }))
+        : c.json({ events: await deps.listAudit!() });
     } catch {
       return c.json({ error: { code: "RELEASE_AUDIT_UNAVAILABLE" } }, 503);
     }

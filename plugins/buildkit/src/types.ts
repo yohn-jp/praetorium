@@ -25,6 +25,12 @@ export type BuildKitProviderConfig = {
 export type BuildKitProgressEvent = BuildProgress;
 export type BuildKitFailureCode = "BUILD_FAILED" | "BUILD_TIMEOUT" | "BUILD_CANCELED";
 
+/** A bounded excerpt from BuildKit's raw progress stream after secret filtering. */
+export type BuildKitDiagnosticExcerpt = {
+  readonly text: string;
+  readonly truncated: boolean;
+};
+
 /** Trusted adapter for one explicitly approved immutable producer receipt contract. */
 export interface BuildCandidateReceiptReader {
   supports(input: BuildInput): boolean;
@@ -50,6 +56,8 @@ export class BuildKitAttemptError extends Error {
   constructor(
     readonly code: BuildKitFailureCode,
     readonly retryable: boolean,
+    readonly diagnostic?: BuildKitDiagnosticExcerpt,
+    readonly exitCode?: number | null,
   ) {
     super(
       code === "BUILD_TIMEOUT"

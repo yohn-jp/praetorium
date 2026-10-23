@@ -13,7 +13,7 @@ if (!Number.isInteger(port) || port < 1024 || port > 65535)
 const server = createServer(async (incoming, outgoing) => {
   try {
     const request = new Request("http://127.0.0.1:" + port + (incoming.url ?? "/"), {
-      method: incoming.method, headers: incoming.headers as HeadersInit,
+      method: incoming.method ?? "GET", headers: incoming.headers as HeadersInit,
     });
     const response = await observer.handle(request);
     outgoing.writeHead(response.status, Object.fromEntries(response.headers.entries()));

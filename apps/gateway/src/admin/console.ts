@@ -392,7 +392,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
         code: "SOURCE_CATALOG_UNAVAILABLE", value: null }),
     ) : Promise.resolve(empty([] as readonly SourceReleaseView[])),
     selectedBuildId ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/source-builds/" + selectedBuildId,
-      "/v1/operator/source-builds/" + selectedBuildId + withCursor,
+      "/v1/operator/source-builds/" + selectedBuildId + "?limit=10" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""),
       (value): value is SourceBuildDetail => {
         const parsed = SourceBuildDetailSchema.safeParse(value);
         return parsed.success && parsed.data.job.id === selectedBuildId;

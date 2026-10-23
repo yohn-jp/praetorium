@@ -1,3 +1,4 @@
+import type { SourceBuildSummary } from "@praetorium/contracts";
 import { createGitHubRestClient, GitHubApiError, type GitHubRestClient } from "@praetorium/github";
 import type { GatewayContext } from "../context.js";
 import { escapeHtml } from "../ui/presentation.js";
@@ -18,20 +19,7 @@ export interface PublishedSourceRelease {
   readonly prerelease: boolean;
   readonly notes: string;
 }
-export interface SourceBuildStatus {
-  readonly id: string;
-  readonly sourceId: string;
-  readonly releaseId: number;
-  readonly tag: string;
-  readonly commit: string;
-  readonly version: string;
-  readonly state: "queued"|"building"|"produced"|"admitted"|"failed";
-  readonly attempt: number;
-  readonly revision: number;
-  readonly retryable: boolean;
-  readonly error: string|null;
-  readonly admittedReleaseId: string|null;
-}
+export type SourceBuildStatus = SourceBuildSummary;
 
 export type SourceRetryIdentityResult =
   | { readonly kind: "matched"; readonly sourceId: string; readonly githubReleaseId: number;

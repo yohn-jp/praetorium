@@ -496,7 +496,7 @@ function buildFilter(model: ConsoleViewModel): string {
   const selected = model.buildStateFilter ?? "";
   return (
     '<form class="admin-mobile-filter" method="get" action="/builds" aria-label="Filter builds">' +
-    '<input type="hidden" name="ui" value="mobile"><label for="admin-mobile-build-state">State</label>' +
+    '<input type="hidden" name="ui" value="mobile"><input type="hidden" name="sort" value="' + value(model.buildSort ?? "recent") + '"><label for="admin-mobile-build-state">State</label>' +
     '<select id="admin-mobile-build-state" name="state">' +
     options
       .map(
@@ -515,9 +515,9 @@ function buildFilter(model: ConsoleViewModel): string {
 }
 
 function builds(model: ConsoleViewModel): string {
-  const jobs = (model.builds.value?.items ?? []).filter(job => !model.buildStateFilter || job.state === model.buildStateFilter);
+  const jobs = model.builds.value?.items ?? []; // The queue applies filters before page limiting.
   const cursor = model.builds.value?.nextCursor;
-  const nextQuery = new URLSearchParams({ ui: "mobile", ...(cursor ? { cursor } : {}) });
+  const nextQuery = new URLSearchParams({ ui: "mobile", sort: model.buildSort ?? "recent", ...(cursor ? { cursor } : {}) });
   if (model.buildStateFilter) nextQuery.set("state", model.buildStateFilter);
   const empty = model.buildStateFilter
     ? "No Source builds match this state filter."

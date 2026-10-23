@@ -15,7 +15,7 @@ COPY plugins/ghcr/patches/@sigstore__core@4.0.1.patch ./plugins/ghcr/patches/@si
 # Use the same bundled public CA roots for BuildKit proxy requests as the original install.
 RUN node -e 'const fs = require("node:fs"); fs.mkdirSync("/etc/ssl/certs", { recursive: true }); fs.writeFileSync("/etc/ssl/certs/ca-certificates.crt", require("node:tls").rootCertificates.join("\n") + "\n");'
 RUN --mount=type=cache,id=praetorium-pnpm-store,target=/pnpm/store,sharing=locked \
-    NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 pnpm fetch --frozen-lockfile --store-dir=/pnpm/store
+    NODE_USE_ENV_PROXY=1 NODE_USE_SYSTEM_CA=1 pnpm fetch --store-dir=/pnpm/store
 COPY tsconfig.base.json turbo.json ./
 COPY apps/ ./apps/
 COPY packages/ ./packages/

@@ -3,16 +3,13 @@ import { applySecurityHeaders } from "./middleware/security-headers.js";
 import { getOrCreateRequestId, withRequestId } from "./middleware/request-id.js";
 import { logRequest, redactedPath } from "./middleware/logging.js";
 import { createGatewayRouter } from "./router.js";
-import { handleAdminHost } from "./admin/console.js";
 
 export async function handle(request: Request, context: GatewayContext): Promise<Response> {
   const startedAt = Date.now();
   const requestId = context.requestId || getOrCreateRequestId(request);
   let response: Response;
   try {
-    response = context.config.adminOrigin && new URL(request.url).origin === context.config.adminOrigin
-      ? await handleAdminHost(request, context)
-      : await createGatewayRouter(context).fetch(request);
+    response = await createGatewayRouter(context).fetch(request);
   } catch {
     console.error(JSON.stringify({
       level: "error",

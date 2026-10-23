@@ -47,6 +47,8 @@ jobs:
         env:
           PRAETORIUM_OPERATOR_EVIDENCE_DIR: ${{ runner.temp }}/operator-console-diagnostics
         run: node --test tests/e2e/operator-console-diagnostics.test.mjs
+      - name: Exercise independent Admin Worker browser and protected infrastructure API
+        run: node --test tests/e2e/independent-admin.test.mjs
       - name: Upload synthetic operator console browser evidence
         if: always()
         uses: actions/upload-artifact@v4

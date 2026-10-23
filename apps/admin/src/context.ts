@@ -3,7 +3,7 @@ import type { SourceReleaseView, SourceRetryIdentityResult } from "./admin/relea
 
 export interface AdminPrincipal { readonly actorId: string; readonly csrfToken: string }
 export type Redemption =
-  | { readonly kind: "ok"; readonly sessionId: string; readonly csrfToken: string; readonly ttlSeconds: number }
+  | { readonly kind: "ok"; readonly sessionId: string; readonly csrfToken: string; readonly ttlSeconds: number; readonly returnTo?: string }
   | { readonly kind: "expired" | "limit" | "unavailable" };
 export type PreparedSource =
   | { readonly kind: "matched"; readonly sourceId: string; readonly githubReleaseId: number;

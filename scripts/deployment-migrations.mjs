@@ -130,10 +130,10 @@ export function assertCompatibleMigrationHistory(expectedFiles, appliedFiles) {
   if (applied.includes(recoveryMigration)) {
     const recoveryPosition = applied.indexOf(recoveryMigration);
     const prerequisite = expected.find((name) =>
-      name !== recoveryMigration && !applied.includes(name),
+      migrationNumber(name) < migrationNumber(recoveryMigration) && !applied.includes(name),
     );
     const laterPrerequisite = expected.find((name) =>
-      name !== recoveryMigration && applied.indexOf(name) > recoveryPosition,
+      migrationNumber(name) < migrationNumber(recoveryMigration) && applied.indexOf(name) > recoveryPosition,
     );
     if (prerequisite || laterPrerequisite) {
       throw new Error(
@@ -141,6 +141,12 @@ export function assertCompatibleMigrationHistory(expectedFiles, appliedFiles) {
         (prerequisite ?? laterPrerequisite),
       );
     }
+  }
+  for (const name of applied.filter((item) => migrationNumber(item) >= 8)) {
+    const position = applied.indexOf(name);
+    const prerequisite = expected.find((item) => migrationNumber(item) < migrationNumber(name) &&
+      (!applied.includes(item) || applied.indexOf(item) > position));
+    if (prerequisite) throw new Error("D1 migration " + name + " is missing or precedes prerequisite " + prerequisite);
   }
   // Force a read of all known names, including pending migrations, so malformed
   // expected sets cannot silently pass this pre-mutation gate.

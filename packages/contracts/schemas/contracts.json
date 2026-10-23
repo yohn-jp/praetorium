@@ -6927,6 +6927,638 @@
     "additionalProperties": false,
     "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
   },
+  "SourceBuildAttemptSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "maxLength": 160
+      },
+      "attempt": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      },
+      "leaseEpoch": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "building",
+          "produced",
+          "failed",
+          "lease_expired"
+        ]
+      },
+      "stage": {
+        "type": "string",
+        "enum": [
+          "unknown",
+          "release_check",
+          "source_checkout",
+          "build_environment",
+          "runtime_base",
+          "buildkit",
+          "metadata",
+          "oci_export",
+          "verification",
+          "admission"
+        ]
+      },
+      "startedAt": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      },
+      "finishedAt": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "failureCode": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 90
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "evidence": {
+        "type": "string",
+        "enum": [
+          "available",
+          "not_recorded",
+          "expired"
+        ]
+      },
+      "expiresAt": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "diagnostic": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "unknown",
+                  "release_check",
+                  "source_checkout",
+                  "build_environment",
+                  "runtime_base",
+                  "buildkit",
+                  "metadata",
+                  "oci_export",
+                  "verification",
+                  "admission"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "stage_started",
+                  "build_failed",
+                  "timeout",
+                  "canceled",
+                  "source_changed",
+                  "verification_failed",
+                  "infrastructure_unavailable",
+                  "completed",
+                  "unknown"
+                ]
+              },
+              "summary": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "excerpt": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "stage",
+              "reason",
+              "summary",
+              "truncated"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "id",
+      "attempt",
+      "revision",
+      "leaseEpoch",
+      "state",
+      "stage",
+      "startedAt",
+      "finishedAt",
+      "failureCode",
+      "evidence",
+      "expiresAt",
+      "diagnostic"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "SourceBuildDetailSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "job": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^sr_[0-9a-f-]{36}$"
+          },
+          "sourceId": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          },
+          "releaseId": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "tag": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "building",
+              "produced",
+              "admitted",
+              "failed"
+            ]
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 90
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "admittedReleaseId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "sourceId",
+          "releaseId",
+          "tag",
+          "commit",
+          "version",
+          "state",
+          "attempt",
+          "revision",
+          "error",
+          "admittedReleaseId",
+          "retryable"
+        ],
+        "additionalProperties": false
+      },
+      "attempts": {
+        "maxItems": 25,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "attempt": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "leaseEpoch": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "building",
+                "produced",
+                "failed",
+                "lease_expired"
+              ]
+            },
+            "stage": {
+              "type": "string",
+              "enum": [
+                "unknown",
+                "release_check",
+                "source_checkout",
+                "build_environment",
+                "runtime_base",
+                "buildkit",
+                "metadata",
+                "oci_export",
+                "verification",
+                "admission"
+              ]
+            },
+            "startedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "finishedAt": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failureCode": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 90
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "evidence": {
+              "type": "string",
+              "enum": [
+                "available",
+                "not_recorded",
+                "expired"
+              ]
+            },
+            "expiresAt": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "diagnostic": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "stage": {
+                      "type": "string",
+                      "enum": [
+                        "unknown",
+                        "release_check",
+                        "source_checkout",
+                        "build_environment",
+                        "runtime_base",
+                        "buildkit",
+                        "metadata",
+                        "oci_export",
+                        "verification",
+                        "admission"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "stage_started",
+                        "build_failed",
+                        "timeout",
+                        "canceled",
+                        "source_changed",
+                        "verification_failed",
+                        "infrastructure_unavailable",
+                        "completed",
+                        "unknown"
+                      ]
+                    },
+                    "summary": {
+                      "type": "string",
+                      "maxLength": 1024
+                    },
+                    "excerpt": {
+                      "type": "string",
+                      "maxLength": 8192
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "stage",
+                    "reason",
+                    "summary",
+                    "truncated"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "attempt",
+            "revision",
+            "leaseEpoch",
+            "state",
+            "stage",
+            "startedAt",
+            "finishedAt",
+            "failureCode",
+            "evidence",
+            "expiresAt",
+            "diagnostic"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "nextCursor": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 128
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "evidence": {
+        "type": "string",
+        "enum": [
+          "available",
+          "not_recorded",
+          "expired"
+        ]
+      }
+    },
+    "required": [
+      "job",
+      "attempts",
+      "nextCursor",
+      "evidence"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "SourceBuildDiagnosticSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "stage": {
+        "type": "string",
+        "enum": [
+          "unknown",
+          "release_check",
+          "source_checkout",
+          "build_environment",
+          "runtime_base",
+          "buildkit",
+          "metadata",
+          "oci_export",
+          "verification",
+          "admission"
+        ]
+      },
+      "reason": {
+        "type": "string",
+        "enum": [
+          "stage_started",
+          "build_failed",
+          "timeout",
+          "canceled",
+          "source_changed",
+          "verification_failed",
+          "infrastructure_unavailable",
+          "completed",
+          "unknown"
+        ]
+      },
+      "summary": {
+        "type": "string",
+        "maxLength": 1024
+      },
+      "excerpt": {
+        "type": "string",
+        "maxLength": 8192
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "stage",
+      "reason",
+      "summary",
+      "truncated"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "SourceBuildStageSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "string",
+    "enum": [
+      "unknown",
+      "release_check",
+      "source_checkout",
+      "build_environment",
+      "runtime_base",
+      "buildkit",
+      "metadata",
+      "oci_export",
+      "verification",
+      "admission"
+    ],
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
+  "SourceBuildSummarySchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^sr_[0-9a-f-]{36}$"
+      },
+      "sourceId": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,31}$"
+      },
+      "releaseId": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "tag": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "commit": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{40}$"
+      },
+      "version": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "building",
+          "produced",
+          "admitted",
+          "failed"
+        ]
+      },
+      "attempt": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      },
+      "error": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 90
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "admittedReleaseId": {
+        "anyOf": [
+          {
+            "type": "string",
+            "maxLength": 128
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "retryable": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id",
+      "sourceId",
+      "releaseId",
+      "tag",
+      "commit",
+      "version",
+      "state",
+      "attempt",
+      "revision",
+      "error",
+      "admittedReleaseId",
+      "retryable"
+    ],
+    "additionalProperties": false,
+    "$comment": "Structural wire schema with expressible semantic constraints. Normative semantic validation in @praetorium/contracts is also required: cross-field host/origin, grant time arithmetic, object-id uniqueness, module graph/resource closure and epoch/operation bindings cannot be certified by this JSON schema alone."
+  },
   "SourceProducerResultSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",

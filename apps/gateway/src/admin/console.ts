@@ -187,8 +187,13 @@ function isAudit(value: unknown): value is { events: Audit[]; nextCursor?: strin
     (value as { events: unknown[] }).events.length <= 25 &&
     (value as { events: unknown[] }).events.every(item => {
       const event = objectValue(item);
-      return event && typeof event.action === "string" && typeof event.outcome === "string" &&
-        (event.actorId === null || typeof event.actorId === "string") && Number.isSafeInteger(event.occurredAt);
+      return !!event && typeof event.action === "string" && typeof event.outcome === "string" &&
+        (event.actorId === null || typeof event.actorId === "string") && Number.isSafeInteger(event.occurredAt) &&
+        (event.eventId === undefined || (typeof event.eventId === "string" && event.eventId.length <= 512)) &&
+        ["jobId","releaseId","operationId","failureCode"].every(key =>
+          event[key] === undefined || event[key] === null || (typeof event[key] === "string" && event[key].length <= 128)) &&
+        ["revision","leaseEpoch"].every(key =>
+          event[key] === undefined || event[key] === null || (Number.isSafeInteger(event[key]) && Number(event[key]) >= 0));
     });
 }
 function isSourceBuilds(value: unknown): value is { items: SourceBuildStatus[]; nextCursor?: string | null } {
@@ -244,7 +249,13 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
     return response(403, "Operator authorization required");
   }
 
-  const actionError = (message: string, status: number) => renderError(context, session.csrfToken, message, status, mode);
+  const sourceError = /^\/source-builds\/(sr_[0-9a-f-]{36})\/retry$/u.exec(url.pathname);
+  const releaseError = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/retry$/u.exec(url.pathname);
+  const returnHref = sourceError ? buildHref(sourceError[1]!, mode) : releaseError
+    ? "/releases/" + encodeURIComponent(releaseError[1]!) + "?ui=" + mode
+    : "/releases?ui=" + mode;
+  const actionError = (message: string, status: number) =>
+    renderError(context, session.csrfToken, message, status, mode, returnHref);
   if (url.pathname === "/logout" && request.method === "POST") {
     const form = await boundedForm(request);
     if (!form || !(await adminFormCsrf(request, context, session, form))) return response(403, "CSRF rejected");
@@ -264,7 +275,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
       if (revision.length !== 1 || !/^(0|[1-9][0-9]*)$/u.test(revision[0]!) ||
           idempotencyKey.length !== 1 || !RELEASE_ID.test(idempotencyKey[0]!) ||
           [...form.keys()].some(key => !["csrfToken", "expectedRevision", "idempotencyKey"].includes(key)))
-        return response(400, "Invalid Source retry command");
+        return actionError("Invalid Source retry command", 400);
       const jobId = sourceRetryMatch[1]!;
       try {
         const loaded = await controlPlane(context, session.actor.userId, "GET",
@@ -341,7 +352,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
       if (revision.length !== 1 || !/^(0|[1-9][0-9]*)$/.test(revision[0]!) ||
           idempotencyKey.length !== 1 || !RELEASE_ID.test(idempotencyKey[0]!) ||
           [...form.keys()].some(key => !["csrfToken", "expectedRevision", "idempotencyKey"].includes(key)))
-        return response(400, "Invalid retry command");
+        return actionError("Invalid retry command", 400);
       const accepted = await controlPlane(context, session.actor.userId, "POST",
         "/v1/operator/releases/" + encodeURIComponent(id) + "/retry", {
           expectedRevision: Number(revision[0]), idempotencyKey: idempotencyKey[0],
@@ -427,10 +438,13 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
     { layout: "handoff", presentation: { mode } });
 }
 
-function renderError(context: GatewayContext, csrf: string, message: string, status: number, mode: ConsoleMode): Response {
+function renderError(context: GatewayContext, csrf: string, message: string, status: number,
+  mode: ConsoleMode, returnHref: string): Response {
   const pageResult = adminPage("Operator action unavailable",
     '<p class="alert" role="alert">' + escapeHtml(message) + '</p>' +
-    '<p><a class="button button-secondary" href="/releases?ui=' + mode + '">Return to release ledger</a></p>', csrf, mode);
+    '<p>Request was not confirmed. Read the authoritative state before attempting another action.</p>' +
+    '<p><a class="button button-secondary" href="' + escapeHtml(returnHref) +
+    '">Return to the affected record</a></p>', csrf, mode);
   void context;
   return new Response(pageResult.body, { status, headers: pageResult.headers });
 }

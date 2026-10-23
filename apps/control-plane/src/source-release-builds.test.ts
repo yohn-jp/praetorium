@@ -22,6 +22,7 @@ import {
   type SourceJobInput,
 } from "./source-release-builds.js";
 import { SourceProofVerificationError } from "./source-producer-verifier.js";
+import { parseBuildCursor } from "./source-build-list.js";
 
 const JOB: SourceJobInput = {
   sourceId: "scriptorium",
@@ -739,12 +740,25 @@ describe("source Release build queue against migrated SQLite D1", () => {
     },ACTOR)));
     const first = await h.queue.list(40);
     expect(first.items).toHaveLength(40);
-    expect(first.nextCursor).toMatch(/^\d+\.sr_/u);
-    const [createdAt,jobId] = first.nextCursor!.split(".");
-    const second = await h.queue.list(40,{createdAt:Number(createdAt),jobId:jobId!});
+    expect(first.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+    const cursor = parseBuildCursor(first.nextCursor!, "recent", null);
+    const second = await h.queue.list(40,cursor);
     expect(second.items).toHaveLength(1);
     expect(second.nextCursor).toBeNull();
     expect(new Set([...first.items,...second.items].map(job=>job.id)).size).toBe(41);
+    // An old registration that failed recently must appear on the first filtered page.
+    h.db.database.prepare(
+      "UPDATE source_release_builds SET state='failed',failure_code='SOURCE_BUILD_FAILED',updated_at=updated_at+100000 WHERE job_id=?",
+    ).run(jobs[0]!.job.id);
+    const operator=createSourceReleaseOperatorRoutes({queue:h.queue,operatorActorId:ACTOR});
+    const headersList={"X-Praetorium-Admin-Actor":ACTOR};
+    const failedPage=await operator.request("/?state=failed&sort=recent",{headers:headersList});
+    expect(failedPage.status).toBe(200);
+    const filtered=await failedPage.json() as {items:Array<{id:string;state:string}>};
+    expect(filtered.items).toHaveLength(1);
+    expect(filtered.items[0]?.id).toBe(jobs[0]!.job.id);
+    expect((await operator.request("/?sort=state&cursor="+encodeURIComponent(first.nextCursor!),{headers:headersList})).status).toBe(400);
+    expect((await operator.request("/?state=invalid",{headers:headersList})).status).toBe(400);
 
     const selected = jobs[0]!.job;
     const insertAttempt = h.db.database.prepare(

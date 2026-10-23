@@ -266,21 +266,23 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
           [...form.keys()].some(key => !["csrfToken", "expectedRevision", "idempotencyKey"].includes(key)))
         return response(400, "Invalid Source retry command");
       const jobId = sourceRetryMatch[1]!;
+      const sourceActionError = (message: string, status: number) =>
+        renderError(context, session.csrfToken, message, status, mode, buildHref(jobId, mode));
       try {
         const loaded = await controlPlane(context, session.actor.userId, "GET",
           "/v1/operator/source-builds/" + encodeURIComponent(jobId));
         if (loaded.status !== 200) {
-          return actionError(errorCode(loaded.data), loaded.status);
+          return sourceActionError(errorCode(loaded.data), loaded.status);
         }
         const job = parseSourceBuildStatus(objectValue(loaded.data)?.job);
         if (!job || job.id !== jobId) {
-          return actionError("Invalid Source build status", 503);
+          return sourceActionError("Invalid Source build status", 503);
         }
         if (job.revision !== Number(revision[0])) {
-          return actionError("Source build changed. Refresh the queue.", 409);
+          return sourceActionError("Source build changed. Refresh the queue.", 409);
         }
         if (job.state !== "failed" || !job.retryable) {
-          return actionError("This Source failure cannot be retried.", 409);
+          return sourceActionError("This Source failure cannot be retried.", 409);
         }
         const identity = await revalidateSourceRetryIdentity(context, session.actor.userId, job);
         if (identity.kind !== "matched") {
@@ -289,7 +291,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
           const message = identity.kind === "forbidden" ? "GitHub Release access is unavailable"
             : identity.kind === "unavailable" ? "Published GitHub Release is temporarily unavailable"
               : "Published Source identity changed. Refresh the queue.";
-          return actionError(message, status);
+          return sourceActionError(message, status);
         }
         const accepted = await controlPlane(context, session.actor.userId, "POST",
           "/v1/operator/source-builds/" + encodeURIComponent(jobId) + "/retry", {
@@ -302,11 +304,11 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
             idempotencyKey: idempotencyKey[0],
           });
         if (![200, 202].includes(accepted.status)) {
-          return actionError(errorCode(accepted.data), accepted.status);
+          return sourceActionError(errorCode(accepted.data), accepted.status);
         }
         return localRedirect(buildHref(jobId, mode) + "&notice=" + encodeURIComponent("Source retry accepted for " + jobId));
       } catch {
-        return actionError("Source retry authority unavailable", 503);
+        return sourceActionError("Source retry authority unavailable", 503);
       }
     }
     if (isSourceDeploy) {
@@ -427,10 +429,10 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
     { layout: "handoff", presentation: { mode } });
 }
 
-function renderError(context: GatewayContext, csrf: string, message: string, status: number, mode: ConsoleMode): Response {
+function renderError(context: GatewayContext, csrf: string, message: string, status: number, mode: ConsoleMode, returnPath?: string): Response {
   const pageResult = adminPage("Operator action unavailable",
     '<p class="alert" role="alert">' + escapeHtml(message) + '</p>' +
-    '<p><a class="button button-secondary" href="/releases?ui=' + mode + '">Return to release ledger</a></p>', csrf, mode);
+    '<p><a class="button button-secondary" href="' + escapeHtml(returnPath ?? "/releases?ui=" + mode) + '">Return to selected record</a></p>', csrf, mode);
   void context;
   return new Response(pageResult.body, { status, headers: pageResult.headers });
 }

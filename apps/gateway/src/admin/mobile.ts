@@ -817,6 +817,12 @@ function buildDetail(model: ConsoleViewModel): string {
     '</p><code class="admin-mobile-job-id">' +
     value(job.id) +
     '</code><a class="button button-secondary" href="' + value(buildHref(job.id, "mobile")) + '">Refresh status</a></header>' +
+    (job.state === "failed"
+      ? '<section class="admin-mobile-diagnostic" role="status"><h2>Investigate failure</h2><p>' +
+        value(attempts[0]?.diagnostic?.summary ??
+          "No diagnostic evidence was recorded. Confirm Worker delivery before retrying.") +
+        '</p><p>Failure code: ' + value(job.error ?? "Unknown") +
+        ' · Last reported stage: ' + value(attempts[0]?.stage ?? "unknown") + '</p></section>' : "") +
     '<dl class="admin-mobile-detail-facts"><div><dt>Immutable source commit</dt><dd><code>' +
     value(job.commit) +
     "</code></dd></div><div><dt>Current attempt</dt><dd>" +

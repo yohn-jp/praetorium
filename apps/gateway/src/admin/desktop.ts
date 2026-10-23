@@ -302,20 +302,10 @@ function sortLabel(sort: BuildSort): string {
   }
 }
 
-function sortBuilds(items: readonly SourceBuildSummary[], sort: BuildSort): SourceBuildSummary[] {
-  if (sort === "recent") return [...items];
-  return [...items].sort((left, right) => {
-    if (sort === "source") return `${left.sourceId}/${left.tag}`.localeCompare(`${right.sourceId}/${right.tag}`);
-    if (sort === "state") return left.state.localeCompare(right.state) || right.attempt - left.attempt;
-    return right.attempt - left.attempt || right.revision - left.revision;
-  });
-}
-
 function buildTable(model: ConsoleViewModel): string {
   if (!model.builds.value) return dependencyUnavailable("Source build queue", model.builds);
   const sort = buildSort(model);
-  const filtered = model.builds.value.items.filter((job) => !model.buildStateFilter || job.state === model.buildStateFilter);
-  const jobs = sortBuilds(filtered, sort);
+  const jobs = model.builds.value.items; // Server filters and orders before LIMIT.
   if (!jobs.length) return `<p class="desktop-empty">${model.builds.value.items.length
     ? "No Source builds match the selected state."
     : "No Source builds are available on this page."}</p>`;
@@ -353,7 +343,7 @@ function builds(model: ConsoleViewModel): string {
       `<option value="${value}"${state === value ? " selected" : ""}>${escapeHtml(humanize(value))}</option>`).join("")}</select>` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Apply filter</button></form>` + buildTable(model) +
     (cursor ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="/builds?${escapeHtml(nextQuery.toString())}">Older builds</a></p>` : "") +
-    `<p class="desktop-table-footnote">Sorting and filtering apply to this bounded page. A queued job is accepted work. Status unavailable means the queue dependency did not respond; it does not mean a build failed.</p></section>`;
+    `<p class="desktop-table-footnote">Filters and sorting apply to the entire Source queue before pagination. A queued job is accepted work. Status unavailable means the queue dependency did not respond; it does not mean a build failed.</p></section>`;
 }
 
 function attemptStateLabel(attempt: SourceBuildAttempt): string {

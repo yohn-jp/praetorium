@@ -245,7 +245,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   if (!session) {
     // No operator data, application state or Control Plane calls before authentication.
     if (request.method === "GET") {
-      const target = adminReturnPath(url.pathname + "?ui=" + mode);
+      const target = url.pathname === "/" ? "/" : adminReturnPath(url.pathname + "?ui=" + mode);
       if (target !== "/" || url.pathname === "/") {
         // An authenticated non-admin is denied; only an expired/missing session re-enters OAuth.
         const gatewaySession = await requireSession(request, context);

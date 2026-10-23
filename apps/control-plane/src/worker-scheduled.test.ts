@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import controlPlane, { type ControlPlaneEnv } from "./worker.js";
 
 describe("Control Plane scheduled production path", () => {
-  it("purges expired credentials and completes with optional release services disabled", async () => {
+  it.each([false, true])("purges expired evidence and credentials with optional releases disabled (legacy schema: %s)", async (legacySchema) => {
     const statements: string[] = [];
     const statement = {
       bind() {
@@ -15,6 +15,8 @@ describe("Control Plane scheduled production path", () => {
     const db = {
       prepare(sql: string) {
         statements.push(sql);
+        if (legacySchema && sql.includes("source_release_build_attempts"))
+          throw new Error("D1_ERROR: no such table: source_release_build_attempts");
         return statement;
       },
     };
@@ -36,7 +38,8 @@ describe("Control Plane scheduled production path", () => {
 
     expect(result).toEqual({ releaseWork: "disabled" });
     expect(statements).toEqual(
-      expect.arrayContaining([expect.stringContaining("DELETE FROM runtime_git_credentials")]),
+      expect.arrayContaining([expect.stringContaining("DELETE FROM runtime_git_credentials"),
+        expect.stringContaining("UPDATE source_release_build_attempts SET diagnostic_json=NULL")]),
     );
     expect(waitUntil).toHaveBeenCalledOnce();
   });

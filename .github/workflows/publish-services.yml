@@ -41,6 +41,21 @@ jobs:
           node --check scripts/ci/source-stable-fixture.mjs
           node scripts/ci/verify-workerd-runtime-identity.mjs
 
+      - name: Install disposable Chromium for operator console verification
+        run: corepack pnpm@11.18.0 exec playwright install --with-deps chromium
+      - name: Render and exercise desktop and mobile operator diagnostics
+        env:
+          PRAETORIUM_OPERATOR_EVIDENCE_DIR: ${{ runner.temp }}/operator-console-diagnostics
+        run: node --test tests/e2e/operator-console-diagnostics.test.mjs
+      - name: Upload synthetic operator console browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-console-diagnostics-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/operator-console-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
+
   source-stable-fixture:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: verify

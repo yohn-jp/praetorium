@@ -5,6 +5,7 @@ import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
 import { D1SourceReleaseBuildQueue, createSourceReleaseOperatorRoutes, createSourceReleaseWorkerRoutes } from "./source-release-builds.js";
+import { metadataFailureReason } from "./http-failure.js";
 import { progressProducedSourceReleases } from "./source-release-progression.js";
 import { createScheduledHandler } from "./scheduled.js";
 import type { ExecutionContext } from "hono";
@@ -363,6 +364,10 @@ export class RepositoryCoordinator {
 export default {
   scheduled: createScheduledHandler<ControlPlaneEnv>(async (env) => {
     await new D1RuntimeGitCredentialStore(env.CONTROL_PLANE_DB).purgeExpired(Date.now(), 64);
+    // Reuse existing bounded maintenance; no additional polling controller.
+    // An optional source feature on a pre-0008 database must not block unrelated maintenance.
+    try { await new D1SourceReleaseBuildQueue(env.CONTROL_PLANE_DB).expireDiagnostics(100); }
+    catch (error) { if (metadataFailureReason(error) !== "schema_missing") throw error; }
     const composed=composeServices(env);
     await composed.progressProduced();
     return composed.releases?.scheduled ?? null;

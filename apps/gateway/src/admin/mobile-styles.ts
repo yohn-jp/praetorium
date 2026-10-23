@@ -19,7 +19,7 @@ body:has(.admin-mobile-console) .page-shell{padding:0;max-width:none;min-height:
 .admin-mobile-page-heading .admin-kicker{display:block;margin-bottom:7px}
 .admin-mobile-page-heading h1{font-size:clamp(26px,7vw,36px);line-height:1.16;letter-spacing:-.05em;overflow-wrap:anywhere}
 .admin-mobile-page-heading p{margin:7px 0 0;color:#647c6c;font-size:14px}
-.admin-mobile-toast{position:fixed;z-index:24;right:10px;bottom:calc(82px + env(safe-area-inset-bottom));left:10px;width:min(600px,calc(100vw - 20px));max-height:min(25vh,9rem);margin-inline:auto;padding:12px 14px;border:1px solid #b9d0c1;border-left:3px solid #235d4b;border-radius:8px;background:#f5fbf6;color:#174937;box-shadow:0 5px 24px #153c2f24;overflow:auto;overflow-wrap:anywhere}
+.admin-mobile-toast{position:fixed;z-index:24;top:calc(80px + env(safe-area-inset-top));right:10px;left:10px;width:min(600px,calc(100vw - 20px));max-height:min(25vh,9rem);margin-inline:auto;padding:12px 14px;border:1px solid #b9d0c1;border-left:3px solid #235d4b;border-radius:8px;background:#f5fbf6;color:#174937;box-shadow:0 5px 24px #153c2f24;overflow:auto;overflow-wrap:anywhere}
 .admin-mobile-console:has(.admin-mobile-action-region) .admin-mobile-toast{bottom:calc(220px + env(safe-area-inset-bottom))}
 .admin-mobile-section{min-width:0;margin:24px 0 0}
 .admin-mobile-section-heading{display:flex;min-width:0;align-items:flex-end;justify-content:space-between;gap:10px;margin:0 0 12px}

@@ -3,6 +3,8 @@ import { EVIDENCE_LEDGER_STYLES } from "./views/evidence-ledger.js";
 import { DESKTOP_STYLES } from "./views/desktop.js";
 import { MOBILE_STYLES } from "./views/mobile.js";
 import { ADMIN_STYLES } from "../admin/styles.js";
+import { DESKTOP_ADMIN_STYLES } from "../admin/desktop-styles.js";
+import { MOBILE_ADMIN_STYLES } from "../admin/mobile-styles.js";
 import type { PortalUiMode } from "./presentation.js";
 
 /** Common controls and tokens. Composition styles are assembled per selected UI mode. */
@@ -113,9 +115,10 @@ body[data-ui="mobile"] .form-grid { grid-template-columns:1fr; }
 `;
 
 export const PORTAL_STYLE_HASHES = {
-  desktop: "OuD6TQq5CDulJcQJF9wUCwZnNj7CAHN2b0GHm9suDvY=",
-  mobile: "KYBu87bYTFiLo5z2c+3o6wfmbpmDfdIli1bRmWSrCZ0=",
+  desktop: "tB9wNWnmXV0XJMUbiXXJi0kDPVRn61ExCi60gztYNNc=",
+  mobile: "4LdMob4Vx8mflak7GQH3Qe0rqgL0lNfTG+GkfxcuXZs=",
 } as const;
 export function portalStyles(mode: PortalUiMode): string {
-  return PORTAL_STYLES + (mode === "mobile" ? MOBILE_STYLES : DESKTOP_STYLES) + EVIDENCE_LEDGER_STYLES + EVIDENCE_LEDGER_LIST_STYLES + ADMIN_STYLES;
+  return PORTAL_STYLES + (mode === "mobile" ? MOBILE_STYLES : DESKTOP_STYLES) + EVIDENCE_LEDGER_STYLES + EVIDENCE_LEDGER_LIST_STYLES + ADMIN_STYLES +
+    (mode === "mobile" ? MOBILE_ADMIN_STYLES : DESKTOP_ADMIN_STYLES);
 }

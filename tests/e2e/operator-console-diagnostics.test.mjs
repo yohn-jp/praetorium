@@ -128,14 +128,29 @@ function detail(state) {
   throw new Error(`Unknown fixture state: ${state}`);
 }
 
-function browserExecutable() {
-  const requested = process.env.PRAETORIUM_OPERATOR_BROWSER_PATH;
-  if (requested) return requested;
+async function browserLaunchOptions() {
   const environmentPath = process.env.PRAETORIUM_OPERATOR_BROWSER_ENVIRONMENT_PATH ??
     "/tmp/praetorium-browser-env.json";
-  return readFile(environmentPath, "utf8")
-    .then((raw) => JSON.parse(raw).executablePath)
-    .catch(() => undefined);
+  let browserEnvironment = {};
+  try {
+    browserEnvironment = JSON.parse(await readFile(environmentPath, "utf8"));
+  } catch {
+    // Playwright's installed default browser remains the fallback in CI.
+  }
+  const executablePath = process.env.PRAETORIUM_OPERATOR_BROWSER_PATH ??
+    browserEnvironment.executablePath;
+  return {
+    headless: true,
+    ...(executablePath ? { executablePath } : {}),
+    env: {
+      PATH: process.env.PATH ?? "",
+      ...(browserEnvironment.LD_LIBRARY_PATH
+        ? { LD_LIBRARY_PATH: browserEnvironment.LD_LIBRARY_PATH }
+        : {}),
+      ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+    },
+    args: ["--no-sandbox", "--disable-background-networking", "--disable-default-apps"],
+  };
 }
 
 async function readBody(request) {
@@ -259,11 +274,14 @@ test("operator console browser diagnostics contract uses local fixture data", { 
   const controller = {
     state: "queued",
     detailUnavailable: false,
+    dispatches: [],
+    retries: [],
     cpCalls: [],
     origin: "http://127.0.0.1",
     context: null,
     controlPlane: async (request) => {
       const url = new URL(request.url);
+      const body = request.method === "POST" ? await request.clone().json() : null;
       if (url.pathname === "/v1/operator/source-builds" && request.method === "GET") {
         const current = controller.state === "retry_queued" ? detail("retry_queued") : detail(controller.state);
         return Response.json({ items: [current.job], nextCursor: null });
@@ -278,10 +296,26 @@ test("operator console browser diagnostics contract uses local fixture data", { 
           ? detail("retry_queued")
           : detail(controller.state));
       }
+      if (url.pathname === "/v1/operator/source-builds" && request.method === "POST") {
+        assert.equal(request.headers.get("X-Control-Plane-Gateway-Auth"),
+          "local-test-service-key-never-exposed-to-browser");
+        assert.equal(request.headers.get("X-Praetorium-Admin-Actor"), ADMIN_ID);
+        assert.deepEqual(body, {
+          sourceId: SOURCE_ID,
+          githubReleaseId: RELEASE_ID,
+          sourceTag: "v0.3.3",
+          sourceRevision: COMMIT,
+          releaseVersion: "0.3.3",
+        });
+        controller.dispatches.push(body);
+        controller.state = "queued";
+        return Response.json({ job: summary("queued", 0, 0), duplicate: false }, { status: 202 });
+      }
       if (url.pathname === `/v1/operator/source-builds/${JOB_ID}/retry` && request.method === "POST") {
         assert.equal(request.headers.get("X-Control-Plane-Gateway-Auth"),
           "local-test-service-key-never-exposed-to-browser");
         assert.equal(request.headers.get("X-Praetorium-Admin-Actor"), ADMIN_ID);
+        controller.retries.push(body);
         controller.state = "retry_queued";
         return Response.json({ job: detail("retry_queued").job, duplicate: false }, { status: 202 });
       }
@@ -323,6 +357,17 @@ test("operator console browser diagnostics contract uses local fixture data", { 
   try {
     globalThis.fetch = async (input) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname === "/repos/yohn-jp/scriptorium/releases") {
+        return Response.json([{
+          id: RELEASE_ID,
+          draft: false,
+          published_at: "2026-10-22T08:00:00.000Z",
+          tag_name: "v0.3.3",
+          prerelease: false,
+          name: "v0.3.3",
+          body: "Fixture release for the local browser contract.",
+        }]);
+      }
       if (url.pathname === `/repos/yohn-jp/scriptorium/releases/${RELEASE_ID}`) {
         return Response.json({
           id: RELEASE_ID,
@@ -340,98 +385,112 @@ test("operator console browser diagnostics contract uses local fixture data", { 
       throw new Error(`Unexpected external request in local browser fixture: ${url.origin}${url.pathname}`);
     };
 
-    const executablePath = await browserExecutable();
-    browser = await chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-      args: ["--no-sandbox", "--disable-background-networking", "--disable-default-apps"],
-    });
+    browser = await chromium.launch(await browserLaunchOptions());
     const context = await browser.newContext({ serviceWorkers: "block" });
     currentPage = await context.newPage();
     currentPage.setDefaultTimeout(8_000);
     const consoleErrors = [];
     currentPage.on("pageerror", (error) => consoleErrors.push(error.message));
 
-    await currentPage.goto(`${serverFixture.origin}/builds?ui=desktop`, { waitUntil: "domcontentloaded" });
-    await currentPage.getByRole("heading", { name: "Builds" }).waitFor();
-    assert.equal(await currentPage.getByRole("navigation", { name: "Operator sections" }).count(), 1);
-    await currentPage.locator(`a[href="/builds/${JOB_ID}?ui=desktop"]`).first().click();
-    await currentPage.getByRole("heading", { name: /v0\.3\.3/ }).waitFor();
-    assert.match(await currentPage.locator("body").innerText(), /queued/i);
-    result.states.push("queued");
+    async function runBuildJourney(mode, width) {
+      await currentPage.setViewportSize({ width, height: mode === "mobile" ? 900 : 1000 });
+      await currentPage.goto(`${serverFixture.origin}/releases?ui=${mode}`, { waitUntil: "domcontentloaded" });
+      await currentPage.getByRole("heading", { name: "Releases", exact: true }).waitFor();
+      assert.equal(await currentPage.getByRole("navigation", { name: "Operator sections" }).count(), 1);
+      await currentPage.getByRole("button", { name: "Build & deploy" }).click();
+      await currentPage.waitForURL((url) => url.pathname === `/builds/${JOB_ID}` &&
+        url.searchParams.get("ui") === mode && url.searchParams.get("notice") !== null);
+      assert.match(await currentPage.locator("body").innerText(), /Source build queued/i);
+      assert.equal(controller.dispatches.length, mode === "desktop" ? 1 : 2);
+      result.states.push(`${mode}: release selected and source build queued`);
 
-    controller.state = "building";
-    await currentPage.reload({ waitUntil: "domcontentloaded" });
-    assert.match(await currentPage.locator("body").innerText(), /building/i);
-    result.states.push("building");
+      await currentPage.getByRole("heading", { name: /v0\.3\.3/ }).waitFor();
+      assert.match(await currentPage.locator("body").innerText(), /queued/i);
+      controller.state = "building";
+      await currentPage.reload({ waitUntil: "domcontentloaded" });
+      assert.match(await currentPage.locator("body").innerText(), /building/i);
+      result.states.push(`${mode}: building`);
+
+      controller.state = "failed";
+      await currentPage.reload({ waitUntil: "domcontentloaded" });
+      await currentPage.getByText("SOURCE_BUILD_FAILED").first().waitFor();
+      const failureText = await currentPage.locator("body").innerText();
+      assert.match(failureText, /BuildKit failed <img src=x onerror="alert\(1\)">/i);
+      assert.equal(await currentPage.locator('img[src="x"]').count(), 0);
+      result.states.push(`${mode}: failed with escaped diagnostic`);
+
+      // The failed attempt remains visible after retry; notices stay out of
+      // the document flow so neither the header nor content jumps.
+      assert.equal(await currentPage.locator("input[name='expectedRevision']").inputValue(), "0");
+      const beforeRetry = await currentPage.evaluate(() => {
+        const header = document.querySelector(".desktop-operator-topbar, .admin-mobile-header");
+        const main = document.querySelector(".desktop-operator-content, .admin-mobile-main, main");
+        return {
+          headerHeight: header?.getBoundingClientRect().height ?? null,
+          mainTop: main?.getBoundingClientRect().top ?? null,
+        };
+      });
+      await currentPage.getByRole("button", { name: "Retry Source build" }).click();
+      await currentPage.waitForURL((url) => url.pathname === `/builds/${JOB_ID}` &&
+        url.searchParams.get("ui") === mode && url.searchParams.get("notice") !== null);
+      assert.match(await currentPage.locator("body").innerText(), /retry accepted/i);
+      assert.match(await currentPage.locator("body").innerText(), /BuildKit failed <img src=x/i);
+      const afterNotice = await currentPage.evaluate(() => {
+        const header = document.querySelector(".desktop-operator-topbar, .admin-mobile-header");
+        const main = document.querySelector(".desktop-operator-content, .admin-mobile-main, main");
+        const notice = document.querySelector(".desktop-notice, .admin-mobile-toast");
+        const noticeSurface = document.querySelector(".desktop-notice-slot, .admin-mobile-toast");
+        return {
+          headerHeight: header?.getBoundingClientRect().height ?? null,
+          mainTop: main?.getBoundingClientRect().top ?? null,
+          noticeRole: notice?.getAttribute("role") ?? null,
+          noticeLive: notice?.getAttribute("aria-live") ?? notice?.parentElement?.getAttribute("aria-live") ?? null,
+          noticePosition: noticeSurface ? getComputedStyle(noticeSurface).position : null,
+        };
+      });
+      if (beforeRetry.headerHeight !== null && afterNotice.headerHeight !== null)
+        assert.equal(afterNotice.headerHeight, beforeRetry.headerHeight, "notice must not resize the header");
+      if (beforeRetry.mainTop !== null && afterNotice.mainTop !== null)
+        assert.equal(afterNotice.mainTop, beforeRetry.mainTop, "notice must not push the main content down");
+      assert.equal(afterNotice.noticeRole, "status");
+      assert.equal(afterNotice.noticeLive, "polite");
+      assert.equal(afterNotice.noticePosition, "fixed");
+      assert.equal(controller.retries.length, mode === "desktop" ? 1 : 2);
+      result.states.push(`${mode}: retry accepted with prior failure retained`);
+
+      // Direct navigation remains server-rendered and authoritative after a
+      // back/forward round trip and a fresh reload.
+      await currentPage.goBack({ waitUntil: "domcontentloaded" });
+      assert.equal(new URL(currentPage.url()).pathname, `/builds/${JOB_ID}`);
+      await currentPage.getByText("SOURCE_BUILD_FAILED").first().waitFor();
+      assert.match(await currentPage.locator("body").innerText(), /queued/i);
+      await currentPage.goForward({ waitUntil: "domcontentloaded" });
+      assert.equal(new URL(currentPage.url()).pathname, `/builds/${JOB_ID}`);
+      await currentPage.getByText("SOURCE_BUILD_FAILED").first().waitFor();
+      assert.match(await currentPage.locator("body").innerText(), /retry accepted/i);
+      await currentPage.reload({ waitUntil: "domcontentloaded" });
+      await currentPage.getByText("SOURCE_BUILD_FAILED").first().waitFor();
+
+      controller.state = "admitted";
+      await currentPage.goto(`${serverFixture.origin}/builds/${JOB_ID}?ui=${mode}`, { waitUntil: "domcontentloaded" });
+      await currentPage.getByText("admitted", { exact: true }).waitFor();
+      assert.match(await currentPage.locator("body").innerText(), /source-attempt-failed-1/);
+      assert.match(await currentPage.locator("body").innerText(), /source-attempt-produced-2/);
+      await currentPage.locator(`a[href="/releases/rel_v033?ui=${mode}"]`).click();
+      await currentPage.getByRole("heading", {
+        name: mode === "desktop" ? "Release 0.3.3" : "0.3.3",
+        exact: true,
+      }).waitFor();
+      assert.match(await currentPage.locator("body").innerText(), /canonical release status/i);
+      assert.match(await currentPage.locator("body").innerText(), /promoted/i);
+      assert.equal(await currentPage.locator("pre").count(), 0, "release status must remain typed, not raw JSON");
+      result.states.push(`${mode}: admitted build follows canonical release status`);
+    }
+
+    await runBuildJourney("desktop", 1440);
 
     controller.state = "failed";
-    await currentPage.reload({ waitUntil: "domcontentloaded" });
-    await currentPage.getByText("SOURCE_BUILD_FAILED").waitFor();
-    const failureText = await currentPage.locator("body").innerText();
-    assert.match(failureText, /BuildKit failed <img src=x onerror="alert\(1\)">/i);
-    assert.equal(await currentPage.locator('img[src="x"]').count(), 0);
-    result.states.push("failed");
-
-    // The failed attempt is deliberately visible before and after retry; the
-    // next queued revision does not erase its immutable history.
-    assert.equal(await currentPage.locator("input[name='expectedRevision']").inputValue(), "0");
-    const beforeRetry = await currentPage.evaluate(() => {
-      const header = document.querySelector(".desktop-operator-topbar, .admin-mobile-header");
-      const main = document.querySelector(".desktop-operator-content, .admin-mobile-main, main");
-      return {
-        headerHeight: header?.getBoundingClientRect().height ?? null,
-        mainTop: main?.getBoundingClientRect().top ?? null,
-      };
-    });
-    await currentPage.getByRole("button", { name: "Retry Source build" }).click();
-    await currentPage.waitForURL((url) => url.pathname === `/builds/${JOB_ID}` &&
-      url.searchParams.get("notice") !== null);
-    assert.match(await currentPage.locator("body").innerText(), /retry accepted/i);
-    assert.match(await currentPage.locator("body").innerText(), /BuildKit failed <img src=x/i);
-    const afterNotice = await currentPage.evaluate(() => {
-      const header = document.querySelector(".desktop-operator-topbar, .admin-mobile-header");
-      const main = document.querySelector(".desktop-operator-content, .admin-mobile-main, main");
-      const notice = document.querySelector(".desktop-notice, .admin-mobile-toast");
-      return {
-        headerHeight: header?.getBoundingClientRect().height ?? null,
-        mainTop: main?.getBoundingClientRect().top ?? null,
-        noticeRole: notice?.getAttribute("role") ?? null,
-        noticeLive: notice?.getAttribute("aria-live") ?? notice?.parentElement?.getAttribute("aria-live") ?? null,
-        noticePosition: notice ? getComputedStyle(notice).position : null,
-      };
-    });
-    if (beforeRetry.headerHeight !== null && afterNotice.headerHeight !== null)
-      assert.equal(afterNotice.headerHeight, beforeRetry.headerHeight, "notice must not resize the header");
-    if (beforeRetry.mainTop !== null && afterNotice.mainTop !== null)
-      assert.equal(afterNotice.mainTop, beforeRetry.mainTop, "notice must not push the main content down");
-    assert.equal(afterNotice.noticeRole, "status");
-    assert.equal(afterNotice.noticeLive, "polite");
-    assert.equal(afterNotice.noticePosition, "fixed");
-    result.states.push("retry queued with prior failure retained");
-
-    // Back, forward, and reload keep a direct detail URL and the authoritative
-    // status available without depending on stale client-side state.
-    await currentPage.goBack({ waitUntil: "domcontentloaded" });
-    await currentPage.getByRole("heading", { name: "Builds" }).waitFor();
-    await currentPage.goForward({ waitUntil: "domcontentloaded" });
-    await currentPage.getByText("SOURCE_BUILD_FAILED").waitFor();
-    await currentPage.reload({ waitUntil: "domcontentloaded" });
-    await currentPage.getByText("SOURCE_BUILD_FAILED").waitFor();
-
-    controller.state = "admitted";
-    await currentPage.goto(`${serverFixture.origin}/builds/${JOB_ID}?ui=desktop`, { waitUntil: "domcontentloaded" });
-    await currentPage.getByText("admitted", { exact: false }).waitFor();
-    assert.match(await currentPage.locator("body").innerText(), /source-attempt-failed-1/);
-    assert.match(await currentPage.locator("body").innerText(), /source-attempt-produced-2/);
-    await currentPage.locator('a[href="/releases/rel_v033?ui=desktop"]').click();
-    await currentPage.getByRole("heading", { name: "0.3.3" }).waitFor();
-    assert.match(await currentPage.locator("body").innerText(), /canonical release status/i);
-    assert.match(await currentPage.locator("body").innerText(), /promoted/i);
-    assert.equal(await currentPage.locator("pre").count(), 0, "release status must remain typed, not raw JSON");
-    result.states.push("admitted release follows canonical release status");
-    result.states.push("admitted");
-
+    await runBuildJourney("mobile", 390);
     controller.detailUnavailable = true;
     await currentPage.goto(`${serverFixture.origin}/builds/${JOB_ID}?ui=desktop`, { waitUntil: "domcontentloaded" });
     await currentPage.reload({ waitUntil: "domcontentloaded" });

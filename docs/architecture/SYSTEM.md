@@ -1,23 +1,7 @@
 # Praetorium — システム全体像と責務境界
 
-> **種別:** **2026-10-18のコードに基づく歴史的主体・正本台帳**。下記の旧Topologyとタイマーは現在の実機Topologyを表すものではない。
-> **元のコード照合:** `ecabf265693e395c40bfcf9be8279c1baf4740ff`（2026-10-18）。**2026-10-24の変更設計のcut:** [main@1930131e](https://github.com/yohn-jp/praetorium/tree/1930131e6858e5d9035abe1dcd82d4ae654c622d)。要件正本は[初期Epic #1](https://github.com/yohn-jp/praetorium/issues/1)と最新の明示的オーナー指示（CI許可）。
-> **現行構成と目標:** [MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)（実施済み3VMを反映）、[ADMINISTRATION.md](ADMINISTRATION.md)（独立Admin Worker＋横断監視の確定目標）、[THREE-VM-INFRA.md](../verification/THREE-VM-INFRA.md)（2026-10-20の新規Bootstrap実測）、[移行残ゲート](MANAGEMENT-PLANE-MIGRATION.md)。旧経路のコード調査には[EXECUTION.md](EXECUTION.md)、旧監査には[REVIEW.md](REVIEW.md)。
-> **読み方:** 以下の旧Actor表は権限・D1/K8sの正本を追跡するため残したもの。既存コードの説明を「承認済み完成形」や「現在の稼働」に読み替えない。本書だけで本番変更・公開は許可されない。
-
-
-## 現行3VMの観測とAdmin分離の目標（更新：2026-10-24）
-
-| 対象 | 記録された実装・実機事実 | 固定したあるべき境界 |
-| --- | --- | --- |
-| Management | 2026-10-20の新規Bootstrapでホストk3s Server・rootless Coordination/Tunnel稼働、再起動後の復帰を観測 | k3s Server、VM横断read-only観測。Adminの状態正本は作らない |
-| Runtime | 同Bootstrapでk3s Agent・Scriptorium Pod稼働を観測 | Runtime Workload/Ingress、実Pod観測はKubernetesが正本 |
-| Builder | 独立rootless BuildKit、cgroup/cacheの時点観測あり | OCI生成・Cache。管理VMやAdminへBuild実行権限を渡さない |
-| Cloudflare Gateway | 2026-10-24 mainでは `apps/gateway` がGateway/Admin両OriginとAdmin UI/sessionを含む | GatewayはGitHub OAuth/Session正本を保持、Adminは別Workerへ分離 |
-| Cloudflare Control Plane | D1がBuild/Operation/Release等の正本、既存Operator Admissionを持つ | 同じD1/契約のままAdminのOperator入口に限定権限を渡す |
-| Admin Plane | 独立Worker・VM統合監視は未実装 | `admin.praetorium.yohn.jp` 独立Worker、Gatewayの非公開Identity Broker、Management read-only Observer |
-
-**観測事実は2026-10-20の時点記録であり、いまも稼働中であることのライブ証明ではない。** Host bootstrapの完成はHosted製品のG1–G9合格でもない。以下の旧トポロジー図は移行前の説明として保持する。
+> **種別:** LEGACY IMPLEMENTATION REFERENCE。以下の主体台帳と旧Topologyは設計正本ではない。正規構成は [MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)、Admin責務は [ADMINISTRATION.md](ADMINISTRATION.md)、受入条件は [MANAGEMENT-PLANE-MIGRATION.md](MANAGEMENT-PLANE-MIGRATION.md) を参照。
+> **Authority:** [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) と最新オーナー指示。実装状況・検証日時・commit SHAは検証資料/履歴で扱う。
 
 ## 1. 製品が提供するもの
 
@@ -37,7 +21,7 @@ Praetoriumは、GitHubの現在の権限に従ってユーザーを**リポジ�
 
 初期Epicでは汎用PaaS、任意Dockerfile、任意プラグイン市場、新しい執筆/NLP機能、Billing、マルチクラスタHAを対象外としている。
 
-## 2. 旧トポロジー（2026-10-18コードスナップショット：現行3VM図ではない）
+## 2. 旧トポロジー（参考図：正規構成ではない）
 
 ```mermaid
 flowchart TB
@@ -83,7 +67,7 @@ flowchart TB
 
 **矢印は経路の概念図**であり、通信が常時必要という意味ではない。現行の起動契機・頻度と是正候補は[EXECUTION.md](EXECUTION.md)を参照。
 
-**以下は2026-10-18の旧配置であり、2026-10-20の実機構成ではない。** 配置は当時、次のとおりだった。
+**以下は旧構成の参考情報であり、正規トポロジーではない。** 当時の配置は次のとおりだった。
 
 - **Cloudflare:** Gateway Worker / Control Plane Worker / Durable Objects / KV / D1。CloudflareはScriptorium Podを直接起動・再起動しない。
 - **Runtime VM:** Ubuntu 26.04 + K3s、Kubernetes Controller、Traefik、Instance Access、Provisioner、Build Worker、各Scriptorium Pod、観測サービス。

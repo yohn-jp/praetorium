@@ -8,7 +8,7 @@ import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection
 import { page } from "../page.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
-  logoutAdmin,
+  logoutAdmin, adminReturnPath,
 } from "../session.js";
 import {
   dispatchPublishedRelease, listRegisteredSources, revalidateSourceRetryIdentity,
@@ -245,9 +245,13 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
 
   const session = await authenticateAdmin(request, context);
   if (!session) {
-    // No operator data, application state or Control Plane calls before authentication.
-    if (url.pathname === "/" && request.method === "GET") {
-      return localRedirect(context.config.origin + "/_admin/entry");
+    // Only allowlisted GET destinations can enter the Gateway OAuth handoff.
+    if (request.method === "GET") {
+      const target = adminReturnPath(url.pathname + "?ui=" + mode);
+      if (target !== "/" || url.pathname === "/") {
+        return localRedirect(context.config.origin + "/_admin/entry" +
+          (target === "/" ? "" : "?return_to=" + encodeURIComponent(target)));
+      }
     }
     return response(403, "Operator authorization required");
   }

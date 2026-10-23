@@ -127,8 +127,12 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
       ? (c.req.header("Authorization") ?? "").replace(/^Bearer /, "")
       : (c.req.header("X-Control-Plane-Gateway-Auth") ?? "");
     const adminCandidate = c.req.header("X-Control-Plane-Admin-Auth") ?? "";
-    const adminAllowed = c.req.path.startsWith("/v1/operator/") && !!deps.adminSecret &&
-      !!adminCandidate && await equalSecret(adminCandidate, deps.adminSecret);
+    // Admin's dedicated credential can read a single operation evidence record,
+    // but cannot enter generic runtime or operation mutation routes.
+    const adminOperationRead = c.req.method === "GET" &&
+      /^\/v1\/operations\/op_[A-Za-z0-9_.:-]{1,124}\/evidence\/?$/u.test(c.req.path);
+    const adminAllowed = (c.req.path.startsWith("/v1/operator/") || adminOperationRead) &&
+      !!deps.adminSecret && !!adminCandidate && await equalSecret(adminCandidate, deps.adminSecret);
     const secret = provisioner ? (deps.provisioner?.secret ?? "") : deps.gatewaySecret;
     if (!adminAllowed && (!secret || !(await equalSecret(candidate, secret))))
       return c.json({ error: { code: "UNAUTHORIZED" } }, 401);

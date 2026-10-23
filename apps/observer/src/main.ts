@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { Observer, parseObserverConfig } from "./collector.js";
 
 const config = parseObserverConfig(
-  process.env.PRAETORIUM_OBSERVER_TARGETS_JSON ?? "",
+  process.env.PRAETORIUM_OBSERVER_TARGETS_FILE
+    ? readFileSync(process.env.PRAETORIUM_OBSERVER_TARGETS_FILE, "utf8")
+    : process.env.PRAETORIUM_OBSERVER_TARGETS_JSON ?? "",
   readFileSync(process.env.PRAETORIUM_OBSERVER_AUTH_TOKEN_FILE ?? "", "utf8").trimEnd(),
 );
 const observer = new Observer(config);

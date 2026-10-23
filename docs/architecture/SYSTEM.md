@@ -1,10 +1,7 @@
 # Praetorium — システム全体像と責務境界
 
-> **種別:** 現行コードに基づくアーキテクチャ台帳（要件の追加・設計の追認ではない）  
-> **照合時点:** `yohn-jp/praetorium@ecabf265693e395c40bfcf9be8279c1baf4740ff`（2026-10-18）  
-> **製品要件の正本:** [初期 Epic #1](https://github.com/yohn-jp/praetorium/issues/1) と、その後の明示的なオーナー指示。初期設計案・移行タスク・既存コードは正本ではない。**CIの利用は最新指示で許可された**。製品インフラへの適用・リリース公開・既存データの削除はこの文書によって許可されない。  
-> **読む順番:** 本文 → [動作経路・トリガー](EXECUTION.md) → [設計上の不整合と未決定事項](REVIEW.md) → 必要な[実装・証拠文書](../README.md)。
-> **重要:** ここで説明するRuntime VM上のk3s Serverなどは**現行実装**。2026-10-20オーナー合意の**将来3VM構成**は[Management Plane Architecture](MANAGEMENT-PLANE.md)、[移行ゲート](MANAGEMENT-PLANE-MIGRATION.md)に独立して記載。どちらも現行運用と混同しない。
+> **種別:** LEGACY IMPLEMENTATION REFERENCE。以下の主体台帳と旧Topologyは設計正本ではない。正規構成は [MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)、Admin責務は [ADMINISTRATION.md](ADMINISTRATION.md)、受入条件は [MANAGEMENT-PLANE-MIGRATION.md](MANAGEMENT-PLANE-MIGRATION.md) を参照。
+> **Authority:** [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) と最新オーナー指示。実装状況・検証日時・commit SHAは検証資料/履歴で扱う。
 
 ## 1. 製品が提供するもの
 
@@ -24,7 +21,7 @@ Praetoriumは、GitHubの現在の権限に従ってユーザーを**リポジ�
 
 初期Epicでは汎用PaaS、任意Dockerfile、任意プラグイン市場、新しい執筆/NLP機能、Billing、マルチクラスタHAを対象外としている。
 
-## 2. トポロジー：管理と実行を別々に見る
+## 2. 旧トポロジー（参考図：正規構成ではない）
 
 ```mermaid
 flowchart TB
@@ -70,7 +67,7 @@ flowchart TB
 
 **矢印は経路の概念図**であり、通信が常時必要という意味ではない。現行の起動契機・頻度と是正候補は[EXECUTION.md](EXECUTION.md)を参照。
 
-配置は次のとおり。
+**以下は旧構成の参考情報であり、正規トポロジーではない。** 当時の配置は次のとおりだった。
 
 - **Cloudflare:** Gateway Worker / Control Plane Worker / Durable Objects / KV / D1。CloudflareはScriptorium Podを直接起動・再起動しない。
 - **Runtime VM:** Ubuntu 26.04 + K3s、Kubernetes Controller、Traefik、Instance Access、Provisioner、Build Worker、各Scriptorium Pod、観測サービス。

@@ -1,9 +1,8 @@
 # Praetorium — エンドツーエンド経路・状態遷移・実行契機
 
-> **種別:** 現行実装のトレースと要件上必要な動作の比較（設計変更の承認ではない）  
-> **ソース:** `ecabf265693e395c40bfcf9be8279c1baf4740ff`。全体の主体・正本は[SYSTEM.md](SYSTEM.md)、解消すべき差分は[REVIEW.md](REVIEW.md)。初期要件は[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)。
+> **種別:** LEGACY EXECUTION REFERENCE。旧実装経路・Polling例の台帳であり、現在の設計や稼働を規定しない。正規設計は[MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)と[ADMINISTRATION.md](ADMINISTRATION.md)。実測・commitは[検証記録](../verification/README.md)に保存する。上位要件は[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)。
 
-各経路について、**Trigger（なぜ発生するか）→ Authority（誰が決定するか）→ Effect（何を変更するか）→ Evidence（成功の根拠）**の順で記す。タイマーの存在自体を要求と解釈しない。
+旧コードの各経路について、**Trigger（なぜ発生するか）→ Authority（誰が決定するか）→ Effect（何を変更するか）→ Evidence（成功の根拠）**の順で記す。タイマーの存在自体を要求と解釈しない。
 
 ## 1. 認証・リポジトリ解決・初回起動
 

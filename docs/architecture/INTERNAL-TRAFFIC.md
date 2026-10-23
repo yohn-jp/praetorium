@@ -1,6 +1,6 @@
 # Praetorium — 内部通信・タイマー・Cloudflareリクエスト台帳
 
-> **種別:** コードから再構成した現状（2026-10-20、main `2f1369df9310ea61686e508fa055397fa72abbb1` を基準）。これは通信量の**計測結果ではない**。実デプロイの環境変数、接続先、Cloudflare請求画面の経路別数値は別途照合する。  
+> **種別:** LEGACY TRAFFIC INVENTORY。以下の周期・空振り回数はソースからの参考算定であり、現在の設定・課金・実測値とはみなさない。正規のWork配送・Admin観測方針は[MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)、[ADMINISTRATION.md](ADMINISTRATION.md)へ記す。実測は[検証記録](../verification/README.md)へ保存する。
 > **目的:** 「何もしていない時のリクエストを極小化し、利用者数／実行インスタンス数の増加でも比例コストを抑える」。既存のLease、Writer排除、保存とリリース受入契約を捨てない。  
 > **範囲:** 現行設計の棚卸しと優先順位の確定まで。**このPRでは通信周期・失敗時リトライを変更しない。** 参照先は改変しない実装の責務を示す。
 

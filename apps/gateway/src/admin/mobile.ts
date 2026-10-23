@@ -520,7 +520,7 @@ function builds(model: ConsoleViewModel): string {
   const nextQuery = new URLSearchParams({ ui: "mobile", ...(cursor ? { cursor } : {}) });
   if (model.buildStateFilter) nextQuery.set("state", model.buildStateFilter);
   const empty = model.buildStateFilter
-    ? "No Source builds on this page match this state filter."
+    ? "No Source builds match this state filter."
     : "No Source builds are available on this page.";
   return (
     pageHeading("Builds", "Review Source jobs, recorded attempts and permitted recovery actions.") +
@@ -533,7 +533,7 @@ function builds(model: ConsoleViewModel): string {
           "</div>"
         : '<p class="admin-mobile-empty">' + value(empty) + "</p>") +
     (cursor ? '<a class="button button-secondary admin-mobile-older" href="/builds?' + value(nextQuery.toString()) + '">Older builds</a>' : "") +
-    '<p class="admin-subtext">State filtering applies to this bounded page.</p>'
+    '<p class="admin-subtext">State filtering and sorting are performed before queue pagination.</p>'
   );
 }
 
@@ -577,8 +577,8 @@ function evidence(attempt: SourceBuildAttempt): string {
 function attemptCard(attempt: SourceBuildAttempt): string {
   return (
     '<li class="admin-mobile-attempt"><article><header class="admin-mobile-attempt-heading">' +
-    '<div><span class="admin-kicker">ATTEMPT ' +
-    value(attempt.attempt) +
+    '<div><span class="admin-kicker">REVISION ' +
+    value(attempt.revision) + " · ATTEMPT " + value(attempt.attempt) + " · EPOCH " + value(attempt.leaseEpoch) +
     "</span>" +
     "<h3>" +
     badge(attempt.state) +
@@ -831,7 +831,7 @@ function buildDetail(model: ConsoleViewModel): string {
       : "") +
     '<section class="admin-mobile-section" aria-labelledby="admin-mobile-attempts-title">' +
     '<div class="admin-mobile-section-heading"><div><span class="admin-kicker">STAGE / HISTORY</span>' +
-    '<h2 id="admin-mobile-attempts-title">Attempts and diagnostics</h2></div></div>' +
+    '<h2 id="admin-mobile-attempts-title">Attempt history and last reported stage</h2></div></div>' +
     '<p class="admin-mobile-evidence-state">Evidence: <strong>' +
     value(detail.evidence.replaceAll("_", " ")) +
     "</strong></p>" +
@@ -862,7 +862,12 @@ function audit(model: ConsoleViewModel): string {
             "</time></div>" +
             "<h2>" +
             value(event.action) +
-            "</h2><p>Actor: " +
+            "</h2>" +
+            (event.jobId ? '<p><a href="' + value(buildHref(event.jobId, "mobile")) + '">Build ' + value(event.jobId) + "</a></p>" : "") +
+            (event.releaseId ? '<p><a href="/releases/' + value(encodeURIComponent(event.releaseId)) + '?ui=mobile">Release ' + value(event.releaseId) + "</a></p>" : "") +
+            (event.failureCode ? "<p>Failure code: " + value(event.failureCode) + "</p>" : "") +
+            (event.leaseEpoch == null ? "" : "<p>Epoch " + value(event.leaseEpoch) + "</p>") +
+            "<p>Actor: " +
             value(event.actorId ?? "Unavailable") +
             "</p></article></li>"
           );

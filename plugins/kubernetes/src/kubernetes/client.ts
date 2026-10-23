@@ -73,6 +73,7 @@ export interface KubernetesApi {
     fieldManager: string,
     resourceVersion: string,
     signal?: AbortSignal,
+    options?: { readonly force?: boolean },
   ): Promise<unknown>;
   delete(reference: KubernetesResourceReference, signal?: AbortSignal): Promise<void>;
   deleteConditional(
@@ -279,9 +280,12 @@ export class KubernetesApiClient implements KubernetesApi {
     fieldManager: string,
     resourceVersion: string,
     signal?: AbortSignal,
+    options: { readonly force?: boolean } = {},
   ): Promise<unknown> {
     if (resourceVersion.length === 0) throw new KubernetesApiError(400, "invalid_precondition");
-    const query = new URLSearchParams({ fieldManager, force: "false" });
+    // Opt in only after ownership, generation/epoch and live operation checks.
+    // A resourceVersion mismatch still rejects the write.
+    const query = new URLSearchParams({ fieldManager, force: String(options.force ?? false) });
     const body = {
       ...resource,
       metadata: { ...resource.metadata, resourceVersion },

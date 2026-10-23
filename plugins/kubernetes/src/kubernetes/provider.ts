@@ -1085,6 +1085,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
           KUBERNETES_FIELD_MANAGER,
           preconditions(metadata).resourceVersion,
           signal,
+          { force: true },
         )
         .catch((error: unknown) => {
           throw mapKubernetesError(error);
@@ -1136,6 +1137,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
             KUBERNETES_FIELD_MANAGER,
             preconditions(metadata).resourceVersion,
             signal,
+            { force: true },
           )
           .catch((error: unknown) => {
             throw mapKubernetesError(error);
@@ -2022,6 +2024,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
             KUBERNETES_FIELD_MANAGER,
             preconditions(metadata).resourceVersion,
             signal,
+            { force: true },
           )
           .catch((error: unknown) => {
             throw mapKubernetesError(error);
@@ -2138,6 +2141,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
         KUBERNETES_FIELD_MANAGER,
         preconditions(metadata).resourceVersion,
         signal,
+        { force: true },
       )
       .catch((error: unknown) => {
         throw mapKubernetesError(error);

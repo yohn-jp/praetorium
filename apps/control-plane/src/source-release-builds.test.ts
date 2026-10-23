@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { D1Database, D1PreparedStatement, D1Result } from "@praetorium/persistence/d1";
 import {
   canonicalSourceProof,
+  SOURCE_DIAGNOSTIC_RETENTION_MS,
   SOURCE_PRODUCER_REQUEST_MAX_BYTES,
   SOURCE_PRODUCER_RESULT_MAX_BYTES,
   SourceProducerResultSchema,
@@ -86,6 +87,7 @@ class SQLiteD1 implements D1Database {
     this.database.exec(readFileSync(new URL("../migrations/0001_repository_platform.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0004_source_release_builds.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../migrations/0007_source_release_recovery.sql", import.meta.url), "utf8"));
+    this.database.exec(readFileSync(new URL("../migrations/0008_source_build_diagnostics.sql", import.meta.url), "utf8"));
   }
 
   prepare(query: string): D1PreparedStatement {
@@ -565,11 +567,15 @@ describe("source Release build queue against migrated SQLite D1", () => {
     const headers = { "X-Praetorium-Admin-Actor": ACTOR };
     const current = await app.request(`/${created.job.id}`, { headers });
     expect(current.status).toBe(200);
-    expect(await current.json()).toMatchObject({ job: {
-      id: created.job.id, sourceId: JOB.sourceId, releaseId: JOB.githubReleaseId,
-      tag: JOB.sourceTag, commit: JOB.sourceRevision, version: JOB.releaseVersion,
-      revision: 0, state: "failed", retryable: true,
-    } });
+    expect(await current.json()).toMatchObject({
+      job: {
+        id: created.job.id, sourceId: JOB.sourceId, releaseId: JOB.githubReleaseId,
+        tag: JOB.sourceTag, commit: JOB.sourceRevision, version: JOB.releaseVersion,
+        revision: 0, state: "failed", retryable: true,
+      },
+      attempts: [{state:"failed",stage:"unknown",evidence:"not_recorded",diagnostic:null}],
+      evidence: "not_recorded", nextCursor: null,
+    });
     const retryInput = {
       ...JOB, expectedRevision: 0, idempotencyKey: "route-retry-1",
     };
@@ -588,5 +594,212 @@ describe("source Release build queue against migrated SQLite D1", () => {
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ duplicate: true, job: { revision: 1 } });
     expect((await app.request(`/${created.job.id}`)).status).toBe(403);
+  });
+
+  it("stores only sanitized, lease-fenced attempt diagnostics and expires their evidence after 30 days", async () => {
+    const h = harness();
+    const created = await h.queue.enqueue(JOB, ACTOR);
+    const claim = await h.queue.claim(SOURCE_WORKER, 30);
+    if (!claim) throw new Error("expected a source lease");
+    const diagnostic = {
+      stage: "buildkit" as const,
+      reason: "build_failed" as const,
+      summary: "token=summary-secret",
+      excerpt: [
+        "npm ERR! code ERESOLVE",
+        "Authorization: Bearer header-secret",
+        "ENV REGISTRY_TOKEN=environment-secret",
+        "RUN npm install --registry=https://user:password@example.invalid",
+        "ERROR: https://user:password@example.invalid/registry failed",
+        "-----BEGIN PRIVATE KEY-----",
+        "private-key-secret",
+        "-----END PRIVATE KEY-----",
+      ].join("\n"),
+      truncated: false,
+    };
+    expect(await h.queue.reportDiagnostic(claim.job_id, {
+      workerId: claim.lease_worker!, leaseToken: claim.lease_token!,
+      leaseEpoch: claim.lease_epoch, diagnostic,
+    })).toBe(true);
+    const accepted = await h.queue.fail(claim.job_id, {
+      workerId: claim.lease_worker!, leaseToken: claim.lease_token!,
+      leaseEpoch: claim.lease_epoch, code: "SOURCE_BUILD_FAILED", diagnostic,
+    });
+    expect(accepted).toBe(true);
+
+    const raw = h.db.database.prepare(
+      "SELECT state,stage,failure_code,diagnostic_json,evidence_expires_at FROM source_release_build_attempts WHERE job_id=? AND lease_epoch=?",
+    ).get(created.job.id, claim.lease_epoch) as {
+      state: string; stage: string; failure_code: string|null;
+      diagnostic_json: string|null; evidence_expires_at: number|null;
+    };
+    expect(raw).toMatchObject({
+      state: "failed", stage: "buildkit", failure_code: "SOURCE_BUILD_FAILED",
+      evidence_expires_at: h.now() + SOURCE_DIAGNOSTIC_RETENTION_MS,
+    });
+    expect(raw.diagnostic_json).not.toContain("summary-secret");
+    expect(raw.diagnostic_json).not.toContain("header-secret");
+    expect(raw.diagnostic_json).not.toContain("environment-secret");
+    expect(raw.diagnostic_json).not.toContain("password");
+    expect(raw.diagnostic_json).not.toContain("private-key-secret");
+    expect(JSON.parse(raw.diagnostic_json!)).toMatchObject({
+      stage: "buildkit", reason: "build_failed",
+      summary: "BuildKit reported a build failure. Inspect the sanitized diagnostic excerpt when available.",
+      excerpt: "npm ERR! code ERESOLVE", truncated: true,
+    });
+
+    const details = await h.queue.detail(created.job.id);
+    expect(details).toMatchObject({
+      job: { state: "failed", error: "SOURCE_BUILD_FAILED" }, evidence: "available",
+      attempts: [{
+        attempt: 1, revision: 0, leaseEpoch: claim.lease_epoch,
+        state: "failed", stage: "buildkit", failureCode: "SOURCE_BUILD_FAILED",
+        evidence: "available", diagnostic: { excerpt: "npm ERR! code ERESOLVE" },
+      }],
+    });
+    expect(JSON.stringify(details)).not.toMatch(/summary-secret|header-secret|environment-secret|password|private-key-secret/u);
+
+    h.advance(SOURCE_DIAGNOSTIC_RETENTION_MS + 1);
+    expect((await h.queue.detail(created.job.id))?.attempts[0]).toMatchObject({
+      evidence: "expired", diagnostic: null,
+    });
+    expect(await h.queue.expireDiagnostics()).toBe(1);
+    const expiredRow = h.db.database.prepare(
+      "SELECT diagnostic_json,evidence_expires_at FROM source_release_build_attempts WHERE job_id=? AND lease_epoch=?",
+    ).get(created.job.id, claim.lease_epoch) as {diagnostic_json:string|null;evidence_expires_at:number|null};
+    expect(expiredRow).toMatchObject({diagnostic_json:null,evidence_expires_at:h.now()-1});
+  });
+
+  it("records every claimed epoch and rejects a diagnostic callback from an expired lease", async () => {
+    const h = harness();
+    const created = await h.queue.enqueue(JOB, ACTOR);
+    const first = await h.queue.claim("worker-first", 15);
+    if (!first) throw new Error("expected first lease");
+    expect(await h.queue.reportDiagnostic(first.job_id, {
+      workerId: first.lease_worker!, leaseToken: first.lease_token!,
+      leaseEpoch: first.lease_epoch,
+      diagnostic: {
+        stage: "source_checkout", reason: "stage_started", summary: "ignored",
+        truncated: false,
+      },
+    })).toBe(true);
+    h.advance(15_001);
+    const second = await h.queue.claim("worker-second", 30);
+    if (!second) throw new Error("expected replacement lease");
+    expect(second.lease_epoch).toBe(first.lease_epoch + 1);
+    expect(await h.queue.reportDiagnostic(first.job_id, {
+      workerId: first.lease_worker!, leaseToken: first.lease_token!,
+      leaseEpoch: first.lease_epoch,
+      diagnostic: {
+        stage: "buildkit", reason: "build_failed", summary: "stale",
+        truncated: false,
+      },
+    })).toBe(false);
+    const history = h.db.database.prepare(
+      "SELECT lease_epoch,state,stage,started_at,finished_at FROM source_release_build_attempts WHERE job_id=? ORDER BY lease_epoch",
+    ).all(created.job.id) as Array<Record<string, unknown>>;
+    expect(history).toMatchObject([
+      {lease_epoch:first.lease_epoch,state:"lease_expired",stage:"source_checkout",started_at:h.now()-15_001},
+      {lease_epoch:second.lease_epoch,state:"building",stage:"unknown",finished_at:null},
+    ]);
+    expect((await h.queue.detail(created.job.id))?.attempts.map(attempt=>attempt.leaseEpoch))
+      .toEqual([second.lease_epoch,first.lease_epoch]);
+  });
+
+  it("keeps a legacy failed row's known failure when retry snapshots it without inventing evidence", async () => {
+    const h = harness();
+    const created = await h.queue.enqueue(JOB, ACTOR);
+    h.db.database.prepare(
+      `UPDATE source_release_builds SET state='failed',attempt=1,lease_epoch=1,
+        failure_code='SOURCE_BUILD_FAILED',updated_at=? WHERE job_id=?`,
+    ).run(h.now(),created.job.id);
+    expect(h.db.database.prepare(
+      "SELECT count(*) AS count FROM source_release_build_attempts WHERE job_id=?",
+    ).get(created.job.id)).toEqual({count:0});
+
+    await h.queue.retry(created.job.id, {
+      ...JOB, expectedRevision: 0, idempotencyKey: "retry-legacy-source-failure",
+    }, ACTOR);
+    const detail = await h.queue.detail(created.job.id);
+    expect(detail).toMatchObject({
+      job: {state:"queued",revision:1},
+      evidence:"not_recorded",
+      attempts:[{
+        attempt:1,revision:0,leaseEpoch:1,state:"failed",stage:"unknown",
+        startedAt:null,finishedAt:h.now(),failureCode:"SOURCE_BUILD_FAILED",
+        evidence:"not_recorded",expiresAt:null,diagnostic:null,
+      }],
+    });
+  });
+
+  it("paginates source jobs and attempt history with stable bounded cursors", async () => {
+    const h = harness();
+    const jobs = await Promise.all(Array.from({length:41},(_,index)=>h.queue.enqueue({
+      ...JOB,githubReleaseId:JOB.githubReleaseId+index,
+    },ACTOR)));
+    const first = await h.queue.list(40);
+    expect(first.items).toHaveLength(40);
+    expect(first.nextCursor).toMatch(/^\d+\.sr_/u);
+    const [createdAt,jobId] = first.nextCursor!.split(".");
+    const second = await h.queue.list(40,{createdAt:Number(createdAt),jobId:jobId!});
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+    expect(new Set([...first.items,...second.items].map(job=>job.id)).size).toBe(41);
+
+    const selected = jobs[0]!.job;
+    const insertAttempt = h.db.database.prepare(
+      `INSERT INTO source_release_build_attempts
+         (job_id,lease_epoch,attempt,revision,state,stage,started_at,finished_at,
+          failure_code,diagnostic_json,evidence_expires_at)
+       VALUES (?, ?, 1, ?, 'failed', 'unknown', ?, ?, 'SOURCE_BUILD_FAILED', NULL, NULL)`,
+    );
+    for(let epoch=1;epoch<=30;epoch+=1)
+      insertAttempt.run(selected.id,epoch,epoch-1,epoch,epoch+1);
+    const app = createSourceReleaseOperatorRoutes({queue:h.queue,operatorActorId:ACTOR});
+    const headers = {"X-Praetorium-Admin-Actor":ACTOR};
+    const pageOne = await app.request(`/${selected.id}?limit=25`,{headers});
+    const pageOneBody = await pageOne.json() as {attempts:Array<{leaseEpoch:number}>;nextCursor:string|null};
+    expect(pageOne.status).toBe(200);
+    expect(pageOneBody.attempts.map(attempt=>attempt.leaseEpoch)).toEqual(
+      Array.from({length:25},(_,index)=>30-index),
+    );
+    expect(pageOneBody.nextCursor).toBe("6");
+    const pageTwo = await app.request(`/${selected.id}?limit=25&cursor=6`,{headers});
+    const pageTwoBody = await pageTwo.json() as {attempts:Array<{leaseEpoch:number}>;nextCursor:string|null};
+    expect(pageTwoBody.attempts.map(attempt=>attempt.leaseEpoch)).toEqual([5,4,3,2,1]);
+    expect(pageTwoBody.nextCursor).toBeNull();
+    expect((await app.request(`/${selected.id}?limit=26`,{headers})).status).toBe(400);
+    expect((await app.request(`/${selected.id}?cursor=not-an-epoch`,{headers})).status).toBe(400);
+  });
+
+  it("keeps old failed work visible in the bounded overview attention list", async () => {
+    const h = harness();
+    const failed = await h.queue.enqueue(JOB,ACTOR);
+    h.db.database.prepare(
+      `UPDATE source_release_builds SET state='failed',attempt=1,lease_epoch=1,
+         failure_code='SOURCE_BUILD_FAILED' WHERE job_id=?`,
+    ).run(failed.job.id);
+    h.advance(1);
+    const completed = await Promise.all(Array.from({length:41},(_,index)=>h.queue.enqueue({
+      ...JOB,githubReleaseId:JOB.githubReleaseId+index+1,
+    },ACTOR)));
+    for(const item of completed)h.db.database.prepare(
+      "UPDATE source_release_builds SET state='admitted',admitted_release_id=? WHERE job_id=?",
+    ).run(`release-${item.job.id}`,item.job.id);
+
+    const history=await h.queue.list(40);
+    expect(history.items).toHaveLength(40);
+    expect(history.items.some(job=>job.id===failed.job.id)).toBe(false);
+    const attention=await h.queue.list(40,undefined,true);
+    expect(attention.items).toHaveLength(1);
+    expect(attention.items[0]).toMatchObject({id:failed.job.id,state:"failed"});
+    expect(attention.nextCursor).toBeNull();
+
+    const app=createSourceReleaseOperatorRoutes({queue:h.queue,operatorActorId:ACTOR});
+    const response=await app.request("/?attention=1",{
+      headers:{"X-Praetorium-Admin-Actor":ACTOR},
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({items:[{id:failed.job.id,state:"failed"}],nextCursor:null});
   });
 });

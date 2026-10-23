@@ -8,7 +8,7 @@ import { page } from "../page.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
   logoutAdmin,
-} from "./session.js";
+} from "../session.js";
 import {
   dispatchPublishedRelease, listRegisteredSources, revalidateSourceRetryIdentity,
   type SourceReleaseView, type SourceBuildStatus,

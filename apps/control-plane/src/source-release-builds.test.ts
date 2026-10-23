@@ -598,6 +598,48 @@ describe("source Release build queue against migrated SQLite D1", () => {
     expect((await h.queue.byId(jobId))?.revision).toBe(0);
   });
 
+  it("round-trips captured production detail and pages recorded and legacy evidence separately", async () => {
+    const captured = SourceBuildDetailSchema.parse(JSON.parse(readFileSync(new URL(
+      "../test/fixtures/source-build-detail-production.fixture.json", import.meta.url,
+    ), "utf8")));
+    const latest = captured.attempts[0]!;
+    const h = harness(latest.finishedAt!);
+    const job = captured.job;
+    const created = await h.queue.enqueue({
+      sourceId: "scriptorium", githubReleaseId: job.releaseId, sourceTag: job.tag,
+      sourceRevision: job.commit, releaseVersion: job.version,
+    }, ACTOR);
+    h.db.database.prepare(
+      `UPDATE source_release_builds SET job_id=?,state=?,attempt=?,revision=?,lease_epoch=?,
+         failure_code=?,admitted_release_id=? WHERE job_id=?`,
+    ).run(job.id, job.state, job.attempt, job.revision, latest.leaseEpoch,
+      job.error, job.admittedReleaseId, created.job.id);
+    const insert = h.db.database.prepare(
+      `INSERT INTO source_release_build_attempts
+         (job_id,lease_epoch,attempt,revision,state,stage,started_at,finished_at,
+          failure_code,diagnostic_json,evidence_expires_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const a of captured.attempts) {
+      insert.run(job.id, a.leaseEpoch, a.attempt, a.revision, a.state, a.stage,
+        a.startedAt, a.finishedAt, a.failureCode,
+        a.diagnostic === null ? null : JSON.stringify(a.diagnostic), a.expiresAt);
+    }
+    const app = createSourceReleaseOperatorRoutes({ queue: h.queue, operatorActorId: ACTOR });
+    const headers = { "X-Praetorium-Admin-Actor": ACTOR };
+    const full = await app.request(`/${job.id}?limit=10`, { headers });
+    expect(full.status).toBe(200);
+    expect(SourceBuildDetailSchema.parse(await full.json())).toEqual(captured);
+    const first = await app.request(`/${job.id}?limit=1`, { headers });
+    expect(SourceBuildDetailSchema.parse(await first.json())).toEqual({
+      job, attempts: [latest], nextCursor: "3", evidence: "available",
+    });
+    const older = await app.request(`/${job.id}?limit=10&cursor=3`, { headers });
+    expect(SourceBuildDetailSchema.parse(await older.json())).toEqual({
+      job, attempts: captured.attempts.slice(1), nextCursor: null, evidence: "not_recorded",
+    });
+  });
+
   it("serves the immutable retry identity and explicit retry through the operator route", async () => {
     const h = harness();
     const created = await h.queue.enqueue(JOB, ACTOR);

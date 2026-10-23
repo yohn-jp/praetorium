@@ -1,0 +1,67 @@
+{
+  "job": {
+    "id": "sr_730c616f-329c-4d2f-aabb-d143eaa2db01",
+    "sourceId": "scriptorium",
+    "releaseId": 422035682,
+    "tag": "v0.3.4",
+    "commit": "588eddcfff20fa2fc76aa8eae54c9551e0c6048b",
+    "version": "0.3.4",
+    "state": "admitted",
+    "attempt": 1,
+    "revision": 2,
+    "error": null,
+    "admittedReleaseId": "rel_ab7dfafe-3f59-4f55-b2c2-6100b2a5d585",
+    "retryable": false
+  },
+  "attempts": [
+    {
+      "id": "sr_730c616f-329c-4d2f-aabb-d143eaa2db01:epoch:3",
+      "attempt": 1,
+      "revision": 2,
+      "leaseEpoch": 3,
+      "state": "produced",
+      "stage": "verification",
+      "startedAt": 1792773863803,
+      "finishedAt": 1792774186373,
+      "failureCode": null,
+      "evidence": "available",
+      "expiresAt": 1795366185107,
+      "diagnostic": {
+        "stage": "verification",
+        "reason": "completed",
+        "summary": "Execution stage completed.",
+        "truncated": false
+      }
+    },
+    {
+      "id": "sr_730c616f-329c-4d2f-aabb-d143eaa2db01:epoch:2",
+      "attempt": 1,
+      "revision": 1,
+      "leaseEpoch": 2,
+      "state": "failed",
+      "stage": "unknown",
+      "startedAt": 1792772314265,
+      "finishedAt": 1792772322587,
+      "failureCode": "SOURCE_BUILD_FAILED",
+      "evidence": "not_recorded",
+      "expiresAt": null,
+      "diagnostic": null
+    },
+    {
+      "id": "sr_730c616f-329c-4d2f-aabb-d143eaa2db01:epoch:1",
+      "attempt": 1,
+      "revision": 0,
+      "leaseEpoch": 1,
+      "state": "failed",
+      "stage": "unknown",
+      "startedAt": null,
+      "finishedAt": 1792771146185,
+      "failureCode": "SOURCE_BUILD_FAILED",
+      "evidence": "not_recorded",
+      "expiresAt": null,
+      "diagnostic": null
+    }
+  ],
+  "nextCursor": null,
+  "evidence": "available"
+}

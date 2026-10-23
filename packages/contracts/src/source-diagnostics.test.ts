@@ -12,7 +12,7 @@ describe("operator source evidence admission", () => {
   });
   it("excludes authentication, commands, environment, URLs, keys and opaque payloads", () => {
     const lines = ["ERROR: Authorization: Bearer private-value", "failed PASSWORD=private-value", "ERROR RUN npm install",
-      "error: command npm run build", "fatal https://user:private-value@example.com/private", "error /run/secrets/key",
+      "error: command npm run build", "ERROR: failed authentication with response signature " + "s".repeat(32), "fatal https://user:private-value@example.com/private", "error /run/secrets/key",
       "-----BEGIN PRIVATE KEY-----", "error private-value", "-----END PRIVATE KEY-----",
       "error ghp_private-value", "error " + "a".repeat(48), "error GITHUB_TOKEN=private-value", "ERROR curl private-value"];
     const diagnostic = sanitizeSourceDiagnostic({ stage: "buildkit", reason: "build_failed", summary: "private-value",

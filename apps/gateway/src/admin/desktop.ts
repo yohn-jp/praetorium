@@ -4,7 +4,7 @@ import type {
 } from "@praetorium/contracts";
 import { escapeHtml } from "../ui/presentation.js";
 import {
-  buildHref, consoleHref, type ConsoleDependency,
+  buildHref, consoleHref, operationHref, type ConsoleDependency,
   type ConsoleRelease, type ConsoleSection, type ConsoleViewModel,
 } from "./view-model.js";
 import type { PublishedSourceRelease, SourceReleaseView } from "./release-sources.js";
@@ -272,7 +272,9 @@ function releaseDetail(model: ConsoleViewModel): string {
       ? `${badge(humanize(build.status), build.status)} <span>${escapeHtml(build.id)}</span> · ${build.attemptCount} attempts`
       : "No Canary build is attached"}</dd></div>` +
     `<div><dt>Canary build key</dt><dd>${escapeHtml(workflow.canaryBuildKey ?? "Not recorded")}</dd></div>` +
-    `<div><dt>Canary operation</dt><dd>${escapeHtml(workflow.canaryOperationId ?? "Not recorded")}</dd></div></dl></section>` +
+    `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(workflow.canaryOperationId)
+  ? `<a href="${escapeHtml(operationHref(workflow.canaryOperationId, model.mode))}">${escapeHtml(workflow.canaryOperationId)}</a>`
+  : escapeHtml(workflow.canaryOperationId ?? "Not recorded")}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-release-followthrough-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">SAFE FOLLOW-THROUGH</p><h2 id="desktop-release-followthrough-title">Canary and Stable progression</h2></div>` +
     `<a class="desktop-button desktop-button-secondary" href="/releases/${encodeURIComponent(value.release.id)}?ui=${model.mode}">Refresh status</a></div>` +
@@ -480,7 +482,28 @@ function audit(model: ConsoleViewModel): string {
     `</section>`;
 }
 
+function operationDetail(model: ConsoleViewModel): string {
+  const dependency=model.operationDetail;
+  const detail=dependency?.value;
+  if(!detail)return `<section class="desktop-operator-heading"><h1>Operation evidence unavailable</h1></section>` +
+    (dependency ? dependencyUnavailable("Operation evidence", dependency) : "No operation selected.");
+  if(detail.operation.id!==model.selectedOperationId)
+    return `<p class="desktop-unavailable" role="status">Operation identity mismatch.</p>`;
+  const op=detail.operation;
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">CANARY / RUNTIME OPERATION</p>` +
+    `<h1>Operation ${escapeHtml(op.id)}</h1><a class="desktop-text-link" href="${consoleHref("releases", model.mode)}">Back to Releases</a></section>` +
+    `<section class="desktop-section"><h2>${badge(humanize(op.status), op.status)} · ${escapeHtml(op.phase)}</h2>` +
+    `<dl class="desktop-facts"><div><dt>Instance</dt><dd><code>${escapeHtml(op.instanceId)}</code></dd></div>` +
+    `<div><dt>Kind</dt><dd>${escapeHtml(op.kind)}</dd></div><div><dt>Generation</dt><dd>${op.generation}</dd></div>` +
+    `<div><dt>Runtime epoch</dt><dd>${op.runtimeEpoch}</dd></div><div><dt>Attempt</dt><dd>${op.attempt}</dd></div>` +
+    `<div><dt>Updated</dt><dd>${escapeHtml(dateTime(op.updatedAt))}</dd></div>` +
+    `<div><dt>Readiness evidence</dt><dd>${detail.readinessEvidence === null ? "Not recorded" : "Recorded"}</dd></div>` +
+    `<div><dt>Rollback evidence</dt><dd>${detail.rollbackCompatibilityEvidence === null ? "Not recorded" : "Recorded"}</dd></div>` +
+    `<div><dt>Rollback compatible</dt><dd>${detail.rollbackCompatible === null ? "Not assessed" : detail.rollbackCompatible ? "Yes" : "No"}</dd></div></dl>` +
+    `<p>Only validated operation status and evidence availability are shown. An absent proof is not success.</p></section>`;
+}
 function sectionContent(model: ConsoleViewModel): string {
+  if (model.selectedOperationId) return operationDetail(model);
   if (model.section === "overview") return overview(model);
   if (model.section === "releases")
     return model.selectedReleaseId ? releaseDetail(model) : releases(model);
@@ -493,6 +516,7 @@ function modeHref(model: ConsoleViewModel, mode: ConsoleViewModel["mode"]): stri
   const selectedReleaseId = model.selectedReleaseId;
   if (selectedReleaseId && model.section === "releases")
     return `/releases/${encodeURIComponent(selectedReleaseId)}?ui=${mode}`;
+  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode);
   if (model.selectedBuildId) return buildHref(model.selectedBuildId, mode);
   return consoleHref(model.section, mode);
 }

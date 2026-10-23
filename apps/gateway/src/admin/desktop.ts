@@ -272,7 +272,9 @@ function releaseDetail(model: ConsoleViewModel): string {
       ? `${badge(humanize(build.status), build.status)} <span>${escapeHtml(build.id)}</span> · ${build.attemptCount} attempts`
       : "No Canary build is attached"}</dd></div>` +
     `<div><dt>Canary build key</dt><dd>${escapeHtml(workflow.canaryBuildKey ?? "Not recorded")}</dd></div>` +
-    `<div><dt>Canary operation</dt><dd>${escapeHtml(workflow.canaryOperationId ?? "Not recorded")}</dd></div></dl></section>` +
+    `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId
+      ? `<a href="/operations/${encodeURIComponent(workflow.canaryOperationId)}?ui=${model.mode}">${escapeHtml(workflow.canaryOperationId)}</a>`
+      : "Not recorded"}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-release-followthrough-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">SAFE FOLLOW-THROUGH</p><h2 id="desktop-release-followthrough-title">Canary and Stable progression</h2></div>` +
     `<a class="desktop-button desktop-button-secondary" href="/releases/${encodeURIComponent(value.release.id)}?ui=${model.mode}">Refresh status</a></div>` +
@@ -477,7 +479,28 @@ function audit(model: ConsoleViewModel): string {
     `</section>`;
 }
 
+function operationEvidence(model: ConsoleViewModel): string {
+  const section=model.operationDetail;
+  if(!section?.value) return section ? dependencyUnavailable("Operation evidence",section)
+    : '<p role="status">Operation evidence unavailable.</p>';
+  const {operation,rollbackCompatible,readinessEvidence}=section.value;
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">CANARY OPERATION</p>
+    <h1>Operation ${escapeHtml(operation.id)}</h1>
+    <p>Read-only evidence from the existing Control Plane authority.</p>
+    <a class="desktop-text-link" href="/releases?ui=${model.mode}">Back to Releases</a></section>
+    <section class="desktop-section"><h2>Execution state</h2><dl class="desktop-facts">
+    <div><dt>Instance</dt><dd>${escapeHtml(operation.instanceId)}</dd></div>
+    <div><dt>State</dt><dd>${escapeHtml(operation.status)}</dd></div>
+    <div><dt>Phase</dt><dd>${escapeHtml(operation.phase)}</dd></div>
+    <div><dt>Kind</dt><dd>${escapeHtml(operation.kind)}</dd></div>
+    <div><dt>Generation</dt><dd>${operation.generation}</dd></div>
+    <div><dt>Runtime epoch</dt><dd>${operation.runtimeEpoch}</dd></div>
+    <div><dt>Rollback compatible</dt><dd>${rollbackCompatible===null?"Not checked":rollbackCompatible?"Yes":"No"}</dd></div>
+    <div><dt>Readiness evidence</dt><dd>${readinessEvidence===null?"Not recorded":"Validated record available"}</dd></div>
+    </dl></section>`;
+}
 function sectionContent(model: ConsoleViewModel): string {
+  if (model.selectedOperationId) return operationEvidence(model);
   if (model.section === "overview") return overview(model);
   if (model.section === "releases")
     return model.selectedReleaseId ? releaseDetail(model) : releases(model);
@@ -487,6 +510,7 @@ function sectionContent(model: ConsoleViewModel): string {
 }
 
 function modeHref(model: ConsoleViewModel, mode: ConsoleViewModel["mode"]): string {
+  if (model.selectedOperationId) return `/operations/${encodeURIComponent(model.selectedOperationId)}?ui=${mode}`;
   const selectedReleaseId = model.selectedReleaseId;
   if (selectedReleaseId && model.section === "releases")
     return `/releases/${encodeURIComponent(selectedReleaseId)}?ui=${mode}`;

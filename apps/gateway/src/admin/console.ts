@@ -3,7 +3,7 @@ import { escapeHtml, resolvePresentation } from "../ui/presentation.js";
 import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDetail } from "@praetorium/contracts";
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
-import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus } from "./view-model.js";
+import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type ConsoleOperationEvidence } from "./view-model.js";
 import { page } from "../ui/views/document.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
@@ -368,8 +368,9 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   if (request.method !== "GET") return response(405, "Method not allowed");
   const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
+  const operationMatch = /^\/operations\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const section: ConsoleSection | null = url.pathname === "/" ? "overview"
-    : url.pathname === "/releases" || releaseMatch ? "releases"
+    : url.pathname === "/releases" || releaseMatch || operationMatch ? "releases"
     : url.pathname === "/builds" || detailMatch ? "builds"
     : url.pathname === "/audit" ? "audit" : null;
   if (!section) return response(404, "Not found");
@@ -384,10 +385,11 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   const auditQuery = url.searchParams.get("q") ?? "";
   if (auditQuery.length > 100 || [...auditQuery].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return response(400, "Invalid audit search");
   const selectedBuildId = detailMatch?.[1] ?? null;
+  const selectedOperationId = operationMatch?.[1] ?? null;
   const selectedReleaseId = releaseMatch?.[1] ?? null;
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
   const empty = <T>(value: T): OperatorSection<T> => ({ endpoint: "", status: 200, code: null, value });
-  const [catalog, audit, builds, sourceViews, detail, releaseDetail] = await Promise.all([
+  const [catalog, audit, builds, sourceViews, detail, releaseDetail, operationDetail] = await Promise.all([
     section === "overview" || (section === "releases" && !selectedReleaseId)
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases",
         "/v1/operator/releases" + (section === "releases" ? withCursor : ""), isCatalog)
@@ -427,13 +429,25 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
             Number.isSafeInteger(build.attemptCount) && (build.failure === null ||
               typeof objectValue(build.failure)?.code === "string")));
       }) : Promise.resolve(null),
+    selectedOperationId ? controlPlaneSection(context, session.actor.userId,
+      "GET /v1/operations/" + selectedOperationId + "/evidence",
+      "/v1/operations/" + encodeURIComponent(selectedOperationId) + "/evidence",
+      (value): value is ConsoleOperationEvidence => {
+        const data=objectValue(value), operation=objectValue(data?.operation);
+        return operation?.id===selectedOperationId && typeof operation.instanceId==="string" &&
+          typeof operation.kind==="string" && typeof operation.status==="string" &&
+          typeof operation.phase==="string" && Number.isSafeInteger(operation.generation) &&
+          Number.isSafeInteger(operation.runtimeEpoch) && Number.isSafeInteger(operation.updatedAt) &&
+          (data?.rollbackCompatible===null || typeof data?.rollbackCompatible==="boolean") &&
+          !!data && "readinessEvidence" in data;
+      }) : Promise.resolve(null),
   ]);
   const model: ConsoleViewModel = {
     section, mode, csrf: session.csrfToken, notice: url.searchParams.get("notice")?.slice(0, 200) ?? null,
-    catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, releaseDetail, buildStateFilter: state,
+    catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedOperationId, operationDetail, selectedReleaseId, releaseDetail, buildStateFilter: state,
     buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery,
   };
-  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedReleaseId ? "Release status" : section),
+  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedOperationId ? "Operation evidence" : selectedReleaseId ? "Release status" : section),
     mode === "mobile" ? renderMobileConsole(model) : renderDesktopConsole(model),
     { layout: "handoff", presentation: { mode } });
 }

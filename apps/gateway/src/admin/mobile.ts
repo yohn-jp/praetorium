@@ -80,6 +80,7 @@ function timeElement(timestamp: number | null): string {
 }
 
 function modeHref(model: ConsoleViewModel, mode: "desktop" | "mobile"): string {
+  if (model.selectedOperationId) return "/operations/" + encodeURIComponent(model.selectedOperationId) + "?ui=" + mode;
   if (model.selectedReleaseId) {
     return "/releases/" + encodeURIComponent(model.selectedReleaseId) + "?ui=" + mode;
   }
@@ -735,9 +736,9 @@ function releaseDetail(model: ConsoleViewModel): string {
         "</code></dd></div>"
       : "") +
     (status.workflow.canaryOperationId
-      ? "<div><dt>Canary operation</dt><dd><code>" +
-        value(status.workflow.canaryOperationId) +
-        "</code></dd></div>"
+      ? '<div><dt>Canary operation</dt><dd><a href="/operations/' +
+        encodeURIComponent(status.workflow.canaryOperationId) + '?ui=mobile">' +
+        value(status.workflow.canaryOperationId) + "</a></dd></div>"
       : "") +
     '</dl><section class="admin-mobile-section"><h2>Failure evidence</h2>' +
     (failureCode
@@ -898,6 +899,22 @@ function audit(model: ConsoleViewModel): string {
 }
 
 function content(model: ConsoleViewModel): string {
+  if (model.selectedOperationId) {
+    const evidence=model.operationDetail?.value;
+    if (!evidence) return pageHeading("Operation evidence unavailable", "The authoritative operation could not be read.") +
+      (model.operationDetail ? sectionUnavailable("Operation evidence", model.operationDetail) : "");
+    const operation=evidence.operation;
+    return pageHeading("Canary operation", "Read-only execution evidence for "+operation.id) +
+      '<section class="admin-mobile-section"><h2>Execution state</h2><dl>' +
+      '<div><dt>Operation</dt><dd><code>'+value(operation.id)+'</code></dd></div>' +
+      '<div><dt>Instance</dt><dd>'+value(operation.instanceId)+'</dd></div>' +
+      '<div><dt>Status</dt><dd>'+value(operation.status)+'</dd></div>' +
+      '<div><dt>Phase</dt><dd>'+value(operation.phase)+'</dd></div>' +
+      '<div><dt>Generation</dt><dd>'+value(operation.generation)+'</dd></div>' +
+      '<div><dt>Runtime epoch</dt><dd>'+value(operation.runtimeEpoch)+'</dd></div>' +
+      '<div><dt>Readiness</dt><dd>'+(evidence.readinessEvidence===null?'Not recorded':'Validated record available')+'</dd></div>' +
+      '</dl></section>';
+  }
   if (model.selectedReleaseId) return releaseDetail(model);
   if (model.selectedBuildId) return buildDetail(model);
   if (model.section === "overview")

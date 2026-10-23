@@ -117,6 +117,9 @@ jobs:
           - service: coordination
             package: "@praetorium/coordination"
             dockerfile: infrastructure/docker/service-runtime.Dockerfile
+          - service: observer
+            package: "@praetorium/observer"
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
     steps:
       - uses: actions/checkout@v4
         with:

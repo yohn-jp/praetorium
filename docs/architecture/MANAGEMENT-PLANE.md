@@ -1,16 +1,19 @@
 # Praetorium — Management / Coordination / Execution 分離アーキテクチャ
 
-> **Status:** 2026-10-20 オーナー合意済みの**目標アーキテクチャ**。本書の追加だけでは実装済み・移行済み・Hosted受入済みとはしない。
-> **Source baseline:** [main@7194bb43275ccb7295b8f7e7f577450ea91aeabe](https://github.com/yohn-jp/praetorium/tree/7194bb43275ccb7295b8f7e7f577450ea91aeabe)。最新の明示的指示と[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)が製品要件の上位正本。
-> **Read alongside:** [SYSTEM.md](SYSTEM.md)（*現行実装*）、[EXECUTION.md](EXECUTION.md)（現行経路）、[INTERNAL-TRAFFIC.md](INTERNAL-TRAFFIC.md)（周期）、[ADMINISTRATION.md](ADMINISTRATION.md)（管理UI）。移行計画は[MANAGEMENT-PLANE-MIGRATION.md](MANAGEMENT-PLANE-MIGRATION.md)。
+> **Status:** ACCEPTED ARCHITECTURE. Management / Coordination / Executionの責務を固定する。実装・デプロイ・受入の成否は本書ではなく検証記録に記す。
+> **Authority:** 最新のオーナー指示と[Epic #1](https://github.com/yohn-jp/praetorium/issues/1)。
+> **Related:** [ADMINISTRATION.md](ADMINISTRATION.md)（独立Admin Workerと運用観測）、[MANAGEMENT-PLANE-MIGRATION.md](MANAGEMENT-PLANE-MIGRATION.md)（移行・受入契約）、[実機検証記録](../verification/README.md)。
 
-## 1. 何を解決するか
+## 1. 目的と不変条件
 
-現行PraetoriumはRuntime VMがk3s **Server**とScriptorium実行を兼ね、Build WorkerとProvisionerもRuntimeクラスタ上のPodである。一方Builder VMには独立したrootless BuildKitがある。ホスト・k3s自体の故障から復旧するための管理主体が不明確で、Cloudflare Control Plane / D1とExecutionの間に実行調整・通信集約の責務が分散する。
+PraetoriumはManagement VMにk3s Server・Coordination・インフラ観測を集約し、Runtime VMにk3s Agentとテナント、Builder VMにrootless BuildKitを配置する。Managementは実行の管理主体だが、Scriptorium WriterやBuildKit実行そのものを集約しない。
 
-目標は**3VMを責務で固定**し、Proxmoxを前提としないホスト構築、Runtime Agentの増設、k3s障害中でも起動する管理サービス、通知を主とする内部通信、既存のWriter安全性を同時に達成することである。
-
-本書は**現在の実装を追認しない**。Cloudflareリクエスト削減量、Workers VPCの実接続、マルチノードのストレージ継続性、旧RuntimeのK3s Serverを安全に移す手順は未実証。
+- 各VMの構築と構成はハイパーバイザー固有APIに依存させず、Ansibleやhost systemdで管理する。
+- Coordinatorはk3s外のrootless Podman/Quadletで起動し、k3s Server停止時にもOSレベルで診断可能とする。
+- 論理Desired State/Release/Build/Operationの正本はControl Plane/D1で維持する。Kubernetesは実Pod/Node状態の正本である。
+- 既存のGitHub認可、Writer排他、Quiesce、世代/Epoch/CAS、immutable OCI Admissionを弱めない。
+- 独立Admin WorkerはGatewayのOAuth/Session authorityを再利用し、Managementのread-only Observerからホスト状態を受け取る。詳細は[ADMINISTRATION.md](ADMINISTRATION.md)。
+- 移行履歴、検証したホスト構成、クラスタ置換時のデータ保持状況、デプロイDigestは[検証記録](../verification/README.md)にのみ記録する。
 
 ## 2. 確定済みの構成決定
 
@@ -24,7 +27,7 @@
 | Builder VM | 既存の独立rootless BuildKitとキャッシュを維持 | Builderへのk3s Server/AgentやテナントWriter権限の付与 |
 | コントロール正本 | GitHub権限・D1状態・既存のOperation/Build/Release契約は継続 | Coordination側に第二のDesired State正本を作ること |
 | ネットワーク | 内部サービスは原則**非公開**。CloudflareからManagementへのプライベート通信を検討し、ホスト内の通信はローカルRPC | 内部Claim/Webhook/APIをドメイン単位で公開することを前提とする運用 |
-| スコープ | アーキテクチャ定義と移行の受入条件まで | VM新設、Ansible Role追加、Quadlet実装、K3s移行、Secrets変更、WAF/DNS/Workers変更 |
+| スコープ | 3VMの責務、Writer/D1フェンスと通信境界を維持。観測/管理は独立[Admin Plane](ADMINISTRATION.md)へ | この文書の編集を本番変更やHosted合格と解釈すること |
 
 **決定と未決定を区別する:** Work配送方式（WebSocket/HTTPS・再送）、Build Workerの最終配置、Provisionerのプロセス分割、k3s Serverの現在のDatastore種別、静的リソースのFlux/kubectl単独所有は**本書では製品契約として未確定**。設計候補と検証ゲートを後述する。
 
@@ -65,7 +68,7 @@ flowchart TB
     App -->|"scoped Git credential broker (Gateway)"| Cloud
 ~~~
 
-概念図であり、`Agent #2`は将来の増設例で**設置済みではない**。`Coordination`は**独立したOSサービス**で、k3s APIが止まってもsystemd/Podmanは起動できる。ただしk3s APIに対する操作が可能とは限らない。Build execution agentの移設時期・実装方式は未確定。
+概念図であり、`Agent #2`は増設可能な実行ノードを示す。`Coordination`は**独立したOSサービス**で、k3s APIが止まってもsystemd/Podmanは起動できる。ただしk3s APIに対する操作が可能とは限らない。Build execution agentの移設時期・実装方式は未確定。
 
 ### 3.1 プレーンと配置を混同しない
 
@@ -76,7 +79,8 @@ flowchart TB
 | Execution Coordination | Management VM rootless Podman Quadlet | 配送、イベント受信、内部実行の仲介、期限・再試行のトリガー、正本への確認済み報告 |
 | Runtime Execution | Runtime VM上のk3s Agent・Pod | 実Scriptorium Writer、Instance Access、Ingress、Runtimeの実観測 |
 | Artifact Build | Builder VM上のrootless BuildKit | 承認済みArtifact生成とローカルキャッシュ。最終的なRelease Admissionは引き続きControl Plane |
-| Provisioning | Coordination管理下の実行責務（最終プロセス/配置は別途設計） | Kubernetesへの適用、Quiesce、旧Writer不在証跡、予約・観測。**K3s管理とテナント管理の権限を混ぜない** |
+| Provisioning | Coordination管理下の実行責務（プロセス/配置は実コードと実環境で照合する） | Kubernetesへの適用、Quiesce、旧Writer不在証跡、予約・観測。**K3s管理とテナント管理の権限を混ぜない** |
+| **Operator Admin** | **独立Admin Worker**（`admin.praetorium.yohn.jp`）＋ Management内read-only Observer | Gateway OAuth/DOとControl Plane正本を再利用し、3VM/Workの状態を統合。WorkerやObserverにはインフラ書込の新権威を作らない |
 
 Management VMのk3s Serverは通常kubelet/コンテナRuntimeも備える。**単にServerを移動するだけではRuntime Podが管理ノードに載らない保証はない**。管理ノードのTaint/Label、Runtime workloadのnodeAffinity/Topology Spread、Traefik等のSystem Podの配置許可、K3s ServiceLBを含むIngress経路を別途定義・検証する。
 
@@ -155,7 +159,8 @@ infrastructure/ansible/
 
 - Browser→Gateway: Cloudflare Workerは公開のOAuth/Portal/制御要求を受ける。通常のScriptorium編集本文は引き続き公開アプリOrigin→k3sへ直接到達させる。
 - Gateway→Control Plane: 既存Service Bindingを維持し、公開Control Planeの管理API露出を必要最小化する。
-- Control Plane→Coordination: **Workers VPC Service Binding + Cloudflare Tunnel**を第一候補（管理サービスの特定Host/PortだけにBinding）。Cloudflare Tunnelは**別の独立ホスト管理サービス**で、k3s Podに依存しない。VPCは2026-10-20時点**Beta**なので機能/課金/SLAは導入前に再確認する。
+- Control Plane→Coordination: **Workers VPC Service Binding + Cloudflare Tunnel**は専用Service/Binding・ホストCoordinationを使う（実証結果は[検証記録](../verification/THREE-VM-CONTROL.md)）。Tunnelはk3s Pod非依存のホストサービスとする。Workers VPCの現行制約・課金・SLAは実装/本番適用時に再照合する。
+- **Admin Worker→Management Observer:** 既存Work通知Bindingとは分離した**read-onlyの専用VPC service**。Admin内のUI/APIだけがOperator認証を受けたobservability DTOを読み取る。K8s admin権限/Builder実行CredentialをAdmin Workerへ渡さない。詳細は[ADMINISTRATION.md](ADMINISTRATION.md)に固定。
 - Coordination→k3s/Builder: Private subnet内の認証済みHTTP/RPC/gRPC等を選択。Loopback/Unix socketを利用できる同一ホストなら優先。k3s API/TLS・BuildKit mTLSを維持。
 - Coordination→Control Plane: **VPC Bindingの逆方向としてVMがService Bindingを直接呼べるわけではない**。結果返却は短いRPCへの応答または独立した認証付き出口/双方向チャネルが必要。長時間処理は明示的な非同期契約とする。
 
@@ -243,3 +248,12 @@ CIや静的マニフェストのPASSは上記最後の3層の代わりになら�
 - [Cloudflare Workers VPC Services](https://developers.cloudflare.com/workers-vpc/configuration/vpc-services/)（**Beta**）
 
 **プロダクションの設計目的は「外部に公開する面を減らし、内部実行の責務を明確にし、Cloudflare空振りInvocationを削減する」こと。新しいプラットフォームや状態正本を際限なく増やすことではない。**
+
+
+## 14. Admin Worker分離とVM可視化
+
+- `praetorium.yohn.jp` は一般Gateway、`admin.praetorium.yohn.jp` は別Cloudflare Workerに固定する。Gateway Wranglerの二重custom domainは移行時に撤去する。
+- Admin Identity/Source BrokerはGateway内の非公開Service Binding RPCであり、DO/Session/GitHubトークン正本を重複させない。Admin自体はUI・認証済みOperator入口・read-only観測の合成に限定する。
+- Management VMのread-only ObserverはCoordination通知relayとは分離する。Management/Runtime/Builderを同じInventoryと鮮度モデルで観測するが、実行権限は移管しない。
+- Work通知のCloudflare Queues化はここでは決定しない。既存のD1 authority、VPC/HTTPS通知、fallback/lease/fenceを変更せず、Admin可視化を先行する。
+- **仕様と受入マトリクスの正本は[ADMINISTRATION.md](ADMINISTRATION.md)。** 本節はManagement/Executionとの接続点のみを定め、認証フロー・DTOをここへ二重定義しない。

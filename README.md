@@ -6,9 +6,11 @@ Praetorium provides repository-scoped Scriptorium instances with GitHub App auth
 
 ## Architecture: read these first
 
-1. [System map and responsibility boundaries](docs/architecture/SYSTEM.md) — what each actor owns: Cloudflare Workers, D1, Durable Objects, KV, Kubernetes, Provisioner, Build Worker, BuildKit, Scriptorium, GitHub, OCI registry, and infrastructure.
-2. [End-to-end execution and triggers](docs/architecture/EXECUTION.md) — login/wake, handoff, build/admission, quiesce/redeploy, idle deadlines, token renewal, stable rollout, and Cloudflare call frequency.
-3. [Requirement-based architecture review](docs/architecture/REVIEW.md) — verified code behavior, defects and unnecessary work, preserved safety mechanisms, open decisions.
+1. [Management/Coordination/Execution](docs/architecture/MANAGEMENT-PLANE.md) — the accepted three-VM responsibilities and the three-VM topology. Runtime hosts the Agent and tenant workloads; Builder keeps rootless BuildKit; Management owns k3s Server and Coordination.
+2. [Admin Plane architecture](docs/architecture/ADMINISTRATION.md) — **accepted target**: independent `apps/admin` Worker/`admin.praetorium.yohn.jp`, existing Gateway OAuth/DO identity authority, Control Plane/D1 state, read-only three-VM observability, desktop/mobile and migration gates. The Worker split is **not implemented** in the existing Gateway implementation.
+3. [Migration/verification gates](docs/architecture/MANAGEMENT-PLANE-MIGRATION.md) — dated actual evidence vs unverified Hosted/notification/Admin gates.
+
+Older source-cut traces remain available: [System actors](docs/architecture/SYSTEM.md), [Execution](docs/architecture/EXECUTION.md), [Audit](docs/architecture/REVIEW.md) (legacy implementation references, **not the target VM topology**).
 
 [Full documentation index](docs/README.md) classifies current explanations, producer wire contracts, deployment runbooks, migration history and dated verification evidence. Historical [PLATFORM.md](docs/architecture/PLATFORM.md), [SCRIPTORIUM-CONTRACT.md](docs/architecture/SCRIPTORIUM-CONTRACT.md), and [migration plan](docs/migration/PLAN.md) remain available as references rather than being a competing source of product requirements.
 
@@ -21,10 +23,10 @@ corepack pnpm@11.18.0 install --frozen-lockfile
 corepack pnpm@11.18.0 check
 ```
 
-The control metadata API runs in Workers/D1/DO; Scriptorium's normal editing traffic reaches its K3s instance origin directly. Runtime Pod health belongs to Kubernetes, while desired state and authorization are separate. See the architecture trace for the actual current poll/cron implementation and its open issues.
+The control metadata API runs in Workers/D1/DO; Scriptorium's normal editing traffic reaches its K3s instance origin directly. Runtime Pod health belongs to Kubernetes, while desired state and authorization are separate. Older code-cut traces and current implementation are not interchangeable; consult the exact `main` source and dated evidence for polling/notification and running versions.
 
 ## Acceptance / deployment status
 
-The [Ubuntu 26.04 VM validation](docs/verification/UBUNTU-2604-20261017.md) records a working K3s host, separate rootless BuildKit host and real generic OCI build/reboot checks. It **does not** certify Hosted Scriptorium. The [Hosted integration evidence](docs/verification/HOSTED-ACCEPTANCE-a669f5c.json) still records unexecuted/blocked product categories at its named source cut.
+The [Three-VM bootstrap evidence](docs/verification/THREE-VM-INFRA.md) confirms a new Management k3s Server, Runtime Agent and independent Builder, plus documented recovery checks; it **does not** certify Hosted Scriptorium. The [Hosted integration evidence](docs/verification/HOSTED-ACCEPTANCE-a669f5c.json) and [GOAL G1–G9](docs/GOAL.md) still require source-cut-specific product acceptance.
 
 A clean build or CI pass is not a license to apply Cloudflare resources, change production cluster state, rotate keys, publish an artifact, or delete user/legacy data. For explicit preflight, owned inventory and deployment operations, see [deployment runbooks](docs/deployment/REPRODUCIBLE-DEPLOYMENT.md).

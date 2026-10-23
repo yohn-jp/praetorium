@@ -1,43 +1,44 @@
 # Praetorium — ドキュメント入口
 
-> 2026-10-18、`main ecabf265693e395c40bfcf9be8279c1baf4740ff`を基準に資料を分類。**製品要件の正本は[初期Epic #1](https://github.com/yohn-jp/praetorium/issues/1)と最新の明示的なオーナー指示**。このディレクトリの文章は製品要件や実環境の成功を自動的に追加・保証しない。後のユーザー指示により**CI実行は許可**されている。
+> アーキテクチャは構成・責務・契約を記述し、日付・commit SHA・検証結果は別の検証記録に保管する。製品要件の正本は[初期Epic #1](https://github.com/yohn-jp/praetorium/issues/1)と最新の明示的なオーナー指示。
 
-## 将来の3VM目標アーキテクチャ（オーナー合意済み、未実装）
+## 確定した管理アーキテクチャ
 
-[Management / Coordination / Execution分離](architecture/MANAGEMENT-PLANE.md)で、Management VM（ホストk3s Server + rootless Podman Quadlet）、Runtime VM（k3s Agent、追加可能）、Builder VM（独立rootless BuildKit）、Ansibleによるハイパーバイザー非依存Bootstrapを定義している。移行の停止条件とバックアップ/復旧ゲートは[Management移行計画](architecture/MANAGEMENT-PLANE-MIGRATION.md)を参照。**下記のSYSTEM/EXECUTIONや2VMデプロイ手順は現行実装の説明であり、この将来設計が本番適用されたわけではない。**
+3VMの責務はManagement（k3s Server / Coordination / Observer）、Runtime（k3s Agent / Scriptorium）、Builder（rootless BuildKit）に分離する。実際の配置・再起動・復旧の合格状況は[検証記録](verification/README.md)を参照する。
 
-## 最初に読む3文書
+**Admin独立Cloudflare Worker** と **Management中心のread-only Infrastructure Observability** を目標構成として固定した。現行Gateway内のAdmin UIとcustom domainは、実装時に独立Workerへ移す。設計決定と実装・本番完了を分けて扱う。
 
-| 文書 | 何が分かるか | 種別 |
+## 最初に読む文書
+
+| 文書 | 役割 | 信頼レベル |
 | --- | --- | --- |
-| [システム全体像](architecture/SYSTEM.md) | Cloudflare Worker/D1/DO/KV、VM、K3s、BuildKit、Registry、Scriptorium、GitHub、CIの**存在目的・責務・正本・禁止境界** | 現行ソースから再構築した地図 |
-| [動作経路・実行契機](architecture/EXECUTION.md) | ログイン→wake→handoff→保存、構成Build、Runtime停止/置換、Release、短命Credential、**ポーリング/Cloudflareコスト** | 現状の動作トレース |
-| [設計監査・未決定事項](architecture/REVIEW.md) | 初期要件との乖離、確定した事象、変えるべき部分・維持すべき安全性・まだ決めていない設計 | 観測と提案を区別した監査 |
-
-**重要:** 上の3文書は既存実装の「正しさ」を宣言する文書ではない。現行実装と、要件が求める動作の差分を読めるようにするための入口である。
+| [3VM Management/Execution](architecture/MANAGEMENT-PLANE.md) | 物理VMと論理Planeの配置、実装と目標の責務境界 | 合意済みターゲット + 明示した観測 |
+| [Admin Plane](architecture/ADMINISTRATION.md) | 独立Worker、認証、観測API、可視化、障害、セキュリティ、移行ゲート | **固定目標、未実装機能を含む** |
+| [Migration/残受入](architecture/MANAGEMENT-PLANE-MIGRATION.md) | 移行実行条件、通知/Hosted/Adminの受入条件 | 実装ステータスは検証資料で管理 |
+| [旧SYSTEM](architecture/SYSTEM.md) / [旧EXECUTION](architecture/EXECUTION.md) / [旧REVIEW](architecture/REVIEW.md) | 従来のコード・通信監査 | 旧実装の参考資料。現在のVM配置の根拠にしない |
 
 ## 役割別の資料
 
 | 目的 | 読む資料 | 解釈上の注意 |
 | --- | --- | --- |
-| Management・Coordination・Executionの3VM構成 | [Management Plane Architecture](architecture/MANAGEMENT-PLANE.md)、[Migration Gates](architecture/MANAGEMENT-PLANE-MIGRATION.md) | **2026-10-20合意済みの将来設計**。Ansible・Quadlet・k3s Server移設は未実装/未適用 |
-| アプリURL・DNS・画面状態遷移 | [Application Origins](architecture/APPLICATION-ORIGINS.md) | **2026-10-19オーナー決定に基づく目標設計**。現行の`ins-` URLや実際のDNS/TLS/Ingressは未移行 |
+| Management・Coordination・Executionの3VM構成 | [Management Plane Architecture](architecture/MANAGEMENT-PLANE.md)、[Migration Gates](architecture/MANAGEMENT-PLANE-MIGRATION.md) | 3VM責務が設計正本。実際のBootstrap結果・Work通知・Hosted受入は検証記録で判定 |
+| アプリURL・DNS・画面状態遷移 | [Application Origins](architecture/APPLICATION-ORIGINS.md) | 合意済みの設計。現行DNS/TLSは実機証拠と照合 |
 | 内部通信・周期・最適化候補 | [Internal Traffic Inventory](architecture/INTERNAL-TRAFFIC.md) | 現行コードのタイマー/通知/HTTPの根拠と、固定費・状態比例・ユーザー比例の区別。実測コストは別途計測 |
 | 責務から見直す通信アーキテクチャ | [Traffic Responsibility Review](architecture/TRAFFIC-RESPONSIBILITIES.md) | Gateway／Control Plane／Build Worker／Provisioner／Runtimeの正本・起動契機・削減候補・決定保留を最初から整理 |
 | 初期受入要件 | [Epic #1](https://github.com/yohn-jp/praetorium/issues/1) | 最優先。CI禁止の旧記述は最新のユーザー指示で上書き済み |
 | レート制限移行の設計目標 | [Cloudflareネイティブ濫用抑制・KV撤去計画](architecture/RATE-LIMITING.md) | **PR #14でWorker側を実装中・未デプロイ**。WAFは別途手動設定、制約・段階移行を明記 |
 | 旧アーキテクチャ草案 | [PLATFORM.md](architecture/PLATFORM.md) | 移行時の実装想定。新しいトポロジーの正本ではない |
 | Producer ABI | [SCRIPTORIUM-CONTRACT.md](architecture/SCRIPTORIUM-CONTRACT.md) | Versioned contract・歴史的な実装差分を含む。現行稼働を単独で証明しない |
-| プラットフォーム運用管理 | [管理者アーキテクチャ](architecture/ADMINISTRATION.md) | 独立した運用入口とHeadlampの任意導入。既存のテナントControl Planeの受入条件ではない |
+| プラットフォーム運用管理 | [管理者アーキテクチャ](architecture/ADMINISTRATION.md) | **独立Admin Workerの確定設計**。GatewayのAuth/DOを維持しread-only Management観測を統合。実装・本番での適用は別途検証 |
 | デプロイ操作 | [再現可能デプロイ](deployment/REPRODUCIBLE-DEPLOYMENT.md)、[ホスト手順](deployment/UBUNTU-2404.md)、[deployment/README](deployment/README.md) | `--check`/`--apply`の境界と実運用Secrets、稼働実証は別 |
 | 実Host・Runtime受入 | [検証記録の索引](verification/README.md) | 各レポートは観測したソースSHA/環境にだけ有効 |
 | 移行の実装履歴 | [移行索引](migration/README.md)、[PLAN.md](migration/PLAN.md) | T00–T15タスクを現在のプロダクト要件と混同しない |
 | オフライン旧データ復旧 | [recovery/README.md](recovery/README.md) | 通常Runtimeは旧PVC/未公開成果を削除しない |
 | CI・開発ルール | [../AGENTS.md](../AGENTS.md)、[GitHub Actions](../.github/workflows/publish-services.yml) | CIは許可。公開・本番デプロイは別途承認 |
 
-## 最新の検証範囲
+## 検証情報の所在
 
-- **VMホスト層:** [Ubuntu 26.04実機物証](verification/UBUNTU-2604-20261017.md)。2台のゲスト、K3s、rootless BuildKit、実OCI生成、キャッシュ、再起動後の復帰まで確認。
+- **VMホスト層:** [3VM構成の検証記録](verification/THREE-VM-INFRA.md)に構築・障害・復帰の実測を保管する。
 - **Hosted製品層:** [既存Hosted統合レポート](verification/HOSTED-ACCEPTANCE-a669f5c.json)は`workers-d1-do`以外の主要分類が`BLOCKED/NOT_CHECKED`。当該レポートは現在mainの全面合格を示さない。
 - **公開適用:** Ubuntuホスト検証と、Cloudflare/K3s/Scriptoriumの全製品経路が本番で動くことは同義ではない。
 
@@ -51,4 +52,4 @@
 
 ## 既存資料を消さない理由
 
-`docs/migration/tasks/*`、`docs/verification/*`には受入根拠、失敗記録、Source Revision、復旧証拠、過去のブロッカーが残っている。重複を理由に削除すると、後から正否を検証できなくなる。**一次の全体像は本索引から3文書へ集約**し、詳細な履歴は索引経由で辿れるようにする。修正が必要なときに古いレポートを上書きして成功を装わない。
+`docs/migration/tasks/*`、`docs/verification/*`には受入根拠、失敗記録、Source Revision、復旧証拠、過去のブロッカーが残っている。重複を理由に削除すると、後から正否を検証できなくなる。**一次の現在/目標は本索引からManagement・Admin・移行ゲート文書へ集約**し、詳細な履歴は索引経由で辿れるようにする。修正が必要なときに古いレポートを上書きして成功を装わない。

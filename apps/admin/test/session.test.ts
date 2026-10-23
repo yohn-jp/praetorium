@@ -90,10 +90,13 @@ describe("independent Admin session boundary", () => {
     expect(await adminFormCsrf(bad, context, session!, form)).toBe(false);
   });
 
-  it("rejects operator data access without a verified session", async () => {
+  it("re-enters authentication for allowlisted deep links without exposing operator data", async () => {
     const { context, cp } = fixture();
     const response = await handleAdminHost(new Request(ADMIN + "/builds"), context);
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe(GATEWAY + "/_admin/entry?return_to=" +
+      encodeURIComponent("/builds?ui=desktop"));
+    expect((await handleAdminHost(new Request(ADMIN + "/unrecognized"), context)).status).toBe(403);
     expect(cp.fetch).not.toHaveBeenCalled();
   });
 

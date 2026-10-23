@@ -394,10 +394,10 @@ describe("mobile operator console", () => {
   });
 });
 
-it("filters only the current bounded build page and preserves navigation to older jobs and releases", () => {
+it("preserves server-filtered build pagination and navigation to older jobs and releases", () => {
   const builds = renderMobileConsole(model({ buildStateFilter: "building",
     builds: dependency({ items: [sourceJob], nextCursor: "older.page" }, "queue") }));
-  expect(builds).toContain("No Source builds on this page match this state filter.");
+  expect(builds).toContain("No Source builds match this state filter.");
   expect(builds).not.toContain('href="/builds/' + sourceJob.id);
   expect(builds).toContain('href="/builds?ui=mobile&amp;cursor=older.page&amp;state=building"');
   const releases = renderMobileConsole(model({ section: "releases",

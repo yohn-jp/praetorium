@@ -1,8 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { SourceProducerResultSchema, type SourceProducerResult } from "@praetorium/contracts";
+import {
+  sanitizeSourceDiagnostic,
+  SourceProducerResultSchema,
+  type SourceBuildDiagnostic,
+  type SourceProducerResult,
+} from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "../src/config.js";
+import { BuildQueueHttpError } from "../src/http-client.js";
 import {
   SourceBuildChangedError,
+  SourceBuildFailureError,
   SourceBuildVerificationError,
 } from "../src/source-producer-builder.js";
 import {
@@ -105,7 +112,8 @@ describe("Source Release Worker lease lifecycle", () => {
         producedStarted = true;
         return producedGate;
       }),
-      failSource: vi.fn(async () => true),
+      reportDiagnostic: vi.fn(async () => true),
+      failSource: vi.fn(async () => ({accepted:true,diagnosticRecorded:true})),
     };
     const worker = new SourceReleaseBuildWorker(CONFIG, client, async () => RESULT);
     const running = worker.runOnce();
@@ -124,7 +132,8 @@ describe("Source Release Worker lease lifecycle", () => {
       claimSource: vi.fn(async () => JOB),
       heartbeatSource: vi.fn(async () => false),
       producedSource: vi.fn(async () => true),
-      failSource: vi.fn(async () => true),
+      reportDiagnostic: vi.fn(async () => true),
+      failSource: vi.fn(async () => ({accepted:true,diagnosticRecorded:true})),
     };
     const worker = new SourceReleaseBuildWorker(CONFIG, client, async (_job, _config, signal) => {
       producerSignal = signal;
@@ -143,14 +152,17 @@ describe("Source Release Worker lease lifecycle", () => {
       claimSource: vi.fn(async () => JOB),
       heartbeatSource: vi.fn(async () => true),
       producedSource: vi.fn(async () => true),
-      failSource: vi.fn(async () => true),
+      reportDiagnostic: vi.fn(async () => true),
+      failSource: vi.fn(async () => ({accepted:true,diagnosticRecorded:true})),
     };
     const worker = new SourceReleaseBuildWorker(CONFIG, client, async () => {
       throw new SourceBuildChangedError();
     });
 
     await expect(worker.runOnce()).resolves.toBe(true);
-    expect(client.failSource).toHaveBeenCalledWith(JOB, "SOURCE_CHANGED");
+    expect(client.failSource).toHaveBeenCalledWith(JOB, "SOURCE_CHANGED", expect.objectContaining({
+      stage:"unknown",reason:"source_changed",
+    }));
     expect(client.producedSource).not.toHaveBeenCalled();
   });
 
@@ -159,14 +171,86 @@ describe("Source Release Worker lease lifecycle", () => {
       claimSource: vi.fn(async () => JOB),
       heartbeatSource: vi.fn(async () => true),
       producedSource: vi.fn(async () => true),
-      failSource: vi.fn(async () => true),
+      reportDiagnostic: vi.fn(async () => true),
+      failSource: vi.fn(async () => ({accepted:true,diagnosticRecorded:true})),
     };
     const worker = new SourceReleaseBuildWorker(CONFIG, client, async () => {
       throw new SourceBuildVerificationError();
     });
 
     await expect(worker.runOnce()).resolves.toBe(true);
-    expect(client.failSource).toHaveBeenCalledWith(JOB, "SOURCE_VERIFICATION_FAILED");
+    expect(client.failSource).toHaveBeenCalledWith(JOB, "SOURCE_VERIFICATION_FAILED", expect.objectContaining({
+      stage:"verification",reason:"verification_failed",
+    }));
+    expect(client.producedSource).not.toHaveBeenCalled();
+  });
+
+  it("awaits stage telemetry and continues on an unavailable diagnostics endpoint", async () => {
+    const stage=sanitizeSourceDiagnostic({stage:"buildkit",reason:"stage_started",summary:"",truncated:false});
+    const client: SourceBuildQueueClient = {
+      claimSource: vi.fn(async () => JOB),
+      heartbeatSource: vi.fn(async () => true),
+      producedSource: vi.fn(async () => true),
+      reportDiagnostic: vi.fn(async () => { throw new BuildQueueHttpError(404); }),
+      failSource: vi.fn(async () => ({accepted:true,diagnosticRecorded:true})),
+    };
+    const order:string[]=[];
+    const worker = new SourceReleaseBuildWorker(CONFIG, client, async (_job,_config,_signal,onStage) => {
+      order.push("start");
+      await onStage(stage);
+      order.push("build");
+      return RESULT;
+    });
+
+    await expect(worker.runOnce()).resolves.toBe(true);
+    expect(order).toEqual(["start","build"]);
+    expect(client.reportDiagnostic).toHaveBeenCalledWith(JOB,stage);
+    expect(client.producedSource).toHaveBeenCalledOnce();
+  });
+
+  it("stops and never reports a result when diagnostic reporting rejects the lease fence", async () => {
+    const stage:SourceBuildDiagnostic=sanitizeSourceDiagnostic({
+      stage:"runtime_base",reason:"stage_started",summary:"",truncated:false,
+    });
+    let producerSignal:AbortSignal|undefined;
+    const client: SourceBuildQueueClient = {
+      claimSource: vi.fn(async () => JOB),
+      heartbeatSource: vi.fn(async () => true),
+      producedSource: vi.fn(async () => true),
+      reportDiagnostic: vi.fn(async () => false),
+      failSource: vi.fn(async () => ({accepted:true,diagnosticRecorded:true})),
+    };
+    const worker = new SourceReleaseBuildWorker(CONFIG, client, async (_job,_config,signal,onStage) => {
+      producerSignal=signal;
+      await onStage(stage);
+      return RESULT;
+    });
+
+    await expect(worker.runOnce()).resolves.toBe(true);
+    expect(producerSignal?.aborted).toBe(true);
+    expect(client.failSource).not.toHaveBeenCalled();
+    expect(client.producedSource).not.toHaveBeenCalled();
+  });
+
+  it("fails with the builder's actual stage and sanitized cause", async () => {
+    const diagnostic=sanitizeSourceDiagnostic({
+      stage:"buildkit",reason:"build_failed",summary:"",
+      excerpt:"src/app.ts:12 - error TS2307: Cannot find module '@praetorium/contracts'",
+      truncated:false,
+    });
+    const client:SourceBuildQueueClient={
+      claimSource:vi.fn(async()=>JOB),
+      heartbeatSource:vi.fn(async()=>true),
+      producedSource:vi.fn(async()=>true),
+      reportDiagnostic:vi.fn(async()=>true),
+      failSource:vi.fn(async()=>({accepted:true,diagnosticRecorded:true})),
+    };
+    const worker=new SourceReleaseBuildWorker(CONFIG,client,async()=>{
+      throw new SourceBuildFailureError("SOURCE_BUILD_FAILED",diagnostic);
+    });
+
+    await expect(worker.runOnce()).resolves.toBe(true);
+    expect(client.failSource).toHaveBeenCalledWith(JOB,"SOURCE_BUILD_FAILED",diagnostic);
     expect(client.producedSource).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { SOURCE_PRODUCER_RESULT_MAX_BYTES } from "@praetorium/contracts";
+import type { SourceBuildDiagnostic } from "@praetorium/contracts";
 import {
   assertSourceProducerResultWithinBudget,
   buildSourceRelease,
@@ -150,8 +151,18 @@ it("reports an unpublished Source Release as an immutable source change", async 
   };
   const config = { buildKit: { temporaryDirectory: root, buildkitRepository: sourceRepository } } as never;
 
-  await expect(buildSourceRelease(job, config, new AbortController().signal))
-    .rejects.toMatchObject({ name: "SourceBuildChangedError", code: "SOURCE_CHANGED" });
+  const stages:SourceBuildDiagnostic[]=[];
+  let failure:unknown;
+  try{
+    await buildSourceRelease(job,config,new AbortController().signal,{
+      onStage:async(stage)=>{stages.push(stage);},
+    });
+  }catch(error){failure=error;}
+  expect(failure).toMatchObject({
+    name:"SourceBuildChangedError",code:"SOURCE_CHANGED",
+    diagnostic:{stage:"release_check",reason:"source_changed",summary:expect.stringContaining("published source identity")},
+  });
+  expect(stages).toEqual([expect.objectContaining({stage:"release_check",reason:"stage_started"})]);
 });
 
 it("rejects non-loopback physical output mappings before contacting GitHub", async () => {

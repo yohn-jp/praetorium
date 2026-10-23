@@ -1,9 +1,16 @@
 import { z } from "zod";
-import { SourceProducerResultSchema, type SourceProducerResult } from "@praetorium/contracts";
+import {
+  sanitizeSourceDiagnostic,
+  SourceBuildDiagnosticSchema,
+  SourceProducerResultSchema,
+  type SourceBuildDiagnostic,
+  type SourceProducerResult,
+} from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "./config.js";
 import {
   buildSourceRelease,
   SourceBuildChangedError,
+  SourceBuildFailureError,
   SourceBuildVerificationError,
   type SourceBuildClaim,
 } from "./source-producer-builder.js";
@@ -33,18 +40,45 @@ const ClaimSchema=z.strictObject({
   result_json:z.string().nullable().optional(),
   progress_json:z.string().nullable().optional(),
 });
+
 export interface SourceBuildQueueClient {
   claimSource(workerId:string,leaseSeconds:number):Promise<unknown|null>;
   heartbeatSource(job:SourceBuildClaim,leaseSeconds:number):Promise<boolean>;
   producedSource(job:SourceBuildClaim,result:SourceProducerResult):Promise<boolean>;
-  failSource(job:SourceBuildClaim,code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"|"SOURCE_CHANGED"):Promise<boolean>;
+  reportDiagnostic(job:SourceBuildClaim,diagnostic:SourceBuildDiagnostic):Promise<boolean>;
+  failSource(
+    job:SourceBuildClaim,
+    code:"SOURCE_BUILD_FAILED"|"SOURCE_VERIFICATION_FAILED"|"SOURCE_CHANGED",
+    diagnostic?:SourceBuildDiagnostic,
+  ):Promise<{accepted:boolean;diagnosticRecorded:boolean}>;
 }
+
+export class SourceBuildLeaseLostError extends Error {
+  constructor(){super("Source build lease is no longer current");this.name="SourceBuildLeaseLostError";}
+}
+
+function failureDiagnostic(error:unknown):SourceBuildDiagnostic{
+  if(error instanceof SourceBuildFailureError)return error.diagnostic;
+  if(error instanceof SourceBuildChangedError&&error.diagnostic)return error.diagnostic;
+  if(error instanceof SourceBuildVerificationError&&error.diagnostic)return error.diagnostic;
+  const stage=error instanceof SourceBuildVerificationError?"verification":"unknown";
+  const reason=error instanceof SourceBuildChangedError?"source_changed":
+    error instanceof SourceBuildVerificationError?"verification_failed":"unknown";
+  return sanitizeSourceDiagnostic({stage,reason,summary:"",truncated:false});
+}
+
 export class SourceReleaseBuildWorker {
   constructor(
     private readonly config:BuildWorkerConfig,
     private readonly client:SourceBuildQueueClient,
-    private readonly execute:(job:SourceBuildClaim,config:BuildWorkerConfig,signal:AbortSignal)=>Promise<SourceProducerResult>=buildSourceRelease,
+    private readonly execute:(
+      job:SourceBuildClaim,
+      config:BuildWorkerConfig,
+      signal:AbortSignal,
+      onStage:(diagnostic:SourceBuildDiagnostic)=>Promise<void>,
+    )=>Promise<SourceProducerResult>=(job,config,signal,onStage)=>buildSourceRelease(job,config,signal,{onStage}),
   ){}
+
   async runOnce(shutdown?:AbortSignal):Promise<boolean>{
     if(shutdown?.aborted)return false;
     const payload=await this.client.claimSource(this.config.workerId,this.config.leaseSeconds);
@@ -79,19 +113,35 @@ export class SourceReleaseBuildWorker {
       try{await sendHeartbeat();}finally{inflight=false;}
       return !lost;
     };
+    const onStage=async(input:SourceBuildDiagnostic):Promise<void>=>{
+      const diagnostic=SourceBuildDiagnosticSchema.parse(sanitizeSourceDiagnostic(input));
+      try{
+        const accepted=await this.client.reportDiagnostic(job,diagnostic);
+        if(!accepted){
+          lost=true;
+          controller.abort();
+          throw new SourceBuildLeaseLostError();
+        }
+      }catch(error){
+        if(error instanceof SourceBuildLeaseLostError)throw error;
+        // Telemetry outages do not fail the build. Heartbeats and final reports
+        // still fence execution and artifact acceptance.
+      }
+    };
     const timer=setInterval(tick,this.config.heartbeatIntervalMs);timer.unref();
     try{
       let result:SourceProducerResult;
       try{
-        result=SourceProducerResultSchema.parse(
-          await this.execute(job,this.config,controller.signal),
-        );
+        const produced=await this.execute(job,this.config,controller.signal,onStage);
+        try{result=SourceProducerResultSchema.parse(produced);}
+        catch{throw new SourceBuildVerificationError();}
       }catch(error){
         executing=false;
         if(!lost&&!controller.signal.aborted){
-          const code=error instanceof SourceBuildChangedError || error instanceof SourceBuildVerificationError
+          const code=error instanceof SourceBuildChangedError||error instanceof SourceBuildVerificationError||error instanceof SourceBuildFailureError
             ?error.code:"SOURCE_BUILD_FAILED";
-          await this.client.failSource(job,code).catch(()=>false);
+          await this.client.failSource(job,code,failureDiagnostic(error))
+            .catch(()=>({accepted:false,diagnosticRecorded:false}));
         }
         return true;
       }

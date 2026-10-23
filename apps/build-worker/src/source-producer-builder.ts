@@ -3,11 +3,12 @@ import { createHash, createPrivateKey, sign as edSign } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdtemp, mkdir, open, rm, writeFile, lstat } from "node:fs/promises";
 import path from "node:path";
-import { createBuildctlRunner } from "@praetorium/buildkit";
+import { BuildKitAttemptError, createBuildctlRunner } from "@praetorium/buildkit";
 import {
   BuildCatalogSchema, RuntimeMetadataSchema, SourceProducerResultSchema,
   SOURCE_PRODUCER_RESULT_MAX_BYTES, canonicalSourceProof, repositoryPathForHost,
-  sourceProducerResultByteLength, sourceProofDigest, type SourceProducerResult,
+  sanitizeSourceDiagnostic, sourceProducerResultByteLength, sourceProofDigest,
+  type SourceBuildDiagnostic, type SourceBuildStage, type SourceProducerResult,
 } from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "./config.js";
 
@@ -65,19 +66,78 @@ export interface IsolatedSourceBuildRegistry {
 }
 export interface SourceBuildOptions {
   readonly isolatedRegistry?:IsolatedSourceBuildRegistry;
+  readonly onStage?:(diagnostic:SourceBuildDiagnostic)=>Promise<void>;
+}
+
+type SourceBuildFailureCode = "SOURCE_BUILD_FAILED" | "SOURCE_VERIFICATION_FAILED" | "SOURCE_CHANGED";
+
+function diagnostic(
+  stage:SourceBuildStage,
+  reason:SourceBuildDiagnostic["reason"],
+  excerpt?:string,
+  truncated=false,
+):SourceBuildDiagnostic{
+  return sanitizeSourceDiagnostic({
+    stage,reason,summary:"",
+    ...(excerpt ? {excerpt} : {}),
+    truncated,
+  });
+}
+
+export class SourceBuildFailureError extends Error {
+  constructor(
+    readonly code:SourceBuildFailureCode,
+    readonly diagnostic:SourceBuildDiagnostic,
+  ){
+    super(diagnostic.summary);
+    this.name="SourceBuildFailureError";
+  }
 }
 
 /** A published Release or immutable source binding no longer matches the
  * queued claim. Callers may terminalize this failure without spending retries. */
 export class SourceBuildChangedError extends Error {
   readonly code="SOURCE_CHANGED" as const;
-  constructor(){super("SOURCE_CHANGED");this.name="SourceBuildChangedError";}
+  constructor(readonly diagnostic?:SourceBuildDiagnostic){super("SOURCE_CHANGED");this.name="SourceBuildChangedError";}
 }
 
 /** Source outputs are permanent evidence failures once the BuildKit solve has succeeded. */
 export class SourceBuildVerificationError extends Error {
   readonly code="SOURCE_VERIFICATION_FAILED" as const;
-  constructor(){super("SOURCE_VERIFICATION_FAILED");this.name="SourceBuildVerificationError";}
+  constructor(readonly diagnostic?:SourceBuildDiagnostic){super("SOURCE_VERIFICATION_FAILED");this.name="SourceBuildVerificationError";}
+}
+
+async function runSourceStage<T>(
+  stage:SourceBuildStage,
+  onStage:SourceBuildOptions["onStage"],
+  operation:()=>Promise<T>,
+):Promise<T>{
+  await onStage?.(diagnostic(stage,"stage_started"));
+  try{return await operation();}
+  catch(error){
+    if(error instanceof SourceBuildFailureError)throw error;
+    let code:SourceBuildFailureCode="SOURCE_BUILD_FAILED";
+    let reason:SourceBuildDiagnostic["reason"]="infrastructure_unavailable";
+    let excerpt:string|undefined;
+    let truncated=false;
+    if(error instanceof SourceBuildChangedError){
+      code=error.code;reason="source_changed";
+    }else if(error instanceof SourceBuildVerificationError){
+      code=error.code;reason="verification_failed";
+    }else if(error instanceof BuildKitAttemptError){
+      reason=error.code==="BUILD_TIMEOUT"?"timeout":error.code==="BUILD_CANCELED"?"canceled":"build_failed";
+      excerpt=error.diagnostic?.text;
+      truncated=error.diagnostic?.truncated??false;
+      if(error.exitCode!==undefined&&error.exitCode!==null)
+        excerpt=[excerpt,"BuildKit solve exit code: "+error.exitCode].filter(Boolean).join("\n");
+    }else if(stage==="metadata"||stage==="verification"){
+      code="SOURCE_VERIFICATION_FAILED";reason="verification_failed";
+    }
+    const evidence=diagnostic(stage,reason,excerpt,truncated);
+    if(code==="SOURCE_CHANGED")throw new SourceBuildChangedError(evidence);
+    if(code==="SOURCE_VERIFICATION_FAILED")throw new SourceBuildVerificationError(evidence);
+    throw new SourceBuildFailureError(code,evidence);
+  }
 }
 
 export function assertSourceProducerResultWithinBudget(value:unknown):void{
@@ -324,39 +384,52 @@ export async function buildSourceRelease(
   const metadataDockerfiles=path.join(root,"dockerfile-metadata");
   const metadata=path.join(root,"metadata");
   const privateGitHome=path.join(root,"git-home");
+  let activeStage:SourceBuildStage|null=null;
+  const onStage=async(value:SourceBuildDiagnostic):Promise<void>=>{
+    if(value.reason==="stage_started"){
+      if(activeStage===value.stage)return;
+      activeStage=value.stage;
+    }
+    await options.onStage?.(value);
+  };
   try{
     await mkdir(source);
     await mkdir(dockerfiles);
     await mkdir(metadataDockerfiles);
     await mkdir(metadata);
     await mkdir(privateGitHome,{mode:0o700});
-    await validatePublishedRelease(job,signal);
-    await checkout(job,source,privateGitHome,signal);
-    const dockerfile=await readSourceProducerFile(path.join(source,"Dockerfile"),128*1024,"Source Dockerfile");
-    const dockerfileDigest=createHash("sha256").update(dockerfile).digest("hex");
+    await runSourceStage("release_check",onStage,()=>validatePublishedRelease(job,signal));
+    await runSourceStage("source_checkout",onStage,()=>checkout(job,source,privateGitHome,signal));
+    const {dockerfile,nodeImage,dockerfileDigest}=await runSourceStage("verification",onStage,async()=>{
+      const dockerfile=await readSourceProducerFile(path.join(source,"Dockerfile"),128*1024,"Source Dockerfile");
+      return {dockerfile,nodeImage:sourceNodeImage(dockerfile),dockerfileDigest:createHash("sha256").update(dockerfile).digest("hex")};
+    });
     // The selected immutable Release owns its recipe. Never rewrite it by version.
     const buildDockerfile=dockerfile;
-    const nodeImage=sourceNodeImage(dockerfile);
     const environmentSource=path.join(root,"node-environment");
     const environmentLayout=path.join(root,"node-environment-oci");
-    await mkdir(environmentSource);
-    await writeFile(path.join(environmentSource,"Dockerfile"),sourceNodeEnvironmentDockerfile,{mode:0o600});
+    await runSourceStage("build_environment",onStage,async()=>{
+      await mkdir(environmentSource);
+      await writeFile(path.join(environmentSource,"Dockerfile"),sourceNodeEnvironmentDockerfile,{mode:0o600});
+    });
     const environmentMetadata=path.join(root,"node-environment.json");
-    await runBuild(config,[
+    await runSourceStage("build_environment",onStage,()=>runBuild(config,[
       "--local","context="+environmentSource,"--local","dockerfile="+environmentSource,
       "--opt","platform=linux/amd64","--opt","build-arg:NODE_IMAGE="+nodeImage,
       "--output","type=oci,tar=false,dest="+environmentLayout,
       "--metadata-file",environmentMetadata,
-    ],environmentSource,root,signal);
-    const buildEnvironmentDigest=await metadataDigest(environmentMetadata);
+    ],environmentSource,root,signal));
+    const buildEnvironmentDigest=await runSourceStage("verification",onStage,()=>metadataDigest(environmentMetadata));
     const environmentArgs=[
       "--oci-layout","praetorium-node="+environmentLayout,
       "--opt","context:praetorium-node=oci-layout://praetorium-node@"+buildEnvironmentDigest,
       "--opt","build-arg:NODE_IMAGE=praetorium-node",
     ];
-    const ignoreBytes=await readSourceProducerFile(path.join(source,".dockerignore"),64*1024,"Source Docker ignore file",true);
-    await writeFile(path.join(dockerfiles,"Dockerfile"),buildDockerfile,{mode:0o600});
-    await writeFile(path.join(dockerfiles,"Dockerfile.dockerignore"),ignoreBytes,{mode:0o600});
+    const ignoreBytes=await runSourceStage("verification",onStage,()=>readSourceProducerFile(path.join(source,".dockerignore"),64*1024,"Source Docker ignore file",true));
+    await runSourceStage("verification",onStage,async()=>{
+      await writeFile(path.join(dockerfiles,"Dockerfile"),buildDockerfile,{mode:0o600});
+      await writeFile(path.join(dockerfiles,"Dockerfile.dockerignore"),ignoreBytes,{mode:0o600});
+    });
     // The Dockerfile is kept inside the remote BuildKit execution boundary;
     // the Worker never loads or executes producer Node packages locally.
     const args=[
@@ -366,27 +439,29 @@ export async function buildSourceRelease(
       "--opt","build-arg:SCRIPTORIUM_PRODUCER_REVISION="+job.source_revision,
     ];
     const runtimeMetadata=path.join(root,"runtime-base.json");
-    await runBuild(config,[...args,"--opt","target=runtime-base",
+    await runSourceStage("runtime_base",onStage,()=>runBuild(config,[...args,"--opt","target=runtime-base",
       "--output","type=image,name="+outputImage+":runtime-base-"+job.source_revision+",push=true",
-      "--metadata-file",runtimeMetadata],source,root,signal);
-    const runtimeDigest=await metadataDigest(runtimeMetadata);
+      "--metadata-file",runtimeMetadata],source,root,signal));
+    const runtimeDigest=await runSourceStage("verification",onStage,()=>metadataDigest(runtimeMetadata));
     const kitMetadata=path.join(root,"build-kit.json");
     // Catalog artifact identities require every shipped module, while the
     // Producer's default build may select only its core profile. Reuse its
     // native workspace build in an isolated derived stage, retaining its frontend.
-    await writeFile(path.join(dockerfiles,"Dockerfile"),Buffer.concat([
+    await runSourceStage("buildkit",onStage,async()=>writeFile(path.join(dockerfiles,"Dockerfile"),Buffer.concat([
       buildDockerfile,Buffer.from("\nFROM buildkit AS praetorium-buildkit\nRUN pnpm run build:workspace\n"),
-    ]),{mode:0o600});
-    await runBuild(config,[...args,"--opt","target=praetorium-buildkit",
+    ]),{mode:0o600}));
+    await runSourceStage("buildkit",onStage,()=>runBuild(config,[...args,"--opt","target=praetorium-buildkit",
       "--opt","build-arg:SCRIPTORIUM_DOCKERFILE_SHA256="+dockerfileDigest,
       "--output","type=image,name="+outputImage+":build-kit-"+job.source_revision+",push=true",
-      "--metadata-file",kitMetadata],source,root,signal);
-    const buildKitDigest=await metadataDigest(kitMetadata);
+      "--metadata-file",kitMetadata],source,root,signal));
+    const buildKitDigest=await runSourceStage("verification",onStage,()=>metadataDigest(kitMetadata));
+    await runSourceStage("metadata",onStage,async()=>{
     await writeFile(path.join(metadataDockerfiles,"Dockerfile"),
       Buffer.concat([buildDockerfile,Buffer.from("\n"+wrapper,"utf8")]),{mode:0o600});
     await writeFile(path.join(metadataDockerfiles,"Dockerfile.dockerignore"),
       sourceMetadataDockerfileIgnore(),{mode:0o600});
-    await runBuild(config,[
+    });
+    await runSourceStage("metadata",onStage,()=>runBuild(config,[
       ...environmentArgs,
       "--local","context="+source,"--local","dockerfile="+metadataDockerfiles,
       "--opt","platform=linux/amd64","--opt","target=praetorium-source-output",
@@ -394,28 +469,32 @@ export async function buildSourceRelease(
       "--opt","build-arg:RUNTIME_BASE_DIGEST="+runtimeDigest,
       "--opt","build-arg:BUILD_KIT_DIGEST="+buildKitDigest,
       "--output","type=local,dest="+metadata,
-    ],source,root,signal);
-    let catalogBytes:Buffer;
-    let runtimeBytes:Buffer;
-    try{
-      [catalogBytes,runtimeBytes]=await Promise.all([
-        readSourceProducerFile(path.join(metadata,"build-catalog.json"),MAX_CATALOG_BYTES,"BuildKit catalog"),
-        readSourceProducerFile(path.join(metadata,"runtime-metadata.json"),16*1024,"BuildKit runtime metadata"),
-      ]);
-    }catch{throw new SourceBuildVerificationError();}
+    ],source,root,signal));
+    const {catalogBytes,runtimeBytes}=await runSourceStage("metadata",onStage,async()=>{
+      try{
+        const [catalogBytes,runtimeBytes]=await Promise.all([
+          readSourceProducerFile(path.join(metadata,"build-catalog.json"),MAX_CATALOG_BYTES,"BuildKit catalog"),
+          readSourceProducerFile(path.join(metadata,"runtime-metadata.json"),16*1024,"BuildKit runtime metadata"),
+        ]);
+        return {catalogBytes,runtimeBytes};
+      }catch{throw new SourceBuildVerificationError();}
+    });
     let catalog:ReturnType<typeof BuildCatalogSchema.parse>;
     let runtime:ReturnType<typeof RuntimeMetadataSchema.parse>;
     try{
       catalog=BuildCatalogSchema.parse(JSON.parse(catalogBytes.toString("utf8")));
       runtime=RuntimeMetadataSchema.parse(JSON.parse(runtimeBytes.toString("utf8")));
     }catch{throw new SourceBuildVerificationError();}
-    const resolver=await resolverArtifact(path.join(metadata,"resolver"));
-    if(catalog.producerRevision!==job.source_revision ||
-      runtime.producerRevision!==job.source_revision ||
-      catalog.runtimeBaseDigest!==runtimeDigest ||
-      catalog.buildKitDigest!==buildKitDigest ||
-      resolver.provenance.producerRevision!==job.source_revision)
-      throw new SourceBuildVerificationError();
+    const {resolver}=await runSourceStage("verification",onStage,async()=>{
+      const resolver=await resolverArtifact(path.join(metadata,"resolver"));
+      if(catalog.producerRevision!==job.source_revision ||
+        runtime.producerRevision!==job.source_revision ||
+        catalog.runtimeBaseDigest!==runtimeDigest ||
+        catalog.buildKitDigest!==buildKitDigest ||
+        resolver.provenance.producerRevision!==job.source_revision)
+        throw new SourceBuildVerificationError();
+      return {resolver};
+    });
     const statement={
       schemaVersion:3 as const,jobId:job.job_id,githubReleaseId:job.github_release_id,
       sourceId:"scriptorium" as const,sourceRepository:"yohn-jp/scriptorium" as const,
@@ -429,9 +508,10 @@ export async function buildSourceRelease(
       resolverProvenanceDigest:resolver.provenanceDigest,
       nodeImage,buildEnvironmentDigest,
     };
-    let unsigned:SourceProducerResult;
-    try{
-      unsigned=SourceProducerResultSchema.parse({
+    const result=await runSourceStage("verification",onStage,async()=>{
+      let unsigned:SourceProducerResult;
+      try{
+        unsigned=SourceProducerResultSchema.parse({
         statement,
         signature:{algorithm:"Ed25519",keyId:config.signingKeyId,signature:"A".repeat(88)},
         catalog,runtimeMetadata:runtime,
@@ -441,12 +521,15 @@ export async function buildSourceRelease(
           contractVersion:catalog.contractVersion,
           provenanceDigest:resolver.provenanceDigest,
         },
+        });
+      }catch{throw new SourceBuildVerificationError();}
+      assertSourceProducerResultWithinBudget(unsigned);
+      return SourceProducerResultSchema.parse({
+        ...unsigned,
+        signature:await signSource(config,statement),
       });
-    }catch{throw new SourceBuildVerificationError();}
-    assertSourceProducerResultWithinBudget(unsigned);
-    return SourceProducerResultSchema.parse({
-      ...unsigned,
-      signature:await signSource(config,statement),
     });
+    await onStage(diagnostic("verification","completed"));
+    return result;
   }finally{await rm(root,{recursive:true,force:true,maxRetries:2,retryDelay:100});}
 }

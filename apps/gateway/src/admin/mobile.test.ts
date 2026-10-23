@@ -171,7 +171,7 @@ describe("mobile operator console", () => {
 
   it("shows full attempt evidence safely and places the revision-fenced retry in the detail action region", () => {
     const html = renderMobileConsole(model({ selectedBuildId: sourceJob.id }));
-    expect(html).toContain("Attempts and diagnostics");
+    expect(html).toContain("Attempt history and last reported stage");
     expect(html).toContain("buildkit");
     expect(html).toContain("BUILD_STEP_FAILED");
     expect(html).toContain("Compiler exited with a nonzero status.");
@@ -397,7 +397,7 @@ describe("mobile operator console", () => {
 it("filters only the current bounded build page and preserves navigation to older jobs and releases", () => {
   const builds = renderMobileConsole(model({ buildStateFilter: "building",
     builds: dependency({ items: [sourceJob], nextCursor: "older.page" }, "queue") }));
-  expect(builds).toContain("No Source builds on this page match this state filter.");
+  expect(builds).toContain("No Source builds match the selected state.");
   expect(builds).not.toContain('href="/builds/' + sourceJob.id);
   expect(builds).toContain('href="/builds?ui=mobile&amp;cursor=older.page&amp;state=building"');
   const releases = renderMobileConsole(model({ section: "releases",

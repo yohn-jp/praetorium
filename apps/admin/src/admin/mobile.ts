@@ -16,9 +16,11 @@ import {
 } from "./view-model.js";
 import type { PublishedSourceRelease, SourceReleaseView } from "./release-sources.js";
 import { MOBILE_ADMIN_STYLES } from "./mobile-styles.js";
+import { infrastructureOverview, renderInfrastructure } from "./infrastructure-view.js";
 
 const SECTIONS: readonly { readonly id: ConsoleSection; readonly label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "infrastructure", label: "Hosts" },
   { id: "releases", label: "Releases" },
   { id: "builds", label: "Builds" },
   { id: "audit", label: "Audit" },
@@ -83,6 +85,8 @@ function modeHref(model: ConsoleViewModel, mode: "desktop" | "mobile"): string {
   if (model.selectedReleaseId) {
     return "/releases/" + encodeURIComponent(model.selectedReleaseId) + "?ui=" + mode;
   }
+  if (model.selectedHostId) return "/infrastructure/hosts/" + encodeURIComponent(model.selectedHostId) + "?ui=" + mode;
+  if (model.dependenciesSelected) return "/infrastructure/dependencies?ui=" + mode;
   return model.selectedBuildId
     ? buildHref(model.selectedBuildId, mode)
     : consoleHref(model.section, mode);
@@ -900,8 +904,9 @@ function content(model: ConsoleViewModel): string {
   if (model.section === "overview")
     return (
       pageHeading("Overview", "Operator status and the next safe Source build action.") +
-      overview(model)
+      infrastructureOverview(model) + overview(model)
     );
+  if (model.section === "infrastructure") return renderInfrastructure(model, true);
   if (model.section === "releases") return releases(model);
   if (model.section === "builds") return builds(model);
   return audit(model);

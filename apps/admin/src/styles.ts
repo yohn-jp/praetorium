@@ -1,6 +1,7 @@
 import { ADMIN_STYLES } from "./admin/styles.js";
 import { DESKTOP_ADMIN_STYLES } from "./admin/desktop-styles.js";
 import { MOBILE_ADMIN_STYLES } from "./admin/mobile-styles.js";
+import { INFRASTRUCTURE_STYLES } from "./admin/infrastructure-view.js";
 export const PORTAL_STYLES = `
 :root { color-scheme:light; font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif; color:#17372f; background:#f3f5f0; font-synthesis:none; --ink:#17372f; --muted:#596f66; --line:#d6e1da; --surface:#fff; --surface-soft:#eef2ed; --brand:#235d4b; --brand-dark:#174937; --good:#146447; --good-soft:#e5f2e9; --warn:#885421; --warn-soft:#fff6e6; --bad:#a44337; --bad-soft:#fff0f0; }
 * { box-sizing:border-box; }
@@ -107,6 +108,6 @@ body[data-ui="mobile"] .form-grid { grid-template-columns:1fr; }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation:none!important; transition:none!important; } }
 `;
 export function adminStyles(mode: "desktop" | "mobile"): string {
-  return PORTAL_STYLES + ADMIN_STYLES +
+  return PORTAL_STYLES + ADMIN_STYLES + INFRASTRUCTURE_STYLES +
     (mode === "mobile" ? MOBILE_ADMIN_STYLES : DESKTOP_ADMIN_STYLES);
 }

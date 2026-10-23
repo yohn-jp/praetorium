@@ -27,6 +27,7 @@ export interface AdminEnv {
   readonly GATEWAY_ORIGIN?: string;
   readonly ADMIN_CONTROL_PLANE_AUTH?: string;
   readonly INFRASTRUCTURE?: Fetcher;
+  readonly ADMIN_OBSERVER_AUTH?: string;
 }
 
 export interface AdminContext {

@@ -1,7 +1,8 @@
 import type { SourceBuildDetail, SourceBuildSummary } from "@praetorium/contracts";
 import type { SourceReleaseView } from "./release-sources.js";
+import type { InfraDependencies, InfraHosts, InfraServices, HostObservation } from "../infrastructure.js";
 
-export type ConsoleSection = "overview" | "releases" | "builds" | "audit";
+export type ConsoleSection = "overview" | "infrastructure" | "releases" | "builds" | "audit";
 export type ConsoleMode = "desktop" | "mobile";
 export interface ConsoleDependency<T> {
   readonly endpoint: string;
@@ -50,6 +51,12 @@ export interface ConsoleViewModel {
   readonly buildStateFilter: string | null;
   readonly buildSort?: "recent" | "source" | "state" | "attempt";
   readonly auditQuery: string;
+  readonly infrastructure?: ConsoleDependency<InfraHosts> | null;
+  readonly selectedHostId?: string | null;
+  readonly hostDetail?: ConsoleDependency<HostObservation> | null;
+  readonly hostServices?: ConsoleDependency<InfraServices> | null;
+  readonly dependenciesSelected?: boolean;
+  readonly dependencies?: ConsoleDependency<InfraDependencies> | null;
 }
 export function consoleHref(section: ConsoleSection, mode: ConsoleMode): string {
   return (section === "overview" ? "/" : "/" + section) + "?ui=" + mode;

@@ -100,7 +100,7 @@ body:has(.admin-mobile-console) .page-shell{padding:0;max-width:none;min-height:
 .admin-mobile-audit-list p{margin:5px 0 0;color:#647c6c;font-size:13px;overflow-wrap:anywhere}
 .admin-mobile-footer{padding:13px 16px 18px;border-top:1px solid #d6e1da;color:#748979;font-size:11px;text-align:center}
 .admin-mobile-tabs{position:fixed;inset:auto 0 0;z-index:20;min-height:72px;padding:4px max(8px,env(safe-area-inset-right)) calc(5px + env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));border-top:1px solid #cbd9cf;background:#fdfefb;box-shadow:0 -7px 24px #153c2f14}
-.admin-mobile-tabs ul{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;max-width:640px;min-height:60px;margin:0 auto;padding:0;list-style:none}
+.admin-mobile-tabs ul{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));width:100%;max-width:640px;min-height:60px;margin:0 auto;padding:0;list-style:none}
 .admin-mobile-tabs li{min-width:0}
 .admin-mobile-tabs a{display:flex;min-width:0;min-height:56px;align-items:center;justify-content:center;padding:5px 2px;border-radius:7px;color:#678071;font-size:12px;font-weight:650;text-align:center;text-decoration:none;overflow-wrap:anywhere}
 .admin-mobile-tabs a:hover,.admin-mobile-tabs a:focus-visible{color:#153c2f}

@@ -8,9 +8,11 @@ import {
   type ConsoleRelease, type ConsoleSection, type ConsoleViewModel,
 } from "./view-model.js";
 import type { PublishedSourceRelease, SourceReleaseView } from "./release-sources.js";
+import { infrastructureOverview, renderInfrastructure } from "./infrastructure-view.js";
 
 const SECTIONS: readonly { readonly id: ConsoleSection; readonly label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "infrastructure", label: "Infrastructure" },
   { id: "releases", label: "Releases" },
   { id: "builds", label: "Builds" },
   { id: "audit", label: "Audit" },
@@ -128,7 +130,7 @@ function overview(model: ConsoleViewModel): string {
   const blocked = releases.filter((item) => ["blocked", "failed"].includes(item.workflow?.workflow.state ?? "")).length;
   return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">OPERATOR / CONTROL PLANE</p>` +
     `<h1>Overview</h1><p>See current release health, active work, and actionable failures.</p></section>` +
-    notice(model.notice) + stablePanel(model) +
+    notice(model.notice) + infrastructureOverview(model) + stablePanel(model) +
     `<section class="desktop-section" aria-labelledby="desktop-incidents-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">NEEDS ATTENTION</p><h2 id="desktop-incidents-title">Active incidents</h2></div>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Open Builds</a></div>` +
@@ -476,6 +478,7 @@ function audit(model: ConsoleViewModel): string {
 
 function sectionContent(model: ConsoleViewModel): string {
   if (model.section === "overview") return overview(model);
+  if (model.section === "infrastructure") return renderInfrastructure(model);
   if (model.section === "releases")
     return model.selectedReleaseId ? releaseDetail(model) : releases(model);
   if (model.section === "audit") return audit(model);
@@ -488,6 +491,8 @@ function modeHref(model: ConsoleViewModel, mode: ConsoleViewModel["mode"]): stri
   if (selectedReleaseId && model.section === "releases")
     return `/releases/${encodeURIComponent(selectedReleaseId)}?ui=${mode}`;
   if (model.selectedBuildId) return buildHref(model.selectedBuildId, mode);
+  if (model.selectedHostId) return "/infrastructure/hosts/" + encodeURIComponent(model.selectedHostId) + "?ui=" + mode;
+  if (model.dependenciesSelected) return "/infrastructure/dependencies?ui=" + mode;
   return consoleHref(model.section, mode);
 }
 

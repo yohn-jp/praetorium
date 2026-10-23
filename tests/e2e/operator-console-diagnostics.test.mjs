@@ -386,18 +386,26 @@ test("operator console browser diagnostics contract uses local fixture data", { 
     };
 
     browser = await chromium.launch(await browserLaunchOptions());
-    const context = await browser.newContext({ serviceWorkers: "block" });
+    const context = await browser.newContext({ serviceWorkers: "block", hasTouch: true });
     currentPage = await context.newPage();
     currentPage.setDefaultTimeout(8_000);
     const consoleErrors = [];
     currentPage.on("pageerror", (error) => consoleErrors.push(error.message));
 
     async function runBuildJourney(mode, width) {
+      const activate = async (locator) => {
+        if (mode === "mobile") await locator.tap();
+        else { await locator.focus(); await currentPage.keyboard.press("Enter"); }
+      };
       await currentPage.setViewportSize({ width, height: mode === "mobile" ? 900 : 1000 });
       await currentPage.goto(`${serverFixture.origin}/releases?ui=${mode}`, { waitUntil: "domcontentloaded" });
       await currentPage.getByRole("heading", { name: "Releases", exact: true }).waitFor();
       assert.equal(await currentPage.getByRole("navigation", { name: "Operator sections" }).count(), 1);
-      await currentPage.getByRole("button", { name: "Build & deploy" }).click();
+      await currentPage.keyboard.press("Tab");
+      assert.equal(await currentPage.locator(":focus").innerText(), "Skip to main content");
+      await currentPage.keyboard.press("Enter");
+      assert.equal(new URL(currentPage.url()).hash, "#main-content");
+      await activate(currentPage.getByRole("button", { name: "Build & deploy" }));
       await currentPage.waitForURL((url) => url.pathname === `/builds/${JOB_ID}` &&
         url.searchParams.get("ui") === mode && url.searchParams.get("notice") !== null);
       assert.match(await currentPage.locator("body").innerText(), /Source build queued/i);
@@ -430,9 +438,9 @@ test("operator console browser diagnostics contract uses local fixture data", { 
           mainTop: main?.getBoundingClientRect().top ?? null,
         };
       });
-      await currentPage.getByRole("button", { name: "Retry Source build" }).click();
+      await activate(currentPage.getByRole("button", { name: "Retry Source build" }));
       await currentPage.waitForURL((url) => url.pathname === `/builds/${JOB_ID}` &&
-        url.searchParams.get("ui") === mode && url.searchParams.get("notice") !== null);
+        url.searchParams.get("ui") === mode && url.searchParams.get("notice") === "Source retry accepted for " + JOB_ID);
       assert.match(await currentPage.locator("body").innerText(), /retry accepted/i);
       assert.match(await currentPage.locator("body").innerText(), /BuildKit failed <img src=x/i);
       const afterNotice = await currentPage.evaluate(() => {
@@ -476,7 +484,7 @@ test("operator console browser diagnostics contract uses local fixture data", { 
       await currentPage.getByText("admitted", { exact: true }).waitFor();
       assert.match(await currentPage.locator("body").innerText(), /source-attempt-failed-1/);
       assert.match(await currentPage.locator("body").innerText(), /source-attempt-produced-2/);
-      await currentPage.locator(`a[href="/releases/rel_v033?ui=${mode}"]`).click();
+      await activate(currentPage.locator(`a[href="/releases/rel_v033?ui=${mode}"]`));
       await currentPage.getByRole("heading", {
         name: mode === "desktop" ? "Release 0.3.3" : "0.3.3",
         exact: true,
@@ -485,6 +493,7 @@ test("operator console browser diagnostics contract uses local fixture data", { 
       assert.match(await currentPage.locator("body").innerText(), /promoted/i);
       assert.equal(await currentPage.locator("pre").count(), 0, "release status must remain typed, not raw JSON");
       result.states.push(`${mode}: admitted build follows canonical release status`);
+      result.states.push(`${mode}: ${mode === "mobile" ? "touch" : "keyboard"} activation passed`);
     }
 
     await runBuildJourney("desktop", 1440);

@@ -105,3 +105,44 @@ verification/completed, while preserving older not_recorded attempts.
 
 No PR merge was performed. This PR carries regression coverage and the operational
 record; its runtime correction was already present on main and is now deployed.
+
+## User-portal availability blocker: controller field management
+
+After the owner asked for a usable user application, the actual target was
+identified as repository 1289100245 (`yohn-jp/white-sigil`), instance
+`ins_01M56ESQH0YF3R4NX0X2AB8HG5`. It has Follow stable policy and no configuration
+or runtime. The approved release list is empty while the new release remains a
+candidate; resource profiles come from that approved catalog.
+
+Canary composition succeeded, but the canary redeploy stalled during retirement.
+A read-only server dry-run reproduced HTTP 409: field ownership conflict with
+manager `unknown` on `.spec.replicas`. Under the owner's explicit authorization
+of destructive redeployment, only the disposable canary's old Deployment and
+then empty namespace were deleted with owner/UID/resourceVersion checks.
+The regular lifecycle then recorded actual writer absence and started epoch 4 /
+generation 7. Its operation `op_01M5MVBEX1H040C6D3WBGNT91A` succeeded with normal
+application, valid/invalid auth, UI/API/MCP and persistence probe evidence.
+Public HTTPS liveness/readiness both returned 200. Initial continuous canary
+health evidence began at 2026-10-23T17:27:20.692Z; this is not Stable approval.
+
+Importantly, newly created resources also have POST/Update field ownership.
+Simply recreating them, or assigning the same manager name on POST, does not
+solve their later unforced SSA ownership conflict. This is a reproducible code
+issue, not just old infrastructure drift.
+
+The minimal provider correction opts into field transfer only on conditional
+updates after its existing namespace/cluster/repository ownership, generation /
+epoch, resource shape and live operation checks. The API client's default remains
+non-forced, resourceVersion CAS remains mandatory, and create-only POST/race
+handling stays unchanged. This matches Kubernetes' documented controller policy
+for [resources they own and manage](https://kubernetes.io/docs/reference/using-api/server-side-apply/#using-server-side-apply-in-a-controller).
+No ownership/admission/lease/absence guard was removed.
+
+Verification: complete frozen install/workspace check passed. Added provider
+regressions cover exact-epoch owned stop and refusal for foreign repository,
+newer epoch and lost effect guard. A real-cluster check used two explicitly owned
+disposable ConfigMaps (no Pods): the existing unforced update returned 409, the
+conditional owned update succeeded, and a stale resourceVersion still returned
+409 without changing data. Both ConfigMaps were UID-conditionally deleted.
+This validates the field-management primitive; deployment of this new provider
+code and final Stable/user-application acceptance remain pending.

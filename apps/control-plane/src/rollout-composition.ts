@@ -179,6 +179,10 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     authorize: deps.authorizeOperator,
     stableChannel: () => releases.getStableChannel(),
     listAuditPage: (query) => readOperatorAudit(deps.db, query),
+    skipCanaryWait: {
+      replay: command => releases.findCanaryWaitSkip(command),
+      execute: command => releases.skipCanaryWait(command),
+    },
     retry: {
       status: (releaseId) => releases.getReleaseRetryStatus(releaseId),
       replay: (command) => releases.findPreRuntimeCanaryRetry(command),

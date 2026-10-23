@@ -55,7 +55,7 @@ describe("desktop operator composition", () => {
     expect(html).toContain('<option value="failed" selected>failed</option>');
     expect(html).toContain("v0.3.3");
     expect(html).toContain("a".repeat(40));
-    expect(html).toContain("Inspect failure / retry");
+    expect(html).toContain("View diagnostics and recovery");
   });
 
   it("shows attempt-scoped evidence and emits only the canonical revision-fenced retry fields", () => {
@@ -90,7 +90,7 @@ describe("desktop operator composition", () => {
       detail: dependency("GET /v1/operator/source-builds/:id", detail),
     }));
 
-    expect(html).toContain("Attempts and last recorded stage");
+    expect(html).toContain("Attempt history and last reported stage");
     expect(html).toContain("buildkit");
     expect(html).toContain("View sanitized diagnostic excerpt");
     expect(html).toContain("Sanitized phase: &lt;script&gt;untrusted&lt;/script&gt;");
@@ -236,8 +236,8 @@ describe("desktop operator composition", () => {
 
 it("keeps bounded build and release pages reachable while preserving the selected state and sort", () => {
   const builds = renderDesktopConsole(view({ buildStateFilter: "building", buildSort: "state",
-    builds: dependency("queue", { items: [job], nextCursor: "older.page" }) }));
-  expect(builds).toContain("No Source builds on this page match this state filter.");
+    builds: dependency("queue", { items: [], nextCursor: "older.page" }) }));
+  expect(builds).toContain("No Source builds match the selected state.");
   expect(builds).toContain('href="/builds?ui=desktop&amp;sort=state&amp;cursor=older.page&amp;state=building"');
   expect(builds).not.toContain('href="/builds/' + job.id);
   const releases = renderDesktopConsole(view({ section: "releases",

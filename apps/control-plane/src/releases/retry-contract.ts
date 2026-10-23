@@ -37,3 +37,8 @@ export type ReleaseRetryResult =
   | { readonly kind: "accepted"; readonly duplicate: boolean; readonly status: ReleaseRetryStatus }
   | { readonly kind: "not_found" }
   | { readonly kind: "conflict"; readonly reason: string };
+
+/** Skips elapsed soak time only; successful real Canary evidence is still required. */
+export type CanaryWaitSkipCommand = Omit<ReleaseRetryCommand, "canary"> & {
+  readonly reason: string;
+};

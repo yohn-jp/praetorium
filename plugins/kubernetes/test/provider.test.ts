@@ -167,6 +167,9 @@ function hostedSpec(epoch = 1, generation = 1, proof = unsignedProof(800)): Runn
 }
 
 class FakeKubernetesApi implements KubernetesApi {
+  readonly conditionalWrites: Array<{
+    resource: KubernetesResource; fieldManager: string; resourceVersion: string; force: boolean;
+  }> = [];
   readonly objects = new Map<string, unknown>();
   readonly namespaces = new Map<string, unknown>();
   readonly writes: string[] = [];
@@ -275,7 +278,11 @@ class FakeKubernetesApi implements KubernetesApi {
     return this.put(resource.kind, resource.metadata.namespace, resource.metadata.name, resource);
   }
 
-  async applyConditional(resource: KubernetesResource): Promise<unknown> {
+  async applyConditional(
+    resource: KubernetesResource, fieldManager: string, resourceVersion: string,
+    _signal?: AbortSignal, options?: { readonly force?: boolean },
+  ): Promise<unknown> {
+    this.conditionalWrites.push({ resource, fieldManager, resourceVersion, force: options?.force ?? false });
     return this.put(resource.kind, resource.metadata.namespace, resource.metadata.name, resource);
   }
 
@@ -484,6 +491,50 @@ function reservation(
 }
 
 describe("Kubernetes runtime provider", () => {
+
+  it("transfers fields only for an owned exact-epoch stop using resourceVersion and a live effect guard", async () => {
+    const api = new FakeKubernetesApi();
+    api.namespaces.set(NAMESPACE, ownedTenantNamespace());
+    api.objects.set(key("Deployment", NAMESPACE, DEPLOYMENT), {
+      apiVersion: "apps/v1", kind: "Deployment",
+      metadata: {
+        name: DEPLOYMENT, namespace: NAMESPACE, uid: "owned-deployment", resourceVersion: "17",
+        labels: { ...managedLabels({ ...identity(), releaseId: RELEASE_ID }),
+          "arcadia.io/runtime-cluster-id": CLUSTER_ID },
+      },
+      spec: { replicas: 1 },
+    });
+    let guarded = false;
+    await provider(api).ensureStopped(spec(), new AbortController().signal, () => { guarded = true; });
+    expect(guarded).toBe(true);
+    expect(api.conditionalWrites).toHaveLength(1);
+    expect(api.conditionalWrites[0]).toMatchObject({
+      fieldManager: "arcadia-provisioner", resourceVersion: "17", force: true,
+      resource: { kind: "Deployment", spec: { replicas: 0 } },
+    });
+  });
+
+  it.each(["foreign repository", "newer epoch", "lost operation fence"])(
+    "does not transfer fields for a stop with %s", async (reason) => {
+      const api = new FakeKubernetesApi();
+      api.namespaces.set(NAMESPACE, ownedTenantNamespace());
+      api.objects.set(key("Deployment", NAMESPACE, DEPLOYMENT), {
+        apiVersion: "apps/v1", kind: "Deployment",
+        metadata: {
+          name: DEPLOYMENT, namespace: NAMESPACE, uid: "guarded-deployment", resourceVersion: "17",
+          labels: { ...managedLabels({ ...identity(reason === "newer epoch" ? 2 : 1),
+            repositoryId: reason === "foreign repository" ? parseRuntimeRepositoryId(732) : REPOSITORY_ID,
+            releaseId: RELEASE_ID }), "arcadia.io/runtime-cluster-id": CLUSTER_ID },
+        },
+        spec: { replicas: 1 },
+      });
+      await expect(provider(api).ensureStopped(spec(), new AbortController().signal, () => {
+        if (reason === "lost operation fence") throw new Error("lease no longer owned");
+      })).rejects.toThrow();
+      expect(api.conditionalWrites).toHaveLength(0);
+    },
+  );
+
   it("creates the exact tenant image pull Secret before referencing it from the Deployment", async () => {
     const api = new FakeKubernetesApi();
     api.addNode();

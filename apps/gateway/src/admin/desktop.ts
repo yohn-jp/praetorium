@@ -1,10 +1,11 @@
 import { generateToken } from "@praetorium/auth";
+import { canaryWaitSkipForm } from "./canary-wait-action.js";
 import type {
   SourceBuildAttempt, SourceBuildDetail, SourceBuildSummary,
 } from "@praetorium/contracts";
 import { escapeHtml } from "../ui/presentation.js";
 import {
-  buildHref, consoleHref, type ConsoleDependency,
+  buildHref, consoleHref, operationHref, type ConsoleDependency,
   type ConsoleRelease, type ConsoleSection, type ConsoleViewModel,
 } from "./view-model.js";
 import type { PublishedSourceRelease, SourceReleaseView } from "./release-sources.js";
@@ -262,7 +263,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     notice(model.notice) +
     `<section class="desktop-job-summary" aria-labelledby="desktop-release-summary-title"><div class="desktop-job-heading">` +
     `<div><p class="desktop-eyebrow">AUTHORITATIVE WORKFLOW</p><h2 id="desktop-release-summary-title">${badge(humanize(workflow.state), workflow.state)}</h2>` +
-    `<code>${escapeHtml(value.release.id)}</code></div><div>${retry}</div></div>` +
+    `<code>${escapeHtml(value.release.id)}</code></div><div>${retry}${canaryWaitSkipForm(value, model.csrf, model.mode)}</div></div>` +
     `<dl class="desktop-facts desktop-job-facts"><div><dt>Release status</dt><dd>${badge(humanize(value.release.status), value.release.status)}</dd></div>` +
     `<div><dt>Workflow revision</dt><dd>${workflow.revision}</dd></div><div><dt>Workflow attempts</dt><dd>${workflow.attempts}</dd></div>` +
     `<div class="desktop-fact-wide"><dt>Immutable OCI digest</dt><dd><code>${escapeHtml(value.release.imageDigest)}</code></dd></div>` +
@@ -272,9 +273,9 @@ function releaseDetail(model: ConsoleViewModel): string {
       ? `${badge(humanize(build.status), build.status)} <span>${escapeHtml(build.id)}</span> · ${build.attemptCount} attempts`
       : "No Canary build is attached"}</dd></div>` +
     `<div><dt>Canary build key</dt><dd>${escapeHtml(workflow.canaryBuildKey ?? "Not recorded")}</dd></div>` +
-    `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId
-      ? `<a href="/operations/${encodeURIComponent(workflow.canaryOperationId)}?ui=${model.mode}">${escapeHtml(workflow.canaryOperationId)}</a>`
-      : "Not recorded"}</dd></div></dl></section>` +
+    `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(workflow.canaryOperationId)
+  ? `<a href="${escapeHtml(operationHref(workflow.canaryOperationId, model.mode))}">${escapeHtml(workflow.canaryOperationId)}</a>`
+  : escapeHtml(workflow.canaryOperationId ?? "Not recorded")}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-release-followthrough-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">SAFE FOLLOW-THROUGH</p><h2 id="desktop-release-followthrough-title">Canary and Stable progression</h2></div>` +
     `<a class="desktop-button desktop-button-secondary" href="/releases/${encodeURIComponent(value.release.id)}?ui=${model.mode}">Refresh status</a></div>` +
@@ -304,22 +305,12 @@ function sortLabel(sort: BuildSort): string {
   }
 }
 
-function sortBuilds(items: readonly SourceBuildSummary[], sort: BuildSort): SourceBuildSummary[] {
-  if (sort === "recent") return [...items];
-  return [...items].sort((left, right) => {
-    if (sort === "source") return `${left.sourceId}/${left.tag}`.localeCompare(`${right.sourceId}/${right.tag}`);
-    if (sort === "state") return left.state.localeCompare(right.state) || right.attempt - left.attempt;
-    return right.attempt - left.attempt || right.revision - left.revision;
-  });
-}
-
 function buildTable(model: ConsoleViewModel): string {
   if (!model.builds.value) return dependencyUnavailable("Source build queue", model.builds);
   const sort = buildSort(model);
-  const filtered = model.builds.value.items.filter((job) => !model.buildStateFilter || job.state === model.buildStateFilter);
-  const jobs = sortBuilds(filtered, sort);
-  if (!jobs.length) return `<p class="desktop-empty">${model.builds.value.items.length
-    ? "No Source builds on this page match this state filter."
+  const jobs = model.builds.value.items; // Server filters and orders before LIMIT.
+  if (!jobs.length) return `<p class="desktop-empty">${model.buildStateFilter
+    ? "No Source builds match the selected state."
     : "No Source builds are available on this page."}</p>`;
   const header = (name: string, key: BuildSort) => `<th scope="col"${sort === key ? ` aria-sort="${["source", "state"].includes(sort) ? "ascending" : "descending"}"` : ""}>` +
     `<a href="${buildSortHref(model, key)}">${escapeHtml(name)}${sort === key ? '<span class="desktop-sr-only">, current sort</span>' : ""}</a></th>`;
@@ -334,7 +325,7 @@ function buildTable(model: ConsoleViewModel): string {
       (job.admittedReleaseId ? `<span class="desktop-table-identity">Admitted Platform release</span>` +
         `<a class="desktop-platform-release-link" href="/releases/${encodeURIComponent(job.admittedReleaseId)}?ui=${model.mode}">${escapeHtml(job.admittedReleaseId)}</a>` : "") +
       `</td><td>${job.state === "failed"
-        ? job.retryable ? `<a class="desktop-policy-available" href="${escapeHtml(buildHref(job.id, model.mode))}">Inspect failure / retry</a>` : `<span class="desktop-muted">Retry not permitted</span>`
+        ? job.retryable ? `<a class="desktop-policy-available" href="${escapeHtml(buildHref(job.id, model.mode))}">View diagnostics and recovery</a>` : `<span class="desktop-muted">Retry not permitted</span>`
         : `<span class="desktop-muted">Not applicable</span>`}</td></tr>`).join("") + `</tbody></table></div>`;
 }
 
@@ -355,7 +346,7 @@ function builds(model: ConsoleViewModel): string {
       `<option value="${value}"${state === value ? " selected" : ""}>${escapeHtml(humanize(value))}</option>`).join("")}</select>` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Apply filter</button></form>` + buildTable(model) +
     (cursor ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="/builds?${escapeHtml(nextQuery.toString())}">Older builds</a></p>` : "") +
-    `<p class="desktop-table-footnote">State filtering applies across the queue; sorting applies to the displayed page. A queued job is accepted work. Status unavailable means the queue dependency did not respond; it does not mean a build failed.</p></section>`;
+    `<p class="desktop-table-footnote">Filters and sorting apply to the entire Source queue before pagination. A queued job is accepted work. Status unavailable means the queue dependency did not respond; it does not mean a build failed.</p></section>`;
 }
 
 function attemptStateLabel(attempt: SourceBuildAttempt): string {
@@ -424,13 +415,23 @@ function buildDetail(model: ConsoleViewModel): string {
   const job = detail.job;
   if (model.selectedBuildId && model.selectedBuildId !== job.id)
     return `<p class="desktop-unavailable" role="status">Build detail is unavailable because the returned job identity did not match the requested job.</p>`;
+  const recent = [...detail.attempts].sort((a,b)=>b.leaseEpoch-a.leaseEpoch)[0];
+  const reason = recent?.diagnostic?.summary ?? (recent?.evidence === "expired"
+    ? "Diagnostic evidence expired. The failure cause is unavailable."
+    : "Diagnostic evidence was not recorded. Confirm Worker delivery before attempting another build.");
+  const incident = job.state === "failed" ?
+    `<section class="desktop-section" aria-labelledby="desktop-build-incident"><p class="desktop-eyebrow">INVESTIGATE FIRST</p>` +
+    `<h2 id="desktop-build-incident">Failure: ${escapeHtml(job.error ?? "Unknown")}</h2>` +
+    `<p>${escapeHtml(reason)}</p><p>Last recorded stage: ${escapeHtml(recent?.stage ?? "unknown")}` +
+    ` · Evidence: ${escapeHtml(recent?.evidence ?? "not_recorded")}</p>` +
+    `<a class="desktop-text-link" href="#desktop-attempts-title">Inspect recorded attempt</a></section>` : "";
   return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">BUILD DETAIL / ${escapeHtml(job.id)}</p>` +
     `<h1>${escapeHtml(job.sourceId)} / ${escapeHtml(job.tag)}</h1><p>Attempt history and bounded diagnostics for this immutable Source job.</p>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Back to Builds</a> ` +
-    `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) +
+    `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) + incident +
     `<section class="desktop-job-summary" aria-labelledby="desktop-job-summary-title"><div class="desktop-job-heading">` +
     `<div><p class="desktop-eyebrow">AUTHORITATIVE JOB STATE</p><h2 id="desktop-job-summary-title">${badge(humanize(job.state), job.state)}</h2>` +
-    `<code>${escapeHtml(job.id)}</code></div><div>${retryForm(job, model)}</div></div>` +
+    `<code>${escapeHtml(job.id)}</code></div></div>` +
     `<dl class="desktop-facts desktop-job-facts"><div><dt>Source</dt><dd>${escapeHtml(job.sourceId)}</dd></div>` +
     `<div><dt>Published tag</dt><dd>${escapeHtml(job.tag)}</dd></div><div><dt>Version</dt><dd>${escapeHtml(job.version)}</dd></div>` +
     `<div><dt>GitHub Release ID</dt><dd>${job.releaseId}</dd></div><div class="desktop-fact-wide"><dt>Immutable source commit</dt><dd><code>${escapeHtml(job.commit)}</code></dd></div>` +
@@ -440,25 +441,28 @@ function buildDetail(model: ConsoleViewModel): string {
       ? `<a class="desktop-text-link" href="/releases/${encodeURIComponent(job.admittedReleaseId)}?ui=${model.mode}">Open Platform release ${escapeHtml(job.admittedReleaseId)}</a>`
       : "Not admitted"}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-attempts-title"><div class="desktop-section-heading">` +
-    `<div><p class="desktop-eyebrow">RECORDED EXECUTION</p><h2 id="desktop-attempts-title">Attempts and last recorded stage</h2></div></div>` +
-    `<p class="desktop-section-intro">Each entry records the last known stage, not every intermediate stage. Missing evidence is shown as unavailable.</p>` +
+    `<div><p class="desktop-eyebrow">RECORDED EXECUTION</p><h2 id="desktop-attempts-title">Attempt history and last reported stage</h2></div></div>` +
+    `<p class="desktop-section-intro">Each entry is tied to its attempt revision and lease epoch. Missing evidence is shown as unavailable.</p>` +
     attemptTimeline(detail) +
     (detail.nextCursor ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}&amp;cursor=${encodeURIComponent(detail.nextCursor)}">Older attempts</a></p>` : "") +
-    `</section>`;
+    `</section>` + (job.state === "failed" ? `<section class="desktop-section" aria-label="Source retry after investigation">${retryForm(job, model)}</section>` : "");
 }
 
 function audit(model: ConsoleViewModel): string {
   if (!model.audit.value) return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">OPERATOR ACTION HISTORY</p><h1>Audit</h1></section>` +
     notice(model.notice) + dependencyUnavailable("Operator audit", model.audit);
-  const query = model.auditQuery.trim().toLocaleLowerCase();
-  const events = model.audit.value.events.filter((event) => !query ||
-    [event.actorId, event.jobId, event.failureCode, event.action, event.outcome, dateTime(event.occurredAt)].some((value) => value?.toLocaleLowerCase().includes(query)));
-  const rows = events.length ? events.map((event) => `<tr><td>${escapeHtml(dateTime(event.occurredAt))}</td>` +
-    `<th scope="row">${escapeHtml(event.action)}</th><td>${badge(humanize(event.outcome), event.outcome)}</td>` +
-    `<td>${escapeHtml(event.actorId ?? "System")}</td><td>${event.jobId
-      ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>`
-      : "—"}${event.failureCode ? ` <small>${escapeHtml(event.failureCode)}</small>` : ""}
-      ${event.leaseEpoch !== null && event.leaseEpoch !== undefined ? ` <small>Epoch ${event.leaseEpoch}</small>` : ""}</td></tr>`).join("") : "";
+  const events = model.audit.value.events; // Authenticated Control Plane already filtered this page.
+  const rows = events.length ? events.map((event) => {
+    const target = event.jobId ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>`
+      : event.releaseId ? `<a href="/releases/${encodeURIComponent(event.releaseId)}?ui=${model.mode}">${escapeHtml(event.releaseId)}</a>`
+      : event.operationId ? `<code>${escapeHtml(event.operationId)}</code>` : "No linked target";
+    const evidence = [event.failureCode, event.revision == null ? null : "revision " + event.revision,
+      event.leaseEpoch == null ? null : "epoch " + event.leaseEpoch].filter(Boolean).join(" · ");
+    return `<tr><td>${escapeHtml(dateTime(event.occurredAt))}</td>` +
+      `<th scope="row">${escapeHtml(event.action)}</th><td>${badge(humanize(event.outcome), event.outcome)}</td>` +
+      `<td>${target}${evidence ? `<div class="desktop-muted">${escapeHtml(evidence)}</div>` : ""}</td>` +
+      `<td>${escapeHtml(event.actorId ?? "System")}</td></tr>`;
+  }).join("") : "";
   const cursor = model.audit.value.nextCursor;
   const nextQuery = new URLSearchParams({ ui: model.mode });
   if (cursor && cursor.length <= 512) nextQuery.set("cursor", cursor);
@@ -471,7 +475,7 @@ function audit(model: ConsoleViewModel): string {
     `<label for="desktop-audit-query">Search audit events</label><input id="desktop-audit-query" name="q" type="search" maxlength="100" value="${escapeHtml(model.auditQuery)}">` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Search</button></form>` +
     (events.length ? `<div class="desktop-table-scroll"><table class="desktop-audit-table"><caption class="desktop-sr-only">${events.length} audit events on this page</caption>` +
-      `<thead><tr><th scope="col">Time (UTC)</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Actor</th><th scope="col">Source job</th></tr></thead>` +
+      `<thead><tr><th scope="col">Time (UTC)</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Target / evidence</th><th scope="col">Actor</th></tr></thead>` +
       `<tbody>${rows}</tbody></table></div>` : `<p class="desktop-empty">${model.audit.value.events.length
         ? "No events on this page match the search."
         : "No operator events are recorded on this page."}</p>`) +
@@ -479,28 +483,28 @@ function audit(model: ConsoleViewModel): string {
     `</section>`;
 }
 
-function operationEvidence(model: ConsoleViewModel): string {
-  const section=model.operationDetail;
-  if(!section?.value) return section ? dependencyUnavailable("Operation evidence",section)
-    : '<p role="status">Operation evidence unavailable.</p>';
-  const {operation,rollbackCompatible,readinessEvidence}=section.value;
-  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">CANARY OPERATION</p>
-    <h1>Operation ${escapeHtml(operation.id)}</h1>
-    <p>Read-only evidence from the existing Control Plane authority.</p>
-    <a class="desktop-text-link" href="/releases?ui=${model.mode}">Back to Releases</a></section>
-    <section class="desktop-section"><h2>Execution state</h2><dl class="desktop-facts">
-    <div><dt>Instance</dt><dd>${escapeHtml(operation.instanceId)}</dd></div>
-    <div><dt>State</dt><dd>${escapeHtml(operation.status)}</dd></div>
-    <div><dt>Phase</dt><dd>${escapeHtml(operation.phase)}</dd></div>
-    <div><dt>Kind</dt><dd>${escapeHtml(operation.kind)}</dd></div>
-    <div><dt>Generation</dt><dd>${operation.generation}</dd></div>
-    <div><dt>Runtime epoch</dt><dd>${operation.runtimeEpoch}</dd></div>
-    <div><dt>Rollback compatible</dt><dd>${rollbackCompatible===null?"Not checked":rollbackCompatible?"Yes":"No"}</dd></div>
-    <div><dt>Readiness evidence</dt><dd>${readinessEvidence===null?"Not recorded":"Validated record available"}</dd></div>
-    </dl></section>`;
+function operationDetail(model: ConsoleViewModel): string {
+  const dependency=model.operationDetail;
+  const detail=dependency?.value;
+  if(!detail)return `<section class="desktop-operator-heading"><h1>Operation evidence unavailable</h1></section>` +
+    (dependency ? dependencyUnavailable("Operation evidence", dependency) : "No operation selected.");
+  if(detail.operation.id!==model.selectedOperationId)
+    return `<p class="desktop-unavailable" role="status">Operation identity mismatch.</p>`;
+  const op=detail.operation;
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">CANARY / RUNTIME OPERATION</p>` +
+    `<h1>Operation ${escapeHtml(op.id)}</h1><a class="desktop-text-link" href="${consoleHref("releases", model.mode)}">Back to Releases</a></section>` +
+    `<section class="desktop-section"><h2>${badge(humanize(op.status), op.status)} · ${escapeHtml(op.phase)}</h2>` +
+    `<dl class="desktop-facts"><div><dt>Instance</dt><dd><code>${escapeHtml(op.instanceId)}</code></dd></div>` +
+    `<div><dt>Kind</dt><dd>${escapeHtml(op.kind)}</dd></div><div><dt>Generation</dt><dd>${op.generation}</dd></div>` +
+    `<div><dt>Runtime epoch</dt><dd>${op.runtimeEpoch}</dd></div><div><dt>Attempt</dt><dd>${op.attempt}</dd></div>` +
+    `<div><dt>Updated</dt><dd>${escapeHtml(dateTime(op.updatedAt))}</dd></div>` +
+    `<div><dt>Readiness evidence</dt><dd>${detail.readinessEvidence === null ? "Not recorded" : "Recorded"}</dd></div>` +
+    `<div><dt>Rollback evidence</dt><dd>${detail.rollbackCompatibilityEvidence === null ? "Not recorded" : "Recorded"}</dd></div>` +
+    `<div><dt>Rollback compatible</dt><dd>${detail.rollbackCompatible === null ? "Not assessed" : detail.rollbackCompatible ? "Yes" : "No"}</dd></div></dl>` +
+    `<p>Only validated operation status and evidence availability are shown. An absent proof is not success.</p></section>`;
 }
 function sectionContent(model: ConsoleViewModel): string {
-  if (model.selectedOperationId) return operationEvidence(model);
+  if (model.selectedOperationId) return operationDetail(model);
   if (model.section === "overview") return overview(model);
   if (model.section === "releases")
     return model.selectedReleaseId ? releaseDetail(model) : releases(model);
@@ -510,10 +514,10 @@ function sectionContent(model: ConsoleViewModel): string {
 }
 
 function modeHref(model: ConsoleViewModel, mode: ConsoleViewModel["mode"]): string {
-  if (model.selectedOperationId) return `/operations/${encodeURIComponent(model.selectedOperationId)}?ui=${mode}`;
   const selectedReleaseId = model.selectedReleaseId;
   if (selectedReleaseId && model.section === "releases")
     return `/releases/${encodeURIComponent(selectedReleaseId)}?ui=${mode}`;
+  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode);
   if (model.selectedBuildId) return buildHref(model.selectedBuildId, mode);
   return consoleHref(model.section, mode);
 }

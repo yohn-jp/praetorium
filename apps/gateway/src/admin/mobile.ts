@@ -1,4 +1,5 @@
 import { generateToken } from "@praetorium/auth";
+import { canaryWaitSkipForm } from "./canary-wait-action.js";
 import type {
   SourceBuildAttempt,
   SourceBuildDetail,
@@ -7,6 +8,7 @@ import type {
 import { escapeHtml } from "../ui/presentation.js";
 import {
   buildHref,
+  operationHref,
   consoleHref,
   type ConsoleDependency,
   type ConsoleRelease,
@@ -80,7 +82,7 @@ function timeElement(timestamp: number | null): string {
 }
 
 function modeHref(model: ConsoleViewModel, mode: "desktop" | "mobile"): string {
-  if (model.selectedOperationId) return "/operations/" + encodeURIComponent(model.selectedOperationId) + "?ui=" + mode;
+  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode);
   if (model.selectedReleaseId) {
     return "/releases/" + encodeURIComponent(model.selectedReleaseId) + "?ui=" + mode;
   }
@@ -497,7 +499,7 @@ function buildFilter(model: ConsoleViewModel): string {
   const selected = model.buildStateFilter ?? "";
   return (
     '<form class="admin-mobile-filter" method="get" action="/builds" aria-label="Filter builds">' +
-    '<input type="hidden" name="ui" value="mobile"><label for="admin-mobile-build-state">State</label>' +
+    '<input type="hidden" name="ui" value="mobile"><input type="hidden" name="sort" value="' + value(model.buildSort ?? "recent") + '"><label for="admin-mobile-build-state">State</label>' +
     '<select id="admin-mobile-build-state" name="state">' +
     options
       .map(
@@ -516,12 +518,12 @@ function buildFilter(model: ConsoleViewModel): string {
 }
 
 function builds(model: ConsoleViewModel): string {
-  const jobs = (model.builds.value?.items ?? []).filter(job => !model.buildStateFilter || job.state === model.buildStateFilter);
+  const jobs = model.builds.value?.items ?? []; // The queue applies filters before page limiting.
   const cursor = model.builds.value?.nextCursor;
-  const nextQuery = new URLSearchParams({ ui: "mobile", ...(cursor ? { cursor } : {}) });
+  const nextQuery = new URLSearchParams({ ui: "mobile", sort: model.buildSort ?? "recent", ...(cursor ? { cursor } : {}) });
   if (model.buildStateFilter) nextQuery.set("state", model.buildStateFilter);
   const empty = model.buildStateFilter
-    ? "No Source builds on this page match this state filter."
+    ? "No Source builds match this state filter."
     : "No Source builds are available on this page.";
   return (
     pageHeading("Builds", "Review Source jobs, recorded attempts and permitted recovery actions.") +
@@ -534,7 +536,7 @@ function builds(model: ConsoleViewModel): string {
           "</div>"
         : '<p class="admin-mobile-empty">' + value(empty) + "</p>") +
     (cursor ? '<a class="button button-secondary admin-mobile-older" href="/builds?' + value(nextQuery.toString()) + '">Older builds</a>' : "") +
-    '<p class="admin-subtext">State filtering applies to this bounded page.</p>'
+    '<p class="admin-subtext">State filtering and sorting are performed before queue pagination.</p>'
   );
 }
 
@@ -578,8 +580,8 @@ function evidence(attempt: SourceBuildAttempt): string {
 function attemptCard(attempt: SourceBuildAttempt): string {
   return (
     '<li class="admin-mobile-attempt"><article><header class="admin-mobile-attempt-heading">' +
-    '<div><span class="admin-kicker">ATTEMPT ' +
-    value(attempt.attempt) +
+    '<div><span class="admin-kicker">REVISION ' +
+    value(attempt.revision) + " · ATTEMPT " + value(attempt.attempt) + " · EPOCH " + value(attempt.leaseEpoch) +
     "</span>" +
     "<h3>" +
     badge(attempt.state) +
@@ -736,9 +738,9 @@ function releaseDetail(model: ConsoleViewModel): string {
         "</code></dd></div>"
       : "") +
     (status.workflow.canaryOperationId
-      ? '<div><dt>Canary operation</dt><dd><a href="/operations/' +
-        encodeURIComponent(status.workflow.canaryOperationId) + '?ui=mobile">' +
-        value(status.workflow.canaryOperationId) + "</a></dd></div>"
+      ? '<div><dt>Canary operation</dt><dd><a href="' + value(operationHref(status.workflow.canaryOperationId, "mobile")) + '">' +
+        value(status.workflow.canaryOperationId) +
+        "</a></dd></div>"
       : "") +
     '</dl><section class="admin-mobile-section"><h2>Failure evidence</h2>' +
     (failureCode
@@ -747,7 +749,7 @@ function releaseDetail(model: ConsoleViewModel): string {
         "</code></p>"
       : '<p class="admin-mobile-empty-inline">No workflow failure code is recorded.</p>') +
     '</section><section class="admin-mobile-action-region" aria-label="Canary recovery action">' +
-    releaseDetailRetry(status, model.csrf) +
+    releaseDetailRetry(status, model.csrf) + canaryWaitSkipForm(status, model.csrf, "mobile") +
     "</section>"
   );
 }
@@ -816,6 +818,12 @@ function buildDetail(model: ConsoleViewModel): string {
     '</p><code class="admin-mobile-job-id">' +
     value(job.id) +
     '</code><a class="button button-secondary" href="' + value(buildHref(job.id, "mobile")) + '">Refresh status</a></header>' +
+    (job.state === "failed"
+      ? '<section class="admin-mobile-diagnostic" role="status"><h2>Investigate failure</h2><p>' +
+        value(attempts[0]?.diagnostic?.summary ??
+          "No diagnostic evidence was recorded. Confirm Worker delivery before retrying.") +
+        '</p><p>Failure code: ' + value(job.error ?? "Unknown") +
+        ' · Last reported stage: ' + value(attempts[0]?.stage ?? "unknown") + '</p></section>' : "") +
     '<dl class="admin-mobile-detail-facts"><div><dt>Immutable source commit</dt><dd><code>' +
     value(job.commit) +
     "</code></dd></div><div><dt>Current attempt</dt><dd>" +
@@ -832,7 +840,7 @@ function buildDetail(model: ConsoleViewModel): string {
       : "") +
     '<section class="admin-mobile-section" aria-labelledby="admin-mobile-attempts-title">' +
     '<div class="admin-mobile-section-heading"><div><span class="admin-kicker">STAGE / HISTORY</span>' +
-    '<h2 id="admin-mobile-attempts-title">Attempts and diagnostics</h2></div></div>' +
+    '<h2 id="admin-mobile-attempts-title">Attempt history and last reported stage</h2></div></div>' +
     '<p class="admin-mobile-evidence-state">Evidence: <strong>' +
     value(detail.evidence.replaceAll("_", " ")) +
     "</strong></p>" +
@@ -863,9 +871,11 @@ function audit(model: ConsoleViewModel): string {
             "</time></div>" +
             "<h2>" +
             value(event.action) +
-            "</h2>" + (event.jobId ? '<p><a href="' + value(buildHref(event.jobId, "mobile")) + '">' +
-              value(event.jobId) + '</a></p>' : '') +
-            (event.failureCode ? '<p>Failure: ' + value(event.failureCode) + '</p>' : '') +
+            "</h2>" +
+            (event.jobId ? '<p><a href="' + value(buildHref(event.jobId, "mobile")) + '">Build ' + value(event.jobId) + "</a></p>" : "") +
+            (event.releaseId ? '<p><a href="/releases/' + value(encodeURIComponent(event.releaseId)) + '?ui=mobile">Release ' + value(event.releaseId) + "</a></p>" : "") +
+            (event.failureCode ? "<p>Failure code: " + value(event.failureCode) + "</p>" : "") +
+            (event.leaseEpoch == null ? "" : "<p>Epoch " + value(event.leaseEpoch) + "</p>") +
             "<p>Actor: " +
             value(event.actorId ?? "Unavailable") +
             "</p></article></li>"
@@ -898,23 +908,27 @@ function audit(model: ConsoleViewModel): string {
   );
 }
 
+function operationDetail(model: ConsoleViewModel): string {
+  const dependency=model.operationDetail,detail=dependency?.value;
+  if(!detail)return pageHeading("Operation evidence unavailable","No current verified operation response.") +
+    (dependency?sectionUnavailable("Operation evidence",dependency):"");
+  if(detail.operation.id!==model.selectedOperationId)
+    return '<p class="admin-mobile-unavailable">Operation identity mismatch.</p>';
+  const op=detail.operation;
+  return '<a class="admin-mobile-back" href="' + value(consoleHref("releases","mobile")) + '">Back to Releases</a>' +
+    pageHeading("Canary / runtime operation", op.id) +
+    '<section class="admin-mobile-section"><h2>' + value(op.status) + " · " + value(op.phase) + "</h2>" +
+    '<dl class="admin-mobile-detail-facts"><div><dt>Instance</dt><dd>' + value(op.instanceId) + "</dd></div>" +
+    "<div><dt>Kind</dt><dd>" + value(op.kind) + "</dd></div>" +
+    "<div><dt>Generation</dt><dd>" + value(op.generation) + "</dd></div>" +
+    "<div><dt>Runtime epoch</dt><dd>" + value(op.runtimeEpoch) + "</dd></div>" +
+    "<div><dt>Updated</dt><dd>" + timeElement(op.updatedAt) + "</dd></div>" +
+    "<div><dt>Readiness evidence</dt><dd>" + (detail.readinessEvidence===null?"Not recorded":"Recorded") + "</dd></div>" +
+    "<div><dt>Rollback evidence</dt><dd>" + (detail.rollbackCompatibilityEvidence===null?"Not recorded":"Recorded") + "</dd></div>" +
+    "</dl><p>An absent proof is not a successful operation.</p></section>";
+}
 function content(model: ConsoleViewModel): string {
-  if (model.selectedOperationId) {
-    const evidence=model.operationDetail?.value;
-    if (!evidence) return pageHeading("Operation evidence unavailable", "The authoritative operation could not be read.") +
-      (model.operationDetail ? sectionUnavailable("Operation evidence", model.operationDetail) : "");
-    const operation=evidence.operation;
-    return pageHeading("Canary operation", "Read-only execution evidence for "+operation.id) +
-      '<section class="admin-mobile-section"><h2>Execution state</h2><dl>' +
-      '<div><dt>Operation</dt><dd><code>'+value(operation.id)+'</code></dd></div>' +
-      '<div><dt>Instance</dt><dd>'+value(operation.instanceId)+'</dd></div>' +
-      '<div><dt>Status</dt><dd>'+value(operation.status)+'</dd></div>' +
-      '<div><dt>Phase</dt><dd>'+value(operation.phase)+'</dd></div>' +
-      '<div><dt>Generation</dt><dd>'+value(operation.generation)+'</dd></div>' +
-      '<div><dt>Runtime epoch</dt><dd>'+value(operation.runtimeEpoch)+'</dd></div>' +
-      '<div><dt>Readiness</dt><dd>'+(evidence.readinessEvidence===null?'Not recorded':'Validated record available')+'</dd></div>' +
-      '</dl></section>';
-  }
+  if (model.selectedOperationId) return operationDetail(model);
   if (model.selectedReleaseId) return releaseDetail(model);
   if (model.selectedBuildId) return buildDetail(model);
   if (model.section === "overview")

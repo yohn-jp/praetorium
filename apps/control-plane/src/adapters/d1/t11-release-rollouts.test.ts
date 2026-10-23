@@ -18,7 +18,7 @@ import {
   type StagedRolloutActivator,
   type T11D1Database,
 } from "./t11-release-rollouts.js";
-import type { ReleaseRetryCommand } from "../../releases/retry-contract.js";
+import type { CanaryWaitSkipCommand, ReleaseRetryCommand } from "../../releases/retry-contract.js";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const BUILD_KEY = `sha256:${"b".repeat(64)}`;
@@ -1516,5 +1516,92 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       ],
     });
     expect(await followers.findCurrent("instance-1")).toEqual(page.items[0]);
+  });
+});
+
+describe("operator Canary wait exception", () => {
+  async function fixture() {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const releases = store(db), release = candidate();
+    await releases.createCandidate(release);
+    seedCanaryHealthFixture(db, release.id, NOW + 5 * 60_000);
+    const evidence = {
+      artifactDigest: DIGEST, runtimeId: "canary-instance", operationId: "canary-operation",
+      runtimeEpoch: 4, providerObservationId: "health-skip-1", source: "runtime-provisioner-observation",
+      imageIdentityVerified: true, observedAt: NOW,
+      checks: { startup: true, auth: true, uiApiMcp: true, persistence: true },
+      checkEvidence: { startup: "startup", auth: "auth", uiApiMcp: "ui-api-mcp", persistence: "persistence" },
+    };
+    db.database.prepare(`UPDATE release_candidate_workflows
+      SET healthy_since = ?, last_healthy_at = ?, last_health_evidence_json = ? WHERE release_id = ?`)
+      .run(NOW, NOW, JSON.stringify(evidence), release.id);
+    db.database.prepare(`INSERT INTO runtime_health_observations
+      (instance_id, repository_id, runtime_epoch, generation, cluster_id, operation_id,
+       provider_observation_id, observed_at, evidence_json)
+      VALUES ('canary-instance', 101, 4, 7, 'cluster-canary', 'canary-operation', 'health-skip-1', ?, '{}')`).run(NOW);
+    const command: CanaryWaitSkipCommand = { releaseId: release.id, expectedRevision: 1,
+      idempotencyKey: "skip-wait-1", requestHash: `sha256:${"d".repeat(64)}`, actorId: "operator-owner",
+      requestId: "skip-request-1", now: NOW + 1_000, reason: "Owner requested immediate release" };
+    return { db, releases, release, command };
+  }
+
+  it("skips only elapsed time, preserves real evidence, records one audited idempotent action and requires normal cleanup", async () => {
+    const {db, releases, release, command} = await fixture();
+    expect(await releases.skipCanaryWait(command)).toMatchObject({ kind: "accepted", duplicate: false,
+      status: { workflow: { state: "canary_cleanup", revision: 2 } } });
+    expect(db.database.prepare(`SELECT healthy_since, last_healthy_at, canary_cleanup_complete,
+      cleanup_evidence_json, cleanup_disposition FROM release_candidate_workflows`).get()).toEqual({
+      healthy_since: NOW, last_healthy_at: NOW, canary_cleanup_complete: 0,
+      cleanup_evidence_json: null, cleanup_disposition: "promote",
+    });
+    expect((await releases.findById(release.id))?.status).toBe("candidate");
+    expect((await releases.getStableChannel()).currentReleaseId).toBeNull();
+    const audit = db.database.prepare("SELECT actor_id, action, metadata_json FROM audit_events WHERE action='release.canary-wait.skipped'").get()!;
+    expect(audit.actor_id).toBe(command.actorId);
+    expect(JSON.parse(String(audit.metadata_json))).toMatchObject({ reason: command.reason, healthObservedAt: NOW });
+    expect(await releases.skipCanaryWait(command)).toMatchObject({kind: "accepted", duplicate: true});
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action='release.canary-wait.skipped'").get()).toEqual({count: 1});
+    expect(await releases.skipCanaryWait({...command, requestHash: `sha256:${"e".repeat(64)}`}))
+      .toEqual({kind: "conflict", reason: "idempotency_key_reused"});
+  });
+
+  it.each([
+    "UPDATE release_candidate_workflows SET revision=2",
+    "UPDATE release_candidate_workflows SET lease_owner='other', lease_expires_at=9999999999999",
+    "UPDATE release_candidate_workflows SET state='blocked'",
+    "UPDATE runtime_health_observations SET provider_observation_id='new-sample'",
+    "UPDATE logical_instances SET runtime_epoch=5",
+    "UPDATE repository_bindings SET suspended=1",
+    "UPDATE operations SET status='running'",
+    "DELETE FROM runtime_health_observations",
+  ])("rejects stale or ineligible state without partial receipt/audit: %s", async sql => {
+    const {db, releases, command} = await fixture();
+    db.database.exec(sql);
+    const before = db.database.prepare("SELECT state, revision FROM release_candidate_workflows").get();
+    expect(await releases.skipCanaryWait(command)).toMatchObject({kind: "conflict"});
+    expect(db.database.prepare("SELECT state, revision FROM release_candidate_workflows").get()).toEqual(before);
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM idempotency_records WHERE response_kind='release-canary-wait-skip'").get()).toEqual({count: 0});
+    expect(db.database.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action='release.canary-wait.skipped'").get()).toEqual({count: 0});
+  });
+
+  it("rejects stale, future, absent and unhealthy evidence", async () => {
+    for (const kind of ["stale", "future", "absent", "unhealthy"]) {
+      const {db, releases, command} = await fixture();
+      if(kind === "absent") db.database.exec("UPDATE release_candidate_workflows SET last_health_evidence_json=NULL");
+      else if(kind === "unhealthy") db.database.exec("UPDATE release_candidate_workflows SET last_health_evidence_json=json_set(last_health_evidence_json, '$.checks.auth', json('false'))");
+      expect(await releases.skipCanaryWait({...command, now: kind === "stale" ? NOW + 10 * 60_000 + 1 : kind === "future" ? NOW - 1 : command.now})).toEqual({kind: "conflict", reason: "fresh_healthy_canary_required"});
+    }
+  });
+
+  it("rechecks the current binding inside the atomic batch", async () => {
+    const {db, releases, command} = await fixture();
+    const batch = db.batch.bind(db);
+    db.batch = async statements => {
+      db.database.exec("UPDATE logical_instances SET generation=8");
+      return batch(statements);
+    };
+    expect(await releases.skipCanaryWait(command)).toEqual({kind: "conflict", reason: "stale_or_ineligible"});
+    expect(db.database.prepare("SELECT state, revision FROM release_candidate_workflows").get()).toEqual({state: "canary_observing", revision: 1});
   });
 });

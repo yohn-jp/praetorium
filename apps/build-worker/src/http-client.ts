@@ -186,8 +186,9 @@ export class BuildQueueHttpClient implements BuildQueuePort {
     }
     try{
       const response=await this.post(path,{...credentials,diagnostic:safe});
-      const accepted=z.strictObject({accepted:z.boolean()}).parse(response.value).accepted;
-      return {accepted,diagnosticRecorded:accepted};
+      const verified=z.object({accepted:z.boolean(),diagnosticRecorded:z.boolean().optional()}).parse(response.value);
+      // A legacy response does not prove durable diagnostic capture.
+      return {accepted:verified.accepted,diagnosticRecorded:verified.accepted&&verified.diagnosticRecorded===true};
     }catch(error){
       // During a CP-first rollout an older strict FailureRequest rejects the
       // additive diagnostic field. Retry once with the same lease fence and

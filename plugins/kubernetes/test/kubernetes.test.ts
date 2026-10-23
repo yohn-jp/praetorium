@@ -82,6 +82,17 @@ describe("KubernetesApiClient", () => {
     );
   });
 
+  it("keeps forced field transfer opt-in and retains resourceVersion preconditions", async () => {
+    const transport = new FakeTransport();
+    const client = new KubernetesApiClient(transport);
+    await client.applyConditional(resource, "arcadia-provisioner", "10");
+    await client.applyConditional(resource, "arcadia-provisioner", "11", undefined, { force: true });
+    expect(transport.requests[0]?.path).toContain("force=false");
+    expect(transport.requests[1]?.path).toContain("force=true");
+    expect(JSON.parse(transport.requests[0]!.body!).metadata.resourceVersion).toBe("10");
+    expect(JSON.parse(transport.requests[1]!.body!).metadata.resourceVersion).toBe("11");
+  });
+
   it("keeps API error details structured and bounded", async () => {
     const transport = new FakeTransport();
     transport.response = {

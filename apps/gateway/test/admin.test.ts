@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSession, type UserId } from "@praetorium/auth";
 import { createInMemorySessionStore } from "@praetorium/auth/testing";
 import type { GatewayContext } from "../src/context.js";
-import { enterAdminFromGateway, completeAdminHandoff } from "../src/admin/session.js";
+import { enterAdminFromGateway, completeAdminHandoff, adminReturnPath } from "../src/admin/session.js";
 import { handleAdminHost } from "../src/admin/console.js";
 
 const NOW = "2026-10-21T10:00:00.000Z";
@@ -71,7 +71,7 @@ async function fixture(userId = "213253858") {
       );
     }
     if (path === "/v1/operator/releases/audit") return Response.json({ events: [] });
-    if (path === "/v1/operator/releases/rel_test/retry")
+    if (path === "/v1/operator/releases/rel_test/retry" || path === "/v1/operator/releases/rel_test/skip-canary-wait")
       return Response.json({ status: "queued" }, { status: 202 });
     return Response.json({ error: { code: "NOT_FOUND" } }, { status: 404 });
   });
@@ -196,6 +196,26 @@ describe("operator-only admin origin", () => {
     expect(nonadmin.gatewayCalls).toHaveLength(0);
   });
 
+  it("restores a validated read-only job after the one-use OAuth handoff", async () => {
+    const f = await fixture();
+    const job = "sr_730c616f-329c-4d2f-aabb-d143eaa2db01";
+    const returnTo = `/builds/${job}?ui=mobile`;
+    const entry = await enterAdminFromGateway(
+      new Request(GATEWAY + "/_admin/entry?return_to=" + encodeURIComponent(returnTo),
+        { headers: { Cookie: f.gatewaySession } }), f.context);
+    expect(entry.status).toBe(200);
+    const code = /name="code" value="([A-Za-z0-9_-]+)"/u.exec(await entry.text())?.[1];
+    expect(code).toBeTruthy();
+    const done = await completeAdminHandoff(new Request(ADMIN + "/_admin/handoff", {
+      method: "POST", headers: { Origin: GATEWAY, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ code: code! }),
+    }), f.context);
+    expect(done.status).toBe(303);
+    expect(done.headers.get("Location")).toBe(returnTo);
+    for (const input of ["//evil.example/", "https://evil.example/", "/source-builds/invalid/retry",
+      "/builds/../../secrets", "/builds?ui=desktop&redirect=https://evil.example"])
+      expect(adminReturnPath(input)).toBe("/");
+  });
   it("requires the exact Gateway origin, consumes handoff once and isolates admin cookies", async () => {
     const f = await fixture();
     const { code, complete } = await login(f);
@@ -680,6 +700,23 @@ describe("operator-only admin origin", () => {
     expect(html.match(/Retry Canary build/g)).toHaveLength(1);
     expect(html).toContain("/releases/rel_eligible/retry?ui=desktop");
     expect(html).not.toContain("/releases/rel_ineligible/retry?ui=desktop");
+  });
+
+  it("binds wait skip to the authenticated admin and rejects cross-origin, missing reason and caller authority", async () => {
+    const f = await fixture();
+    const {complete} = await login(f);
+    const cookies = cookiesFrom(await complete());
+    const body = {expectedRevision: "5", idempotencyKey: "wait-skip-1", reason: "Owner requested release"};
+    const path = "/releases/rel_test/skip-canary-wait";
+    expect((await handleAdminHost(post(path, cookies, body, "https://attacker.test"), f.context)).status).toBe(403);
+    expect((await handleAdminHost(post(path, cookies, {...body, reason: ""}), f.context)).status).toBe(400);
+    expect((await handleAdminHost(post(path, cookies, {...body, actorId: "other"}), f.context)).status).toBe(400);
+    expect(f.gatewayCalls).toHaveLength(0);
+    expect((await handleAdminHost(post(path, cookies, body), f.context)).status).toBe(303);
+    expect(f.gatewayCalls).toHaveLength(1);
+    expect(f.gatewayCalls[0]?.path).toBe("/v1/operator/releases/rel_test/skip-canary-wait");
+    expect(f.gatewayCalls[0]?.body).toEqual({...body, expectedRevision: 5});
+    expect(f.gatewayCalls[0]?.headers.get("X-Praetorium-Admin-Actor")).toBe("213253858");
   });
 
   it("removes browser raw-manifest authority while keeping canonical CSRF-gated Canary retry", async () => {

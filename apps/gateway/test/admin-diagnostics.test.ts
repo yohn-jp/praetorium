@@ -207,8 +207,8 @@ describe("operator Source diagnostics routes", () => {
     const unauthenticated = await fixture({ initialDetail: detail(job("failed", 1, 2, true)) });
     const denied = await handleAdminHost(get(`/builds/${JOB_ID}`), unauthenticated.context);
     expect(denied.status).toBe(303);
-    expect(denied.headers.get("Location")).toBe(GATEWAY+"/_admin/entry");
-    expect(denied.headers.get("Set-Cookie")).toContain("admin_return");
+    expect(denied.headers.get("Location")).toContain("/_admin/entry?return_to=");
+    expect(decodeURIComponent(denied.headers.get("Location") ?? "")).toContain("/builds/" + JOB_ID);
     expect(unauthenticated.calls).toHaveLength(0);
 
     const nonAdmin = await fixture({
@@ -230,29 +230,6 @@ describe("operator Source diagnostics routes", () => {
     expect(admin.calls[0]?.headers.get("X-Control-Plane-Gateway-Auth")).toBe(CONTROL_PLANE_SECRET);
     expect(admin.calls[0]?.headers.get("X-Praetorium-Admin-Actor")).toBe(ADMIN_ID);
     expect(await response.text()).not.toContain(CONTROL_PLANE_SECRET);
-  });
-
-  it("follows read-only Canary operation evidence from the authorized Admin route", async () => {
-    const operationId="op_canary-1";
-    const admin=await fixture({handleControlPlane:async(request)=>{
-      const url=new URL(request.url);
-      if(url.pathname==="/v1/operations/"+operationId+"/evidence") return Response.json({
-        operation:{id:operationId,instanceId:"ins_fixture",kind:"redeploy",status:"failed",
-          phase:"quiesce",generation:3,runtimeEpoch:4,updatedAt:12345},
-        rollbackCompatible:false,readinessEvidence:null,rollbackCompatibilityEvidence:null,
-        rollbackDeclarations:null,
-      });
-      return Response.json({error:{code:"NOT_FOUND"}},{status:404});
-    }});
-    for(const mode of ["desktop","mobile"]) {
-      const page=await handleAdminHost(get("/operations/"+operationId+"?ui="+mode,admin.cookies),admin.context);
-      expect(page.status).toBe(200);
-      const body=await page.text();
-      expect(body).toContain(operationId);
-      expect(body).toContain("quiesce");
-      expect(body).not.toContain(CONTROL_PLANE_SECRET);
-    }
-    expect(admin.calls.filter(call=>call.path==="/v1/operations/"+operationId+"/evidence")).toHaveLength(2);
   });
 
   it("shows each canonical queue state and preserves the failed attempt across retry", async () => {

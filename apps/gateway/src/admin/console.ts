@@ -3,16 +3,17 @@ import { escapeHtml, resolvePresentation } from "../ui/presentation.js";
 import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDetail } from "@praetorium/contracts";
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
-import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus } from "./view-model.js";
+import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
 import { page } from "../ui/views/document.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
-  logoutAdmin,
+  logoutAdmin, isAdmin, adminReturnPath,
 } from "./session.js";
 import {
   dispatchPublishedRelease, listRegisteredSources, revalidateSourceRetryIdentity,
   type SourceReleaseView, type SourceBuildStatus,
 } from "./release-sources.js";
+import { requireSession } from "../http/session.js";
 
 const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 
@@ -187,8 +188,13 @@ function isAudit(value: unknown): value is { events: Audit[]; nextCursor?: strin
     (value as { events: unknown[] }).events.length <= 25 &&
     (value as { events: unknown[] }).events.every(item => {
       const event = objectValue(item);
-      return event && typeof event.action === "string" && typeof event.outcome === "string" &&
-        (event.actorId === null || typeof event.actorId === "string") && Number.isSafeInteger(event.occurredAt);
+      return !!event && typeof event.action === "string" && typeof event.outcome === "string" &&
+        (event.actorId === null || typeof event.actorId === "string") && Number.isSafeInteger(event.occurredAt) &&
+        (event.eventId === undefined || (typeof event.eventId === "string" && event.eventId.length <= 512)) &&
+        ["jobId","releaseId","operationId","failureCode"].every(key =>
+          event[key] === undefined || event[key] === null || (typeof event[key] === "string" && event[key].length <= 128)) &&
+        ["revision","leaseEpoch"].every(key =>
+          event[key] === undefined || event[key] === null || (Number.isSafeInteger(event[key]) && Number(event[key]) >= 0));
     });
 }
 function isSourceBuilds(value: unknown): value is { items: SourceBuildStatus[]; nextCursor?: string | null } {
@@ -238,13 +244,27 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   const session = await authenticateAdmin(request, context);
   if (!session) {
     // No operator data, application state or Control Plane calls before authentication.
-    if (url.pathname === "/" && request.method === "GET") {
-      return localRedirect(context.config.origin + "/_admin/entry");
+    if (request.method === "GET") {
+      const target = url.pathname === "/" ? "/" : adminReturnPath(url.pathname + "?ui=" + mode);
+      if (target !== "/" || url.pathname === "/") {
+        // An authenticated non-admin is denied; only an expired/missing session re-enters OAuth.
+        const gatewaySession = await requireSession(request, context);
+        if (gatewaySession.ok && !isAdmin(context, gatewaySession.session.actor.userId))
+          return response(403, "Operator authorization required");
+        return localRedirect(context.config.origin + "/_admin/entry" +
+          (target === "/" ? "" : "?return_to=" + encodeURIComponent(target)));
+      }
     }
     return response(403, "Operator authorization required");
   }
 
-  const actionError = (message: string, status: number) => renderError(context, session.csrfToken, message, status, mode);
+  const sourceError = /^\/source-builds\/(sr_[0-9a-f-]{36})\/retry$/u.exec(url.pathname);
+  const releaseError = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})\/retry$/u.exec(url.pathname);
+  const returnHref = sourceError ? buildHref(sourceError[1]!, mode) : releaseError
+    ? "/releases/" + encodeURIComponent(releaseError[1]!) + "?ui=" + mode
+    : "/releases?ui=" + mode;
+  const actionError = (message: string, status: number) =>
+    renderError(context, session.csrfToken, message, status, mode, returnHref);
   if (url.pathname === "/logout" && request.method === "POST") {
     const form = await boundedForm(request);
     if (!form || !(await adminFormCsrf(request, context, session, form))) return response(403, "CSRF rejected");
@@ -283,7 +303,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
       if (revision.length !== 1 || !/^(0|[1-9][0-9]*)$/u.test(revision[0]!) ||
           idempotencyKey.length !== 1 || !RELEASE_ID.test(idempotencyKey[0]!) ||
           [...form.keys()].some(key => !["csrfToken", "expectedRevision", "idempotencyKey"].includes(key)))
-        return response(400, "Invalid Source retry command");
+        return actionError("Invalid Source retry command", 400);
       const jobId = sourceRetryMatch[1]!;
       try {
         const loaded = await controlPlane(context, session.actor.userId, "GET",
@@ -360,7 +380,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
       if (revision.length !== 1 || !/^(0|[1-9][0-9]*)$/.test(revision[0]!) ||
           idempotencyKey.length !== 1 || !RELEASE_ID.test(idempotencyKey[0]!) ||
           [...form.keys()].some(key => !["csrfToken", "expectedRevision", "idempotencyKey"].includes(key)))
-        return response(400, "Invalid retry command");
+        return actionError("Invalid retry command", 400);
       const accepted = await controlPlane(context, session.actor.userId, "POST",
         "/v1/operator/releases/" + encodeURIComponent(id) + "/retry", {
           expectedRevision: Number(revision[0]), idempotencyKey: idempotencyKey[0],
@@ -376,8 +396,9 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   if (request.method !== "GET") return response(405, "Method not allowed");
   const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
+  const operationMatch = /^\/operations\/(op_[A-Za-z0-9_.:-]{1,124})$/u.exec(url.pathname);
   const section: ConsoleSection | null = url.pathname === "/" ? "overview"
-    : url.pathname === "/releases" || releaseMatch ? "releases"
+    : url.pathname === "/releases" || releaseMatch || operationMatch ? "releases"
     : url.pathname === "/builds" || detailMatch ? "builds"
     : url.pathname === "/audit" ? "audit" : null;
   if (!section) return response(404, "Not found");
@@ -393,7 +414,12 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   if (auditQuery.length > 100 || [...auditQuery].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return response(400, "Invalid audit search");
   const selectedBuildId = detailMatch?.[1] ?? null;
   const selectedReleaseId = releaseMatch?.[1] ?? null;
+  const selectedOperationId = operationMatch?.[1] ?? null;
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
+  const sourceParams = new URLSearchParams();
+  if (sort !== "recent") sourceParams.set("sort", sort);
+  if (state) sourceParams.set("state", state);
+  if (cursor) sourceParams.set("cursor", cursor);
   const empty = <T>(value: T): OperatorSection<T> => ({ endpoint: "", status: 200, code: null, value });
   const [catalog, audit, builds, sourceViews, detail, releaseDetail] = await Promise.all([
     section === "overview" || (section === "releases" && !selectedReleaseId)
@@ -406,7 +432,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
       : Promise.resolve(empty({ events: [] as Audit[] })),
     section !== "audit" && !selectedBuildId && !selectedReleaseId
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/source-builds",
-        "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" ? withCursor : ""), isSourceBuilds)
+        "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" && sourceParams.size ? "?" + sourceParams.toString() : ""), isSourceBuilds)
       : Promise.resolve(empty({ items: [] as SourceBuildStatus[] })),
     section === "releases" && !selectedReleaseId ? listRegisteredSources(context, session.actor.userId).then(
       (value): OperatorSection<readonly SourceReleaseView[]> =>
@@ -436,20 +462,34 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
               typeof objectValue(build.failure)?.code === "string")));
       }) : Promise.resolve(null),
   ]);
+  const operationDetail = selectedOperationId ? await controlPlaneSection(context, session.actor.userId,
+    "GET /v1/operations/" + selectedOperationId + "/evidence",
+    "/v1/operations/" + encodeURIComponent(selectedOperationId) + "/evidence",
+    (value): value is OperatorOperationDetail => {
+      const body=objectValue(value),op=objectValue(body?.operation);
+      return !!op && op.id===selectedOperationId && typeof op.instanceId==="string" &&
+        ["kind","status","phase"].every(key=>typeof op[key]==="string") &&
+        ["generation","runtimeEpoch","attempt","createdAt","updatedAt"].every(key=>Number.isSafeInteger(op[key]) && Number(op[key])>=0) &&
+        (body?.rollbackCompatible===null || typeof body?.rollbackCompatible==="boolean") &&
+        "readinessEvidence" in (body ?? {}) && "rollbackCompatibilityEvidence" in (body ?? {});
+    }) : null;
   const model: ConsoleViewModel = {
     section, mode, csrf: session.csrfToken, notice: url.searchParams.get("notice")?.slice(0, 200) ?? null,
     catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, releaseDetail, buildStateFilter: state,
-    buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery,
+    buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery, selectedOperationId, operationDetail,
   };
-  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedReleaseId ? "Release status" : section),
+  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedOperationId ? "Operation evidence" : selectedReleaseId ? "Release status" : section),
     mode === "mobile" ? renderMobileConsole(model) : renderDesktopConsole(model),
     { layout: "handoff", presentation: { mode } });
 }
 
-function renderError(context: GatewayContext, csrf: string, message: string, status: number, mode: ConsoleMode): Response {
+function renderError(context: GatewayContext, csrf: string, message: string, status: number,
+  mode: ConsoleMode, returnHref: string): Response {
   const pageResult = adminPage("Operator action unavailable",
     '<p class="alert" role="alert">' + escapeHtml(message) + '</p>' +
-    '<p><a class="button button-secondary" href="/releases?ui=' + mode + '">Return to release ledger</a></p>', csrf, mode);
+    '<p>Request was not confirmed. Read the authoritative state before attempting another action.</p>' +
+    '<p><a class="button button-secondary" href="' + escapeHtml(returnHref) +
+    '">Return to the affected record</a></p>', csrf, mode);
   void context;
   return new Response(pageResult.body, { status, headers: pageResult.headers });
 }

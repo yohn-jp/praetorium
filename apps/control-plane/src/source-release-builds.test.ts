@@ -23,6 +23,7 @@ import {
   type SourceJobInput,
 } from "./source-release-builds.js";
 import { SourceProofVerificationError } from "./source-producer-verifier.js";
+import { parseBuildCursor } from "./source-build-list.js";
 
 const JOB: SourceJobInput = {
   sourceId: "scriptorium",
@@ -712,6 +713,20 @@ describe("source Release build queue against migrated SQLite D1", () => {
       leaseEpoch: claim.lease_epoch, code: "SOURCE_BUILD_FAILED", diagnostic,
     });
     expect(accepted).toBe(true);
+    expect(await h.queue.diagnosticRecorded(claim.job_id, claim.lease_epoch)).toBe(true);
+    const route = createSourceReleaseWorkerRoutes({
+      queue: h.queue, workerId: SOURCE_WORKER, serviceToken: SOURCE_TOKEN,
+    });
+    const duplicate = await route.request(`/${claim.job_id}/fail`, {
+      method: "POST", headers: {
+        Authorization: `Bearer ${SOURCE_TOKEN}`, "content-type": "application/json",
+      }, body: JSON.stringify({
+        workerId: claim.lease_worker, leaseToken: claim.lease_token,
+        leaseEpoch: claim.lease_epoch, code: "SOURCE_BUILD_FAILED", diagnostic,
+      }),
+    });
+    expect(duplicate.status).toBe(200);
+    expect(await duplicate.json()).toEqual({ accepted: true, diagnosticRecorded: true });
 
     const raw = h.db.database.prepare(
       "SELECT state,stage,failure_code,diagnostic_json,evidence_expires_at FROM source_release_build_attempts WHERE job_id=? AND lease_epoch=?",
@@ -754,6 +769,7 @@ describe("source Release build queue against migrated SQLite D1", () => {
       "SELECT diagnostic_json,evidence_expires_at FROM source_release_build_attempts WHERE job_id=? AND lease_epoch=?",
     ).get(created.job.id, claim.lease_epoch) as {diagnostic_json:string|null;evidence_expires_at:number|null};
     expect(expiredRow).toMatchObject({diagnostic_json:null,evidence_expires_at:h.now()-1});
+    expect(await h.queue.diagnosticRecorded(claim.job_id, claim.lease_epoch)).toBe(false);
   });
 
   it("records every claimed epoch and rejects a diagnostic callback from an expired lease", async () => {
@@ -825,12 +841,25 @@ describe("source Release build queue against migrated SQLite D1", () => {
     },ACTOR)));
     const first = await h.queue.list(40);
     expect(first.items).toHaveLength(40);
-    expect(first.nextCursor).toMatch(/^\d+\.sr_/u);
-    const [createdAt,jobId] = first.nextCursor!.split(".");
-    const second = await h.queue.list(40,{createdAt:Number(createdAt),jobId:jobId!});
+    expect(first.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+    const cursor = parseBuildCursor(first.nextCursor!, "recent", null);
+    const second = await h.queue.list(40,cursor);
     expect(second.items).toHaveLength(1);
     expect(second.nextCursor).toBeNull();
     expect(new Set([...first.items,...second.items].map(job=>job.id)).size).toBe(41);
+    // An old registration that failed recently must appear on the first filtered page.
+    h.db.database.prepare(
+      "UPDATE source_release_builds SET state='failed',failure_code='SOURCE_BUILD_FAILED',updated_at=updated_at+100000 WHERE job_id=?",
+    ).run(jobs[0]!.job.id);
+    const operator=createSourceReleaseOperatorRoutes({queue:h.queue,operatorActorId:ACTOR});
+    const headersList={"X-Praetorium-Admin-Actor":ACTOR};
+    const failedPage=await operator.request("/?state=failed&sort=recent",{headers:headersList});
+    expect(failedPage.status).toBe(200);
+    const filtered=await failedPage.json() as {items:Array<{id:string;state:string}>};
+    expect(filtered.items).toHaveLength(1);
+    expect(filtered.items[0]?.id).toBe(jobs[0]!.job.id);
+    expect((await operator.request("/?sort=state&cursor="+encodeURIComponent(first.nextCursor!),{headers:headersList})).status).toBe(400);
+    expect((await operator.request("/?state=invalid",{headers:headersList})).status).toBe(400);
 
     const selected = jobs[0]!.job;
     const insertAttempt = h.db.database.prepare(

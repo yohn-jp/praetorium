@@ -4,7 +4,7 @@ import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDeta
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
 import { readInfrastructure, type InfraDependencies, type InfraHosts, type InfraServices, type HostObservation } from "../infrastructure.js";
-import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus } from "./view-model.js";
+import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
 import { page } from "../page.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
@@ -27,7 +27,9 @@ type Summary = {
     build: { status: string; failure: { code: string } | null } | null;
   } | null;
 };
-type Audit = { actorId: string | null; action: string; outcome: string; occurredAt: number };
+type Audit = { actorId: string | null; action: string; outcome: string; occurredAt: number;
+  eventId?: string; jobId?: string | null; releaseId?: string | null; operationId?: string | null;
+  failureCode?: string | null; revision?: number | null; leaseEpoch?: number | null };
 
 function response(status: number, message: string): Response {
   return new Response(message, { status, headers: {
@@ -188,8 +190,13 @@ function isAudit(value: unknown): value is { events: Audit[]; nextCursor?: strin
     (value as { events: unknown[] }).events.length <= 25 &&
     (value as { events: unknown[] }).events.every(item => {
       const event = objectValue(item);
-      return event && typeof event.action === "string" && typeof event.outcome === "string" &&
-        (event.actorId === null || typeof event.actorId === "string") && Number.isSafeInteger(event.occurredAt);
+      return !!event && typeof event.action === "string" && typeof event.outcome === "string" &&
+        (event.actorId === null || typeof event.actorId === "string") && Number.isSafeInteger(event.occurredAt) &&
+        (event.eventId === undefined || (typeof event.eventId === "string" && event.eventId.length <= 512)) &&
+        ["jobId","releaseId","operationId","failureCode"].every(key =>
+          event[key] === undefined || event[key] === null || (typeof event[key] === "string" && event[key].length <= 128)) &&
+        ["revision","leaseEpoch"].every(key =>
+          event[key] === undefined || event[key] === null || (Number.isSafeInteger(event[key]) && Number(event[key]) >= 0));
     });
 }
 function isSourceBuilds(value: unknown): value is { items: SourceBuildStatus[]; nextCursor?: string | null } {
@@ -388,12 +395,13 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   if (request.method !== "GET") return response(405, "Method not allowed");
   const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
+  const operationMatch = /^\/operations\/(op_[A-Za-z0-9_.:-]{1,124})$/u.exec(url.pathname);
   const infraHostMatch = /^\/infrastructure\/hosts\/([a-z][a-z0-9-]{0,63})$/u.exec(url.pathname);
   const dependenciesSelected = url.pathname === "/infrastructure/dependencies";
   const selectedHostId = infraHostMatch?.[1] ?? null;
   const section: ConsoleSection | null = url.pathname === "/" ? "overview"
     : url.pathname === "/infrastructure" || infraHostMatch || dependenciesSelected ? "infrastructure"
-    : url.pathname === "/releases" || releaseMatch ? "releases"
+    : url.pathname === "/releases" || releaseMatch || operationMatch ? "releases"
     : url.pathname === "/builds" || detailMatch ? "builds"
     : url.pathname === "/audit" ? "audit" : null;
   if (!section) return response(404, "Not found");
@@ -409,6 +417,11 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   if (auditQuery.length > 100 || [...auditQuery].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return response(400, "Invalid audit search");
   const selectedBuildId = detailMatch?.[1] ?? null;
   const selectedReleaseId = releaseMatch?.[1] ?? null;
+  const selectedOperationId = operationMatch?.[1] ?? null;
+  const sourceParams = new URLSearchParams();
+  if (sort !== "recent") sourceParams.set("sort", sort);
+  if (state) sourceParams.set("state", state);
+  if (cursor) sourceParams.set("cursor", cursor);
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
   const empty = <T>(value: T): OperatorSection<T> => ({ endpoint: "", status: 200, code: null, value });
   const [catalog, audit, builds, sourceViews, detail, releaseDetail, infrastructure, hostDetail, hostServices, dependencies] = await Promise.all([
@@ -420,9 +433,9 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases/audit",
         "/v1/operator/releases/audit" + withCursor + (auditQuery ? (cursor ? "&" : "?") + "q=" + encodeURIComponent(auditQuery) : ""), isAudit)
       : Promise.resolve(empty({ events: [] as Audit[] })),
-    section !== "audit" && section !== "infrastructure" && !selectedBuildId && !selectedReleaseId
+    section !== "audit" && section !== "infrastructure" && !selectedBuildId && !selectedReleaseId && !selectedOperationId
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/source-builds",
-        "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" ? withCursor : ""), isSourceBuilds)
+        "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" && sourceParams.size ? "?" + sourceParams.toString() : ""), isSourceBuilds)
       : Promise.resolve(empty({ items: [] as SourceBuildStatus[] })),
     section === "releases" && !selectedReleaseId ? listRegisteredSources(context, session.rawSessionId).then(
       (value): OperatorSection<readonly SourceReleaseView[]> =>
@@ -464,13 +477,24 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
       ? readInfrastructure<InfraDependencies>(context, "/v1/dependencies")
       : Promise.resolve(null),
   ]);
+  const operationDetail = selectedOperationId ? await controlPlaneSection(context, session.actor.userId,
+    "GET /v1/operations/" + selectedOperationId + "/evidence",
+    "/v1/operations/" + encodeURIComponent(selectedOperationId) + "/evidence",
+    (value): value is OperatorOperationDetail => {
+      const body=objectValue(value),op=objectValue(body?.operation);
+      return !!op && op.id===selectedOperationId && typeof op.instanceId==="string" &&
+        ["kind","status","phase"].every(key=>typeof op[key]==="string") &&
+        ["generation","runtimeEpoch","attempt","createdAt","updatedAt"].every(key=>Number.isSafeInteger(op[key]) && Number(op[key])>=0) &&
+        (body?.rollbackCompatible===null || typeof body?.rollbackCompatible==="boolean") &&
+        "readinessEvidence" in (body ?? {}) && "rollbackCompatibilityEvidence" in (body ?? {});
+    }) : null;
   const model: ConsoleViewModel = {
     section, mode, csrf: session.csrfToken, notice: url.searchParams.get("notice")?.slice(0, 200) ?? null,
-    catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, releaseDetail, buildStateFilter: state,
+    catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, selectedOperationId, operationDetail, releaseDetail, buildStateFilter: state,
     buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery,
     infrastructure, selectedHostId, hostDetail, hostServices, dependenciesSelected, dependencies,
   };
-  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedReleaseId ? "Release status" : section),
+  return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedOperationId ? "Operation evidence" : selectedReleaseId ? "Release status" : section),
     mode === "mobile" ? renderMobileConsole(model) : renderDesktopConsole(model),
     { layout: "handoff", presentation: { mode } });
 }

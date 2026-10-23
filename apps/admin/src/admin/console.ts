@@ -3,6 +3,7 @@ import { escapeHtml, resolvePresentation } from "../presentation.js";
 import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDetail } from "@praetorium/contracts";
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
+import { readInfrastructure, type InfraDependencies, type InfraHosts, type InfraServices, type HostObservation } from "../infrastructure.js";
 import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus } from "./view-model.js";
 import { page } from "../page.js";
 import {
@@ -244,6 +245,17 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
     return response(403, "Operator authorization required");
   }
 
+  if (url.pathname.startsWith("/api/admin/v1/infrastructure")) {
+    if (request.method !== "GET") return response(405, "Method not allowed");
+    const prefix = "/api/admin/v1/infrastructure";
+    const route = "/v1" + url.pathname.slice(prefix.length);
+    const result = await readInfrastructure(context, route);
+    return Response.json(result.value !== null
+      ? result.value : {error:{code:result.code ?? "OBSERVER_UNAVAILABLE"}}, {
+      status: result.value !== null ? 200 : result.status ?? 503,
+      headers: { "Cache-Control":"no-store", "X-Content-Type-Options":"nosniff" },
+    });
+  }
   const actionError = (message: string, status: number) => renderError(context, session.csrfToken, message, status, mode);
   if (url.pathname === "/logout" && request.method === "POST") {
     const form = await boundedForm(request);
@@ -357,7 +369,11 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   if (request.method !== "GET") return response(405, "Method not allowed");
   const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
+  const infraHostMatch = /^\/infrastructure\/hosts\/([a-z][a-z0-9-]{0,63})$/u.exec(url.pathname);
+  const dependenciesSelected = url.pathname === "/infrastructure/dependencies";
+  const selectedHostId = infraHostMatch?.[1] ?? null;
   const section: ConsoleSection | null = url.pathname === "/" ? "overview"
+    : url.pathname === "/infrastructure" || infraHostMatch || dependenciesSelected ? "infrastructure"
     : url.pathname === "/releases" || releaseMatch ? "releases"
     : url.pathname === "/builds" || detailMatch ? "builds"
     : url.pathname === "/audit" ? "audit" : null;
@@ -376,7 +392,7 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   const selectedReleaseId = releaseMatch?.[1] ?? null;
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
   const empty = <T>(value: T): OperatorSection<T> => ({ endpoint: "", status: 200, code: null, value });
-  const [catalog, audit, builds, sourceViews, detail, releaseDetail] = await Promise.all([
+  const [catalog, audit, builds, sourceViews, detail, releaseDetail, infrastructure, hostDetail, hostServices, dependencies] = await Promise.all([
     section === "overview" || (section === "releases" && !selectedReleaseId)
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases",
         "/v1/operator/releases" + (section === "releases" ? withCursor : ""), isCatalog)
@@ -385,7 +401,7 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases/audit",
         "/v1/operator/releases/audit" + withCursor + (auditQuery ? (cursor ? "&" : "?") + "q=" + encodeURIComponent(auditQuery) : ""), isAudit)
       : Promise.resolve(empty({ events: [] as Audit[] })),
-    section !== "audit" && !selectedBuildId && !selectedReleaseId
+    section !== "audit" && section !== "infrastructure" && !selectedBuildId && !selectedReleaseId
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/source-builds",
         "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" ? withCursor : ""), isSourceBuilds)
       : Promise.resolve(empty({ items: [] as SourceBuildStatus[] })),
@@ -416,11 +432,24 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
             Number.isSafeInteger(build.attemptCount) && (build.failure === null ||
               typeof objectValue(build.failure)?.code === "string")));
       }) : Promise.resolve(null),
+    (section === "infrastructure" && !selectedHostId && !dependenciesSelected) || section === "overview"
+      ? readInfrastructure<InfraHosts>(context, "/v1/hosts")
+      : Promise.resolve(null),
+    selectedHostId
+      ? readInfrastructure<HostObservation>(context, "/v1/hosts/" + selectedHostId)
+      : Promise.resolve(null),
+    selectedHostId
+      ? readInfrastructure<InfraServices>(context, "/v1/hosts/" + selectedHostId + "/services")
+      : Promise.resolve(null),
+    dependenciesSelected
+      ? readInfrastructure<InfraDependencies>(context, "/v1/dependencies")
+      : Promise.resolve(null),
   ]);
   const model: ConsoleViewModel = {
     section, mode, csrf: session.csrfToken, notice: url.searchParams.get("notice")?.slice(0, 200) ?? null,
     catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, releaseDetail, buildStateFilter: state,
     buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery,
+    infrastructure, selectedHostId, hostDetail, hostServices, dependenciesSelected, dependencies,
   };
   return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedReleaseId ? "Release status" : section),
     mode === "mobile" ? renderMobileConsole(model) : renderDesktopConsole(model),

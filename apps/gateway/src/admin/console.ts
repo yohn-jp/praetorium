@@ -395,6 +395,9 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
   const selectedBuildId = detailMatch?.[1] ?? null;
   const selectedReleaseId = releaseMatch?.[1] ?? null;
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
+  const sourceParams = new URLSearchParams({sort});
+  if (state) sourceParams.set("state", state);
+  if (cursor) sourceParams.set("cursor", cursor);
   const empty = <T>(value: T): OperatorSection<T> => ({ endpoint: "", status: 200, code: null, value });
   const [catalog, audit, builds, sourceViews, detail, releaseDetail] = await Promise.all([
     section === "overview" || (section === "releases" && !selectedReleaseId)
@@ -407,7 +410,7 @@ async function handleAdminRequest(request: Request, context: GatewayContext, mod
       : Promise.resolve(empty({ events: [] as Audit[] })),
     section !== "audit" && !selectedBuildId && !selectedReleaseId
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/source-builds",
-        "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" ? withCursor : ""), isSourceBuilds)
+        "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" ? "?" + sourceParams.toString() : ""), isSourceBuilds)
       : Promise.resolve(empty({ items: [] as SourceBuildStatus[] })),
     section === "releases" && !selectedReleaseId ? listRegisteredSources(context, session.actor.userId).then(
       (value): OperatorSection<readonly SourceReleaseView[]> =>

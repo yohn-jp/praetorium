@@ -7,7 +7,7 @@ CREATE TABLE source_release_build_attempts (
   revision INTEGER NOT NULL CHECK (revision >= 0),
   state TEXT NOT NULL CHECK (state IN ('building','produced','failed','lease_expired')),
   stage TEXT NOT NULL CHECK (stage IN ('unknown','release_check','source_checkout','build_environment','runtime_base','buildkit','metadata','oci_export','verification','admission')),
-  started_at INTEGER NOT NULL,
+  started_at INTEGER,
   finished_at INTEGER,
   failure_code TEXT,
   diagnostic_json TEXT CHECK (diagnostic_json IS NULL OR (json_valid(diagnostic_json) AND length(CAST(diagnostic_json AS BLOB)) <= 12288)),

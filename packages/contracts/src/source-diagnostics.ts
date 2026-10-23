@@ -39,7 +39,7 @@ export const SourceBuildAttemptSchema = z.strictObject({
   leaseEpoch: z.number().int().positive().safe(),
   state: z.enum(["building", "produced", "failed", "lease_expired"]),
   stage: SourceBuildStageSchema,
-  startedAt: z.number().int().nonnegative().safe(),
+  startedAt: z.number().int().nonnegative().safe().nullable(),
   finishedAt: z.number().int().nonnegative().safe().nullable(),
   failureCode: z.string().max(90).nullable(),
   evidence: z.enum(["available", "not_recorded", "expired"]),

@@ -1,6 +1,6 @@
 # Praetorium — 内部通信・タイマー・Cloudflareリクエスト台帳
 
-> **種別:** コードから再構成した現状（2026-10-20、main `2f1369df9310ea61686e508fa055397fa72abbb1` を基準）。これは通信量の**計測結果ではない**。実デプロイの環境変数、接続先、Cloudflare請求画面の経路別数値は別途照合する。  
+> **種別:** **2026-10-20の特定main cutにおける内部通信監査**（`2f1369df9310ea61686e508fa055397fa72abbb1`）。本稿の周期や空振り回数は**コードからの推定**であり、2026-10-24のmain/本番の実測ではない。後続のCoordination/VPC導入は[MANAGEMENT-PLANE.md](MANAGEMENT-PLANE.md)と[THREE-VM-CONTROL.md](../verification/THREE-VM-CONTROL.md)、Admin Workerの追加観測と通信上限は[ADMINISTRATION.md](ADMINISTRATION.md)を参照する。  
 > **目的:** 「何もしていない時のリクエストを極小化し、利用者数／実行インスタンス数の増加でも比例コストを抑える」。既存のLease、Writer排除、保存とリリース受入契約を捨てない。  
 > **範囲:** 現行設計の棚卸しと優先順位の確定まで。**このPRでは通信周期・失敗時リトライを変更しない。** 参照先は改変しない実装の責務を示す。
 

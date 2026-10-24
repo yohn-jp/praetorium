@@ -699,6 +699,20 @@ describe("Gateway mutation authorization endpoint", () => {
       headers: serviceHeaders,
       body: JSON.stringify({ ...base, refreshCredential }),
     });
+    const wrongServiceRefresh = await test.router.fetch(new Request(
+      `${ORIGIN}/internal/instance-access/refresh`,
+      {
+        method: "POST",
+        headers: { ...serviceHeaders, Authorization: "Bearer wrong-instance-access-service-token" },
+        body: JSON.stringify({ ...base, refreshCredential: initial.refreshCredential }),
+      },
+    ));
+    expect(wrongServiceRefresh.status).toBe(401);
+    const wrongServiceBody = await wrongServiceRefresh.text();
+    expect(JSON.parse(wrongServiceBody)).toMatchObject({ error: { code: "UNAUTHENTICATED" } });
+    expect(wrongServiceBody).not.toContain(initial.refreshCredential);
+    expect(wrongServiceBody).not.toContain("wrong-instance-access-service-token");
+
     const credentialStoreRead = vi.spyOn(test.accessRefreshCredentialStore, "get")
       .mockRejectedValue(new Error("private refresh store error detail"));
     const refreshWarning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -737,7 +751,9 @@ describe("Gateway mutation authorization endpoint", () => {
     try {
       const invalid = await test.router.fetch(refresh(initial.refreshCredential));
       expect(invalid.status).toBe(401);
-      expect((await invalid.text())).not.toContain(initial.refreshCredential);
+      const invalidBody = await invalid.text();
+      expect(JSON.parse(invalidBody)).toMatchObject({ error: { code: "REFRESH_CREDENTIAL_REJECTED" } });
+      expect(invalidBody).not.toContain(initial.refreshCredential);
       expect(warning.mock.calls).toEqual([[JSON.stringify({
         event: "instance_access_refresh_rejected",
         reason: "INVALID_CREDENTIAL",
@@ -761,7 +777,9 @@ describe("Gateway mutation authorization endpoint", () => {
     expect(await revoked.json()).toEqual({ contractVersion: "instance-access/v2", revoked: true });
     const revokedRefresh = await test.router.fetch(refresh(rotated.refreshCredential));
     expect(revokedRefresh.status).toBe(401);
-    expect((await revokedRefresh.text())).not.toContain(rotated.refreshCredential);
+    const revokedBody = await revokedRefresh.text();
+    expect(JSON.parse(revokedBody)).toMatchObject({ error: { code: "REFRESH_CREDENTIAL_REJECTED" } });
+    expect(revokedBody).not.toContain(rotated.refreshCredential);
   });
 
   it("stops refreshing the old runtime grant once observation leaves the current ready runtime", async () => {
@@ -809,7 +827,9 @@ describe("Gateway mutation authorization endpoint", () => {
       body: JSON.stringify({ ...binding, refreshCredential: grant.refreshCredential }),
     }));
 
-    expect(refresh.status).toBe(401);
+    expect(refresh.status).toBe(503);
+    expect(refresh.headers.get("Retry-After")).toBe("5");
+    expect(await refresh.json()).toMatchObject({ error: { code: "INSTANCE_STARTING" } });
   });
 
   it("rejects cross-origin, bad-CSRF, caller-actor and non-write requests before receipt issuance", async () => {

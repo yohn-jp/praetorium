@@ -224,10 +224,43 @@ function operation(overrides: Partial<OperationRecord> = {}): OperationRecord {
   };
 }
 
+function stopOperation(): OperationRecord {
+  const base = operation();
+  const checkpoint = base.checkpoint as Record<string, unknown>;
+  const lifecycle = checkpoint["lifecycle"] as Record<string, unknown>;
+  const request = lifecycle["quiesceRequest"] as Record<string, unknown>;
+  return operation({
+    generation: 8,
+    runtimeEpoch: 4,
+    kind: "stop",
+    deploymentRevisionId: "revision-old-7",
+    reservationId: null,
+    checkpoint: {
+      schemaVersion: 1,
+      writerAbsenceProof: null,
+      lifecycle: {
+        ...lifecycle,
+        runtimeEpoch: 4,
+        kind: "stop",
+        reason: "user",
+        target: null,
+        targetEpoch: null,
+        targetReservationId: null,
+        quiesceRequest: { ...request, runtimeEpoch: 4, reason: "stop" },
+      },
+    },
+  });
+}
+
 function snapshot(overrides: {
   readonly suspended?: boolean;
   readonly authorizationRevision?: number;
+  readonly desiredState?: "running" | "stopped";
+  readonly generation?: number;
+  readonly runtimeEpoch?: number;
+  readonly desiredRevisionId?: string | null;
   readonly observedState?: RepositorySnapshot["instance"]["observedState"];
+  readonly observedGeneration?: number | null;
   readonly observedEpoch?: number | null;
 } = {}): RepositorySnapshot {
   return {
@@ -244,15 +277,17 @@ function snapshot(overrides: {
     instance: {
       instanceId: INSTANCE_ID,
       repositoryId: REPOSITORY_ID,
-      generation: 8,
-      runtimeEpoch: 5,
-      desiredState: "running",
+      generation: overrides.generation ?? 8,
+      runtimeEpoch: overrides.runtimeEpoch ?? 5,
+      desiredState: overrides.desiredState ?? "running",
       policy: "stable",
-      observedGeneration: 7,
+      observedGeneration: overrides.observedGeneration === undefined ? 7 : overrides.observedGeneration,
       observedRuntimeEpoch: overrides.observedEpoch === undefined ? 4 : overrides.observedEpoch,
       observedSequence: 6,
       observedState: overrides.observedState ?? "ready",
-      desiredRevisionId: "revision-new-8",
+      desiredRevisionId: overrides.desiredRevisionId === undefined
+        ? "revision-new-8"
+        : overrides.desiredRevisionId,
       observedRevisionId: "revision-old-7",
       currentArtifactDigest: IMAGE_DIGEST,
       desiredArtifactDigest: `sha256:${"3".repeat(64)}`,
@@ -375,6 +410,25 @@ describe("provisioner history drain grant", () => {
     }]);
   });
 
+  it("accepts a canonical desired-stopped operation draining its unchanged observed epoch", async () => {
+    const h = await harness({
+      op: stopOperation(),
+      snap: snapshot({
+        desiredState: "stopped",
+        runtimeEpoch: 4,
+        desiredRevisionId: "revision-old-7",
+      }),
+    });
+    const response = await h.app.request(`/operations/${OPERATION_ID}/history-drain-grant`, request(BASE_BODY));
+    expect(response.status).toBe(200);
+    expect(h.gatewayInput).toMatchObject({
+      oldGeneration: 7,
+      oldRuntimeEpoch: 4,
+      currentGeneration: 8,
+      currentRuntimeEpoch: 4,
+    });
+  });
+
   it.each([
     ["stale lease", { op: operation({ leaseExpiresAt: NOW }) }, BASE_BODY],
     ["wrong checkpoint sequence", {}, { ...BASE_BODY, expectedCheckpointSequence: 10 }],
@@ -390,6 +444,14 @@ describe("provisioner history drain grant", () => {
     ["suspended binding", { snap: snapshot({ suspended: true }) }, BASE_BODY],
     ["old writer no longer ready", { snap: snapshot({ observedState: "stopped" }) }, BASE_BODY],
     ["old epoch mismatch", { snap: snapshot({ observedEpoch: 3 }) }, BASE_BODY],
+    ["stop with running desired state", {
+      op: stopOperation(),
+      snap: snapshot({ runtimeEpoch: 4 }),
+    }, BASE_BODY],
+    ["stop with a replacement epoch", {
+      op: stopOperation(),
+      snap: snapshot({ desiredState: "stopped", runtimeEpoch: 5 }),
+    }, BASE_BODY],
     ["stale authorization revision", { snap: snapshot({ authorizationRevision: 8 }) }, BASE_BODY],
     ["unsafe quiesce receipt", { op: operation({ checkpoint: {
       ...operation().checkpoint!,
@@ -430,7 +492,7 @@ describe("provisioner history drain grant", () => {
       jwksUrl: `${GATEWAY_ORIGIN}/.well-known/jwks.json`,
       origin: APP_ORIGIN,
       audience: APP_ORIGIN,
-      authRevision: 9,
+      authorizationRevision: 9,
       grant: "signedAccessGrantCookieValue-0123456789",
       permissions: ["read", "write"],
     } });
@@ -450,7 +512,6 @@ describe("provisioner history drain grant", () => {
     expect(response.status).toBe(409);
     expect(h.gatewayCalls).toBe(1);
   });
-});
 
   it("accepts the separately allowlisted legacy core-only artifact with no modules", async () => {
     const coreProducer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -488,3 +549,4 @@ describe("provisioner history drain grant", () => {
     const response = await h.app.request(`/operations/${OPERATION_ID}/history-drain-grant`, request(BASE_BODY));
     expect(response.status).toBe(200);
   });
+});

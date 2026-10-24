@@ -247,7 +247,7 @@ function matchesLease(
     operation.leaseEpoch === input.leaseEpoch &&
     operation.leaseExpiresAt !== null && operation.leaseExpiresAt > now &&
     operation.checkpointSequence === input.expectedCheckpointSequence &&
-    (operation.kind === "update" || operation.kind === "redeploy");
+    (operation.kind === "stop" || operation.kind === "update" || operation.kind === "redeploy");
 }
 
 function persistedOldAssignment(
@@ -286,6 +286,7 @@ function persistedOldAssignment(
   const producerRevision = isRecord(runtimeMetadata) ? runtimeMetadata["producerRevision"] : null;
   const reservationId = current["reservationId"];
   const oldEpoch = runtimeEpoch;
+  const isStop = operation.kind === "stop";
   const reason = operation.kind;
   if (
     lifecycle["id"] !== operation.id || lifecycle["instanceId"] !== operation.instanceId ||
@@ -294,7 +295,9 @@ function persistedOldAssignment(
     lifecycle["kind"] !== operation.kind || lifecycle["phase"] !== "stopping-old" ||
     !Number.isSafeInteger(generation) || typeof generation !== "number" || generation < 1 ||
     !Number.isSafeInteger(runtimeEpoch) || typeof runtimeEpoch !== "number" || runtimeEpoch < 1 ||
-    runtimeEpoch >= operation.runtimeEpoch ||
+    (isStop
+      ? runtimeEpoch !== operation.runtimeEpoch || generation + 1 !== operation.generation
+      : runtimeEpoch >= operation.runtimeEpoch) ||
     typeof reservationId !== "string" || reservationId.length === 0 || reservationId.length > 128 ||
     typeof platformManifestDigest !== "string" || !DIGEST.test(platformManifestDigest) ||
     imageDigest !== platformManifestDigest ||
@@ -325,7 +328,9 @@ function persistedOldAssignment(
     receipt["activeMutations"] !== 0 || receipt["activeJobs"] !== 0 ||
     receipt["pendingCheckpoints"] !== 0 || receipt["uncertainPublication"] !== false ||
     typeof receipt["quiesceRevision"] !== "string" || receipt["quiesceRevision"].length === 0 ||
-    (operation.kind !== "update" && operation.kind !== "redeploy") ||
+    (operation.kind !== "stop" && operation.kind !== "update" && operation.kind !== "redeploy") ||
+    (isStop && (lifecycle["target"] !== null || lifecycle["targetEpoch"] !== null ||
+      lifecycle["targetReservationId"] !== null)) ||
     lifecycle["writerAbsenceProof"] !== null || checkpoint["writerAbsenceProof"] !== null ||
     lifecycle["rollbackEpoch"] !== null || lifecycle["rollbackCompatibilityEvidence"] !== null ||
     lifecycle["rollbackCompatible"] === true
@@ -386,13 +391,14 @@ function matchesSnapshot(
   snapshot: RepositorySnapshot,
   dependencies: ProvisionerHistoryDrainGrantDependencies,
 ): boolean {
+  const desiredState = operation.kind === "stop" ? "stopped" : "running";
   return !snapshot.binding.suspended &&
     snapshot.binding.repositoryId === operation.repositoryId &&
     snapshot.binding.instanceId === operation.instanceId &&
     snapshot.instance.repositoryId === operation.repositoryId &&
     snapshot.instance.instanceId === operation.instanceId &&
     snapshot.binding.authorizationRevision >= 0 &&
-    snapshot.instance.desiredState === "running" &&
+    snapshot.instance.desiredState === desiredState &&
     snapshot.instance.generation === operation.generation &&
     snapshot.instance.runtimeEpoch === operation.runtimeEpoch &&
     snapshot.instance.desiredRevisionId === operation.deploymentRevisionId &&

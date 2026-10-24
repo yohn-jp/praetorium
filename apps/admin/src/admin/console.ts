@@ -247,7 +247,10 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   if (!session) {
     // Only allowlisted GET destinations can enter the Gateway OAuth handoff.
     if (request.method === "GET") {
-      const target = adminReturnPath(url.pathname + "?ui=" + mode);
+      // Keep only authenticated read-only navigation state; never replay mutations.
+      const returnParams = new URLSearchParams(url.search);
+      if (!returnParams.has("ui")) returnParams.set("ui", mode);
+      const target = adminReturnPath(url.pathname + "?" + returnParams.toString());
       if (target !== "/" || url.pathname === "/") {
         return localRedirect(context.config.origin + "/_admin/entry" +
           (target === "/" ? "" : "?return_to=" + encodeURIComponent(target)));
@@ -435,7 +438,7 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
   const empty = <T>(value: T): OperatorSection<T> => ({ endpoint: "", status: 200, code: null, value });
   const [catalog, audit, builds, sourceViews, detail, releaseDetail, infrastructure, hostDetail, hostServices, dependencies] = await Promise.all([
-    section === "overview" || (section === "releases" && !selectedReleaseId)
+    section === "overview" || (section === "releases" && !selectedReleaseId && !selectedOperationId)
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases",
         "/v1/operator/releases" + (section === "releases" ? withCursor : ""), isCatalog)
       : Promise.resolve(empty({ items: [] as Summary[], stableChannel: null })),
@@ -447,7 +450,7 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/source-builds",
         "/v1/operator/source-builds" + (section === "overview" ? "?attention=1" : section === "builds" && sourceParams.size ? "?" + sourceParams.toString() : ""), isSourceBuilds)
       : Promise.resolve(empty({ items: [] as SourceBuildStatus[] })),
-    section === "releases" && !selectedReleaseId ? listRegisteredSources(context, session.rawSessionId).then(
+    section === "releases" && !selectedReleaseId && !selectedOperationId ? listRegisteredSources(context, session.rawSessionId).then(
       (value): OperatorSection<readonly SourceReleaseView[]> =>
         ({ endpoint: "GitHub Releases / configured sources", status: 200, code: null, value }),
       (): OperatorSection<readonly SourceReleaseView[]> => ({ endpoint: "GitHub Releases / configured sources", status: null,
@@ -501,7 +504,7 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   const model: ConsoleViewModel = {
     section, mode, csrf: session.csrfToken, notice: url.searchParams.get("notice")?.slice(0, 200) ?? null,
     catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, selectedOperationId, operationDetail, releaseDetail, buildStateFilter: state,
-    buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery,
+    buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery, pageCursor: cursor,
     infrastructure, selectedHostId, hostDetail, hostServices, dependenciesSelected, dependencies,
   };
   return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedOperationId ? "Operation evidence" : selectedReleaseId ? "Release status" : section),

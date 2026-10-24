@@ -212,6 +212,59 @@ it("rejects malformed or oversized operation path IDs before making a Control Pl
   expect(cp.fetch).not.toHaveBeenCalled();
 });
 
+function releaseRetryPost(fields: Record<string, string>): Request {
+  return new Request(ADMIN + "/releases/rel_recovery/retry?ui=desktop", {
+    method: "POST",
+    headers: {
+      Origin: ADMIN,
+      Cookie: "__Host-praetorium_session=" + SESSION_ID + "; __Host-praetorium_csrf=" + CSRF,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ csrfToken: CSRF, expectedRevision: "12", idempotencyKey: "action-recovery", ...fields }),
+  });
+}
+
+it("submits a bounded Canary recovery request through the existing revision-fenced retry endpoint", async () => {
+  const {context,cp}=fixture();
+  vi.mocked(cp.fetch).mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 202 }));
+  const response=await handleAdminHost(releaseRetryPost({ recoveryRequest: "canary-recovery" }),context);
+  expect(response.status).toBe(303);
+  expect(response.headers.get("Location")).toContain("/releases/rel_recovery?ui=desktop&notice=Canary%20recovery%20request%20accepted");
+  expect(response.headers.get("Location")).toContain("acceptance%20is%20not%20Canary%20success%20or%20Stable%20promotion");
+  const [input,init]=vi.mocked(cp.fetch).mock.calls[0]!;
+  expect(new URL(String(input)).pathname).toBe("/v1/operator/releases/rel_recovery/retry");
+  expect(JSON.parse(String(init?.body))).toEqual({ expectedRevision: 12, idempotencyKey: "action-recovery" });
+  expect(String(init?.body)).not.toContain("recoveryRequest");
+});
+
+it("keeps a stale Canary recovery request on the affected Release with actionable conflict guidance", async () => {
+  const {context,cp}=fixture();
+  vi.mocked(cp.fetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "RELEASE_CONFLICT" } }), { status: 409 }));
+  const response=await handleAdminHost(releaseRetryPost({ recoveryRequest: "canary-recovery" }),context);
+  expect(response.status).toBe(409);
+  const html=await response.text();
+  expect(html).toContain("workflow changed or its verified stopped target and Stop proof are no longer current");
+  expect(html).toContain('href="/releases/rel_recovery?ui=desktop"');
+  expect(html).toContain("Request was not confirmed");
+});
+
+it("keeps the existing pre-runtime retry submission body unchanged", async () => {
+  const {context,cp}=fixture();
+  vi.mocked(cp.fetch).mockResolvedValueOnce(new Response(JSON.stringify({ accepted: true }), { status: 202 }));
+  const response=await handleAdminHost(releaseRetryPost({}),context);
+  expect(response.status).toBe(303);
+  expect(response.headers.get("Location")).toContain("notice=Retry%20accepted%20for%20rel_recovery");
+  const [,init]=vi.mocked(cp.fetch).mock.calls[0]!;
+  expect(JSON.parse(String(init?.body))).toEqual({ expectedRevision: 12, idempotencyKey: "action-recovery" });
+});
+
+it("rejects unknown recovery request form fields before the Control Plane call", async () => {
+  const {context,cp}=fixture();
+  const response=await handleAdminHost(releaseRetryPost({ recoveryRequest: "automatic-retry" }),context);
+  expect(response.status).toBe(400);
+  expect(cp.fetch).not.toHaveBeenCalled();
+});
+
 
 it("offers the canonical one-time mobile choice without changing Desktop defaults or signed-in authority", async () => {
   const {context}=fixture();

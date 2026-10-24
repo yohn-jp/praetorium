@@ -431,6 +431,35 @@ describe("mobile operator console", () => {
     expect(html).toContain('name="expectedRevision" value="7"');
   });
 
+  it("shows bounded rejected Canary recovery requests in the Release list and detail", () => {
+    const release = {
+      release: { id: "rel_recovery", version: "2.3.6", imageDigest: "sha256:" + "e".repeat(64),
+        status: "rejected", createdAt: "2026-10-25T00:00:00Z" },
+      workflow: { workflow: { state: "rejected", revision: 12, failureCode: "canary_stop_blocked",
+        attempts: 3, nextAttemptAt: null }, build: null },
+    };
+    const list = renderMobileConsole(model({ section: "releases", catalog: dependency({
+      items: [release], stableChannel: { currentReleaseId: null, revision: 0 },
+    }, "GET /v1/operator/releases") }));
+    const detail = renderMobileConsole(model({ section: "releases", selectedReleaseId: "rel_recovery",
+      releaseDetail: dependency({ release: release.release,
+        workflow: { ...release.workflow.workflow, canaryBuildKey: "build-key", canaryOperationId: null },
+        build: null }, "GET /v1/operator/releases/rel_recovery") }));
+    for (const html of [list, detail]) {
+      expect(html).toContain("Request Canary recovery");
+      expect(html).toContain('name="expectedRevision" value="12"');
+      expect(html).toContain('name="recoveryRequest" value="canary-recovery"');
+      expect(html).toContain("Acceptance does not mean Canary success or Stable promotion");
+      expect(html).not.toContain(">Retry Canary build</button>");
+      expect(html).not.toContain("No retry is currently permitted by the Canary queue.");
+    }
+    const ineligible = renderMobileConsole(model({ section: "releases", selectedReleaseId: "rel_recovery",
+      releaseDetail: dependency({ release: release.release,
+        workflow: { ...release.workflow.workflow, state: "canary_cleanup", canaryBuildKey: null, canaryOperationId: null },
+        build: null }, "GET /v1/operator/releases/rel_recovery") }));
+    expect(ineligible).not.toContain("Request Canary recovery");
+  });
+
   it("explains a known Canary configuration conflict on Source and Release detail without inventing operation links", () => {
     const conflict = "canary_configuration_conflict";
     const guidance = "Canary configuration changed or an operation is still active; inspect the current operation and let normal recovery finish before automatic retry.";

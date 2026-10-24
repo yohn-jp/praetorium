@@ -296,6 +296,34 @@ describe("desktop operator composition", () => {
     expect(denied).not.toContain('name="idempotencyKey"');
   });
 
+  it("offers only a revision-fenced Canary recovery request for eligible rejected releases in list and detail", () => {
+    const release = {
+      release: { id: "rel_recovery", version: "1.5.0", imageDigest: "sha256:" + "e".repeat(64),
+        status: "rejected", createdAt: "2026-10-25T00:00:00Z" },
+      workflow: { workflow: { state: "rejected", revision: 12, failureCode: "canary_operation_failed",
+        attempts: 3, nextAttemptAt: null }, build: null },
+    };
+    const list = renderDesktopConsole(view({ section: "releases", catalog: dependency(
+      "GET /v1/operator/releases", { items: [release], stableChannel: { currentReleaseId: null, revision: 0 } },
+    ) }));
+    const detailStatus = { ...release, workflow: { ...release.workflow.workflow,
+      canaryBuildKey: "build-key", canaryOperationId: null }, build: null };
+    const detail = renderDesktopConsole(view({ section: "releases", selectedReleaseId: "rel_recovery",
+      releaseDetail: dependency("GET /v1/operator/releases/rel_recovery", detailStatus) }));
+    for (const html of [list, detail]) {
+      expect(html).toContain("Request Canary recovery");
+      expect(html).toContain('name="expectedRevision" value="12"');
+      expect(html).toContain('name="recoveryRequest" value="canary-recovery"');
+      expect(html).toContain("Acceptance does not mean Canary success or Stable promotion");
+      expect(html).not.toContain(">Retry Canary build</button>");
+    }
+    const excluded = renderDesktopConsole(view({ section: "releases", selectedReleaseId: "rel_recovery",
+      releaseDetail: dependency("GET /v1/operator/releases/rel_recovery", {
+        ...detailStatus, workflow: { ...detailStatus.workflow, state: "canary_cleanup" },
+      }) }));
+    expect(excluded).not.toContain("Request Canary recovery");
+  });
+
   it("explains a known Canary configuration conflict on Source and Release detail without inventing operation links", () => {
     const conflict = "canary_configuration_conflict";
     const guidance = "Canary configuration changed or an operation is still active; inspect the current operation and let normal recovery finish before automatic retry.";

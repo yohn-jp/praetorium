@@ -111,6 +111,14 @@ export function isOperationId(id: string): boolean {
     /^operation_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(id);
 }
 
+export function canRequestCanaryRecovery(workflow: {
+  state: string; failureCode: string | null; revision: number;
+} | null | undefined): boolean {
+  return !!workflow && workflow.state === "rejected" && Number.isSafeInteger(workflow.revision) &&
+    workflow.revision >= 0 && ["canary_assignment_superseded", "canary_operation_failed", "canary_stop_blocked"]
+      .includes(workflow.failureCode ?? "");
+}
+
 export function operationHref(id:string, mode:ConsoleMode, relatedReleaseId?:string|null):string {
   if (!isOperationId(id)) return consoleHref("releases", mode);
   const params=new URLSearchParams({ui:mode});

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   admittedReleaseHref,
+  canRequestCanaryRecovery,
   compositionBuildHref,
   isOperationId,
   operationHref,
@@ -65,4 +66,13 @@ describe("authoritative execution navigation", () => {
     } as ConsoleViewModel;
     expect(viewHref(model, "mobile")).toBe("/operations/op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ?ui=mobile&release=release_123");
   });
+
+  it.each(["canary_assignment_superseded", "canary_operation_failed", "canary_stop_blocked"])(
+    "offers bounded recovery eligibility only for rejected %s workflow at a valid revision", failureCode => {
+      expect(canRequestCanaryRecovery({ state: "rejected", failureCode, revision: 9 })).toBe(true);
+      expect(canRequestCanaryRecovery({ state: "canary_cleanup", failureCode, revision: 9 })).toBe(false);
+      expect(canRequestCanaryRecovery({ state: "rejected", failureCode: "other_failure", revision: 9 })).toBe(false);
+      expect(canRequestCanaryRecovery({ state: "rejected", failureCode, revision: -1 })).toBe(false);
+    },
+  );
 });

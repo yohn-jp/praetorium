@@ -408,12 +408,16 @@ describe("Instance Access production handler", () => {
   });
 
   it.each([
-    { status: 401, gatewayCode: "UNAUTHENTICATED", expectedCode: "UNAUTHENTICATED" },
-    { status: 403, gatewayCode: "FORBIDDEN", expectedCode: "FORBIDDEN" },
-    { status: 503, gatewayCode: "UPSTREAM_UNAVAILABLE", expectedCode: "UPSTREAM_UNAVAILABLE" },
+    { status: 401, gatewayCode: "REFRESH_CREDENTIAL_REJECTED", expectedStatus: 401, expectedCode: "UNAUTHENTICATED" },
+    { status: 401, gatewayCode: "UNAUTHENTICATED", expectedStatus: 503, expectedCode: "GATEWAY_UNAVAILABLE" },
+    { status: 403, gatewayCode: "FORBIDDEN", expectedStatus: 403, expectedCode: "FORBIDDEN" },
+    { status: 403, gatewayCode: "INSTANCE_BLOCKED", expectedStatus: 503, expectedCode: "GATEWAY_UNAVAILABLE" },
+    { status: 503, gatewayCode: "UPSTREAM_UNAVAILABLE", expectedStatus: 503, expectedCode: "UPSTREAM_UNAVAILABLE" },
+    { status: 503, gatewayCode: "INSTANCE_STARTING", expectedStatus: 503, expectedCode: "INSTANCE_STARTING" },
+    { status: 503, gatewayCode: "FORBIDDEN", expectedStatus: 503, expectedCode: "GATEWAY_UNAVAILABLE" },
   ])(
-    "preserves Gateway refresh status $status without leaking its diagnostic body or expiring cookies",
-    async ({ status, gatewayCode, expectedCode }) => {
+    "maps refresh Gateway status $status and code $gatewayCode without leaking diagnostics or expiring cookies",
+    async ({ status, gatewayCode, expectedStatus, expectedCode }) => {
       const handler = createInstanceAccessHandler(environment(async (request) => {
         if (new URL(request.url).pathname.endsWith("/refresh")) {
           return Response.json(
@@ -427,14 +431,36 @@ describe("Instance Access production handler", () => {
       const originalRefresh = cookieValue(jar, "__Secure-praetorium_refresh");
       const response = await handler(refreshRequest(host, jar));
 
-      expect(response.status).toBe(status);
+      expect(response.status).toBe(expectedStatus);
       expect(await response.json()).toEqual({ error: { code: expectedCode } });
       expect(response.headers.getSetCookie()).toHaveLength(0);
       expect(response.headers.get("Cache-Control")).toContain("no-store");
-      if (status === 503) expect(response.headers.get("Retry-After")).toBe("5");
+      if (expectedStatus === 503) expect(response.headers.get("Retry-After")).toBe("5");
+      applyCookies(jar, response);
       expect(cookieValue(jar, "__Secure-praetorium_refresh")).toBe(originalRefresh);
     },
   );
+
+  it.each([
+    { variant: "malformed", body: "{" },
+    {
+      variant: "oversized",
+      body: JSON.stringify({ error: { code: "REFRESH_CREDENTIAL_REJECTED" } }).padEnd(4_097, " "),
+    },
+  ])("fails closed on a $variant Gateway refresh error body", async ({ body }) => {
+    const handler = createInstanceAccessHandler(environment(async (request) => {
+      if (new URL(request.url).pathname.endsWith("/refresh"))
+        return new Response(body, { status: 401 });
+      return grantResponse();
+    }), fetch, () => now);
+    const jar = await createCookieJar(handler);
+    const response = await handler(refreshRequest(host, jar));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: { code: "GATEWAY_UNAVAILABLE" } });
+    expect(response.headers.get("Retry-After")).toBe("5");
+    expect(response.headers.getSetCookie()).toHaveLength(0);
+  });
 
   it("keeps reauthentication cookie-neutral when stale tab responses arrive after refresh rotation", async () => {
     let gatewayCalls = 0;

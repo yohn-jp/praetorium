@@ -1,7 +1,20 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeAssignment } from "@praetorium/application/lifecycle";
 import type { ProvisionerOperationService } from "./operation-client.js";
-import type { RuntimeObservation } from "@praetorium/kubernetes";
+import {
+  KubernetesApiError,
+  KubernetesRuntimeProvider,
+  createKubernetesResourceRenderer,
+  managedLabels,
+  parseRuntimeInstanceId,
+  parseRuntimeReleaseId,
+  parseRuntimeRepositoryId,
+  runtimeNamespaceName,
+  runtimeResourceName,
+  type KubernetesApi,
+  type RuntimeObservation,
+} from "@praetorium/kubernetes";
 import {
   LifecycleReservationAdapter,
   KubernetesLifecycleRuntimeAdapter,
@@ -166,6 +179,199 @@ function adapter() {
   };
 }
 
+function hostedRuntimeAssignment(): RuntimeAssignment {
+  const instanceId = parseRuntimeInstanceId("ins_00000000000000000000000001");
+  const repositoryId = parseRuntimeRepositoryId(123456);
+  const releaseId = parseRuntimeReleaseId("rel_00000000000000000000000001");
+  const imageDigest = `sha256:${"a".repeat(64)}`;
+  const platformManifestDigest = `sha256:${"b".repeat(64)}`;
+  return {
+    instanceId,
+    repositoryId,
+    runtimeEpoch: 1,
+    generation: 1,
+    clusterId: "clu_00000000000000000000000001",
+    reservationId: "res_00000000000000000000000001",
+    deployment: {
+      ...deployment(),
+      revisionId: releaseId,
+      repositoryId,
+      imageDigest,
+      platformManifestDigest,
+      artifactRef: `ghcr.io/praetorium/scriptorium@${imageDigest}`,
+    },
+  };
+}
+
+function legacyStopProviderFixture(assignment: RuntimeAssignment) {
+  const instanceId = parseRuntimeInstanceId(assignment.instanceId);
+  const namespace = runtimeNamespaceName("praetorium-instances", instanceId);
+  const name = runtimeResourceName(instanceId);
+  const releaseId = parseRuntimeReleaseId(assignment.deployment.revisionId);
+  const ownershipLabels = {
+    ...managedLabels({
+      instanceId: parseRuntimeInstanceId(assignment.instanceId),
+      repositoryId: parseRuntimeRepositoryId(assignment.repositoryId),
+      runtimeEpoch: assignment.runtimeEpoch,
+      generation: assignment.generation,
+      releaseId,
+    }),
+    "arcadia.io/runtime-cluster-id": assignment.clusterId,
+  };
+  const namespaceObject = {
+    apiVersion: "v1",
+    kind: "Namespace",
+    metadata: {
+      name: namespace,
+      uid: "namespace-uid",
+      resourceVersion: "10",
+      labels: {
+        ...ownershipLabels,
+        "pod-security.kubernetes.io/enforce": "restricted",
+        "pod-security.kubernetes.io/audit": "restricted",
+        "pod-security.kubernetes.io/warn": "restricted",
+      },
+    },
+  };
+  const deploymentObject = {
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: {
+      name,
+      namespace,
+      uid: "deployment-uid",
+      resourceVersion: "11",
+      labels: ownershipLabels,
+      annotations: { "arcadia.io/release-digest": assignment.deployment.imageDigest },
+    },
+    spec: { replicas: 1 },
+    status: { readyReplicas: 1 },
+  };
+  const podName = `${name}-legacy`;
+  const podObject = {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: podName,
+      namespace,
+      uid: "legacy-pod-uid",
+      resourceVersion: "12",
+      labels: { ...ownershipLabels, "app.kubernetes.io/name": "scriptorium" },
+    },
+    spec: {
+      containers: [
+        {
+          name: "scriptorium",
+          image: assignment.deployment.artifactRef,
+          env: [{ name: "SCRIPTORIUM_USAGE_DIR", value: "/data/history" }],
+          volumeMounts: [{ name: "workspace", mountPath: "/data" }],
+        },
+      ],
+      volumes: [{ name: "workspace", emptyDir: {} }],
+    },
+    status: {
+      phase: "Running",
+      conditions: [{ type: "Ready", status: "True" }],
+      containerStatuses: [
+        {
+          name: "scriptorium",
+          ready: true,
+          imageID: `containerd://${assignment.deployment.platformManifestDigest}`,
+        },
+      ],
+    },
+  };
+  const objects = new Map<string, unknown>([
+    [`Deployment/${namespace}/${name}`, deploymentObject],
+    [`Pod/${namespace}/${podName}`, podObject],
+  ]);
+  const writes: string[] = [];
+  let listRevision = 12;
+  const api = {
+    async get(reference: { readonly kind: string; readonly namespace: string; readonly name: string }) {
+      const value = objects.get(`${reference.kind}/${reference.namespace}/${reference.name}`);
+      if (value === undefined) throw new KubernetesApiError(404, "NotFound");
+      return value;
+    },
+    async getNamespace() {
+      return namespaceObject;
+    },
+    async list(kind: string, selectedNamespace: string) {
+      return {
+        items: [...objects.entries()]
+          .filter(([key]) => key.startsWith(`${kind}/${selectedNamespace}/`))
+          .map(([, value]) => value),
+        resourceVersion: String(listRevision),
+        nextCursor: null,
+      };
+    },
+    async create(resource: { readonly kind: string; readonly metadata: { readonly namespace: string; readonly name: string } }) {
+      writes.push(`create:${resource.kind}`);
+      listRevision += 1;
+      const created = {
+        ...resource,
+        metadata: {
+          ...resource.metadata,
+          uid: `created-${resource.kind.toLowerCase()}`,
+          resourceVersion: String(listRevision),
+        },
+      };
+      objects.set(`${resource.kind}/${resource.metadata.namespace}/${resource.metadata.name}`, created);
+      return created;
+    },
+    async applyConditional(resource: { readonly kind: string; readonly metadata: { readonly namespace: string; readonly name: string }; readonly spec?: Readonly<Record<string, unknown>> }) {
+      writes.push(`apply:${resource.kind}`);
+      listRevision += 1;
+      const previous = objects.get(`${resource.kind}/${resource.metadata.namespace}/${resource.metadata.name}`) as Record<string, unknown>;
+      const applied = {
+        ...previous,
+        ...resource,
+        metadata: { ...(previous.metadata as object), ...resource.metadata, resourceVersion: String(listRevision) },
+        spec: resource.spec,
+      };
+      objects.set(`${resource.kind}/${resource.metadata.namespace}/${resource.metadata.name}`, applied);
+      if (resource.kind === "Deployment" && resource.spec?.replicas === 0)
+        objects.delete(`Pod/${namespace}/${podName}`);
+      return applied;
+    },
+    async delete() { throw new Error("unexpected delete"); },
+    async deleteConditional() { throw new Error("unexpected conditional delete"); },
+    async apply() { throw new Error("unexpected apply"); },
+    async createNamespace() { throw new Error("unexpected namespace create"); },
+    async applyNamespaceConditional() { throw new Error("unexpected namespace update"); },
+    async deleteNamespaceConditional() { throw new Error("unexpected namespace delete"); },
+    async *watch() { yield* []; },
+    async readHistorySnapshot(input: { readonly sourcePodUid: string }) {
+      const manifest = { schemaVersion: 1, sourcePodUid: input.sourcePodUid, files: [] };
+      const manifestSha256 = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+      return JSON.stringify({ ...manifest, manifestSha256 });
+    },
+  } as unknown as KubernetesApi;
+  const renderer = createKubernetesResourceRenderer({
+    namespacePrefix: "praetorium-instances",
+    clusterId: assignment.clusterId,
+    ingressNamespace: "traefik",
+    instanceAccessNamespace: "praetorium-system",
+    instanceAccessService: "instance-access",
+    controlNamespace: "praetorium-system",
+    controlService: "provisioner",
+    maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
+  });
+  const provider = new KubernetesRuntimeProvider({
+    api,
+    namespacePrefix: "praetorium-instances",
+    clusterId: assignment.clusterId,
+    renderer,
+    reservations: {
+      currentReservations: async () => { throw new Error("not used by stop"); },
+      recordCapacitySnapshot: async () => { throw new Error("not used by stop"); },
+    },
+    maxCapacityAgeMs: 30_000,
+    now: () => now,
+  });
+  return { provider, writes, objects, namespace, name, podName };
+}
+
 describe("LifecycleReservationAdapter", () => {
   it("waits before retiring the old runtime when other reservations fragment node capacity", async () => {
     const { adapter: capacity, reserveRuntime } = adapter();
@@ -174,6 +380,65 @@ describe("LifecycleReservationAdapter", () => {
       capacity.reserve("op_target", "ins_target", deployment(), async () => undefined),
     ).resolves.toEqual({ status: "pending" });
     expect(reserveRuntime).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosted stop private-history boundary", () => {
+  function lifecycleAdapter(
+    assignment: RuntimeAssignment,
+    provider: KubernetesRuntimeProvider,
+    drain: Parameters<KubernetesLifecycleRuntimeAdapter["setLegacyHistoryDrain"]>[0],
+  ) {
+    const identityTransport = new RuntimeIdentityAssignmentTransport({
+      operations: {} as RuntimeIdentityProvisionerService,
+      workerId: "worker-a",
+      clusterId: assignment.clusterId,
+    });
+    const project = vi.spyOn(identityTransport, "project");
+    const runtime = Object.assign(Object.create(KubernetesLifecycleRuntimeAdapter.prototype), {
+      provider,
+      identityTransport,
+      now: () => now,
+      convergenceTimeoutMs: 1_000,
+      pollIntervalMs: 1,
+    }) as KubernetesLifecycleRuntimeAdapter;
+    runtime.setLegacyHistoryDrain(drain);
+    return { runtime, project };
+  }
+
+  const noOpBeforeEffect = async () => undefined;
+
+  it("does not scale down a legacy Hosted writer when fenced history drain fails", async () => {
+    const assignment = hostedRuntimeAssignment();
+    const fixture = legacyStopProviderFixture(assignment);
+    const drain = vi.fn(async () => { throw new Error("history_grant_rejected"); });
+    const { runtime, project } = lifecycleAdapter(assignment, fixture.provider, drain);
+
+    await expect(runtime.stop(assignment, "op_stop", noOpBeforeEffect)).rejects.toThrow(
+      "history_grant_rejected",
+    );
+
+    expect(drain).toHaveBeenCalledOnce();
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.objects.has(`Pod/${fixture.namespace}/${fixture.podName}`)).toBe(true);
+    expect((fixture.objects.get(`Deployment/${fixture.namespace}/${fixture.name}`) as { spec: { replicas: number } }).spec.replicas).toBe(1);
+    expect(project).not.toHaveBeenCalled();
+  });
+
+  it("stores the bounded legacy seed before scaling down after a successful drain", async () => {
+    const assignment = hostedRuntimeAssignment();
+    const fixture = legacyStopProviderFixture(assignment);
+    const drain = vi.fn(async () => undefined);
+    const { runtime, project } = lifecycleAdapter(assignment, fixture.provider, drain);
+
+    await runtime.stop(assignment, "op_stop", noOpBeforeEffect);
+
+    expect(drain).toHaveBeenCalledOnce();
+    expect(fixture.writes).toEqual(["create:Secret", "apply:Deployment"]);
+    expect(fixture.objects.has(`Pod/${fixture.namespace}/${fixture.podName}`)).toBe(false);
+    expect(fixture.objects.has(`Secret/${fixture.namespace}/${fixture.name}-history-seed`)).toBe(true);
+    expect((fixture.objects.get(`Deployment/${fixture.namespace}/${fixture.name}`) as { spec: { replicas: number } }).spec.replicas).toBe(0);
+    expect(project).not.toHaveBeenCalled();
   });
 });
 

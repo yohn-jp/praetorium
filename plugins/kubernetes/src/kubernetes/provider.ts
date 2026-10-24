@@ -912,7 +912,10 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     }) => Promise<void>,
   ): Promise<void> {
     validateIdentity(spec, this.options.clusterId);
-    if (spec.scriptoriumAssignment === undefined) return;
+    if (spec.scriptoriumAssignment === undefined) {
+      await this.assertNoUnclassifiedWriterBeforeStop(spec, signal);
+      return;
+    }
     const initial = await this.inspect(spec, signal);
     if (initial.writerCensus.queriedPodCount === 0) return;
     const firstWriter = initial.writerCensus.pods[0];
@@ -1353,6 +1356,8 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     beforeEffect: RuntimeEffectGuard,
   ): Promise<ApplyResult> {
     validateIdentity(spec, this.options.clusterId);
+    if (spec.scriptoriumAssignment === undefined)
+      await this.assertNoUnclassifiedWriterBeforeStop(spec, signal);
     await this.deactivateCurrentEndpoint(spec, signal, beforeEffect);
     const before = await this.inspect(spec, signal);
     const namespaceName = this.namespaceFor(spec.instanceId);
@@ -1874,6 +1879,34 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       );
     }
     return { kind: "legacy", sourceDirectory: "/data/history" };
+  }
+
+  /** A stop without Hosted assignment metadata may not retire a live writer.
+   * The caller needs that non-secret metadata to classify and preserve private
+   * history before any scale-down. A complete empty census remains safe. */
+  private async assertNoUnclassifiedWriterBeforeStop(
+    spec: StoppedInstanceSpec,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const observation = await this.inspect(spec, signal);
+    if (
+      observation.writerCensus.complete !== true ||
+      observation.writerCensus.scope !== "instance-repository-all-epochs" ||
+      observation.writerCensus.queriedPodCount !== observation.writerCensus.pods.length
+    ) {
+      throw new RuntimeProviderError(
+        "unavailable",
+        "stop without Hosted history metadata requires a complete writer census",
+        "retryable",
+      );
+    }
+    if (observation.writerCensus.queriedPodCount !== 0) {
+      throw new RuntimeProviderError(
+        "misconfigured",
+        "Hosted assignment metadata is required before stopping a live writer to preserve private history",
+        "terminal",
+      );
+    }
   }
 
   private historySeedResource(

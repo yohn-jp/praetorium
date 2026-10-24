@@ -618,6 +618,28 @@ describe("Kubernetes runtime provider", () => {
     expect(api.deletes).toHaveLength(0);
   });
 
+  it("fails closed if a live writer reaches a stop boundary without Hosted assignment metadata", async () => {
+    const api = new FakeKubernetesApi();
+    addLegacyWriter(api);
+    const runtime = provider(api);
+    const stopSpec = { ...spec(), scriptoriumAssignment: undefined };
+
+    await expect(
+      runtime.preserveHistoryBeforeStop(
+        stopSpec,
+        new AbortController().signal,
+        async () => undefined,
+      ),
+    ).rejects.toThrow("Hosted assignment metadata is required before stopping a live writer");
+    await expect(
+      runtime.ensureStopped(stopSpec, new AbortController().signal, async () => undefined),
+    ).rejects.toThrow("Hosted assignment metadata is required before stopping a live writer");
+
+    expect(api.conditionalWrites).toHaveLength(0);
+    expect(api.writes).toHaveLength(0);
+    expect(api.objects.has(key("Pod", NAMESPACE, "legacy-writer"))).toBe(true);
+  });
+
   it("drains the exact legacy writer before taking and retaining the stable snapshot", async () => {
     const api = new FakeKubernetesApi();
     addLegacyWriter(api);

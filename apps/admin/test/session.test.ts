@@ -152,6 +152,6 @@ it("fetches only an operation's current evidence on its detail page", async () =
   expect(response.status).toBe(200);
   expect(identity.listApprovedSourceReleases).not.toHaveBeenCalled();
   expect(cp.fetch).toHaveBeenCalledTimes(1);
-  const request=vi.mocked(cp.fetch).mock.calls[0]?.[0] as Request;
-  expect(new URL(request.url).pathname).toBe("/v1/operations/op_123/evidence");
+  const request=vi.mocked(cp.fetch).mock.calls[0]?.[0];
+  expect(new URL(String(request)).pathname).toBe("/v1/operations/op_123/evidence");
 });

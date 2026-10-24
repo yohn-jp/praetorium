@@ -436,6 +436,15 @@ export class D1SourceReleaseBuildQueue {
     return (await this.db.prepare("SELECT * FROM source_release_builds WHERE job_id=?")
       .bind(jobId).first<SourceJob>())??null;
   }
+  /** Exact read-only relationship lookup for a published Source release.
+   * The pair is immutable and unique in this queue, so old jobs do not depend
+   * on appearing in the paginated recent-build list. */
+  async bySourceRelease(sourceId:string,githubReleaseId:number):Promise<PublicJob|null> {
+    const row=await this.db.prepare(
+      "SELECT * FROM source_release_builds WHERE source_id=? AND github_release_id=?",
+    ).bind(sourceId,githubReleaseId).first<SourceJob>();
+    return row?publicSourceJob(row):null;
+  }
   async claimProduced(limit=5,leaseMs=ADMISSION_LEASE_MS):Promise<readonly (SourceJob&{result_json:string})[]> {
     if(!Number.isSafeInteger(limit)||limit<1||limit>MAX_ADMISSION_PAGE||
       !Number.isSafeInteger(leaseMs)||leaseMs<30_000||leaseMs>15*60_000)
@@ -736,6 +745,14 @@ export function createSourceReleaseOperatorRoutes(input:{
     const sort=parseBuildSort(c.req.query("sort")),state=parseBuildState(c.req.query("state"));
     const cursor=parseBuildCursor(c.req.query("cursor"),sort,state);
     return c.json(await input.queue.list(limit,cursor,attention==="1",state,sort));
+  });
+  app.get("/by-release/:sourceId/:releaseId",async(c)=>{
+    const sourceId=c.req.param("sourceId");
+    const releaseId=c.req.param("releaseId");
+    if(!/^[a-z][a-z0-9-]{0,31}$/u.test(sourceId)||
+      !/^[1-9][0-9]{0,15}$/u.test(releaseId)||!Number.isSafeInteger(Number(releaseId)))
+      return c.json({error:{code:"INVALID_REQUEST"}},400);
+    return c.json({job:await input.queue.bySourceRelease(sourceId,Number(releaseId))});
   });
   app.get("/:jobId",async(c)=>{
     const limit=readPageLimit(c.req.query("limit"),10,25);

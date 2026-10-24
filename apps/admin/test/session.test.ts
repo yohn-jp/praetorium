@@ -133,6 +133,52 @@ it("retains bounded read-only query context after an expired Admin session", asy
   expect(cp.fetch).not.toHaveBeenCalled();
 });
 
+it("retains an exact Source Release execution path after an expired Admin session", async () => {
+  const {context,cp}=fixture();
+  const response=await handleAdminHost(new Request(
+    ADMIN+"/source-release-builds/scriptorium/416422590?ui=mobile"),context);
+  expect(response.status).toBe(303);
+  expect(new URL(response.headers.get("Location")!).searchParams.get("return_to"))
+    .toBe("/source-release-builds/scriptorium/416422590?ui=mobile");
+  expect(cp.fetch).not.toHaveBeenCalled();
+});
+
+it("resolves a published GitHub Release to its exact recorded Source build", async () => {
+  const {context,cp}=fixture();
+  const job={
+    id:"sr_00000000-0000-4000-a000-000000000001",sourceId:"scriptorium",releaseId:416422590,
+    tag:"v0.3.5",commit:"a".repeat(40),version:"0.3.5",state:"admitted",attempt:1,
+    revision:4,error:null,admittedReleaseId:"rel_admitted",retryable:false,
+  };
+  vi.mocked(cp.fetch).mockResolvedValueOnce(Response.json({job}));
+  const response=await handleAdminHost(sessionRequest(
+    ADMIN+"/source-release-builds/scriptorium/416422590?ui=mobile"),context);
+  expect(response.status).toBe(303);
+  expect(response.headers.get("Location")).toBe(
+    "/builds/sr_00000000-0000-4000-a000-000000000001?ui=mobile");
+  const [request,init]=vi.mocked(cp.fetch).mock.calls[0]!;
+  expect(new URL(String(request)).pathname)
+    .toBe("/v1/operator/source-builds/by-release/scriptorium/416422590");
+  expect(new Headers(init?.headers).get("X-Praetorium-Admin-Actor")).toBe("213253858");
+});
+
+it("keeps an absent Source execution distinct and rejects a mismatched read identity", async () => {
+  const {context,cp}=fixture();
+  vi.mocked(cp.fetch).mockResolvedValueOnce(Response.json({job:null}));
+  const absent=await handleAdminHost(sessionRequest(
+    ADMIN+"/source-release-builds/scriptorium/416422590?ui=desktop"),context);
+  expect(absent.status).toBe(303);
+  expect(absent.headers.get("Location")).toContain("/releases?ui=desktop&notice=");
+  vi.mocked(cp.fetch).mockResolvedValueOnce(Response.json({job:{
+    id:"sr_00000000-0000-4000-a000-000000000001",sourceId:"scriptorium",releaseId:123,
+    tag:"v0.3.5",commit:"a".repeat(40),version:"0.3.5",state:"admitted",attempt:1,
+    revision:4,error:null,admittedReleaseId:"rel_admitted",retryable:false,
+  }}));
+  const mismatch=await handleAdminHost(sessionRequest(
+    ADMIN+"/source-release-builds/scriptorium/416422590"),context);
+  expect(mismatch.status).toBe(503);
+});
+
 it("accepts only bounded same-origin GET destination search parameters", () => {
   expect(adminReturnPath("/audit?ui=mobile&q=lease+epoch&cursor=12:evt_1")).toBe(
     "/audit?ui=mobile&q=lease+epoch&cursor=12%3Aevt_1");

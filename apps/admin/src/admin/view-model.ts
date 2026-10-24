@@ -60,6 +60,8 @@ export interface ConsoleViewModel {
   readonly selectedBuildId: string | null;
   readonly selectedReleaseId?: string | null;
   readonly selectedOperationId?: string | null;
+  /** Read-only return context from the canonical workflow that linked to this operation. */
+  readonly relatedReleaseId?: string | null;
   readonly operationDetail?: ConsoleDependency<OperatorOperationDetail> | null;
   readonly releaseDetail?: ConsoleDependency<ConsoleReleaseStatus> | null;
   readonly pageCursor?: string | null;
@@ -80,14 +82,39 @@ export function buildHref(id: string, mode: ConsoleMode): string {
   return "/builds/" + encodeURIComponent(id) + "?ui=" + mode;
 }
 
-export function operationHref(id:string, mode:ConsoleMode):string {
-  return "/operations/" + encodeURIComponent(id) + "?ui=" + mode;
+const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
+const SOURCE_ID = /^[a-z][a-z0-9-]{0,31}$/u;
+
+export function sourceReleaseExecutionHref(sourceId:string,githubReleaseId:number,mode:ConsoleMode):string {
+  if(!SOURCE_ID.test(sourceId)||!Number.isSafeInteger(githubReleaseId)||githubReleaseId<=0)
+    return consoleHref("releases",mode);
+  return "/source-release-builds/"+encodeURIComponent(sourceId)+"/"+githubReleaseId+"?ui="+mode;
+}
+
+export function admittedReleaseHref(releaseId:string,mode:ConsoleMode):string {
+  return "/releases/"+encodeURIComponent(releaseId)+"?ui="+mode;
+}
+
+/** Composition status belongs to its canonical Release workflow read model. */
+export function compositionBuildHref(releaseId:string,mode:ConsoleMode):string {
+  return admittedReleaseHref(releaseId,mode);
+}
+
+/** Stable channel pointers name a canonical Release; its detail is the status authority. */
+export function stableReleaseHref(releaseId:string,mode:ConsoleMode):string {
+  return admittedReleaseHref(releaseId,mode);
+}
+
+export function operationHref(id:string, mode:ConsoleMode, relatedReleaseId?:string|null):string {
+  const params=new URLSearchParams({ui:mode});
+  if(relatedReleaseId&&RELEASE_ID.test(relatedReleaseId))params.set("release",relatedReleaseId);
+  return "/operations/" + encodeURIComponent(id) + "?" + params.toString();
 }
 
 /** Preserve the current authorized read context when switching UI composition. */
 export function viewHref(model: ConsoleViewModel, mode: ConsoleMode): string {
   const params = new URLSearchParams({ ui: mode });
-  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode);
+  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode,model.relatedReleaseId);
   if (model.selectedReleaseId)
     return "/releases/" + encodeURIComponent(model.selectedReleaseId) + "?" + params.toString();
   if (model.selectedBuildId) {

@@ -784,9 +784,14 @@ it("preserves only allowlisted Admin read query context across the Gateway OAuth
     "/builds?ui=mobile&sort=attempt&state=failed&cursor=older_1");
   expect(adminReturnPath("/audit?ui=desktop&q=lease+epoch&cursor=12:evt_1")).toBe(
     "/audit?ui=desktop&q=lease+epoch&cursor=12%3Aevt_1");
+  expect(adminReturnPath("/source-release-builds/scriptorium/416422590?ui=mobile")).toBe(
+    "/source-release-builds/scriptorium/416422590?ui=mobile");
+  expect(adminReturnPath("/operations/op_123?ui=desktop&release=release_123")).toBe(
+    "/operations/op_123?ui=desktop&release=release_123");
   for (const invalid of [
     "//attacker.test/", "/source-builds/sr_00000000-0000-4000-a000-000000000001/retry",
     "/audit?ui=mobile&ui=desktop", "/audit?q=%0A",
     "/releases?state=failed", "/audit?redirect_to=https://evil.test",
+    "/operations/op_123?release=https://evil.test",
   ]) expect(adminReturnPath(invalid)).toBe("/");
 });

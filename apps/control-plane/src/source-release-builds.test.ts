@@ -166,6 +166,34 @@ afterEach(() => {
 });
 
 describe("source Release build queue against migrated SQLite D1", () => {
+  it("resolves a published Source release to its exact build beyond recent-page history", async () => {
+    const h=harness();
+    const original=await h.queue.enqueue(JOB,ACTOR);
+    for(let index=1;index<=40;index++){
+      h.advance(1);
+      await h.queue.enqueue({...JOB,githubReleaseId:JOB.githubReleaseId+index},ACTOR);
+    }
+    const recent=await h.queue.list(40);
+    expect(recent.items.some(job=>job.id===original.job.id)).toBe(false);
+    expect(recent.nextCursor).not.toBeNull();
+    expect(await h.queue.bySourceRelease(JOB.sourceId,JOB.githubReleaseId)).toEqual(original.job);
+
+    const app=createSourceReleaseOperatorRoutes({queue:h.queue,operatorActorId:ACTOR});
+    const response=await app.request(`/by-release/${JOB.sourceId}/${JOB.githubReleaseId}`,{
+      headers:{"X-Praetorium-Admin-Actor":ACTOR},
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({job:original.job});
+    const absent=await app.request(`/by-release/${JOB.sourceId}/999999999`,{
+      headers:{"X-Praetorium-Admin-Actor":ACTOR},
+    });
+    expect(await absent.json()).toEqual({job:null});
+    expect((await app.request(`/by-release/${JOB.sourceId}/0`,{
+      headers:{"X-Praetorium-Admin-Actor":ACTOR},
+    })).status).toBe(400);
+    expect((await app.request(`/by-release/${JOB.sourceId}/${JOB.githubReleaseId}`)).status).toBe(403);
+  });
+
   it("retries a failed unique release through a revision CAS and replays one receipt", async () => {
     const h = harness();
     const created = await h.queue.enqueue(JOB, ACTOR);

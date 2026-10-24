@@ -182,6 +182,21 @@ export interface WriterAbsenceProof {
   readonly source: "runtime-provider-census";
 }
 
+/** Fresh provider evidence for restoring the grant of an already-created target.
+ * This does not replace the durable pre-start old-writer absence proof.
+ */
+export interface RuntimeAuthorityRecoveryEvidence {
+  readonly instanceId: string;
+  readonly repositoryId: number;
+  readonly generation: number;
+  readonly runtimeEpoch: RuntimeEpoch;
+  readonly clusterId: string;
+  readonly reservationId: string;
+  readonly actualImageDigest: string;
+  readonly imageIdentityVerified: true;
+  readonly census: WriterCensus;
+}
+
 export interface RuntimeReadiness {
   readonly status: "ready" | "not-ready" | "unknown";
   readonly assignment: RuntimeAssignment;
@@ -399,6 +414,20 @@ export interface LifecycleDependencies {
   readonly authProbe: LifecycleAuthProbeProvider;
   readonly runtime: LifecycleRuntimeProvider;
   readonly routes: LifecycleRouteProvider;
+  /** Hosted adapters restore only the exact target grant after a fresh census.
+   * They must validate the live operation fence and durable pre-start proof;
+   * neither this hook nor an expired lease proves that an old writer is absent.
+   * Providers without a separate hosted authority plane may omit it.
+   */
+  readonly recoverTargetAuthority?: (
+    input: {
+      readonly operationId: string;
+      readonly assignment: RuntimeAssignment;
+      readonly census: WriterCensus;
+    },
+    beforeEffect: BeforeLifecycleEffect,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   readonly now?: () => number;
   readonly quiesceTimeoutMs?: number;
   readonly readinessTimeoutMs?: number;

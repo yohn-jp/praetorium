@@ -16,6 +16,7 @@ import {
   createProvisionerIdleRoutes,
   type ProvisionerIdleRoutesDependencies,
 } from "./idle-routes.js";
+import { createProvisionerRoutes } from "./provisioner-routes.js";
 import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 
 const schemaUrl = new URL("../../../docs/migration/tasks/T03-schema.sql", import.meta.url);
@@ -226,7 +227,7 @@ describe("Control Plane provisioner idle routes", () => {
     expect(wrongCluster.status).toBe(403);
   });
 
-  it("exposes only the retained observed writer for identity renewal after a blocked stop", async () => {
+  it("exposes the retained writer for identity renewal while replacement work is active", async () => {
     const h = createHarness();
     await h.addReadyInstance("ins_retained", 770);
     await h.addReadyInstance("ins_retained_suspended", 771, { suspended: true });
@@ -255,8 +256,8 @@ describe("Control Plane provisioner idle routes", () => {
            operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase,
            idempotency_scope, idempotency_key, request_hash, actor_id, authorization_revision,
            created_at, updated_at
-         ) VALUES ('op_retained_active', 'ins_retained_active', 772, 2, 1, 'stop', 'pending', 'accepted',
-                   'repository:772', 'retained-active', 'hash', 'worker-a', 3, ?, ?)`,
+         ) VALUES ('op_retained_active', 'ins_retained_active', 772, 2, 1, 'update', 'running', 'waiting-for-capacity',
+                   'repository:772', 'user-update-active', 'hash', 'user-772', 3, ?, ?)`,
       )
       .run(NOW, NOW);
     const schedule = vi.fn(async () => ({
@@ -284,11 +285,36 @@ describe("Control Plane provisioner idle routes", () => {
       healthNextCheckAt: null,
       currentRuntime: { instanceId: "ins_retained", repositoryId: 770, runtimeEpoch: 1 },
     });
-    for (const instanceId of [
-      "ins_retained_suspended",
-      "ins_retained_active",
-      "ins_retained_epoch_changed",
-    ]) {
+    const active = await h.request(
+      "/internal/provisioner/idle-candidate",
+      { workerId: WORKER_ID, clusterId: CLUSTER_ID, instanceId: "ins_retained_active" },
+      schedule,
+    );
+    expect(active.status).toBe(200);
+    await expect(active.json()).resolves.toMatchObject({
+      instanceId: "ins_retained_active",
+      repositoryId: 772,
+      generation: 1,
+      runtimeEpoch: 1,
+      desiredState: "stopped",
+      hasActiveOperation: true,
+      currentRuntime: { instanceId: "ins_retained_active", repositoryId: 772, runtimeEpoch: 1 },
+    });
+
+    const inventory = await h.request("/internal/provisioner/idle-candidates", {
+      workerId: WORKER_ID,
+      clusterId: CLUSTER_ID,
+      limit: 25,
+      cursor: null,
+    });
+    expect(inventory.status).toBe(200);
+    const inventoryBody = await inventory.json() as { items: Array<Record<string, unknown>> };
+    expect(inventoryBody.items).toContainEqual(expect.objectContaining({
+      instanceId: "ins_retained_active",
+      desiredState: "stopped",
+      hasActiveOperation: true,
+    }));
+    for (const instanceId of ["ins_retained_suspended", "ins_retained_epoch_changed"]) {
       const excluded = await h.request("/internal/provisioner/idle-candidate", {
         workerId: WORKER_ID,
         clusterId: CLUSTER_ID,
@@ -670,6 +696,65 @@ describe("Control Plane provisioner idle routes", () => {
     await expect(response.json()).resolves.toEqual({
       error: { code: "WORKER_SCOPE_MISMATCH" },
     });
+  });
+});
+
+describe("Provisioner canary stop completion notification", () => {
+  it("continues only a newly applied successful release-canary stop report", async () => {
+    let result = {
+      operation: {
+        id: "op_canary_stop",
+        kind: "stop",
+        status: "succeeded",
+        idempotencyKey: "stable-canary-stop:release-1",
+      },
+      applied: true,
+      duplicate: false,
+    };
+    const report = vi.fn(async () => result);
+    const afterCanaryStopReported = vi.fn(async () => undefined);
+    const routes = createProvisionerRoutes({
+      operations: { report } as unknown as OperationService,
+      workerId: WORKER_ID,
+      clusterId: CLUSTER_ID,
+      now: () => NOW,
+      afterCanaryStopReported,
+      resolveRuntimeContext: async () => null,
+    });
+    const input = {
+      operationId: "op_canary_stop",
+      workerId: WORKER_ID,
+      leaseToken: "lease-token-aaaaaaaaaaaaaaaaaaaaaaaa",
+      leaseEpoch: 1,
+      sequence: 1,
+      terminal: "succeeded",
+      observation: {
+        instanceId: "ins_canary_stop",
+        repositoryId: 701,
+        generation: 2,
+        runtimeEpoch: 1,
+        sequence: 1,
+        observedState: "stopped",
+        observedArtifactDigest: null,
+        observedRevisionId: null,
+      },
+    };
+    const request = () =>
+      routes.request("/report", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
+
+    expect((await request()).status).toBe(200);
+    await vi.waitFor(() => expect(afterCanaryStopReported).toHaveBeenCalledExactlyOnceWith("op_canary_stop"));
+
+    result = { ...result, applied: false, duplicate: true };
+    expect((await request()).status).toBe(200);
+    result = { ...result, applied: true, duplicate: false,
+      operation: { ...result.operation, idempotencyKey: "ordinary-stop-1" } };
+    expect((await request()).status).toBe(200);
+    expect(afterCanaryStopReported).toHaveBeenCalledTimes(1);
   });
 });
 

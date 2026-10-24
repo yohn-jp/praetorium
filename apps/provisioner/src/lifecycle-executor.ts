@@ -410,6 +410,7 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
           this.options.operations.recordCapacitySnapshot({ ...input, signal: context.signal }),
       },
       this.options.assignmentTransport.forClaim(claim),
+      this.options.operations,
     );
     const currentAssignment =
       claim.runtimeContext.current === null
@@ -513,6 +514,18 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
         .forLease(claim, this.options.workerId),
       runtime,
       routes: runtime,
+      recoverTargetAuthority: (input, beforeEffect, signal) =>
+        runtime.recoverTargetAuthority(
+          {
+            ...input,
+            workerId: this.options.workerId,
+            leaseToken: operation.leaseToken,
+            leaseEpoch: operation.leaseEpoch,
+            expectedCheckpointSequence: journal.currentCheckpointSequence,
+          },
+          beforeEffect,
+          signal,
+        ),
       now: this.now,
     });
     try {

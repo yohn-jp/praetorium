@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash, randomBytes } from "node:crypto";
 import { access, lstat, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { createServer } from "node:http";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { chromium } from "@playwright/test";
 
@@ -12,10 +13,6 @@ const INVENTORY_ENV = "PRAETORIUM_T14_INVENTORY_PATH";
 const CATEGORY_ENV = "PRAETORIUM_T14_CATEGORY";
 const RESULT_ENV = "PRAETORIUM_T14_RESULT_PATH";
 const RESULT_FILENAME = "runner-result.json";
-const PRODUCER_STATUS_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../docs/migration/PRODUCER-STATUS.json",
-);
 const REQUIRED_CATEGORIES = [
   "workers-d1-do",
   "github-access",
@@ -39,6 +36,7 @@ const BLOCKED_CODES = new Set([
   "OWNER_INPUT_MISSING",
   "OWNED_ENVIRONMENT_UNAVAILABLE",
   "PRODUCER_CONTRACT_MISSING",
+  "PRODUCER_ADMISSION_UNAVAILABLE",
   "RUNTIME_UNAVAILABLE",
   "BROWSER_UNAVAILABLE",
   "INSUFFICIENT_LIFETIME",
@@ -60,6 +58,11 @@ function ensureOwnerLifetime(inventory, requiredSeconds) {
   const requiredMs = requiredSeconds * 1_000 + 5_000;
   if (remainingMs < requiredMs) block("INSUFFICIENT_LIFETIME");
   return Math.min(requiredSeconds * 1_000, remainingMs - 5_000);
+}
+
+function ownerBoundSignal(inventory, maximumMs) {
+  const remainingMs = Date.parse(inventory.environment.expiresAt) - Date.now();
+  return AbortSignal.timeout(Math.max(1, Math.min(maximumMs, remainingMs)));
 }
 
 function isRecord(value) {
@@ -191,6 +194,251 @@ async function readJsonFile(filePath, maximumBytes, privateFile = false) {
   }
 }
 
+async function readPrivateCredential(filePath) {
+  if (!safeAbsolutePath(filePath)) block("OWNER_INPUT_MISSING");
+  const linkInfo = await lstat(filePath).catch(() => null);
+  if (!linkInfo?.isFile() || linkInfo.isSymbolicLink()) block("OWNER_INPUT_MISSING");
+  const actualPath = await realpath(filePath).catch(() => null);
+  const fileInfo = actualPath ? await stat(actualPath).catch(() => null) : null;
+  if (
+    !actualPath ||
+    actualPath !== path.resolve(filePath) ||
+    !fileInfo?.isFile() ||
+    fileInfo.uid !== process.getuid?.() ||
+    (fileInfo.mode & 0o077) !== 0 ||
+    fileInfo.size < 1 ||
+    fileInfo.size > 4096
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+  const bytes = await readFile(actualPath).catch(() => null);
+  if (!bytes || bytes.byteLength > 4096) block("OWNER_INPUT_MISSING");
+  const credential = bytes.toString("utf8").trimEnd();
+  if (!/^[\x21-\x7e]{32,4096}$/u.test(credential)) block("OWNER_INPUT_MISSING");
+  return credential;
+}
+
+const SOURCE_JOB_ID_PATTERN =
+  /^sr_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RELEASE_ID_PATTERN =
+  /^rel_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MAX_ADMISSION_RESPONSE_BYTES = 64 * 1024;
+
+async function readBoundedJsonResponse(response) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_ADMISSION_RESPONSE_BYTES) {
+    block("PRODUCER_ADMISSION_UNAVAILABLE");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) block("PRODUCER_ADMISSION_UNAVAILABLE");
+  const chunks = [];
+  let byteLength = 0;
+  while (true) {
+    const { done, value } = await reader.read().catch(() => ({ done: true, value: null }));
+    if (done) break;
+    byteLength += value.byteLength;
+    if (byteLength > MAX_ADMISSION_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => {});
+      block("PRODUCER_ADMISSION_UNAVAILABLE");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  const bytes = Buffer.concat(chunks, byteLength);
+  try {
+    const value = JSON.parse(bytes.toString("utf8"));
+    if (!isRecord(value)) block("PRODUCER_ADMISSION_UNAVAILABLE");
+    return value;
+  } catch {
+    block("PRODUCER_ADMISSION_UNAVAILABLE");
+  }
+}
+
+async function readAdmissionEndpoint({
+  origin,
+  pathname,
+  actorId,
+  credential,
+  inventory,
+  fetchImpl = fetch,
+}) {
+  const response = await fetchImpl(new URL(pathname, origin), {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Control-Plane-Admin-Auth": credential,
+      "X-Praetorium-Admin-Actor": actorId,
+    },
+    redirect: "manual",
+    signal: ownerBoundSignal(inventory, 15_000),
+  }).catch(() => null);
+  if (Date.parse(inventory.environment.expiresAt) <= Date.now()) {
+    block("INSUFFICIENT_LIFETIME");
+  }
+  if (
+    !response ||
+    response.status !== 200 ||
+    response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !==
+      "application/json"
+  ) {
+    block("PRODUCER_ADMISSION_UNAVAILABLE");
+  }
+  return readBoundedJsonResponse(response);
+}
+
+function validateSourceJobDetail(value, config) {
+  const job = value.job;
+  if (
+    !isRecord(job) ||
+    job.id !== config.producerAdmission.sourceJobId ||
+    job.state !== "admitted" ||
+    job.commit !== config.producer.revision ||
+    job.admittedReleaseId !== config.producerAdmission.releaseId
+  ) {
+    block("PRODUCER_CONTRACT_MISSING");
+  }
+}
+
+function validateAdmittedReleaseStatus(value, config) {
+  const release = value.release;
+  if (
+    !isRecord(release) ||
+    release.id !== config.producerAdmission.releaseId ||
+    release.status !== "available" ||
+    release.imageDigest !== config.producer.runtimeBaseDigest
+  ) {
+    block("PRODUCER_CONTRACT_MISSING");
+  }
+}
+
+async function verifyCurrentProducerAdmission(config, inventory, fetchImpl = fetch) {
+  const credential = await readPrivateCredential(config.producerAdmission.adminCredentialPath);
+  const origin = parseOrigin(config.producerAdmission.controlPlaneOrigin)?.origin;
+  if (!origin) block("OWNER_INPUT_MISSING");
+  const sourceJob = await readAdmissionEndpoint({
+    origin,
+    pathname: `/v1/operator/source-builds/${encodeURIComponent(config.producerAdmission.sourceJobId)}?limit=10`,
+    actorId: config.gateway.expectedUserId,
+    credential,
+    inventory,
+    fetchImpl,
+  });
+  validateSourceJobDetail(sourceJob, config);
+  const releaseStatus = await readAdmissionEndpoint({
+    origin,
+    pathname: `/v1/operator/releases/${encodeURIComponent(config.producerAdmission.releaseId)}`,
+    actorId: config.gateway.expectedUserId,
+    credential,
+    inventory,
+    fetchImpl,
+  });
+  validateAdmittedReleaseStatus(releaseStatus, config);
+}
+
+test("owner admission guard accepts a current tuple independently of the historical ledger", () => {
+  const config = {
+    producer: {
+      revision: "a".repeat(40),
+      runtimeBaseDigest: `sha256:${"b".repeat(64)}`,
+    },
+    producerAdmission: {
+      sourceJobId: "sr_11111111-1111-4111-8111-111111111111",
+      releaseId: "rel_11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const jobDetail = {
+    job: {
+      id: config.producerAdmission.sourceJobId,
+      state: "admitted",
+      commit: config.producer.revision,
+      admittedReleaseId: config.producerAdmission.releaseId,
+    },
+  };
+  const releaseStatus = {
+    release: {
+      id: config.producerAdmission.releaseId,
+      status: "available",
+      imageDigest: config.producer.runtimeBaseDigest,
+    },
+  };
+  assert.doesNotThrow(() => {
+    validateSourceJobDetail(jobDetail, config);
+    validateAdmittedReleaseStatus(releaseStatus, config);
+  });
+});
+
+test("owner admission guard blocks mismatched or unavailable current evidence", async () => {
+  const config = {
+    producer: {
+      revision: "a".repeat(40),
+      runtimeBaseDigest: `sha256:${"b".repeat(64)}`,
+    },
+    producerAdmission: {
+      sourceJobId: "sr_11111111-1111-4111-8111-111111111111",
+      releaseId: "rel_11111111-1111-4111-8111-111111111111",
+    },
+  };
+  assert.throws(
+    () => validateSourceJobDetail({ job: { id: "other", state: "admitted" } }, config),
+    (error) => error instanceof GateBlocked && error.reasonCode === "PRODUCER_CONTRACT_MISSING",
+  );
+  assert.throws(
+    () =>
+      validateSourceJobDetail(
+        {
+          job: {
+            id: config.producerAdmission.sourceJobId,
+            state: "admitted",
+            commit: "c".repeat(40),
+            admittedReleaseId: config.producerAdmission.releaseId,
+          },
+        },
+        config,
+      ),
+    (error) => error instanceof GateBlocked && error.reasonCode === "PRODUCER_CONTRACT_MISSING",
+  );
+  assert.throws(
+    () =>
+      validateAdmittedReleaseStatus(
+        {
+          release: {
+            id: config.producerAdmission.releaseId,
+            status: "candidate",
+            imageDigest: config.producer.runtimeBaseDigest,
+          },
+        },
+        config,
+      ),
+    (error) => error instanceof GateBlocked && error.reasonCode === "PRODUCER_CONTRACT_MISSING",
+  );
+  assert.throws(
+    () =>
+      validateAdmittedReleaseStatus(
+        {
+          release: {
+            id: config.producerAdmission.releaseId,
+            status: "available",
+            imageDigest: `sha256:${"c".repeat(64)}`,
+          },
+        },
+        config,
+      ),
+    (error) => error instanceof GateBlocked && error.reasonCode === "PRODUCER_CONTRACT_MISSING",
+  );
+  await assert.rejects(
+    () =>
+      readAdmissionEndpoint({
+        origin: "https://control.example",
+        pathname: "/v1/operator/source-builds/sr_11111111-1111-4111-8111-111111111111?limit=10",
+        actorId: "213253858",
+        credential: "never-logged-private-credential-value",
+        inventory: { environment: { expiresAt: new Date(Date.now() + 60_000).toISOString() } },
+        fetchImpl: async () => new Response("", { status: 503 }),
+      }),
+    (error) =>
+      error instanceof GateBlocked && error.reasonCode === "PRODUCER_ADMISSION_UNAVAILABLE",
+  );
+});
+
 function validateBrowserState(state) {
   if (
     !exactKeys(state, ["cookies", "origins"]) ||
@@ -241,6 +489,49 @@ function validateWriteProbe(value) {
   return body;
 }
 
+function validHostnameSuffix(value) {
+  return (
+    typeof value === "string" &&
+    value.length <= 253 &&
+    value === value.toLowerCase() &&
+    value.includes(".") &&
+    !/^\d+(?:\.\d+){3}$/u.test(value) &&
+    /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(
+      value,
+    ) &&
+    !/(?:^|\.)(?:localhost|local|internal|onion|example\.(?:com|net|org)|invalid|test)$/u.test(
+      value,
+    )
+  );
+}
+
+function ownedApplicationOriginMatches(repositoryId, hostnameSuffix, rawOrigin) {
+  const origin = parseOrigin(rawOrigin);
+  return (
+    Number.isSafeInteger(repositoryId) &&
+    repositoryId > 0 &&
+    validHostnameSuffix(hostnameSuffix) &&
+    origin?.origin === `https://${repositoryId}.${hostnameSuffix}`
+  );
+}
+
+function rpcBodyFromText(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const eventData = text
+      .split(/\r?\n/u)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .join("\n");
+    try {
+      return eventData ? JSON.parse(eventData) : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 function validateConfig(config, inventory) {
   if (
     !exactKeys(config, [
@@ -251,8 +542,10 @@ function validateConfig(config, inventory) {
       "instance",
       "browser",
       "producer",
+      "producerAdmission",
       "writeProbe",
       "selection",
+      "mcp",
       "timeouts",
     ]) ||
     config.schemaVersion !== 1
@@ -282,9 +575,10 @@ function validateConfig(config, inventory) {
     !Number.isSafeInteger(config.repository.id) ||
     config.repository.id < 1 ||
     !/^[A-Za-z0-9_.-]{1,255}\/[A-Za-z0-9_.-]{1,255}$/u.test(config.repository.fullName) ||
-    !exactKeys(config.instance, ["id", "origin", "applicationHeading"]) ||
+    !exactKeys(config.instance, ["id", "origin", "hostnameSuffix", "applicationHeading"]) ||
     !ID_PATTERN.test(config.instance.id) ||
     !parseOrigin(config.instance.origin) ||
+    !validHostnameSuffix(config.instance.hostnameSuffix) ||
     !safeText(config.instance.applicationHeading, 256)
   ) {
     block("OWNER_INPUT_MISSING");
@@ -292,13 +586,15 @@ function validateConfig(config, inventory) {
 
   const instanceOrigin = parseOrigin(config.instance.origin);
   const gatewayOrigin = parseOrigin(config.gateway.origin);
-  const expectedInstanceLabel = `ins-${config.instance.id.slice(4).toLowerCase()}.`;
   if (
     !instanceOrigin ||
     !gatewayOrigin ||
     instanceOrigin.origin === gatewayOrigin.origin ||
-    !instanceOrigin.hostname.startsWith(expectedInstanceLabel) ||
-    instanceOrigin.hostname.split(".").length < 3
+    !ownedApplicationOriginMatches(
+      config.repository.id,
+      config.instance.hostnameSuffix,
+      instanceOrigin.origin,
+    )
   ) {
     block("OWNER_INPUT_MISSING");
   }
@@ -312,10 +608,24 @@ function validateConfig(config, inventory) {
   }
 
   if (
-    !exactKeys(config.producer, ["revision", "tree", "artifactDigest"]) ||
+    !exactKeys(config.producer, ["revision", "runtimeBaseDigest"]) ||
     !REVISION_PATTERN.test(config.producer.revision) ||
-    !REVISION_PATTERN.test(config.producer.tree) ||
-    !DIGEST_PATTERN.test(config.producer.artifactDigest)
+    !DIGEST_PATTERN.test(config.producer.runtimeBaseDigest)
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+
+  if (
+    !exactKeys(config.producerAdmission, [
+      "sourceJobId",
+      "releaseId",
+      "controlPlaneOrigin",
+      "adminCredentialPath",
+    ]) ||
+    !SOURCE_JOB_ID_PATTERN.test(config.producerAdmission.sourceJobId) ||
+    !RELEASE_ID_PATTERN.test(config.producerAdmission.releaseId) ||
+    !parseOrigin(config.producerAdmission.controlPlaneOrigin) ||
+    !safeAbsolutePath(config.producerAdmission.adminCredentialPath)
   ) {
     block("OWNER_INPUT_MISSING");
   }
@@ -339,11 +649,26 @@ function validateConfig(config, inventory) {
   }
 
   if (
+    !exactKeys(config.mcp, ["clientName", "requiredTools"]) ||
+    !safeText(config.mcp.clientName, 80) ||
+    !Array.isArray(config.mcp.requiredTools) ||
+    config.mcp.requiredTools.length === 0 ||
+    config.mcp.requiredTools.length > 32 ||
+    config.mcp.requiredTools.some(
+      (tool) => !safeText(tool, 64) || !/^[a-z][a-z0-9_-]{0,63}$/u.test(tool),
+    ) ||
+    new Set(config.mcp.requiredTools).size !== config.mcp.requiredTools.length
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+
+  if (
     !exactKeys(config.timeouts, [
       "loginSeconds",
       "wakeSeconds",
       "configurationSeconds",
       "redeploySeconds",
+      "mcpSeconds",
     ]) ||
     Object.values(config.timeouts).some(
       (seconds) => !Number.isSafeInteger(seconds) || seconds < 10 || seconds > 1800,
@@ -362,7 +687,11 @@ function validateConfig(config, inventory) {
   }
 
   const writeProbeBody = validateWriteProbe(config.writeProbe);
-  return { gatewayOrigin, instanceOrigin, writeProbeBody };
+  return {
+    gatewayOrigin,
+    instanceOrigin,
+    writeProbeBody,
+  };
 }
 
 async function loadInputs() {
@@ -392,28 +721,64 @@ async function loadInputs() {
   );
   validateBrowserState(storageState);
 
-  const producer = await readJsonFile(PRODUCER_STATUS_PATH, MAX_CONFIG_BYTES);
-  const capabilities = new Map(
-    Array.isArray(producer.capabilities)
-      ? producer.capabilities.filter((item) => isRecord(item)).map((item) => [item.id, item])
-      : [],
-  );
-  const producerReady = ["S01", "S02", "S03", "S04", "S05"].every(
-    (id) => capabilities.get(id)?.status === "available",
-  );
-  if (
-    !producerReady ||
-    !REVISION_PATTERN.test(producer.producerRevision ?? "") ||
-    !REVISION_PATTERN.test(producer.producerTree ?? "") ||
-    !DIGEST_PATTERN.test(producer.artifactDigest ?? "") ||
-    producer.producerRevision !== config.producer.revision ||
-    producer.producerTree !== config.producer.tree ||
-    producer.artifactDigest !== config.producer.artifactDigest
-  ) {
-    block("PRODUCER_CONTRACT_MISSING");
-  }
+  await verifyCurrentProducerAdmission(config, inventory);
   return { inventory, config, storageState, derived, executablePath };
 }
+
+test("stable public origin binds the numeric repository under the owner suffix", () => {
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.yohn.jp",
+      "https://1423923158.scriptorium.yohn.jp",
+    ),
+    true,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.yohn.jp",
+      "https://1423923159.scriptorium.yohn.jp",
+    ),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.yohn.jp",
+      "https://ins-01arz3ndektsv4rrffq69g5fav.instances.praetorium.yohn.jp",
+    ),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.test",
+      "https://1423923158.scriptorium.test",
+    ),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.internal",
+      "https://1423923158.scriptorium.internal",
+    ),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(1423923158, "127.0.0.1", "https://1423923158.127.0.0.1"),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.yohn.jp",
+      "https://1423923158.scriptorium.yohn.jp:8443",
+    ),
+    false,
+  );
+});
 
 async function writeRunnerResult(status, reasonCode) {
   if (!BLOCKED_CODES.has(reasonCode) && reasonCode !== "ACCEPTANCE_ASSERTION_FAILED") return;
@@ -627,9 +992,7 @@ async function waitForDeployment(page, config, derived, inventory, expectedModul
     }
     const selectedModuleNames =
       snapshot.selection && snapshot.moduleDisplayNames
-        ? snapshot.selection.moduleIds.map((moduleId) =>
-            snapshot.moduleDisplayNames.get(moduleId),
-          )
+        ? snapshot.selection.moduleIds.map((moduleId) => snapshot.moduleDisplayNames.get(moduleId))
         : null;
     const deployedAndRequestedModulesMatch =
       snapshot.currentModules !== null &&
@@ -724,10 +1087,15 @@ async function readRemoteScene(page, projectId, sceneId, snapshot, inventory) {
 
 async function readCodeMirrorText(textbox) {
   return textbox.evaluate((element) => {
-    if (element.getAttribute("role") !== "textbox" || element.getAttribute("contenteditable") !== "true") {
+    if (
+      element.getAttribute("role") !== "textbox" ||
+      element.getAttribute("contenteditable") !== "true"
+    ) {
       throw new Error("expected the Scriptorium CodeMirror manuscript editor");
     }
-    const lines = Array.from(element.children).filter((child) => child.classList.contains("cm-line"));
+    const lines = Array.from(element.children).filter((child) =>
+      child.classList.contains("cm-line"),
+    );
     if (lines.length === 0 || lines.length !== element.children.length) {
       throw new Error("the manuscript editor has an unexpected CodeMirror line structure");
     }
@@ -785,6 +1153,8 @@ test(
     const { inventory, config, storageState, derived, executablePath } = inputs;
     let browser;
     let context;
+    let callbackServer;
+    let callbackOrigin = null;
     let stage = "browser-launch";
     const gatewayRequests = [];
     const instanceRequests = [];
@@ -808,6 +1178,7 @@ test(
         if (
           url.origin === derived.gatewayOrigin.origin ||
           url.origin === derived.instanceOrigin.origin ||
+          url.origin === callbackOrigin ||
           (url.protocol === "https:" && isGithubHost(url.hostname))
         ) {
           await route.continue();
@@ -908,7 +1279,10 @@ test(
       );
 
       stage = "repository-selection";
-      const repositoryLink = page.getByRole("link", { name: config.repository.fullName, exact: true });
+      const repositoryLink = page.getByRole("link", {
+        name: config.repository.fullName,
+        exact: true,
+      });
       assert.equal(
         await repositoryLink.count(),
         1,
@@ -1070,6 +1444,235 @@ test(
         undefined,
         "replayed code must not mint application cookies",
       );
+
+      stage = "mcp-read-only-oauth-and-tools-list";
+      ensureOwnerLifetime(inventory, config.timeouts.mcpSeconds);
+      const callbackPath = `/oauth/callback/${randomBytes(16).toString("hex")}`;
+      let resolveCallback;
+      const callbackResult = new Promise((resolve) => {
+        resolveCallback = resolve;
+      });
+      callbackServer = createServer((request, response) => {
+        if (request.method !== "GET") {
+          response.writeHead(405);
+          response.end();
+          return;
+        }
+        const callbackUrl = new URL(request.url ?? "/", callbackOrigin ?? "http://127.0.0.1");
+        if (callbackUrl.pathname !== callbackPath) {
+          response.writeHead(404);
+          response.end();
+          return;
+        }
+        const codes = callbackUrl.searchParams.getAll("code");
+        const states = callbackUrl.searchParams.getAll("state");
+        const issuers = callbackUrl.searchParams.getAll("iss");
+        const errors = callbackUrl.searchParams.getAll("error");
+        resolveCallback({
+          code: codes.length === 1 ? codes[0] : null,
+          state: states.length === 1 ? states[0] : null,
+          issuer: issuers.length === 1 ? issuers[0] : null,
+          error: errors.length <= 1 ? (errors[0] ?? null) : "duplicate_error",
+        });
+        response.writeHead(200, {
+          "Cache-Control": "no-store",
+          "Content-Type": "text/plain; charset=utf-8",
+        });
+        response.end("MCP authorization completed. You may close this page.");
+      });
+      await new Promise((resolve, reject) => {
+        callbackServer.once("error", reject);
+        callbackServer.listen(0, "127.0.0.1", resolve);
+      });
+      const callbackAddress = callbackServer.address();
+      assert.ok(callbackAddress && typeof callbackAddress === "object");
+      callbackOrigin = `http://127.0.0.1:${callbackAddress.port}`;
+      const redirectUri = `${callbackOrigin}${callbackPath}`;
+
+      ensureOwnerLifetime(inventory, 10);
+      const registrationResponse = await fetch(`${derived.gatewayOrigin.origin}/oauth/register`, {
+        method: "POST",
+        redirect: "manual",
+        signal: ownerBoundSignal(inventory, 10_000),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_name: config.mcp.clientName,
+          redirect_uris: [redirectUri],
+          token_endpoint_auth_method: "none",
+          grant_types: ["authorization_code"],
+          response_types: ["code"],
+        }),
+      });
+      assert.equal(
+        registrationResponse.status,
+        201,
+        "Gateway must register the ephemeral public MCP client",
+      );
+      const registration = await registrationResponse.json();
+      assert.match(registration.client_id, /^praetorium_cl_[A-Za-z0-9_-]{22}$/u);
+      assert.deepEqual(registration.redirect_uris, [redirectUri]);
+
+      const verifier = randomBytes(32).toString("base64url");
+      const challenge = createHash("sha256").update(verifier).digest("base64url");
+      const oauthState = randomBytes(24).toString("base64url");
+      const authorizeUrl = new URL("/oauth/authorize", derived.gatewayOrigin.origin);
+      for (const [key, value] of Object.entries({
+        response_type: "code",
+        client_id: registration.client_id,
+        redirect_uri: redirectUri,
+        resource: derived.instanceOrigin.origin,
+        scope: "read",
+        state: oauthState,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      })) {
+        authorizeUrl.searchParams.set(key, value);
+      }
+      const mcpPage = await context.newPage();
+      mcpPage.setDefaultTimeout(15_000);
+      mcpPage.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, config.timeouts.mcpSeconds),
+      );
+      await mcpPage.goto(authorizeUrl.toString(), { waitUntil: "domcontentloaded" });
+      assert.equal(
+        await mcpPage.getByRole("heading", { name: "Allow MCP access?", exact: true }).count(),
+        1,
+        "read-only MCP authorization must use Gateway's real consent screen",
+      );
+      let callbackTimeout;
+      const callbackWait = Promise.race([
+        callbackResult,
+        new Promise((_, reject) => {
+          callbackTimeout = setTimeout(
+            () => reject(new Error("MCP authorization callback timed out")),
+            config.timeouts.mcpSeconds * 1_000,
+          );
+        }),
+      ]);
+      // Handle the pending wait if the browser click fails before it is awaited.
+      void callbackWait.catch(() => {});
+      let authorization;
+      try {
+        ensureOwnerLifetime(inventory, 10);
+        await mcpPage.getByRole("button", { name: "Allow", exact: true }).click();
+        authorization = await callbackWait;
+      } finally {
+        clearTimeout(callbackTimeout);
+      }
+      assert.equal(authorization.error, null, "MCP consent must not return an OAuth error");
+      assert.equal(authorization.state, oauthState, "OAuth callback must preserve PKCE state");
+      assert.equal(authorization.issuer, derived.gatewayOrigin.origin);
+      assert.ok(authorization.code, "Gateway consent must issue an authorization code");
+
+      ensureOwnerLifetime(inventory, 10);
+      const tokenResponse = await fetch(`${derived.gatewayOrigin.origin}/oauth/token`, {
+        method: "POST",
+        redirect: "manual",
+        signal: ownerBoundSignal(inventory, 10_000),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          client_id: registration.client_id,
+          code: authorization.code,
+          redirect_uri: redirectUri,
+          resource: derived.instanceOrigin.origin,
+          code_verifier: verifier,
+        }),
+      });
+      assert.equal(
+        tokenResponse.status,
+        200,
+        "PKCE code exchange must issue an instance-scoped token",
+      );
+      const tokenBody = await tokenResponse.json();
+      assert.equal(tokenBody.scope, "read", "MCP access must remain read-only");
+      assert.equal(tokenBody.token_type, "Bearer");
+      assert.ok(Number.isSafeInteger(tokenBody.expires_in) && tokenBody.expires_in > 0);
+      assert.ok(tokenBody.expires_in <= 300);
+      assert.ok(safeText(tokenBody.access_token, 16_384));
+      assert.ok(safeText(tokenBody.refresh_token, 1_024));
+      const accept = "application/json, text/event-stream";
+      async function mcpRequest(body, bearerToken, sessionId = null, protocolVersion = null) {
+        ensureOwnerLifetime(inventory, 10);
+        const headers = {
+          Accept: accept,
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${bearerToken}`,
+          ...(sessionId ? { "MCP-Session-Id": sessionId } : {}),
+          ...(protocolVersion ? { "MCP-Protocol-Version": protocolVersion } : {}),
+        };
+        const response = await fetch(`${derived.instanceOrigin.origin}/mcp`, {
+          method: "POST",
+          redirect: "manual",
+          signal: ownerBoundSignal(inventory, 10_000),
+          headers,
+          body: JSON.stringify(body),
+        });
+        return {
+          status: response.status,
+          headers: response.headers,
+          body: rpcBodyFromText(await response.text()),
+        };
+      }
+      const invalidCredential = await mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "praetorium-invalid-credential-check", version: "1.0" },
+          },
+        },
+        "invalid-praetorium-t14-credential",
+      );
+      assert.equal(invalidCredential.status, 401, "invalid MCP bearer credential must fail closed");
+      assert.match(invalidCredential.headers.get("www-authenticate") ?? "", /^Bearer\b/iu);
+
+      const initialized = await mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: config.mcp.clientName, version: "1.0" },
+          },
+        },
+        tokenBody.access_token,
+      );
+      assert.equal(initialized.status, 200, "valid read token must initialize MCP");
+      assert.equal(initialized.body?.jsonrpc, "2.0");
+      assert.equal(initialized.body?.id, 1);
+      assert.equal(initialized.body?.result?.protocolVersion, "2025-03-26");
+      const mcpSessionId = initialized.headers.get("mcp-session-id");
+      const notification = await mcpRequest(
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        tokenBody.access_token,
+        mcpSessionId,
+        initialized.body.result.protocolVersion,
+      );
+      assert.ok([200, 202, 204].includes(notification.status));
+      const listedTools = await mcpRequest(
+        { jsonrpc: "2.0", id: 2, method: "tools/list" },
+        tokenBody.access_token,
+        notification.headers.get("mcp-session-id") ?? mcpSessionId,
+        initialized.body.result.protocolVersion,
+      );
+      assert.equal(listedTools.status, 200, "authorized read token must list MCP tools");
+      assert.equal(listedTools.body?.jsonrpc, "2.0");
+      assert.equal(listedTools.body?.id, 2);
+      assert.ok(Array.isArray(listedTools.body?.result?.tools));
+      const toolNames = listedTools.body.result.tools.map((tool) => tool.name);
+      for (const requiredTool of config.mcp.requiredTools) {
+        assert.ok(toolNames.includes(requiredTool), `MCP tools/list must include ${requiredTool}`);
+      }
+      await mcpPage.close();
+      await new Promise((resolve) => callbackServer.close(resolve));
+      callbackServer = null;
 
       stage = "owned-manuscript-edit-checkpoint-publish-reload";
       context.setDefaultNavigationTimeout(
@@ -1320,9 +1923,7 @@ test(
           response.request().method() === "POST",
       );
       ensureOwnerLifetime(inventory, 10);
-      await page
-        .getByRole("button", { name: "Save configuration and build", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Save configuration and build", exact: true }).click();
       const saveResponse = await saveResponsePromise;
       assert.equal(saveResponse.status(), 202, "UI configuration must queue the build");
       const pendingBuild = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
@@ -1523,6 +2124,8 @@ test(
       );
       throw new Error(`${reasonCode}: ${stage}`);
     } finally {
+      if (callbackServer)
+        await new Promise((resolve) => callbackServer.close(resolve)).catch(() => {});
       await context?.close().catch(() => {});
       await browser?.close().catch(() => {});
     }

@@ -1,5 +1,9 @@
 import { physicalInstanceId } from "@praetorium/contracts";
-import type { LifecyclePhase, LifecycleReadinessEvidence } from "@praetorium/application/lifecycle";
+import type {
+  LifecyclePhase,
+  LifecycleReadinessEvidence,
+  RuntimeAuthorityRecoveryEvidence,
+} from "@praetorium/application/lifecycle";
 import {
   RuntimeCanaryHealthDueRequestSchema,
   RuntimeCanaryHealthDueResponseSchema,
@@ -324,6 +328,15 @@ export interface HttpOperationServiceOptions {
 }
 
 export interface ProvisionerOperationService {
+  recoverRuntimeAuthority(input: {
+    readonly operationId: string;
+    readonly workerId: string;
+    readonly leaseToken: string;
+    readonly leaseEpoch: number;
+    readonly expectedCheckpointSequence: number;
+    readonly evidence: RuntimeAuthorityRecoveryEvidence;
+    readonly signal?: AbortSignal;
+  }): Promise<void>;
   readIdleCandidate(
     input: RuntimeIdleCandidateRequest & { readonly signal?: AbortSignal },
   ): Promise<ProvisionerIdleCandidate | null>;
@@ -1566,6 +1579,24 @@ export class OperationServiceHttpClient
     )
       throw new TypeError("runtime identity response is invalid or outside its lifetime");
     return { token, expiresAt };
+  }
+
+  async recoverRuntimeAuthority(input: {
+    readonly operationId: string;
+    readonly workerId: string;
+    readonly leaseToken: string;
+    readonly leaseEpoch: number;
+    readonly expectedCheckpointSequence: number;
+    readonly evidence: RuntimeAuthorityRecoveryEvidence;
+    readonly signal?: AbortSignal;
+  }): Promise<void> {
+    const value = object(
+      await this.post("/runtime-authority/recover", withoutSignal(input), input.signal),
+      "invalid runtime authority recovery response",
+    );
+    if (Object.keys(value).sort().join(",") !== "recovered" || value.recovered !== true) {
+      throw new TypeError("Control Plane did not confirm runtime authority recovery");
+    }
   }
 
   async recordRuntimeHealth(

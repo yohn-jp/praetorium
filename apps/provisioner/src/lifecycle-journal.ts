@@ -270,6 +270,10 @@ export class OperationBackedLifecycleJournal implements LifecycleJournal {
     return this.current;
   }
 
+  get currentCheckpointSequence(): number {
+    return this.remoteCheckpointSequence;
+  }
+
   async load(operationId: string, signal?: AbortSignal): Promise<LifecycleOperation | null> {
     if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
     if (operationId !== this.options.claim.operation.id) return null;

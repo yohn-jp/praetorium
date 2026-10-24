@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { OperationService, OperationFenceConflict } from "@praetorium/application/operations";
 import { physicalInstanceId } from "@praetorium/contracts";
 import {
@@ -15,6 +15,7 @@ import { createProvisionerRoutes } from "./provisioner-routes.js";
 import { createRuntimeBindingMetadataReader } from "./runtime-binding.js";
 import { createRuntimeGitCredentialRoutes } from "./runtime-git-credential-routes.js";
 import { publishRuntimeAuthority } from "./runtime-authority-transition.js";
+import { createRuntimeAuthorityRecovery } from "./runtime-authority-recovery.js";
 
 const NOW = Date.now();
 const REPOSITORY_ID = 7001;
@@ -26,17 +27,24 @@ const OPERATION_ID = "op-redeploy-5";
 const LEASE_TOKEN = "lease-secret-".padEnd(64, "x");
 const CURRENT_RESERVATION_ID = "res_current-4";
 const TARGET_RESERVATION_ID = "res_target-5";
+const TARGET_REVISION_ID = "revision-5";
 const liveDatabases: DatabaseSync[] = [];
 
 class SQLiteD1 implements D1Database {
   readonly database = new DatabaseSync(":memory:");
+  beforeFirst: ((query: string) => void) | undefined;
 
   constructor() {
     liveDatabases.push(this.database);
   }
 
   prepare(query: string): D1PreparedStatement {
-    return new SQLiteD1Statement(this.database, query, this.database.prepare(query));
+    return new SQLiteD1Statement(
+      this.database,
+      query,
+      this.database.prepare(query),
+      () => this.beforeFirst?.(query),
+    );
   }
 
   async batch<T = unknown>(
@@ -63,6 +71,7 @@ class SQLiteD1Statement implements D1PreparedStatement {
     private readonly database: DatabaseSync,
     private readonly query: string,
     private readonly statement: StatementSync,
+    private readonly beforeFirst: () => void,
   ) {}
 
   bind(
@@ -79,6 +88,7 @@ class SQLiteD1Statement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(): Promise<T | null> {
+    this.beforeFirst();
     return (this.statement.get(...this.sqlValues()) as T | undefined) ?? null;
   }
 
@@ -180,6 +190,87 @@ function seedOperation(db: SQLiteD1): void {
     );
 }
 
+function seedAdmittedTarget(db: SQLiteD1): void {
+  db.database.prepare(
+    `INSERT INTO builds (build_id, build_key, build_input_json, status, created_at, updated_at)
+     VALUES ('build-target', 'build-key-target', '{}', 'succeeded', ?, ?)`,
+  ).run(NOW - 1000, NOW - 1000);
+  db.database.prepare(
+    `INSERT INTO build_attempts (
+       attempt_id, build_id, lease_epoch, worker_id, status, lease_token,
+       lease_expires_at, started_at, updated_at, finished_at
+     ) VALUES ('attempt-target', 'build-target', 1, 'builder', 'succeeded', 'build-lease', ?, ?, ?, ?)`,
+  ).run(NOW - 500, NOW - 1000, NOW - 500, NOW - 500);
+  db.database.prepare(
+    `INSERT INTO artifacts (
+       artifact_digest, build_key, build_id, attempt_id, manifest_digest,
+       platform_manifest_digest, composition_manifest_digest, producer_revision,
+       requested_modules_json, resolved_modules_json, contract_versions_json,
+       verification_json, statement_json, signature_json, verifier_id, status,
+       created_at, admitted_at
+     ) VALUES ('sha256:target', 'build-key-target', 'build-target', 'attempt-target',
+       'sha256:manifest', 'sha256:target', 'sha256:composition', 'producer-1',
+       '[]', '[]', '{}', '{}', '{}', '{}', 'verifier-1', 'admitted', ?, ?)`,
+  ).run(NOW - 1000, NOW - 500);
+  db.database.prepare(
+    `INSERT INTO deployment_revisions (
+       revision_id, instance_id, repository_id, generation, build_key, build_id,
+       selection_json, resource_requirements_json, runtime_metadata_json,
+       artifact_digest, status, actor_id, created_at
+     ) VALUES (?, ?, ?, 8, 'build-key-target', 'build-target', '{}', '{}', '{}',
+       'sha256:target', 'admitted', 'user-1', ?)`,
+  ).run(TARGET_REVISION_ID, INSTANCE_ID, REPOSITORY_ID, NOW - 1000);
+  db.database.prepare(
+    "UPDATE operations SET deployment_revision_id = ? WHERE operation_id = ?",
+  ).run(TARGET_REVISION_ID, OPERATION_ID);
+}
+
+function recoveryEvidence(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    instanceId: INSTANCE_ID,
+    repositoryId: REPOSITORY_ID,
+    generation: 8,
+    runtimeEpoch: 5,
+    clusterId: CLUSTER_ID,
+    reservationId: TARGET_RESERVATION_ID,
+    actualImageDigest: "sha256:target",
+    imageIdentityVerified: true,
+    census: {
+      complete: true,
+      providerObservationId: "provider-observation-target-88",
+      observedAt: new Date(NOW - 500).toISOString(),
+      matchedWriterCount: 1,
+      writers: [{ runtimeEpoch: 5, phase: "running", identities: ["pod-uid-target"] }],
+    },
+    ...overrides,
+  };
+}
+
+async function prepareRecoverableOperation(h: Awaited<ReturnType<typeof harness>>): Promise<void> {
+  seedAdmittedTarget(h.db);
+  const proof = absenceCheckpoint();
+  const fence = {
+    operationId: OPERATION_ID,
+    workerId: WORKER_ID,
+    leaseToken: LEASE_TOKEN,
+    leaseEpoch: 4,
+  };
+  await h.operations.checkpoint({
+    ...fence,
+    expectedCheckpointSequence: 0,
+    phase: "old-writer-absent",
+    checkpoint: proof,
+    now: NOW,
+  });
+  await h.operations.checkpoint({
+    ...fence,
+    expectedCheckpointSequence: 1,
+    phase: "starting-target",
+    checkpoint: proof,
+    now: NOW,
+  });
+}
+
 function registration(input: {
   readonly token: string;
   readonly epoch: 4 | 5;
@@ -262,6 +353,11 @@ async function harness(
     publishRuntimeAuthority: options.publish
       ? (operation, now) => options.publish!(db, operation, now)
       : (operation, now) => publishRuntimeAuthority(db, operation, now),
+    recoverRuntimeAuthority: createRuntimeAuthorityRecovery({
+      db,
+      operations,
+      now: () => clock.value,
+    }),
   });
   app.onError((error, context) => {
     if (error instanceof OperationFenceConflict)
@@ -392,6 +488,152 @@ afterEach(() => {
 });
 
 describe("runtime authority checkpoint recovery", () => {
+  it("restores a NULL target grant only from a fresh, fenced target census and persisted absence proof", async () => {
+    const h = await harness();
+    await prepareRecoverableOperation(h);
+    const before = await h.reader.getCurrent(REPOSITORY_ID);
+    expect(before).toBeNull();
+    const request = {
+      operationId: OPERATION_ID,
+      workerId: WORKER_ID,
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 2,
+      evidence: recoveryEvidence(),
+    };
+    const response = await h.app.request("/runtime-authority/recover", jsonInit(request));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ recovered: true });
+    const replay = await h.app.request("/runtime-authority/recover", jsonInit(request));
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({ recovered: true });
+    expect(await h.reader.getCurrent(REPOSITORY_ID)).toMatchObject({
+      authority: "post-absence-target",
+      runtimeEpoch: 5,
+      runtimeId: TARGET_RESERVATION_ID,
+    });
+    expect(await checkpointCount(h.db)).toBe(2);
+    expect(h.db.database.prepare(
+      "SELECT count(*) AS count FROM audit_events WHERE action = 'runtime.authority.recovery-evidence-admitted'",
+    ).get()).toEqual({ count: 1 });
+    expect(h.db.database.prepare(
+      "SELECT action, outcome FROM audit_events WHERE operation_id = ?",
+    ).all(OPERATION_ID)).toContainEqual({
+      action: "runtime.authority.recovery-evidence-admitted",
+      outcome: "recorded",
+    });
+  });
+
+  it.each([
+    ["stale lease", { leaseToken: "stale-lease-token-that-is-long-enough-to-parse" }, {}],
+    ["wrong generation", {}, { generation: 7 }],
+    ["wrong target epoch", {}, { runtimeEpoch: 4 }],
+    ["wrong admitted digest", {}, { actualImageDigest: "sha256:other" }],
+    ["incomplete census", {}, { census: {
+      complete: false, providerObservationId: "provider-observation-target-88",
+      observedAt: new Date(NOW - 500).toISOString(), matchedWriterCount: 1,
+      writers: [{ runtimeEpoch: 5, phase: "running", identities: ["pod-uid-target"] }],
+    } }],
+    ["multiple writers", {}, { census: {
+      complete: true, providerObservationId: "provider-observation-target-88",
+      observedAt: new Date(NOW - 500).toISOString(), matchedWriterCount: 2,
+      writers: [
+        { runtimeEpoch: 5, phase: "running", identities: ["pod-uid-target"] },
+        { runtimeEpoch: 4, phase: "running", identities: ["pod-uid-old"] },
+      ],
+    } }],
+  ] as const)("rejects %s without restoring authority", async (_label, requestOverrides, evidenceOverrides) => {
+    const h = await harness();
+    await prepareRecoverableOperation(h);
+    const response = await h.app.request("/runtime-authority/recover", jsonInit({
+      operationId: OPERATION_ID,
+      workerId: WORKER_ID,
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 2,
+      evidence: recoveryEvidence(evidenceOverrides),
+      ...requestOverrides,
+    }));
+    expect(response.status).toBe(409);
+    expect(await h.reader.getCurrent(REPOSITORY_ID)).toBeNull();
+    expect(await checkpointCount(h.db)).toBe(2);
+  });
+
+  it("records fresh census evidence but keeps authority absent while retired Git credentials remain", async () => {
+    const h = await harness();
+    await prepareRecoverableOperation(h);
+    await register(h.credentialApp, registration({ token: "a", epoch: 4 }));
+    const response = await h.app.request("/runtime-authority/recover", jsonInit({
+      operationId: OPERATION_ID,
+      workerId: WORKER_ID,
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 2,
+      evidence: recoveryEvidence(),
+    }));
+    expect(response.status).toBe(409);
+    expect(await h.reader.getCurrent(REPOSITORY_ID)).toBeNull();
+    expect(h.db.database.prepare(
+      "SELECT count(*) AS count FROM audit_events WHERE action = 'runtime.authority.recovery-evidence-admitted'",
+    ).get()).toEqual({ count: 1 });
+  });
+
+  it.each([
+    ["lease expiry", 30_000, new Date(NOW).toISOString()],
+    ["census age limit", 29_501, new Date(NOW - 500).toISOString()],
+  ] as const)("does not publish when the %s elapses during durable audit read", async (_label, elapsed, observedAt) => {
+    const h = await harness();
+    await prepareRecoverableOperation(h);
+    h.db.beforeFirst = (query) => {
+      if (query.includes("FROM audit_events WHERE event_id")) {
+        h.db.beforeFirst = undefined;
+        h.clock.value = NOW + elapsed;
+      }
+    };
+    const response = await h.app.request("/runtime-authority/recover", jsonInit({
+      operationId: OPERATION_ID,
+      workerId: WORKER_ID,
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 2,
+      evidence: recoveryEvidence({
+        census: {
+          complete: true,
+          providerObservationId: "provider-observation-target-88",
+          observedAt,
+          matchedWriterCount: 1,
+          writers: [{ runtimeEpoch: 5, phase: "running", identities: ["pod-uid-target"] }],
+        },
+      }),
+    }));
+    expect(response.status).toBe(409);
+    expect(await h.reader.getCurrent(REPOSITORY_ID)).toBeNull();
+    expect(await checkpointCount(h.db)).toBe(2);
+  });
+
+  it("does not acknowledge recovery when the lease expires during the final operation read", async () => {
+    const h = await harness();
+    await prepareRecoverableOperation(h);
+    const readOperation = h.operations.getById.bind(h.operations);
+    let reads = 0;
+    vi.spyOn(h.operations, "getById").mockImplementation(async (id) => {
+      const operation = await readOperation(id);
+      if (++reads === 3) h.clock.value = NOW + 30_000;
+      return operation;
+    });
+    const response = await h.app.request("/runtime-authority/recover", jsonInit({
+      operationId: OPERATION_ID,
+      workerId: WORKER_ID,
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 2,
+      evidence: recoveryEvidence(),
+    }));
+    expect(reads).toBe(3);
+    expect(response.status).toBe(409);
+    expect(await checkpointCount(h.db)).toBe(2);
+  });
+
   it("keeps authority absent through failed and partial retirement while a stale registrar races", async () => {
     let gatewayCalls = 0;
     let staleRegistrationStatus = "";

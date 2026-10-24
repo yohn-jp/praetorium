@@ -21,6 +21,7 @@ import type {
   LifecycleRouteProvider,
   LifecycleRuntimeProvider,
   RuntimeAssignment,
+  RuntimeAuthorityRecoveryEvidence,
   RuntimeReadiness,
   WriterCensus,
 } from "@praetorium/application/lifecycle";
@@ -157,6 +158,30 @@ function censusOf(observation: RuntimeObservation): WriterCensus {
   };
 }
 
+function isExactSoleTargetCensus(
+  census: WriterCensus,
+  runtimeEpoch: number,
+  now: number,
+): boolean {
+  const observedAt = Date.parse(census.observedAt);
+  const writer = census.writers[0];
+  return (
+    census.complete === true &&
+    census.providerObservationId.length > 0 &&
+    Number.isFinite(observedAt) &&
+    observedAt <= now &&
+    now - observedAt <= 30_000 &&
+    census.matchedWriterCount === 1 &&
+    census.writers.length === 1 &&
+    writer?.runtimeEpoch === runtimeEpoch &&
+    writer.phase === "running" &&
+    writer.identities.length === 1 &&
+    writer.identities[0] !== undefined &&
+    writer.identities[0].length > 0 &&
+    new Set(writer.identities).size === writer.identities.length
+  );
+}
+
 function sameIdentity(observed: RuntimeObservation, assignment: RuntimeAssignment): boolean {
   return (
     observed.identity.instanceId === assignment.instanceId &&
@@ -227,6 +252,10 @@ export class KubernetesLifecycleRuntimeAdapter
       ) => ReturnType<ProvisionerOperationService["recordCapacitySnapshot"]>;
     },
     private readonly identityTransport?: RuntimeIdentityAssignmentTransport,
+    private readonly authorityRecoveryOperations?: Pick<
+      ProvisionerOperationService,
+      "recoverRuntimeAuthority"
+    >,
   ) {
     this.now = options.now ?? Date.now;
     this.convergenceTimeoutMs = options.convergenceTimeoutMs ?? DEFAULT_CONVERGENCE_TIMEOUT_MS;
@@ -262,6 +291,80 @@ export class KubernetesLifecycleRuntimeAdapter
     const identity = writerCensusIdentity(instanceId, repositoryId, this.fence);
     const observation = await this.provider.inspect(identity, signal);
     return censusOf(observation);
+  }
+
+  async recoverTargetAuthority(
+    input: {
+      readonly operationId: string;
+      readonly workerId: string;
+      readonly leaseToken: string;
+      readonly leaseEpoch: number;
+      readonly expectedCheckpointSequence: number;
+      readonly assignment: RuntimeAssignment;
+      readonly census: WriterCensus;
+    },
+    beforeEffect: BeforeLifecycleEffect,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const { assignment } = input;
+    if (
+      assignment.clusterId !== this.fence.clusterId ||
+      assignment.repositoryId !== this.fence.repositoryId ||
+      assignment.generation !== this.fence.generation ||
+      assignment.runtimeEpoch !== this.fence.runtimeEpoch ||
+      input.operationId.length === 0 ||
+      input.workerId.length === 0 ||
+      input.leaseToken.length < 32 ||
+      !Number.isSafeInteger(input.leaseEpoch) ||
+      input.leaseEpoch < 0 ||
+      !Number.isSafeInteger(input.expectedCheckpointSequence) ||
+      input.expectedCheckpointSequence < 0 ||
+      assignment.reservationId === null ||
+      assignment.reservationId.length === 0 ||
+      !isExactSoleTargetCensus(input.census, assignment.runtimeEpoch, this.now())
+    ) {
+      throw new TypeError("runtime authority recovery request is outside its operation fence");
+    }
+
+    // Independently re-observe the provider immediately before publishing the
+    // authority. The lifecycle census alone does not bind the actual image.
+    const observation = await this.provider.inspect(parseIdentity(assignment), signal);
+    const census = censusOf(observation);
+    const actualImageDigest = observation.observedImageDigest;
+    if (
+      !isExactSoleTargetCensus(census, assignment.runtimeEpoch, this.now()) ||
+      !sameIdentity(observation, assignment) ||
+      actualImageDigest !== assignment.deployment.platformManifestDigest ||
+      !observation.writerCensus.pods.some((pod) =>
+        pod.imageIds.some((imageId) => imageId.endsWith(assignment.deployment.platformManifestDigest)),
+      )
+    ) {
+      throw new Error("runtime authority recovery provider observation is not the exact target");
+    }
+
+    const evidence: RuntimeAuthorityRecoveryEvidence = {
+      instanceId: assignment.instanceId,
+      repositoryId: assignment.repositoryId,
+      generation: assignment.generation,
+      runtimeEpoch: assignment.runtimeEpoch,
+      clusterId: assignment.clusterId,
+      reservationId: assignment.reservationId,
+      actualImageDigest,
+      imageIdentityVerified: true,
+      census,
+    };
+    await beforeEffect();
+    if (this.authorityRecoveryOperations === undefined)
+      throw new Error("runtime authority recovery transport is unavailable");
+    await this.authorityRecoveryOperations.recoverRuntimeAuthority({
+      operationId: input.operationId,
+      workerId: input.workerId,
+      leaseToken: input.leaseToken,
+      leaseEpoch: input.leaseEpoch,
+      expectedCheckpointSequence: input.expectedCheckpointSequence,
+      evidence,
+      ...(signal === undefined ? {} : { signal }),
+    });
   }
 
   async stop(

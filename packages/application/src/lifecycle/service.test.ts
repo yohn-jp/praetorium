@@ -177,6 +177,7 @@ interface HarnessOptions {
   readonly readinessTimeoutMs?: number;
   readonly quiesceTimeoutMs?: number;
   readonly resumeFailure?: boolean;
+  readonly recoverTargetAuthority?: LifecycleDependencies["recoverTargetAuthority"];
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -205,6 +206,11 @@ function harness(options: HarnessOptions = {}) {
     }[],
     deactivations: 0,
     released: [] as string[],
+    authorityRecoveries: [] as {
+      readonly operationId: string;
+      readonly runtimeEpoch: number;
+      readonly census: WriterCensus;
+    }[],
   };
   const remoteObservedAtByEpoch = new Map<number, string>();
   let crashedAfterStart = false;
@@ -391,6 +397,19 @@ function harness(options: HarnessOptions = {}) {
     },
     authProbe,
     runtime,
+    ...(options.recoverTargetAuthority === undefined
+      ? {}
+      : {
+          recoverTargetAuthority: async (input, beforeEffect, signal) => {
+            counters.authorityRecoveries.push({
+              operationId: input.operationId,
+              runtimeEpoch: input.assignment.runtimeEpoch,
+              census: input.census,
+            });
+            timeline.push(`authority-recovered:${input.assignment.runtimeEpoch}`);
+            await options.recoverTargetAuthority!(input, beforeEffect, signal);
+          },
+        }),
     routes: {
       async activate(value, evidence) {
         counters.activations.push({ assignment: value, evidence });
@@ -1071,6 +1090,158 @@ describe("LifecycleService", () => {
     expect(h.timeline.lastIndexOf("checkpoint:starting-target")).toBeLessThan(
       h.timeline.lastIndexOf("start:5"),
     );
+  });
+
+  it("restores fenced target authority from a fresh sole-writer census before retrying startup", async () => {
+    const proof: WriterAbsenceProof = {
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      retiredRuntimeEpoch: null,
+      providerObservationId: "pods-before-target",
+      censusObservedAt: new Date().toISOString(),
+      remainingWriters: 0,
+      evidenceIdentities: ["namespace-uid/pod-list-rv"],
+      source: "runtime-provider-census",
+    };
+    const recoverTargetAuthority = vi.fn(async () => undefined);
+    const h = harness({
+      operation: operation({
+        kind: "start",
+        phase: "starting-target",
+        version: 5,
+        current: null,
+        target: deployment(),
+        targetEpoch: 5,
+        targetReservationId: "reservation-5",
+        writerAbsenceProof: proof,
+      }),
+      initialWriters: [assignment(5)],
+      recoverTargetAuthority,
+    });
+
+    const recovered = await h.service.execute("op-01", h.context);
+
+    expect(recovered.status).toBe("complete");
+    expect(recoverTargetAuthority).toHaveBeenCalledOnce();
+    expect(h.counters.authorityRecoveries[0]).toMatchObject({
+      operationId: "op-01",
+      runtimeEpoch: 5,
+      census: {
+        complete: true,
+        matchedWriterCount: 1,
+        writers: [{ runtimeEpoch: 5, phase: "running", identities: ["pod-5"] }],
+      },
+    });
+    expect(h.timeline.indexOf("authority-recovered:5")).toBeLessThan(
+      h.timeline.indexOf("start:5"),
+    );
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([5]);
+  });
+
+  it("persists starting-target before recovering authority from unknown", async () => {
+    const proof: WriterAbsenceProof = {
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      retiredRuntimeEpoch: null,
+      providerObservationId: "pods-before-target",
+      censusObservedAt: new Date().toISOString(),
+      remainingWriters: 0,
+      evidenceIdentities: ["namespace-uid/pod-list-rv"],
+      source: "runtime-provider-census",
+    };
+    const h = harness({
+      operation: operation({
+        kind: "start",
+        phase: "unknown",
+        current: null,
+        target: deployment(),
+        targetEpoch: 5,
+        targetReservationId: "reservation-5",
+        writerAbsenceProof: proof,
+      }),
+      initialWriters: [assignment(5)],
+      recoverTargetAuthority: async () => undefined,
+    });
+
+    await h.service.execute("op-01", h.context);
+
+    expect(h.timeline.indexOf("checkpoint:starting-target")).toBeLessThan(
+      h.timeline.indexOf("authority-recovered:5"),
+    );
+    expect(h.timeline.indexOf("authority-recovered:5")).toBeLessThan(
+      h.timeline.indexOf("start:5"),
+    );
+  });
+
+  it("does not recover authority or start when the census includes another writer", async () => {
+    const proof: WriterAbsenceProof = {
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      retiredRuntimeEpoch: null,
+      providerObservationId: "pods-before-target",
+      censusObservedAt: new Date().toISOString(),
+      remainingWriters: 0,
+      evidenceIdentities: ["namespace-uid/pod-list-rv"],
+      source: "runtime-provider-census",
+    };
+    const recoverTargetAuthority = vi.fn(async () => undefined);
+    const h = harness({
+      operation: operation({
+        kind: "start",
+        phase: "starting-target",
+        current: null,
+        target: deployment(),
+        targetEpoch: 5,
+        targetReservationId: "reservation-5",
+        writerAbsenceProof: proof,
+      }),
+      initialWriters: [assignment(5), assignment(4)],
+      recoverTargetAuthority,
+    });
+
+    const result = await h.service.execute("op-01", h.context);
+
+    expect(result.status).toBe("unknown");
+    expect(recoverTargetAuthority).not.toHaveBeenCalled();
+    expect(h.counters.starts).toHaveLength(0);
+    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([5, 4]);
+  });
+
+  it("keeps the existing target writer running when authority recovery fails", async () => {
+    const proof: WriterAbsenceProof = {
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      retiredRuntimeEpoch: null,
+      providerObservationId: "pods-before-target",
+      censusObservedAt: new Date().toISOString(),
+      remainingWriters: 0,
+      evidenceIdentities: ["namespace-uid/pod-list-rv"],
+      source: "runtime-provider-census",
+    };
+    const h = harness({
+      operation: operation({
+        kind: "start",
+        phase: "starting-target",
+        current: null,
+        target: deployment(),
+        targetEpoch: 5,
+        targetReservationId: "reservation-5",
+        writerAbsenceProof: proof,
+      }),
+      initialWriters: [assignment(5)],
+      recoverTargetAuthority: async () => {
+        throw new Error("stale recovery fence");
+      },
+    });
+
+    await expect(h.service.execute("op-01", h.context)).resolves.toMatchObject({
+      status: "unknown",
+      code: "runtime_authority_recovery_failed",
+    });
+    expect(h.counters.starts).toHaveLength(0);
+    expect(h.counters.stops).toHaveLength(0);
+    expect(h.writers.map((writer) => writer.runtimeEpoch)).toEqual([5]);
   });
 
   it("rearms an exact target writer from unknown only after persisting starting-target", async () => {

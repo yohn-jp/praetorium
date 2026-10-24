@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeAssignment } from "@praetorium/application/lifecycle";
 import type { ProvisionerOperationService } from "./operation-client.js";
+import type { RuntimeObservation } from "@praetorium/kubernetes";
 import {
   LifecycleReservationAdapter,
   KubernetesLifecycleRuntimeAdapter,
@@ -377,5 +378,147 @@ describe("runtime identity renewal after a controller outage", () => {
       await runtime.close();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("target runtime authority recovery evidence", () => {
+  const assignment: RuntimeAssignment = {
+    instanceId: "ins_00000000000000000000000001",
+    repositoryId: 123456,
+    runtimeEpoch: 5,
+    generation: 2,
+    clusterId: "cluster-a",
+    reservationId: "res_target",
+    deployment: deployment(),
+  };
+
+  function providerObservation(runtimeEpoch = assignment.runtimeEpoch): RuntimeObservation {
+    return {
+      identity: {
+        instanceId: assignment.instanceId,
+        repositoryId: assignment.repositoryId,
+        runtimeEpoch: assignment.runtimeEpoch,
+        generation: assignment.generation,
+        clusterId: assignment.clusterId,
+      },
+      observationId: "ns-uid/pods-rv-10",
+      observedAt: now,
+      writerState: "running",
+      writerCensus: {
+        scope: "instance-repository-all-epochs",
+        complete: true,
+        queriedNamespace: "praetorium-instances-target",
+        namespaceUid: "ns-uid",
+        namespaceResourceVersion: "ns-rv-8",
+        listResourceVersion: "pods-rv-10",
+        queriedPodCount: 1,
+        pods: [
+          {
+            namespace: "praetorium-instances-target",
+            name: "arcadia-ins-target-abcde",
+            uid: "pod-uid-1",
+            runtimeEpoch,
+            generation: assignment.generation,
+            deleting: false,
+            imageIds: [`containerd://${assignment.deployment.platformManifestDigest}`],
+          },
+        ],
+      },
+      observedImageDigest: assignment.deployment.platformManifestDigest,
+      application: null,
+      conditions: [],
+    } as unknown as RuntimeObservation;
+  }
+
+  it("rechecks provider census and actual image before asking CP to restore authority", async () => {
+    const recovery = vi.fn(async () => undefined);
+    const provider = { inspect: vi.fn(async () => providerObservation()) };
+    const runtime = Object.assign(Object.create(KubernetesLifecycleRuntimeAdapter.prototype), {
+      provider,
+      fence: {
+        clusterId: assignment.clusterId,
+        repositoryId: assignment.repositoryId,
+        generation: assignment.generation,
+        runtimeEpoch: assignment.runtimeEpoch,
+      },
+      now: () => now,
+      authorityRecoveryOperations: { recoverRuntimeAuthority: recovery },
+    }) as KubernetesLifecycleRuntimeAdapter;
+    const beforeEffect = vi.fn(async () => undefined);
+
+    await runtime.recoverTargetAuthority(
+      {
+        operationId: "op_01",
+        workerId: "worker-a",
+        leaseToken: "l".repeat(48),
+        leaseEpoch: 4,
+        expectedCheckpointSequence: 5,
+        assignment,
+        census: {
+          complete: true,
+          providerObservationId: "pods-before-start",
+          observedAt: new Date(now - 100).toISOString(),
+          matchedWriterCount: 1,
+          writers: [{ runtimeEpoch: 5, phase: "running", identities: ["pod-uid-1"] }],
+        },
+      },
+      beforeEffect,
+    );
+
+    expect(provider.inspect).toHaveBeenCalledOnce();
+    expect(beforeEffect).toHaveBeenCalledOnce();
+    expect(recovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationId: "op_01",
+        expectedCheckpointSequence: 5,
+        evidence: expect.objectContaining({
+          reservationId: "res_target",
+          actualImageDigest: assignment.deployment.platformManifestDigest,
+          imageIdentityVerified: true,
+          census: expect.objectContaining({
+            providerObservationId: "ns-uid/pods-rv-10",
+            matchedWriterCount: 1,
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("rejects an extra or stale writer before the recovery endpoint", async () => {
+    const recovery = vi.fn(async () => undefined);
+    const provider = { inspect: vi.fn(async () => providerObservation(4)) };
+    const runtime = Object.assign(Object.create(KubernetesLifecycleRuntimeAdapter.prototype), {
+      provider,
+      fence: {
+        clusterId: assignment.clusterId,
+        repositoryId: assignment.repositoryId,
+        generation: assignment.generation,
+        runtimeEpoch: assignment.runtimeEpoch,
+      },
+      now: () => now,
+      authorityRecoveryOperations: { recoverRuntimeAuthority: recovery },
+    }) as KubernetesLifecycleRuntimeAdapter;
+
+    await expect(
+      runtime.recoverTargetAuthority(
+        {
+          operationId: "op_01",
+          workerId: "worker-a",
+          leaseToken: "l".repeat(48),
+          leaseEpoch: 4,
+          expectedCheckpointSequence: 5,
+          assignment,
+          census: {
+            complete: true,
+            providerObservationId: "pods-before-start",
+            observedAt: new Date(now - 100).toISOString(),
+            matchedWriterCount: 1,
+            writers: [{ runtimeEpoch: 5, phase: "running", identities: ["pod-uid-1"] }],
+          },
+        },
+        async () => undefined,
+      ),
+    ).rejects.toThrow("not the exact target");
+    expect(recovery).not.toHaveBeenCalled();
   });
 });

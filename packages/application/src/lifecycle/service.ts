@@ -45,6 +45,17 @@ function censusIsComplete(census: WriterCensus): boolean {
   );
 }
 
+function isSoleTargetWriter(census: WriterCensus, targetEpoch: RuntimeEpoch): boolean {
+  return (
+    censusIsComplete(census) &&
+    census.writers.length === 1 &&
+    census.writers[0]?.runtimeEpoch === targetEpoch &&
+    census.writers[0]?.phase === "running" &&
+    census.writers[0]?.identities.length === 1 &&
+    (census.writers[0]?.identities[0]?.length ?? 0) > 0
+  );
+}
+
 function validSha256(value: string): boolean {
   return /^sha256:[a-f0-9]{64}$/u.test(value);
 }
@@ -815,9 +826,7 @@ export class LifecycleService {
       );
       const recoveredProof = operation.writerAbsenceProof;
       const targetAlreadyRunning =
-        censusIsComplete(recoveredTargetCensus) &&
-        recoveredTargetCensus.writers.length === 1 &&
-        recoveredTargetCensus.writers[0]?.runtimeEpoch === targetEpoch &&
+        isSoleTargetWriter(recoveredTargetCensus, targetEpoch) &&
         ["unknown", "starting-target", "target-ready", "route-activated"].includes(
           operation.phase,
         ) &&
@@ -853,18 +862,38 @@ export class LifecycleService {
         );
       if (beforeStart.writers.length > 0) {
         if (
-          beforeStart.writers.length === 1 &&
-          beforeStart.writers[0]?.runtimeEpoch === targetEpoch &&
+          isSoleTargetWriter(beforeStart, targetEpoch) &&
           provesPreviousWriterAbsent(retirement.proof, targetAssignment, targetEpoch)
         ) {
           // A prior attempt may have started the target and exited before recording progress.
           // Re-enter the idempotent provider start path so it can verify the exact
           // assignment and resume startup work such as runtime identity renewal.
-          if (operation.phase === "unknown") {
+          const recoveredFromUnknown = operation.phase === "unknown";
+          if (recoveredFromUnknown) {
             await context.assertLease();
             await checkpoint({ phase: "starting-target", failureCode: null, failureReason: null });
           }
-          if (operation.phase === "starting-target") {
+          if (targetAlreadyRunning && this.dependencies.recoverTargetAuthority !== undefined) {
+            try {
+              await context.assertLease();
+              await this.dependencies.recoverTargetAuthority(
+                {
+                  operationId: operation.id,
+                  assignment: targetAssignment,
+                  census: beforeStart,
+                },
+                context.assertLease,
+                context.signal,
+              );
+            } catch {
+              return setOutcome(
+                "unknown",
+                "runtime_authority_recovery_failed",
+                "the existing target writer could not regain its fenced runtime authority",
+              );
+            }
+          }
+          if (recoveredFromUnknown || operation.phase === "starting-target") {
             await context.assertLease();
             await this.dependencies.runtime.start(
               targetAssignment,

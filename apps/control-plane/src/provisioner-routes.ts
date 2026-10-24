@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { ResourceRequirementsSchema } from "@praetorium/contracts";
 import type { OperationService, ClaimedOperation } from "@praetorium/application/operations";
+import type { RuntimeAuthorityRecoveryEvidence } from "@praetorium/application/lifecycle";
 import { boundedJson } from "./app.js";
 import { IssueControlCredentialInputSchema } from "./control-credentials.js";
 const Id = z.string().min(1).max(128),
@@ -99,6 +100,31 @@ const Capacity = z.strictObject({
   }),
   representedReservationIds: z.array(Id).max(4096),
 });
+const RuntimeAuthorityRecovery = z.strictObject({
+  ...Fence,
+  expectedCheckpointSequence: Counter,
+  evidence: z.strictObject({
+    instanceId: Id,
+    repositoryId: z.number().int().positive(),
+    generation: Counter,
+    runtimeEpoch: Counter,
+    clusterId: Id,
+    reservationId: Id,
+    actualImageDigest: z.string().min(1).max(512),
+    imageIdentityVerified: z.literal(true),
+    census: z.strictObject({
+      complete: z.boolean(),
+      providerObservationId: z.string().min(1).max(512),
+      observedAt: z.string().datetime(),
+      matchedWriterCount: Counter,
+      writers: z.array(z.strictObject({
+        runtimeEpoch: Counter.nullable(),
+        phase: z.enum(["running", "terminating"]),
+        identities: z.array(z.string().min(1).max(512)).max(256),
+      })).max(256),
+    }),
+  }),
+});
 export interface ProvisionerRoutesDependencies {
   operations: OperationService;
   workerId: string;
@@ -112,6 +138,16 @@ export interface ProvisionerRoutesDependencies {
     operation: Awaited<ReturnType<OperationService["checkpoint"]>>,
     now: number,
   ) => Promise<boolean | void>;
+  recoverRuntimeAuthority?: (input: {
+    readonly operationId: string;
+    readonly workerId: string;
+    readonly leaseToken: string;
+    readonly leaseEpoch: number;
+    readonly expectedCheckpointSequence: number;
+    readonly evidence: RuntimeAuthorityRecoveryEvidence;
+    readonly now: number;
+  }) => Promise<boolean>;
+  afterCanaryStopReported?: (operationId: string) => Promise<void>;
   issueControlCredential?: (input: unknown) => Promise<unknown>;
   resolveRuntimeContext: (claim: ClaimedOperation) => Promise<unknown>;
 }
@@ -224,6 +260,18 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
     }
     return c.json({ operation });
   });
+  app.post("/runtime-authority/recover", async (c) => {
+    if (!deps.recoverRuntimeAuthority)
+      return c.json({ error: { code: "RUNTIME_AUTHORITY_RECOVERY_UNAVAILABLE" } }, 503);
+    const input = RuntimeAuthorityRecovery.parse(await boundedJson(c.req.raw));
+    scoped(input);
+    if (input.evidence.clusterId !== deps.clusterId)
+      return c.json({ error: { code: "RUNTIME_AUTHORITY_RECOVERY_FENCED" } }, 409);
+    const recovered = await deps.recoverRuntimeAuthority({ ...input, now: deps.now() });
+    if (!recovered)
+      return c.json({ error: { code: "RUNTIME_AUTHORITY_RECOVERY_FENCED" } }, 409);
+    return c.json({ recovered: true });
+  });
   app.post("/advance-epoch", async (c) => {
     const input = Advance.parse(await boundedJson(c.req.raw));
     scoped(input);
@@ -237,14 +285,35 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
   app.post("/report", async (c) => {
     const input = Report.parse(await boundedJson(c.req.raw));
     scoped(input);
-    return c.json(
-      await deps.operations.report({
+    const result = await deps.operations.report({
         ...input,
         terminal: input.terminal ?? null,
         observation: input.observation ? { ...input.observation, reportedAt: deps.now() } : null,
         now: deps.now(),
-      }),
-    );
+      });
+    const operation = result.operation;
+    if (
+      result.applied &&
+      !result.duplicate &&
+      operation.kind === "stop" &&
+      operation.status === "succeeded" &&
+      operation.idempotencyKey.startsWith("stable-canary-stop:") &&
+      deps.afterCanaryStopReported
+    ) {
+      const work = Promise.resolve()
+        .then(() => deps.afterCanaryStopReported?.(operation.id))
+        .then(
+          () => undefined,
+          () => undefined,
+        );
+      try {
+        c.executionCtx.waitUntil(work);
+      } catch {
+        // The operation report is durable; the bounded callback is a wake hint.
+        void work;
+      }
+    }
+    return c.json(result);
   });
   app.post("/reservations/current", async (c) => {
     const input = z.strictObject({ clusterId: Id }).parse(await boundedJson(c.req.raw));

@@ -12,6 +12,7 @@ import type { ExecutionContext } from "hono";
 import { notifyWorkAvailable, type WorkNotificationEnv } from "./work-notifications.js";
 import { createRuntimeIdentityRoutes } from "./runtime-identity-routes.js";
 import { publishRuntimeAuthority } from "./runtime-authority-transition.js";
+import { createRuntimeAuthorityRecovery } from "./runtime-authority-recovery.js";
 import { createRuntimeBindingMetadataReader } from "./runtime-binding.js";
 import { createRuntimeGitCredentialRoutes } from "./runtime-git-credential-routes.js";
 import { D1RuntimeGitCredentialStore } from "@praetorium/persistence/d1";
@@ -249,7 +250,15 @@ function composeServices(env: ControlPlaneEnv) {
       ? {
           provisioner: {
             operations,
+            ...(releases
+              ? { afterCanaryStopReported: releases.progressCanaryStop }
+              : {}),
             publishRuntimeAuthority: (operation, now) => publishRuntimeAuthority(env.CONTROL_PLANE_DB, operation, now),
+            recoverRuntimeAuthority: createRuntimeAuthorityRecovery({
+              db: env.CONTROL_PLANE_DB,
+              operations,
+              now: Date.now,
+            }),
             retireCredentials: createCredentialRetirementBarrier({
               db: env.CONTROL_PLANE_DB,
               ...(env.GATEWAY_SERVICE ? { gateway: env.GATEWAY_SERVICE } : {}),

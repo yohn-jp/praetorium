@@ -7,6 +7,7 @@ import type { GatewayContext } from "../context.js";
 import { requireSession, hasValidGatewayCsrf } from "../http/session.js";
 import { runtimeEpochForAccess } from "../active-runtime.js";
 import { createOAuthStorage, type OAuthClientRecord, type OAuthCodeRecord, type OAuthRefreshRecord } from "./oauth-storage.js";
+import { fetchMetadataClient, isSupportedMetadataClientId } from "./oauth-client-metadata.js";
 
 const MAX_BODY_BYTES = 8_192;
 const SCOPE_SET = new Set(["read", "write"]);
@@ -93,7 +94,10 @@ function storage(context: GatewayContext) {
   return createOAuthStorage(context.env.EPHEMERAL_CODES, context.config.credentialPepper);
 }
 function clientIdFormat(id: string): boolean {
-  return /^praetorium_cl_[A-Za-z0-9_-]{22}$/.test(id);
+  return /^praetorium_cl_[A-Za-z0-9_-]{22}$/.test(id) || isSupportedMetadataClientId(id);
+}
+async function resolveClient(id: string, context: GatewayContext): Promise<OAuthClientRecord | null> {
+  return isSupportedMetadataClientId(id) ? fetchMetadataClient(id) : storage(context).getClient(id);
 }
 function formResource(data: URLSearchParams, key = "resource"): string | null {
   const raw = single(data, key);
@@ -167,7 +171,7 @@ export function authorizationServerMetadata(context: GatewayContext): Response {
     issuer,
     authorization_endpoint: issuer + "/oauth/authorize",
     token_endpoint: issuer + "/oauth/token",
-    registration_endpoint: issuer + "/oauth/register",
+    client_id_metadata_document_supported: true,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
@@ -252,7 +256,7 @@ async function validateAuthorization(
       !/^[A-Za-z0-9_-]{43}$/.test(challenge) || !scopes ||
       single(params, "response_type") !== "code" || single(params, "code_challenge_method") !== "S256")
     return null;
-  const client = await storage(context).getClient(clientId);
+  const client = await resolveClient(clientId, context);
   if (!client || !client.redirectUris.includes(redirectUri)) return null;
   return { clientId, redirectUri, resource, state, challenge, permissions: scopes, clientName: client.clientName };
 }
@@ -331,14 +335,15 @@ export async function exchangeOAuthToken(
   request: Request, context: GatewayContext,
 ): Promise<Response> {
   const params = await boundedForm(request);
-  if (!params || request.headers.has("Authorization") || request.headers.has("Cookie"))
+  if (!params || request.headers.has("Authorization") || request.headers.has("Cookie") ||
+      params.has("client_secret") || params.has("client_assertion") || params.has("client_assertion_type"))
     return oauthError("invalid_request");
   const grantType = single(params, "grant_type");
   const clientId = single(params, "client_id");
   const resource = formResource(params);
   if (!clientId || !clientIdFormat(clientId) || !resource) return oauthError("invalid_client", 401);
   try {
-    const client = await storage(context).getClient(clientId);
+    const client = await resolveClient(clientId, context);
     if (!client) return oauthError("invalid_client", 401);
     if (grantType === "authorization_code") {
       const code = single(params, "code");

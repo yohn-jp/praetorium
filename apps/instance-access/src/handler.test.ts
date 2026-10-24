@@ -215,13 +215,13 @@ describe("Instance Access production handler", () => {
     expect(response.headers.getSetCookie()).toHaveLength(0);
   });
 
-  it("serves OAuth discovery and unauthenticated MCP challenge without waking the instance", async () => {
+  it.each(["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"])("serves OAuth discovery at %s and MCP challenge without waking the instance", async (path) => {
     let gatewayCalls = 0;
     const handler = createInstanceAccessHandler(environment(async () => {
       gatewayCalls += 1;
       return Response.json({ status: "starting" }, { status: 202 });
     }));
-    const discovery = await handler(new Request(`${origin}/.well-known/oauth-protected-resource`, {
+    const discovery = await handler(new Request(`${origin}${path}`, {
       headers: { Host: host },
     }));
     expect(discovery.status).toBe(200);

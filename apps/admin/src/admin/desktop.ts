@@ -5,7 +5,7 @@ import type {
 } from "@praetorium/contracts";
 import { escapeHtml } from "../presentation.js";
 import {
-  buildHref, consoleHref, operationHref, type ConsoleDependency,
+  buildHref, consoleHref, operationHref, viewHref, type ConsoleDependency,
   type ConsoleRelease, type ConsoleSection, type ConsoleViewModel,
 } from "./view-model.js";
 import type { PublishedSourceRelease, SourceReleaseView } from "./release-sources.js";
@@ -455,9 +455,14 @@ function audit(model: ConsoleViewModel): string {
     notice(model.notice) + dependencyUnavailable("Operator audit", model.audit);
   const events = model.audit.value.events; // Authenticated Control Plane already filtered this page.
   const rows = events.length ? events.map((event) => {
-    const target = event.jobId ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>`
-      : event.releaseId ? `<a href="/releases/${encodeURIComponent(event.releaseId)}?ui=${model.mode}">${escapeHtml(event.releaseId)}</a>`
-      : event.operationId ? `<code>${escapeHtml(event.operationId)}</code>` : "No linked target";
+    const targets = [
+      event.jobId ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>` : null,
+      event.releaseId ? `<a href="/releases/${encodeURIComponent(event.releaseId)}?ui=${model.mode}">${escapeHtml(event.releaseId)}</a>` : null,
+      event.operationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(event.operationId)
+        ? `<a href="${escapeHtml(operationHref(event.operationId, model.mode))}">${escapeHtml(event.operationId)}</a>`
+        : event.operationId ? `<code>${escapeHtml(event.operationId)}</code>` : null,
+    ].filter((value): value is string => value !== null);
+    const target = targets.length ? targets.join(" · ") : "No linked target";
     const evidence = [event.failureCode, event.revision == null ? null : "revision " + event.revision,
       event.leaseEpoch == null ? null : "epoch " + event.leaseEpoch].filter(Boolean).join(" · ");
     return `<tr><td>${escapeHtml(dateTime(event.occurredAt))}</td>` +
@@ -517,14 +522,7 @@ function sectionContent(model: ConsoleViewModel): string {
 }
 
 function modeHref(model: ConsoleViewModel, mode: ConsoleViewModel["mode"]): string {
-  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode);
-  const selectedReleaseId = model.selectedReleaseId;
-  if (selectedReleaseId && model.section === "releases")
-    return `/releases/${encodeURIComponent(selectedReleaseId)}?ui=${mode}`;
-  if (model.selectedBuildId) return buildHref(model.selectedBuildId, mode);
-  if (model.selectedHostId) return "/infrastructure/hosts/" + encodeURIComponent(model.selectedHostId) + "?ui=" + mode;
-  if (model.dependenciesSelected) return "/infrastructure/dependencies?ui=" + mode;
-  return consoleHref(model.section, mode);
+  return viewHref(model, mode);
 }
 
 function navigation(model: ConsoleViewModel): string {
@@ -543,8 +541,8 @@ export function renderDesktopConsole(model: ConsoleViewModel): string {
     `<div class="desktop-sidebar-footer"><span>Authorized operations</span><span>Release and build operations</span></div></aside>` +
     `<div class="desktop-operator-main"><header class="desktop-operator-topbar"><div><span class="desktop-context-label">CONTROL PLANE</span>` +
     `<strong>Operator workspace</strong></div><div class="desktop-topbar-actions"><nav aria-label="Console layout">` +
-    `<a href="${modeHref(model, "desktop")}"${model.mode === "desktop" ? ' aria-current="true"' : ""}>Desktop</a>` +
-    `<a href="${modeHref(model, "mobile")}"${model.mode === "mobile" ? ' aria-current="true"' : ""}>Mobile</a></nav>` +
+    `<a href="${escapeHtml(modeHref(model, "desktop"))}"${model.mode === "desktop" ? ' aria-current="true"' : ""}>Desktop</a>` +
+    `<a href="${escapeHtml(modeHref(model, "mobile"))}"${model.mode === "mobile" ? ' aria-current="true"' : ""}>Mobile</a></nav>` +
     `<form method="post" action="/logout?ui=${model.mode}"><input type="hidden" name="csrfToken" value="${escapeHtml(model.csrf)}">` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Sign out</button></form></div></header>` +
     `<div class="desktop-operator-content">${sectionContent(contentModel)}</div></div></div>`;

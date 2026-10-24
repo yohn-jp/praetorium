@@ -424,3 +424,24 @@ it("describes admission recovery without promising another source build attempt"
   expect(html).toContain("existing produced result");
   expect(html).not.toContain('type="submit">Retry Source build</button>');
 });
+
+
+it("preserves list pagination, state and audit search when switching to desktop", () => {
+  const builds=renderMobileConsole(model({
+    section:"builds",buildStateFilter:"failed",buildSort:"attempt",
+    ...({pageCursor:"queue_older"} as object),
+  }));
+  expect(builds).toContain('href="/builds?ui=desktop&amp;sort=attempt&amp;state=failed&amp;cursor=queue_older"');
+  const audit=renderMobileConsole(model({section:"audit",auditQuery:"lease epoch",
+    ...({pageCursor:"12:evt_1"} as object)}));
+  expect(audit).toContain('href="/audit?ui=desktop&amp;q=lease+epoch&amp;cursor=12%3Aevt_1"');
+});
+
+it("links Canary operation evidence from the mobile audit trail", () => {
+  const html=renderMobileConsole(model({section:"audit",
+    audit:dependency({events:[{eventId:"aud_1",action:"release.canary-wait.skipped",
+      outcome:"accepted",actorId:"213253858",occurredAt:1792000000000,
+      operationId:"op_123",jobId:null,releaseId:null,failureCode:null}],nextCursor:null},"audit"),
+  }));
+  expect(html).toContain('href="/operations/op_123?ui=mobile"');
+});

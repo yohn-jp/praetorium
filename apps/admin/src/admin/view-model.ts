@@ -62,6 +62,7 @@ export interface ConsoleViewModel {
   readonly selectedOperationId?: string | null;
   readonly operationDetail?: ConsoleDependency<OperatorOperationDetail> | null;
   readonly releaseDetail?: ConsoleDependency<ConsoleReleaseStatus> | null;
+  readonly pageCursor?: string | null;
   readonly buildStateFilter: string | null;
   readonly buildSort?: "recent" | "source" | "state" | "attempt";
   readonly auditQuery: string;
@@ -81,4 +82,27 @@ export function buildHref(id: string, mode: ConsoleMode): string {
 
 export function operationHref(id:string, mode:ConsoleMode):string {
   return "/operations/" + encodeURIComponent(id) + "?ui=" + mode;
+}
+
+/** Preserve the current authorized read context when switching UI composition. */
+export function viewHref(model: ConsoleViewModel, mode: ConsoleMode): string {
+  const params = new URLSearchParams({ ui: mode });
+  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode);
+  if (model.selectedReleaseId)
+    return "/releases/" + encodeURIComponent(model.selectedReleaseId) + "?" + params.toString();
+  if (model.selectedBuildId) {
+    if (model.pageCursor) params.set("cursor", model.pageCursor);
+    return "/builds/" + encodeURIComponent(model.selectedBuildId) + "?" + params.toString();
+  }
+  if (model.selectedHostId)
+    return "/infrastructure/hosts/" + encodeURIComponent(model.selectedHostId) + "?" + params.toString();
+  if (model.dependenciesSelected) return "/infrastructure/dependencies?" + params.toString();
+  if (model.section === "builds") {
+    if (model.buildSort && model.buildSort !== "recent") params.set("sort", model.buildSort);
+    if (model.buildStateFilter) params.set("state", model.buildStateFilter);
+  } else if (model.section === "audit" && model.auditQuery) params.set("q", model.auditQuery);
+  if (model.pageCursor && ["builds", "audit", "releases"].includes(model.section))
+    params.set("cursor", model.pageCursor);
+  const pathname = model.section === "overview" ? "/" : "/" + model.section;
+  return pathname + "?" + params.toString();
 }

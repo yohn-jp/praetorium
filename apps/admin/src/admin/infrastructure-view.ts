@@ -36,10 +36,10 @@ function hostCard(host: HostObservation, mode: ConsoleMode, mobile: boolean): st
     '"><div class="infra-host-head"><div><span class="infra-role">' + label[host.role] +
     '</span><h3>' + escapeHtml(host.id) + "</h3></div>" + stateBadge(state) + "</div>" +
     '<dl class="infra-host-metrics">' +
-    '<div><dt>CPU</dt><dd>' + (host.cpu.usedPercent === null ? "Collecting baseline" : host.cpu.usedPercent.toFixed(1) + "%") + "</dd></div>" +
+    '<div><dt>CPU</dt><dd>' + (host.cpu.usedPercent === null ? (host.freshness === "fresh" && host.reasons.includes("cpu_baseline_pending") ? "Collecting baseline" : "Not collected") : host.cpu.usedPercent.toFixed(1) + "%") + "</dd></div>" +
     '<div><dt>Memory</dt><dd>' + metric(host.memory.usedBytes, host.memory.totalBytes) + "</dd></div>" +
     '<div><dt>Disk</dt><dd>' + metric(host.disk.usedBytes, host.disk.totalBytes) + "</dd></div></dl>" +
-    '<p class="infra-seen">Observed ' + safeTime(host.observedAt) + "</p>" +
+    '<p class="infra-seen">' + (host.freshness === "absent" ? "Observation unavailable as of " : "Observed ") + safeTime(host.observedAt) + "</p>" +
     (host.reasons.length ? '<p class="infra-reasons">Conditions: ' +
       host.reasons.map(escapeHtml).join(", ") + "</p>" : "") +
     '<a class="infra-detail-link" href="' + detailUrl(host.id, mode) + '">' +
@@ -60,10 +60,10 @@ function dependencies(detail: ConsoleDependency<InfraDependencies> | null | unde
     '</h2><ul>' + target.services.map(s => '<li>' + escapeHtml(s.id) + " " +
     stateBadge(s.state) + "</li>").join("") + "</ul></article>").join("") + "</div>";
 }
-function header(title: string, description: string, mode: ConsoleMode): string {
+function header(title: string, description: string, mode: ConsoleMode, refreshPath: string): string {
   return '<div class="infra-page-head"><div><p class="infra-kicker">PLATFORM / INFRASTRUCTURE</p><h1>' +
     escapeHtml(title) + "</h1><p>" + escapeHtml(description) + '</p></div><a class="infra-refresh" href="' +
-    (title === "Dependencies" ? "/infrastructure/dependencies" : "/infrastructure") +
+    refreshPath +
     "?ui=" + mode + '">Refresh status</a></div>';
 }
 
@@ -81,18 +81,19 @@ export function infrastructureOverview(model: ConsoleViewModel): string {
 
 /** Same authenticated snapshots with distinct desktop/tablet and mobile/task layouts. */
 export function renderInfrastructure(model: ConsoleViewModel, mobile = false): string {
-  if (model.dependenciesSelected) return header("Dependencies", "Private services and health observations", model.mode) +
+  if (model.dependenciesSelected) return header("Dependencies", "Private services and health observations", model.mode, "/infrastructure/dependencies") +
     '<p><a href="/infrastructure?ui=' + model.mode + '">← All hosts</a></p>' +
     dependencies(model.dependencies);
   if (model.selectedHostId) {
     const host = model.hostDetail?.value;
-    return header("Host diagnostics", "Read-only resource and service observations", model.mode) +
+    return header("Host diagnostics", "Read-only resource and service observations", model.mode,
+      "/infrastructure/hosts/" + encodeURIComponent(model.selectedHostId)) +
       '<p><a href="/infrastructure?ui=' + model.mode + '">← All hosts</a></p>' +
       (host ? hostCard(host, model.mode, mobile) : failure("Host observation", model.hostDetail)) +
       '<section class="infra-services-section"><h2>Services</h2>' + services(model.hostServices) + "</section>";
   }
   const data = model.infrastructure;
-  return header("Infrastructure", "Management, Runtime and Builder host observations", model.mode) +
+  return header("Infrastructure", "Management, Runtime and Builder host observations", model.mode, "/infrastructure") +
     '<p class="infra-muted">Status is a fresh observation, not an inferred service guarantee. Unavailable components remain visible.</p>' +
     (data?.value ?
       '<div class="' + (mobile ? "infra-host-grid infra-mobile" : "infra-host-grid") + '">' +

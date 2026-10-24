@@ -253,3 +253,37 @@ it("describes an admission retry as re-verifying the existing output", () => {
   expect(html).toContain("existing produced result");
   expect(html).not.toContain('type="submit">Retry Source build</button>');
 });
+
+
+it("preserves server-filtered Builds and Audit context on Desktop/Mobile switch", () => {
+  const builds = renderDesktopConsole(view({
+    section: "builds", buildStateFilter: "failed", buildSort: "attempt",
+    ...({ pageCursor: "queue_older" } as object),
+  }));
+  expect(builds).toContain('href="/builds?ui=mobile&amp;sort=attempt&amp;state=failed&amp;cursor=queue_older"');
+  const audit = renderDesktopConsole(view({
+    section:"audit", auditQuery:"lease epoch", ...({ pageCursor:"12:evt_1" } as object),
+  }));
+  expect(audit).toContain('href="/audit?ui=mobile&amp;q=lease+epoch&amp;cursor=12%3Aevt_1"');
+});
+
+it("links allowlisted operation identities from the Audit ledger", () => {
+  const html=renderDesktopConsole(view({section:"audit",audit:dependency("audit",{
+    events:[{eventId:"aud_1",action:"release.canary-wait.skipped",outcome:"accepted",actorId:"213253858",
+      occurredAt:1792000000000,operationId:"op_123",jobId:null,releaseId:null,failureCode:null}],
+    nextCursor:null,
+  })}));
+  expect(html).toContain('href="/operations/op_123?ui=desktop"');
+});
+
+
+it("keeps both Release and Operation evidence destinations when one audit event refers to both", () => {
+  const html=renderDesktopConsole(view({section:"audit",audit:dependency("audit",{
+    events:[{eventId:"aud_2",action:"release.canary-wait.skipped",outcome:"accepted",
+      actorId:"213253858",occurredAt:1792000000000,
+      releaseId:"rel_candidate",operationId:"op_123",jobId:null,failureCode:null}],
+    nextCursor:null,
+  })}));
+  expect(html).toContain('href="/releases/rel_candidate?ui=desktop"');
+  expect(html).toContain('href="/operations/op_123?ui=desktop"');
+});

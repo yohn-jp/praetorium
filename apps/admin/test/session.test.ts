@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AdminIdentityRpc } from "../src/context.js";
 import { createAdminContext } from "../src/context.js";
-import { authenticateAdmin, adminFormCsrf, completeAdminHandoff, logoutAdmin } from "../src/session.js";
+import { authenticateAdmin, adminFormCsrf, completeAdminHandoff, logoutAdmin, adminReturnPath } from "../src/session.js";
 import { handleAdminHost } from "../src/admin/console.js";
 
 const GATEWAY = "https://praetorium.test";
@@ -95,7 +95,7 @@ describe("independent Admin session boundary", () => {
     const response = await handleAdminHost(new Request(ADMIN + "/builds"), context);
     expect(response.status).toBe(303);
     expect(response.headers.get("Location")).toBe(GATEWAY + "/_admin/entry?return_to=" +
-      encodeURIComponent("/builds?ui=desktop"));
+      encodeURIComponent("/builds"));
     expect((await handleAdminHost(new Request(ADMIN + "/unrecognized"), context)).status).toBe(403);
     expect(cp.fetch).not.toHaveBeenCalled();
   });
@@ -118,4 +118,87 @@ describe("independent Admin session boundary", () => {
       ADMIN_CONTROL_PLANE_AUTH: "short",
     })).toThrow(/credential/u);
   });
+});
+
+
+it("retains bounded read-only query context after an expired Admin session", async () => {
+  const {context,cp}=fixture();
+  const url=ADMIN+"/builds?ui=mobile&state=failed&sort=attempt&cursor=queue_older";
+  const response=await handleAdminHost(new Request(url),context);
+  expect(response.status).toBe(303);
+  const location=new URL(response.headers.get("Location")!);
+  expect(location.origin).toBe(GATEWAY);
+  expect(location.searchParams.get("return_to")).toBe(
+    "/builds?ui=mobile&state=failed&sort=attempt&cursor=queue_older");
+  expect(cp.fetch).not.toHaveBeenCalled();
+});
+
+it("accepts only bounded same-origin GET destination search parameters", () => {
+  expect(adminReturnPath("/audit?ui=mobile&q=lease+epoch&cursor=12:evt_1")).toBe(
+    "/audit?ui=mobile&q=lease+epoch&cursor=12%3Aevt_1");
+  expect(adminReturnPath("/builds?ui=desktop&state=failed&sort=attempt")).toBe(
+    "/builds?ui=desktop&state=failed&sort=attempt");
+  for(const invalid of [
+    "//evil.example/", "/builds?ui=mobile&ui=desktop",
+    "/audit?q=a&q=b", "/releases?state=failed",
+    "/builds?state=not_real", "/audit?q=%0A", "/logout?ui=mobile",
+    "/audit?next=https://evil.example", "/audit#fragment",
+  ]) expect(adminReturnPath(invalid)).toBe("/");
+});
+
+it("fetches only an operation's current evidence on its detail page", async () => {
+  const {context,identity,cp}=fixture();
+  const response=await handleAdminHost(sessionRequest(ADMIN+"/operations/op_123?ui=mobile"),context);
+  expect(response.status).toBe(200);
+  expect(identity.listApprovedSourceReleases).not.toHaveBeenCalled();
+  expect(cp.fetch).toHaveBeenCalledTimes(1);
+  const request=vi.mocked(cp.fetch).mock.calls[0]?.[0];
+  expect(new URL(String(request)).pathname).toBe("/v1/operations/op_123/evidence");
+});
+
+
+it("offers the canonical one-time mobile choice without changing Desktop defaults or signed-in authority", async () => {
+  const {context}=fixture();
+  const initial=await handleAdminHost(sessionRequest(ADMIN+"/builds"),context);
+  expect(initial.status).toBe(200);
+  const html=await initial.text();
+  expect(html).toContain('class="mode-choice"');
+  expect(html).toContain('href="/builds?ui=mobile"');
+  expect(html).toContain('href="/builds?ui=desktop"');
+  expect(html).toContain('body data-ui="desktop"');
+  const decided=await handleAdminHost(sessionRequest(ADMIN+"/builds?ui=mobile"),context);
+  expect((await decided.text())).not.toContain('class="mode-choice"');
+  expect(decided.headers.get("Set-Cookie")).toContain("praetorium_ui=mobile");
+});
+
+
+it("does not prompt again once a valid Admin presentation cookie is stored", async () => {
+  const {context}=fixture();
+  const cookies=sessionRequest().headers.get("Cookie") + "; praetorium_ui=mobile";
+  const response=await handleAdminHost(new Request(ADMIN+"/builds",{headers:{Cookie:cookies}}),context);
+  expect(response.status).toBe(200);
+  const html=await response.text();
+  expect(html).toContain('<body data-ui="mobile">');
+  expect(html).not.toContain('class="mode-choice"');
+});
+
+it("restores an expired job detail even if its previous success notice is no longer authoritative", async () => {
+  const {context}=fixture();
+  const id="sr_54a61e4d-088c-453e-98ca-6be8588a4e1f";
+  const result=await handleAdminHost(new Request(ADMIN+"/builds/"+id+
+    "?ui=mobile&notice=Retry%20accepted"),context);
+  expect(result.status).toBe(303);
+  expect(new URL(result.headers.get("Location")!).searchParams.get("return_to")).toBe(
+    "/builds/"+id+"?ui=mobile");
+});
+
+
+it("does not silently select Desktop before first-visit OAuth has completed", async () => {
+  const {context}=fixture();
+  const first=await handleAdminHost(new Request(ADMIN+"/"),context);
+  expect(first.status).toBe(303);
+  expect(first.headers.get("Location")).toBe(GATEWAY+"/_admin/entry");
+  const deep=await handleAdminHost(new Request(ADMIN+"/builds?state=failed"),context);
+  expect(new URL(deep.headers.get("Location")!).searchParams.get("return_to")).toBe(
+    "/builds?state=failed");
 });

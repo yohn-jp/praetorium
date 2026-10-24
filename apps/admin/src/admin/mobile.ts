@@ -10,6 +10,7 @@ import {
   buildHref,
   operationHref,
   consoleHref,
+  viewHref,
   type ConsoleDependency,
   type ConsoleRelease,
   type ConsoleReleaseStatus,
@@ -84,15 +85,7 @@ function timeElement(timestamp: number | null): string {
 }
 
 function modeHref(model: ConsoleViewModel, mode: "desktop" | "mobile"): string {
-  if (model.selectedOperationId) return operationHref(model.selectedOperationId, mode);
-  if (model.selectedReleaseId) {
-    return "/releases/" + encodeURIComponent(model.selectedReleaseId) + "?ui=" + mode;
-  }
-  if (model.selectedHostId) return "/infrastructure/hosts/" + encodeURIComponent(model.selectedHostId) + "?ui=" + mode;
-  if (model.dependenciesSelected) return "/infrastructure/dependencies?ui=" + mode;
-  return model.selectedBuildId
-    ? buildHref(model.selectedBuildId, mode)
-    : consoleHref(model.section, mode);
+  return viewHref(model, mode);
 }
 
 function mobileNavigation(model: ConsoleViewModel): string {
@@ -878,6 +871,9 @@ function audit(model: ConsoleViewModel): string {
             "</h2>" +
             (event.jobId ? '<p><a href="' + value(buildHref(event.jobId, "mobile")) + '">Build ' + value(event.jobId) + "</a></p>" : "") +
             (event.releaseId ? '<p><a href="/releases/' + value(encodeURIComponent(event.releaseId)) + '?ui=mobile">Release ' + value(event.releaseId) + "</a></p>" : "") +
+            (event.operationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(event.operationId)
+              ? '<p><a href="' + value(operationHref(event.operationId, "mobile")) +
+                '">Operation ' + value(event.operationId) + '</a></p>' : "") +
             (event.failureCode ? "<p>Failure code: " + value(event.failureCode) + "</p>" : "") +
             (event.leaseEpoch == null ? "" : "<p>Epoch " + value(event.leaseEpoch) + "</p>") +
             "<p>Actor: " +

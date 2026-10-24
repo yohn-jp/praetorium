@@ -276,7 +276,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     `<div><dt>Workflow revision</dt><dd>${workflow.revision}</dd></div><div><dt>Workflow attempts</dt><dd>${workflow.attempts}</dd></div>` +
     `<div class="desktop-fact-wide"><dt>Immutable OCI digest</dt><dd><code>${escapeHtml(value.release.imageDigest)}</code></dd></div>` +
     `<div><dt>Canonical failure</dt><dd>${escapeHtml(failureCode ?? "None recorded")}</dd></div>` +
-     (stopBlocked ? `<div class="desktop-fact-wide"><dt>Safe recovery</dt><dd>Canary stop is blocked by the producer. Preserve unpublished local work and obtain a new quiesce/Writer-absence proof before Stable promotion. A completed Source build alone is not Stable.</dd></div>` : "") + `` +
+     (stopBlocked ? `<div class="desktop-fact-wide"><dt>Safe recovery</dt><dd>Canary stop is blocked by the producer. Preserve unpublished local work and obtain a new quiesce/Writer-absence proof before Stable promotion. A completed Source build alone is not Stable.</dd></div>` : "") +
     `<div><dt>Next attempt</dt><dd>${workflow.nextAttemptAt === null ? "Not scheduled" : escapeHtml(dateTime(workflow.nextAttemptAt))}</dd></div>` +
     `<div><dt>Canary build</dt><dd>${build
       ? `${badge(humanize(build.status), build.status)} <span>${escapeHtml(build.id)}</span> · ${build.attemptCount} attempts`

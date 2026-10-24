@@ -451,12 +451,7 @@ async function readIdleCandidateRows(
          AND (
            (i.desired_state = 'running' AND i.observed_generation = i.generation)
            OR (i.desired_state = 'stopped' AND i.observed_generation < i.generation
-             AND b.suspended = 0
-             AND NOT EXISTS (
-               SELECT 1 FROM operations active
-               WHERE active.instance_id = i.instance_id
-                 AND active.status IN ('pending', 'claimed', 'running')
-             ))
+             AND b.suspended = 0)
          )
          ${instanceFilter}
        ORDER BY i.instance_id
@@ -491,7 +486,7 @@ function isCurrentCandidate(
       (row.desired_state !== "running" ||
         snapshot.instance.observedGeneration === row.desired_generation) &&
       (row.desired_state !== "stopped" ||
-        (row.generation < row.desired_generation && row.has_active_operation === 0)) &&
+        row.generation < row.desired_generation) &&
       snapshot.instance.clusterId === clusterId &&
       row.cluster_id === clusterId,
   );

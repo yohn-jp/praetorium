@@ -76,7 +76,7 @@ describe("browser session boundary", () => {
     const page = await app.fetch(new Request(target));
     expect(page.status).toBe(200);
     expect(page.headers.get("Location")).toBeNull();
-    expect(page.headers.get("Cache-Control")).toBe("no-store");
+    expect(page.headers.get("Cache-Control")).toBe("no-store, no-transform");
     const html = await page.text();
     expect(html).toContain("Sign in with GitHub");
     expect(html).toContain("/auth/github/start");

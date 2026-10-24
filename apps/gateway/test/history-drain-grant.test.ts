@@ -210,7 +210,7 @@ describe("private Gateway history-drain grant", () => {
         expectedRepositoryId: REPOSITORY_ID,
         expectedRuntimeEpoch: OLD_RUNTIME_EPOCH,
         requiredPermissions: ["read"],
-        now: NOW,
+        now: new Date().toISOString(),
         clockSkewSeconds: 0,
         resolveKey: async (kid) => (kid === "gateway-test-key" ? h.pair.publicKey : null),
       });

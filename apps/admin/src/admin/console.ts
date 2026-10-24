@@ -249,6 +249,8 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
     if (request.method === "GET") {
       // Keep only authenticated read-only navigation state; never replay mutations.
       const returnParams = new URLSearchParams(url.search);
+      // An old query-string notice is not durable evidence after reauthentication.
+      returnParams.delete("notice");
       if (!returnParams.has("ui")) returnParams.set("ui", mode);
       const target = adminReturnPath(url.pathname + "?" + returnParams.toString());
       if (target !== "/" || url.pathname === "/") {

@@ -922,7 +922,10 @@ export class D1PlatformStore implements OperationStore {
                    AND o.generation = i.generation
                    AND (
                      (o.kind = 'stop' AND o.phase IN ('old-writer-absent', 'complete')
-                       AND o.runtime_epoch = runtime_reservations.runtime_epoch)
+                       AND o.runtime_epoch = i.runtime_epoch
+                       AND i.observed_generation = runtime_reservations.generation
+                       AND i.observed_runtime_epoch = runtime_reservations.runtime_epoch
+                       AND i.reservation_id = runtime_reservations.reservation_id)
                      OR (o.kind <> 'stop' AND o.phase IN ('route-activated', 'complete')
                        AND o.runtime_epoch = i.runtime_epoch AND i.observed_runtime_epoch = o.runtime_epoch
                        AND i.observed_revision_id = o.deployment_revision_id

@@ -786,6 +786,52 @@ describe("D1PlatformStore with SQLite transactions", () => {
     ).rejects.toBeInstanceOf(OperationFenceConflict);
   });
 
+  it("releases the exact retained observed reservation for a newer-epoch stop operation", async () => {
+    const fixture = await prepareRetainedStopReservationRelease();
+    await checkpointRetainedStopAbsence(fixture, 7);
+
+    await fixture.operations.releaseRuntime({
+      ...fixture.lease,
+      reservationId: fixture.reservationId,
+      expectedReservationRuntimeEpoch: 7,
+      now: 103,
+    });
+    expect(fixture.database.prepare(
+      "SELECT status FROM runtime_reservations WHERE reservation_id = ?",
+    ).get(fixture.reservationId)).toMatchObject({ status: "released" });
+    expect(fixture.database.prepare(
+      "SELECT reservation_id, reservation_state FROM logical_instances WHERE instance_id = ?",
+    ).get(fixture.binding.instanceId)).toMatchObject({ reservation_id: null, reservation_state: "released" });
+  });
+
+  it.each([
+    { cause: "missing absence proof", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => checkpointRetainedStopAbsence(f, null) },
+    { cause: "wrong retired epoch", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => checkpointRetainedStopAbsence(f, 6) },
+    { cause: "wrong old reservation generation", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => {
+      await checkpointRetainedStopAbsence(f, 7);
+      f.database.prepare("UPDATE runtime_reservations SET generation = 16 WHERE reservation_id = ?").run(f.reservationId);
+    } },
+    { cause: "newer desired generation", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => {
+      await checkpointRetainedStopAbsence(f, 7);
+      f.database.prepare("UPDATE logical_instances SET generation = 21 WHERE instance_id = ?").run(f.binding.instanceId);
+    } },
+    { cause: "expired stop lease", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => {
+      await checkpointRetainedStopAbsence(f, 7);
+    }, expireLease: true },
+  ])("does not release a retained reservation with $cause", async ({ mutate, expireLease }) => {
+    const fixture = await prepareRetainedStopReservationRelease();
+    await mutate(fixture);
+    await expect(fixture.operations.releaseRuntime({
+      ...fixture.lease,
+      reservationId: fixture.reservationId,
+      expectedReservationRuntimeEpoch: 7,
+      now: expireLease ? fixture.leaseExpiresAt : 103,
+    })).rejects.toBeInstanceOf(OperationFenceConflict);
+    expect(fixture.database.prepare(
+      "SELECT status FROM runtime_reservations WHERE reservation_id = ?",
+    ).get(fixture.reservationId)).toMatchObject({ status: "allocated" });
+  });
+
   it("cannot create writer authority by reporting ready before credential retirement admission", async () => {
     const { database, operations, binding, operation, lease } = await prepareTargetRedeploy();
     database.prepare(`UPDATE logical_instances SET runtime_authority_reservation_id = NULL,
@@ -1289,6 +1335,90 @@ type TargetCheckpointOptions = {
   readonly includeWriterAbsenceProof?: boolean;
   readonly retiredRuntimeEpoch?: number | null;
 };
+
+async function prepareRetainedStopReservationRelease() {
+  const platform = createPlatform();
+  const { database, registry, instances, operations } = platform;
+  const resolved = await registry.resolveOrCreate(registryInput("instance-retained-stop", "request-retained-stop"));
+  const { binding } = resolved;
+  seedDeployment(database, binding.instanceId);
+  seedCurrentReadyRuntime(database, binding.instanceId);
+  const reservationId = "retained-writer-epoch-7";
+  database.prepare(`INSERT INTO runtime_reservations (
+    reservation_id, instance_id, repository_id, runtime_epoch, generation, cluster_id, status,
+    capacity_snapshot_epoch, cpu_milli, memory_mib, ephemeral_storage_mib, created_at, updated_at
+  ) VALUES (?, ?, 71, 7, 17, 'cluster-a', 'allocated', 1, 400, 256, 128, 10, 10)`)
+    .run(reservationId, binding.instanceId);
+  database.prepare(`INSERT INTO operations (
+    operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase,
+    attempt, lease_epoch, report_sequence, checkpoint_sequence, cluster_id, reservation_id,
+    deployment_revision_id, idempotency_scope, idempotency_key, request_hash, actor_id,
+    authorization_revision, created_at, updated_at
+  ) VALUES ('retained-writer-op', ?, 71, 17, 7, 'update', 'succeeded', 'complete',
+    1, 1, 1, 0, 'cluster-a', ?, 'revision-1', 'repository:71', 'retained-writer',
+    'retained-writer-hash', 'user-1', 3, 10, 10)`)
+    .run(binding.instanceId, reservationId);
+  database.prepare(`UPDATE logical_instances SET generation = 19, runtime_epoch = 9,
+    desired_state = 'running', observed_generation = 17, observed_runtime_epoch = 7,
+    observed_state = 'ready', observed_revision_id = 'revision-1',
+    reservation_state = 'allocated', reservation_id = ?,
+    runtime_authority_reservation_id = ?, runtime_authority_operation_id = 'retained-writer-op'
+    WHERE instance_id = ?`)
+    .run(reservationId, reservationId, binding.instanceId);
+
+  const requested = await instances.requestDesiredState({
+    repositoryId: binding.repositoryId,
+    bindingEpoch: binding.bindingEpoch,
+    authorizationRevision: binding.authorizationRevision,
+    desiredState: "stopped",
+    expectedGeneration: 19,
+    actorId: "system:stable-release-canary",
+    idempotencyKey: "stable-canary-stop:release-v038",
+    requestId: "t11-canary-stop:operation-v038",
+    now: 100,
+  });
+  if (!requested.operation) throw new Error("expected a retained-writer stop operation");
+  expect(requested.operation).toMatchObject({ generation: 20, runtimeEpoch: 9, kind: "stop" });
+  const claimed = await operations.claimNext({ workerId: "provisioner-stop", clusterId: "cluster-a", now: 101 });
+  if (!claimed) throw new Error("expected retained-writer stop claim");
+  return {
+    ...platform,
+    binding,
+    reservationId,
+    operation: claimed.operation,
+    leaseExpiresAt: claimed.operation.leaseExpiresAt!,
+    lease: {
+      operationId: claimed.operation.id,
+      workerId: claimed.operation.workerId!,
+      leaseToken: claimed.operation.leaseToken!,
+      leaseEpoch: claimed.operation.leaseEpoch,
+    },
+  };
+}
+
+async function checkpointRetainedStopAbsence(
+  fixture: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>,
+  retiredEpoch: number | null,
+) {
+  await fixture.operations.checkpoint({
+    ...fixture.lease,
+    expectedCheckpointSequence: 0,
+    phase: "old-writer-absent",
+    checkpoint: retiredEpoch === null ? {} : {
+      writerAbsenceProof: {
+        instanceId: fixture.binding.instanceId,
+        repositoryId: fixture.binding.repositoryId,
+        retiredRuntimeEpoch: retiredEpoch,
+        providerObservationId: "retained-writer-absence-observation",
+        censusObservedAt: "2026-10-25T00:00:00.000Z",
+        remainingWriters: 0,
+        evidenceIdentities: [],
+        source: "runtime-provider-census",
+      },
+    },
+    now: 102,
+  });
+}
 
 async function prepareTargetRedeploy(options: TargetCheckpointOptions = {}) {
   const platform = createPlatform();

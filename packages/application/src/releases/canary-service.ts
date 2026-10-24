@@ -14,6 +14,8 @@ export type DisposableCanaryBinding = {
 
 type CanaryOperation = {
   readonly id: string;
+  readonly instanceId: string;
+  readonly repositoryId: number;
   readonly kind: "start" | "stop" | "redeploy" | "update";
   readonly status: "pending" | "claimed" | "running" | "succeeded" | "failed" | "blocked";
   readonly generation: number;
@@ -40,6 +42,26 @@ type CanaryInstance = {
   readonly observedRevisionId: string | null;
   readonly observedRuntimeEpoch: number | null;
 };
+
+function ownsCurrentCanaryTarget(
+  operation: CanaryOperation,
+  instance: CanaryInstance,
+  binding: DisposableCanaryBinding,
+  revisionId: string,
+): boolean {
+  return (
+    operation.instanceId === binding.instanceId &&
+    operation.repositoryId === binding.repositoryId &&
+    operation.kind !== "stop" &&
+    operation.deploymentRevisionId === revisionId &&
+    operation.generation === instance.generation &&
+    operation.runtimeEpoch === instance.runtimeEpoch &&
+    instance.instanceId === binding.instanceId &&
+    instance.repositoryId === binding.repositoryId &&
+    instance.desiredState === "running" &&
+    instance.desiredRevisionId === revisionId
+  );
+}
 
 export type CanaryPlanReceipt = {
   readonly instance: CanaryInstance;
@@ -293,29 +315,56 @@ export class ServiceBackedDisposableCanary
     ) {
       throw new Error("canary revision is not admitted at the expected immutable digest");
     }
-    const current = await this.currentBinding();
-    let operation = receipt.operation;
-    if (!operation || operation.deploymentRevisionId !== receipt.revision.revisionId) {
+    let current = await this.currentBinding();
+    let operation = receipt.operation
+      ? await this.options.operations.getById(receipt.operation.id)
+      : null;
+    if (receipt.operation && operation && ownsCurrentCanaryTarget(
+      operation,
+      current.instance,
+      this.options.binding,
+      receipt.revision.revisionId,
+    )) {
+      return { runtimeId: this.options.binding.instanceId, operationId: operation.id };
+    }
+    if (current.instance.desiredRevisionId !== receipt.revision.revisionId) {
+      throw new Error("canary revision no longer owns the current runtime assignment");
+    }
+    if (current.instance.desiredState !== "stopped" ||
+        (current.instance.observedState !== "stopped" && current.instance.observedState !== "absent")) {
+      // A stale operation cannot be reused just because it was once linked to
+      // this plan. A same-revision retry may restart only after a canonical stop
+      // has actually removed the observed writer.
+      throw new Error("canary start operation no longer owns the current runtime assignment");
+    }
+    if (!operation || !ownsCurrentCanaryTarget(
+      operation,
+      current.instance,
+      this.options.binding,
+      receipt.revision.revisionId,
+    )) {
       const result = await this.options.instances.requestDesiredState({
         repositoryId: this.options.binding.repositoryId,
         bindingEpoch: this.options.binding.bindingEpoch,
         authorizationRevision: this.options.binding.authorizationRevision,
         desiredState: "running",
         actorId: this.actorId,
-        idempotencyKey: input.idempotencyKey,
+        idempotencyKey: `${input.idempotencyKey}:recovery:${current.instance.generation}`,
         requestId: `t11-canary-start:${input.release.id}`,
         now: this.options.now(),
         expectedGeneration: current.instance.generation,
         forceNewRuntime: true,
       });
       operation = result.operation;
-    }
-    if (
-      !operation ||
-      operation.deploymentRevisionId !== receipt.revision.revisionId ||
-      operation.kind === "stop"
-    ) {
-      throw new Error("normal canary start did not create an operation for the pinned revision");
+      current = await this.currentBinding();
+      if (!operation || !ownsCurrentCanaryTarget(
+        operation,
+        current.instance,
+        this.options.binding,
+        receipt.revision.revisionId,
+      )) {
+        throw new Error("normal canary start did not create the current pinned runtime assignment");
+      }
     }
     return { runtimeId: this.options.binding.instanceId, operationId: operation.id };
   }
@@ -352,7 +401,40 @@ export class ServiceBackedDisposableCanary
     readonly idempotencyKey: string;
   }) {
     if (input.runtimeId !== this.options.binding.instanceId) return { kind: "pending" as const };
-    await this.currentBinding();
+    const startedOperation = await this.options.operations.getById(input.startedOperationId);
+    if (!startedOperation || !startedOperation.deploymentRevisionId ||
+        startedOperation.kind === "stop" ||
+        startedOperation.instanceId !== this.options.binding.instanceId ||
+        startedOperation.repositoryId !== this.options.binding.repositoryId) {
+      return { kind: "blocked" as const };
+    }
+    const current = await this.currentBinding();
+    const alreadyStoppedGeneration = startedOperation.generation + 1;
+    if (
+      current.instance.observedState === "ready" &&
+      current.instance.observedRuntimeEpoch !== startedOperation.runtimeEpoch
+    ) {
+      // A failed target may coexist with the retained healthy old writer. A
+      // candidate cleanup cannot stop that writer without separate retirement
+      // evidence for the target/old assignment.
+      return { kind: "blocked" as const };
+    }
+    if (
+      current.instance.generation !== startedOperation.generation ||
+      current.instance.runtimeEpoch !== startedOperation.runtimeEpoch ||
+      current.instance.desiredRevisionId !== startedOperation.deploymentRevisionId ||
+      current.instance.desiredState !== "running"
+    ) {
+      // A delayed cleanup for an older release must never stop a newer canary.
+      // Existing same-request stop replays are handled by requestDesiredState's
+      // idempotency record and still have to match the exact stopped generation.
+      if (
+        current.instance.generation !== alreadyStoppedGeneration ||
+        current.instance.runtimeEpoch !== startedOperation.runtimeEpoch ||
+        current.instance.desiredRevisionId !== startedOperation.deploymentRevisionId ||
+        current.instance.desiredState !== "stopped"
+      ) return { kind: "blocked" as const };
+    }
     const result = await this.options.instances.requestDesiredState({
       repositoryId: this.options.binding.repositoryId,
       bindingEpoch: this.options.binding.bindingEpoch,
@@ -362,10 +444,18 @@ export class ServiceBackedDisposableCanary
       idempotencyKey: input.idempotencyKey,
       requestId: `t11-canary-stop:${input.startedOperationId}`,
       now: this.options.now(),
+      expectedGeneration: startedOperation.generation,
     });
     let stopOperation = result.operation;
     if (stopOperation) {
-      if (stopOperation.kind !== "stop") return { kind: "pending" as const };
+      if (stopOperation.kind !== "stop" ||
+          stopOperation.instanceId !== this.options.binding.instanceId ||
+          stopOperation.repositoryId !== this.options.binding.repositoryId ||
+          stopOperation.generation !== alreadyStoppedGeneration ||
+          stopOperation.runtimeEpoch !== startedOperation.runtimeEpoch ||
+          stopOperation.deploymentRevisionId !== startedOperation.deploymentRevisionId) {
+        return { kind: "pending" as const };
+      }
       const fresh = await this.options.operations.getById(stopOperation.id);
       if (fresh?.status === "blocked") {
         // A separately authorized retry keeps the original idempotency receipt.
@@ -410,6 +500,16 @@ export class ServiceBackedDisposableCanary
       stopped.data.writerAbsence.instanceId !== this.options.binding.instanceId ||
       stopped.data.writerAbsence.repositoryId !== this.options.binding.repositoryId ||
       stopped.data.writerAbsence.retiredEpoch !== retiredEpoch
+    ) {
+      return { kind: "pending" as const };
+    }
+    if (!stopOperation) return { kind: "pending" as const };
+    const latest = await this.currentBinding();
+    if (
+      latest.instance.generation !== stopOperation.generation ||
+      latest.instance.runtimeEpoch !== startedOperation.runtimeEpoch ||
+      latest.instance.desiredRevisionId !== startedOperation.deploymentRevisionId ||
+      latest.instance.desiredState !== "stopped"
     ) {
       return { kind: "pending" as const };
     }

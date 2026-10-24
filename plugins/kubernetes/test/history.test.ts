@@ -56,8 +56,11 @@ describe("private history snapshot validation", () => {
 
   it("uses a private data subdirectory and reapplies owner-only modes on every init run", () => {
     expect(HISTORY_RESTORE_NODE_SCRIPT).toContain("const privateRoot = path.join(root, 'private')");
-    expect(HISTORY_RESTORE_NODE_SCRIPT).toContain("fs.chmodSync(privateRoot, 0o700)");
-    expect(HISTORY_RESTORE_NODE_SCRIPT).toContain("fs.chmodSync(target, 0o600)");
+    expect(HISTORY_RESTORE_NODE_SCRIPT).toContain("fs.chmodSync(directory, 0o700)");
+    expect(HISTORY_RESTORE_NODE_SCRIPT).toContain("fs.fchmodSync(fd, entry.directory ? 0o700 : 0o600)");
+    expect(HISTORY_RESTORE_NODE_SCRIPT.indexOf("function scanPrivateTree")).toBeLessThan(
+      HISTORY_RESTORE_NODE_SCRIPT.indexOf("function enforcePrivateModes"),
+    );
     expect(HISTORY_RESTORE_NODE_SCRIPT).toContain("enforcePrivateModes(privateRoot)");
     expect(HISTORY_MARKER_NODE_SCRIPT).toContain("/history/private");
     expect(HISTORY_MARKER_NODE_SCRIPT).toContain("0o700");
@@ -242,6 +245,8 @@ describe("private history snapshot validation", () => {
       }));
       for (let index = 0; index < 4_097; index += 1)
         writeFileSync(path.join(privateRoot, `entry-${index}.json`), "");
+      chmodSync(privateRoot, 0o755);
+      chmodSync(path.join(privateRoot, "entry-0.json"), 0o644);
       const script = HISTORY_RESTORE_NODE_SCRIPT.replace(
         "const root = '/history';",
         `const root = ${JSON.stringify(historyRoot)};`,
@@ -257,6 +262,8 @@ describe("private history snapshot validation", () => {
       });
       expect(result.status).not.toBe(0);
       expect(result.stdout.length).toBe(0);
+      expect(statSync(privateRoot).mode & 0o777).toBe(0o755);
+      expect(statSync(path.join(privateRoot, "entry-0.json")).mode & 0o777).toBe(0o644);
     } finally {
       rmSync(temporary, { recursive: true, force: true });
     }

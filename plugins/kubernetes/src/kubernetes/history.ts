@@ -230,7 +230,6 @@ try {
   if (!error || error.code !== 'ENOENT') throw error;
   fs.mkdirSync(privateRoot, { mode: 0o700 });
 }
-fs.chmodSync(privateRoot, 0o700);
 function fsyncDirectory(directory) {
   const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
@@ -258,33 +257,45 @@ function fsyncPrivateDirectories(directory, depth = 0) {
 }
 fsyncDirectory(privateRoot);
 fsyncDirectory(root);
-function enforcePrivateModes(directory) {
-  const stack = [{ directory, depth: 0 }];
-  let entries = 0;
-  while (stack.length > 0) {
-    const current = stack.pop();
-    fs.chmodSync(current.directory, 0o700);
-    const handle = fs.opendirSync(current.directory);
-    try {
-      for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
-        entries += 1;
-        if (entries > maxEntries) throw new Error('private history contains too many entries');
-        const target = path.join(current.directory, entry.name);
-        if (path.relative(privateRoot, target).length > 512) throw new Error('private history path is too long');
-        const item = fs.lstatSync(target);
-        if (item.isSymbolicLink()) throw new Error('private history links are not allowed');
-        if (item.isDirectory()) {
-          if (current.depth >= maxDepth) throw new Error('private history directory nesting is too deep');
-          stack.push({ directory: target, depth: current.depth + 1 });
-          fs.chmodSync(target, 0o700);
-        } else if (item.isFile() && item.nlink === 1) {
-          fs.chmodSync(target, 0o600);
-          fsyncFile(target);
-        } else {
-          throw new Error('private history entry is not a regular file or directory');
-        }
+function scanPrivateTree(directory, depth = 0, entries = []) {
+  if (depth > maxDepth) throw new Error('private history directory nesting is too deep');
+  const handle = fs.opendirSync(directory);
+  try {
+    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+      if (entries.length >= maxEntries) throw new Error('private history contains too many entries');
+      const target = path.join(directory, entry.name);
+      if (path.relative(privateRoot, target).length > 512) throw new Error('private history path is too long');
+      const item = fs.lstatSync(target);
+      if (item.isSymbolicLink()) throw new Error('private history links are not allowed');
+      if (item.isDirectory()) {
+        entries.push({ target, dev: item.dev, ino: item.ino, directory: true });
+        scanPrivateTree(target, depth + 1, entries);
+      } else if (item.isFile() && item.nlink === 1) {
+        entries.push({ target, dev: item.dev, ino: item.ino, directory: false });
+      } else {
+        throw new Error('private history entry is not a regular file or directory');
       }
-    } finally { handle.closeSync(); }
+    }
+  } finally { handle.closeSync(); }
+  return entries;
+}
+function enforcePrivateModes(directory, entries = scanPrivateTree(directory)) {
+  // Preflight the complete bounded tree before changing any modes. This makes
+  // oversized or unsafe trees fail closed without doing 4096 file fsyncs.
+  fs.chmodSync(directory, 0o700);
+  for (const entry of entries) {
+    const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW |
+      (entry.directory ? fs.constants.O_DIRECTORY : 0);
+    const fd = fs.openSync(entry.target, flags);
+    try {
+      const item = fs.fstatSync(fd);
+      if (item.dev !== entry.dev || item.ino !== entry.ino ||
+          (entry.directory ? !item.isDirectory() : !item.isFile() || item.nlink !== 1)) {
+        throw new Error('private history entry changed during mode repair');
+      }
+      fs.fchmodSync(fd, entry.directory ? 0o700 : 0o600);
+      if (!entry.directory) fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
   }
 }
 if (fs.existsSync(marker)) {
@@ -292,6 +303,7 @@ if (fs.existsSync(marker)) {
   if (!markerStat.isFile() || markerStat.isSymbolicLink()) throw new Error('history ownership marker is unsafe');
   const state = JSON.parse(fs.readFileSync(marker, 'utf8'));
   if (state.schemaVersion !== 1 || state.instanceId !== expected.instanceId || state.repositoryId !== expected.repositoryId || state.clusterId !== expected.clusterId || state.claimName !== expected.claimName || typeof state.seedManifestSha256 !== 'string') throw new Error('history volume belongs to another assignment');
+  const privateEntries = scanPrivateTree(privateRoot);
   fs.chmodSync(marker, 0o600);
   fsyncFile(marker);
   if (fs.existsSync(progressMarker)) {
@@ -302,7 +314,7 @@ if (fs.existsSync(marker)) {
     fs.unlinkSync(progressMarker);
     fsyncDirectory(root);
   }
-  enforcePrivateModes(privateRoot);
+  enforcePrivateModes(privateRoot, privateEntries);
   fsyncPrivateDirectories(privateRoot);
   fsyncDirectory(root);
   process.exit(0);

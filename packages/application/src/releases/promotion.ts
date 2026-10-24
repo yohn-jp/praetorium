@@ -44,7 +44,7 @@ export interface CanaryRuntimeProvider {
     readonly startedOperationId: string;
     readonly idempotencyKey: string;
   }): Promise<
-    { readonly kind: "pending" | "blocked" } | { readonly kind: "stopped"; readonly evidence: unknown }
+    { readonly kind: "pending" } | { readonly kind: "blocked" } | { readonly kind: "stopped"; readonly evidence: unknown }
   >;
 }
 

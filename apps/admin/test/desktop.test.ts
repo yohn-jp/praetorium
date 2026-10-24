@@ -287,3 +287,16 @@ it("keeps both Release and Operation evidence destinations when one audit event 
   expect(html).toContain('href="/releases/rel_candidate?ui=desktop"');
   expect(html).toContain('href="/operations/op_123?ui=desktop"');
 });
+
+
+it("does not list superseded Source failures as Active incidents while Stable is still empty", () => {
+  const older={...job,id:"sr_00000000-0000-4000-a000-000000000002",version:"0.3.3",tag:"v0.3.3"};
+  const newer={...job,id:"sr_00000000-0000-4000-a000-000000000003",
+    version:"0.3.4",tag:"v0.3.4",state:"admitted" as const,error:null,retryable:false,
+    admittedReleaseId:"rel_current"};
+  const html=renderDesktopConsole(view({section:"overview",
+    builds:dependency("GET /v1/operator/source-builds",{items:[older,newer],nextCursor:null})}));
+  expect(html).toContain("No release promoted yet");
+  expect(html).not.toContain("SOURCE_BUILD_FAILED");
+  expect(html).toContain("No active failed builds");
+});

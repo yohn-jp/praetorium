@@ -14,6 +14,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mcp-discovery-live-diagnostic:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Inspect public OAuth discovery endpoints without credentials
+        shell: bash
+        run: |
+          set -uo pipefail
+          for url in \
+            https://1289100245.scriptorium.yohn.jp/mcp \
+            https://1289100245.scriptorium.yohn.jp/.well-known/oauth-protected-resource \
+            https://1289100245.scriptorium.yohn.jp/.well-known/oauth-protected-resource/mcp \
+            https://praetorium.yohn.jp/.well-known/oauth-authorization-server; do
+            echo "=== $url ==="
+            rm -f /tmp/mcp-head /tmp/mcp-body
+            curl --silent --show-error --max-time 15 --dump-header /tmp/mcp-head --output /tmp/mcp-body --write-out 'HTTP %{http_code}\n' "$url" || true
+            if test -f /tmp/mcp-head; then grep -Ei '^(HTTP/|content-type:|www-authenticate:|location:)' /tmp/mcp-head || true; fi
+            if test -f /tmp/mcp-body; then head -c 500 /tmp/mcp-body; echo; fi
+          done
   verify:
     runs-on: ubuntu-24.04
     steps:

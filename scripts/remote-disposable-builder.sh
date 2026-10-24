@@ -19,6 +19,7 @@ readonly MOUNT_UNIT='var-lib-praetorium\x2dt14-state.mount'
 readonly SLICE_UNIT='praetorium-t14.slice'
 readonly TEST_BUILDKIT_UNIT='praetorium-buildkit-t14.service'
 readonly RUN_UNIT_PREFIX='praetorium-t14-acceptance'
+readonly CGROUP_PROBE_PREFIX='praetorium-t14-cgroup-probe'
 readonly IMAGE_BYTES=6442450944
 readonly SUBID_START=3000000
 readonly SUBID_COUNT=65536
@@ -37,21 +38,43 @@ fail() { echo "BLOCKED: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "missing required tool: $1"; }
 subid_status() { node "$STATE_MODULE" subid-status "$1" "$OWNER" "$SUBID_START" "$SUBID_COUNT"; }
 
-verify_runtime_helper() {
-  [[ -f $STATE_MODULE && ! -L $STATE_MODULE && -r $STATE_MODULE ]] || fail 'T14 state helper must be a readable regular file'
-  state_module_mode=$(stat -c '%a' "$STATE_MODULE")
-  [[ $(stat -c '%u' "$STATE_MODULE") == 0 ]] && (( (8#$state_module_mode & 0022) == 0 && (8#$state_module_mode & 0004) != 0 )) || fail 'T14 state helper must be root-owned, readable, and not group/world writable'
-  state_module_real=$(realpath "$STATE_MODULE")
-  case "$state_module_real" in
-    /tmp/*|/var/tmp/*) fail 'T14 state helper cannot reside on a temporary filesystem hidden by the acceptance service' ;;
+verify_root_staged_file() {
+  local file=$1 executable=${2:-false} canonical lexical mode directory directory_mode
+  [[ -f $file && ! -L $file && -r $file ]] || fail "T14 root helper must be a readable regular file: $file"
+  canonical=$(realpath -e -- "$file") || fail "T14 root helper path cannot be resolved: $file"
+  lexical=$(realpath -m -s -- "$file") || fail "T14 root helper path cannot be normalized: $file"
+  [[ $canonical == "$lexical" ]] || fail "T14 root helper path contains a symlink: $file"
+  case "$canonical" in
+    /tmp/*|/var/tmp/*) fail "T14 root helper cannot reside on a temporary filesystem hidden by the acceptance service: $file" ;;
   esac
-  helper_directory=$(dirname "$state_module_real")
-  while [[ $helper_directory != / ]]; do
-    helper_directory_mode=$(stat -c '%a' "$helper_directory")
-    (( (8#$helper_directory_mode & 0001) != 0 )) || fail "T14 state helper parent is not traversable by its service account: $helper_directory"
-    helper_directory=${helper_directory%/*}
-    [[ -n $helper_directory ]] || helper_directory=/
+  mode=$(stat -c '%a' "$canonical")
+  [[ $(stat -c '%u' "$canonical") == 0 ]] && (( (8#$mode & 0022) == 0 && (8#$mode & 0004) != 0 )) || fail "T14 root helper must be root-owned, readable, and not group/world writable: $file"
+  if [[ $executable == true ]]; then
+    (( (8#$mode & 0001) != 0 )) || fail "T14 shell helper must be executable by its service account: $file"
+  fi
+  directory=${canonical%/*}
+  [[ -n $directory ]] || directory=/
+  while :; do
+    [[ -d $directory && ! -L $directory && $(stat -c '%u' "$directory") == 0 ]] || fail "T14 root helper ancestor must be a root-owned directory: $directory"
+    directory_mode=$(stat -c '%a' "$directory")
+    (( (8#$directory_mode & 0022) == 0 && (8#$directory_mode & 0001) != 0 )) || fail "T14 root helper ancestor must be non-writable by group/other and traversable: $directory"
+    [[ $directory == / ]] && break
+    directory=${directory%/*}
+    [[ -n $directory ]] || directory=/
   done
+}
+
+verify_runtime_helpers() {
+  verify_root_staged_file "${BASH_SOURCE[0]}" true
+  verify_root_staged_file "$STATE_MODULE" false
+}
+
+verify_no_active_t14_command_units() {
+  local active_units
+  active_units=$(systemctl list-units --type=service --state=active,activating,deactivating,reloading --plain --no-legend --full \
+    'praetorium-t14-*.service' "$TEST_BUILDKIT_UNIT") \
+    || fail 'could not verify that T14 command services are idle; preserve the cluster and state'
+  [[ -z $active_units ]] || fail "T14 command service is still active; preserve it and retry cleanup later: ${active_units%%$'\n'*}"
 }
 
 check_subid_free() {
@@ -85,6 +108,8 @@ check_tools() {
   [[ $(awk '/MemAvailable:/ {print $2}' /proc/meminfo) -ge 8388608 ]] || fail 'less than 8 GiB MemAvailable'
   [[ $(df -B1 --output=avail / | tail -1 | tr -d ' ') -ge $required_root_free ]] || fail "less than required free root space ($required_root_free bytes)"
 }
+
+if (( EUID == 0 )); then verify_runtime_helpers; fi
 
 recovery_root_headroom() {
   local allocated=0 remaining
@@ -149,7 +174,6 @@ PY
 
 if [[ $action == plan ]]; then
   (( EUID == 0 )) || fail 'run plan through the Builder host with sudo for an authoritative preflight'
-  verify_runtime_helper
   if [[ -e $JOURNAL || -L $JOURNAL ]]; then
     node "$STATE_MODULE" journal-validate "$JOURNAL"
     check_tools "$(recovery_root_headroom)"
@@ -173,7 +197,6 @@ fi
 (( EUID == 0 )) || fail "$action requires root"
 
 if [[ $action == setup ]]; then
-  verify_runtime_helper
   if [[ -e $JOURNAL || -L $JOURNAL ]]; then
     node "$STATE_MODULE" journal-validate "$JOURNAL"
     check_tools "$(recovery_root_headroom)"
@@ -269,7 +292,6 @@ fi
 if [[ $action == run ]]; then
   (( EUID == 0 )) || fail 'run must be invoked through sudo so systemd can place the process in the bounded system slice'
   [[ $# -gt 0 ]] || usage
-  verify_runtime_helper
   verify_marker
   test_uid=$(id -u "$OWNER")
   slice_hash=$(sha256sum "/etc/systemd/system/$SLICE_UNIT" | awk '{print $1}')
@@ -307,7 +329,7 @@ fi
 if [[ $action == verify-cgroup ]]; then
   (( EUID == 0 )) || fail 'verify-cgroup requires root'
   verify_marker
-  probe="praetorium-t14-cgroup-probe-$$.service"
+  probe="$CGROUP_PROBE_PREFIX-$$.service"
   test_uid=$(id -u "$OWNER")
   systemd-run --wait --pipe --collect --slice="$SLICE_UNIT" --unit="$probe" --uid="$OWNER" \
     --property=Type=exec --property=Delegate=yes --property=SetLoginEnvironment=yes \
@@ -355,10 +377,6 @@ if [[ $action == verify-cgroup ]]; then
 fi
 
 verify_marker
-  if [[ -e $JOURNAL || -L $JOURNAL ]]; then
-  node "$STATE_MODULE" journal-validate "$JOURNAL"
-  node "$STATE_MODULE" journal-remove "$JOURNAL"
-fi
 getent passwd "$OWNER" >/dev/null || fail 'owned test account is missing; do not infer ownership'
 need kind; need podman
 test_uid=$(id -u "$OWNER")
@@ -370,6 +388,11 @@ group=$(getent group "$OWNER") || fail 'T14 primary group is missing'
 install -d -o "$OWNER" -g "$OWNER" -m 0700 "/run/user/$test_uid" "/run/user/$test_uid/containers"
 [[ $(subid_status /etc/subuid) == exact && $(subid_status /etc/subgid) == exact ]] || fail 'disposable account subordinate ID records differ from the exact single allocated range'
 if [[ $(systemctl show "$TEST_BUILDKIT_UNIT" -p LoadState --value 2>/dev/null || true) != not-found ]]; then fail 'T14 BuildKit unit exists; verify and remove it separately before substrate cleanup'; fi
+verify_no_active_t14_command_units
+if [[ -e $JOURNAL || -L $JOURNAL ]]; then
+  node "$STATE_MODULE" journal-validate "$JOURNAL"
+  node "$STATE_MODULE" journal-remove "$JOURNAL"
+fi
 if [[ -e $CGROUP_RECEIPT || -L $CGROUP_RECEIPT ]]; then
   [[ -f $CGROUP_RECEIPT && ! -L $CGROUP_RECEIPT && $(stat -c '%u:%a' "$CGROUP_RECEIPT") == '0:600' ]] || fail 'cgroup receipt path is not a private owner file'
   rm -f "$CGROUP_RECEIPT"
@@ -393,11 +416,6 @@ if grep -Fxq "$CLUSTER" <<<"$clusters"; then
     KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name "$CLUSTER"
 fi
 test_uid=$(id -u "$OWNER")
-kubeconfig="/tmp/praetorium-t12-$test_uid/$CLUSTER.yaml"
-if [[ -e $kubeconfig || -L $kubeconfig ]]; then
-  [[ -f $kubeconfig && ! -L $kubeconfig && $(stat -c '%u:%a' "$kubeconfig") == "$test_uid:600" ]] || fail 'canonical T14 kubeconfig is not a private regular file owned by the disposable account'
-  rm -f "$kubeconfig"
-fi
 [[ -f "$MOUNT/.praetorium-t14/owner.json" ]] || fail 'in-volume owner marker missing; refusing cleanup'
 cmp -s "$MARKER" "$MOUNT/.praetorium-t14/owner.json" || fail 'owner markers differ; refusing cleanup'
 if pgrep -u "$OWNER" >/dev/null 2>&1; then fail 'disposable account still has processes; preserve the bounded volume'; fi

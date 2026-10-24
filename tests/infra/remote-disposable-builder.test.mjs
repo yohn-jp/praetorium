@@ -72,6 +72,34 @@ test("remote Builder helper isolates state and leaves production BuildKit protec
   assert.match(source, /"\$STATE_MODULE" exec -- \/bin\/bash/u);
   assert.match(stateSource, /process\.env\.HOME !== account\.homedir/u);
   assert.match(source, /systemctl show "\$probe" -p ControlGroup/u);
+  assert.match(source, /verify_root_staged_file "\$\{BASH_SOURCE\[0\]\}" true/u);
+  assert.match(source, /verify_root_staged_file "\$STATE_MODULE" false/u);
+  assert.match(source, /stat -c '%u' "\$directory"\) == 0/u);
+  assert.match(source, /directory_mode & 0022\) == 0/u);
+  assert.match(source, /canonical == "\$lexical"/u);
+  const stagedHelpersCheck = source.indexOf("if (( EUID == 0 )); then verify_runtime_helpers; fi");
+  const firstRootAction = source.indexOf("if [[ $action == plan ]]");
+  assert.ok(stagedHelpersCheck >= 0 && stagedHelpersCheck < firstRootAction);
+});
+
+test("cleanup never deletes cross-run temporary paths and blocks active test services before removal", () => {
+  assert.doesNotMatch(source, /praetorium-t12-\$test_uid/u);
+  assert.match(source, /KUBECONFIG=\$MOUNT\/kube\/config/u);
+  assert.match(source, /--state=active,activating,deactivating,reloading/u);
+  assert.match(source, /'praetorium-t14-\*\.service' "\$TEST_BUILDKIT_UNIT"/u);
+  const cleanupStart = source.indexOf('verify_marker\ngetent passwd "$OWNER"');
+  const activeGuard = source.indexOf("verify_no_active_t14_command_units", cleanupStart);
+  const journalRemoval = source.indexOf(
+    'node "$STATE_MODULE" journal-remove "$JOURNAL"',
+    cleanupStart,
+  );
+  const receiptRemoval = source.indexOf('rm -f "$CGROUP_RECEIPT"', cleanupStart);
+  const clusterDelete = source.indexOf('kind delete cluster --name "$CLUSTER"', cleanupStart);
+  assert.ok(cleanupStart >= 0);
+  assert.ok(activeGuard > cleanupStart);
+  assert.ok(journalRemoval > activeGuard);
+  assert.ok(receiptRemoval > activeGuard);
+  assert.ok(clusterDelete > activeGuard);
 });
 
 test("pretty kubectl version JSON is parsed structurally", () => {

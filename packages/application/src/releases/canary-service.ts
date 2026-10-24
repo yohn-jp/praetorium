@@ -118,6 +118,12 @@ export interface CanaryConfigurationService {
 
 export interface CanaryOperationService {
   getById(operationId: string): Promise<CanaryOperation | null>;
+  findSucceededStop?(input: {
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly generation: number;
+    readonly runtimeEpoch: number;
+  }): Promise<CanaryOperation | null>;
 }
 
 /** Reads observations already persisted by the provisioner; this is not a cluster client. */
@@ -357,12 +363,28 @@ export class ServiceBackedDisposableCanary
       requestId: `t11-canary-stop:${input.startedOperationId}`,
       now: this.options.now(),
     });
-    const stopOperation = result.operation;
+    let stopOperation = result.operation;
     if (stopOperation) {
       if (stopOperation.kind !== "stop") return { kind: "pending" as const };
       const fresh = await this.options.operations.getById(stopOperation.id);
-      if (fresh?.status === "blocked") return { kind: "blocked" as const };
-      if (!fresh || fresh.status !== "succeeded") return { kind: "pending" as const };
+      if (fresh?.status === "blocked") {
+        // A separately authorized retry keeps the original idempotency receipt.
+        // Accept only its current-generation stop and independently verified census.
+        if (result.instance.desiredState !== "stopped" || result.instance.observedState !== "stopped" ||
+            result.instance.generation <= fresh.generation || result.instance.runtimeEpoch !== fresh.runtimeEpoch)
+          return { kind: "blocked" as const };
+        const recovered = await this.options.operations.findSucceededStop?.({
+          instanceId: this.options.binding.instanceId,
+          repositoryId: this.options.binding.repositoryId,
+          generation: result.instance.generation,
+          runtimeEpoch: result.instance.runtimeEpoch,
+        });
+        if (!recovered || recovered.kind !== "stop" || recovered.status !== "succeeded" ||
+            recovered.generation !== result.instance.generation || recovered.runtimeEpoch !== fresh.runtimeEpoch ||
+            recovered.deploymentRevisionId !== fresh.deploymentRevisionId)
+          return { kind: "blocked" as const };
+        stopOperation = recovered;
+      } else if (!fresh || fresh.status !== "succeeded") return { kind: "pending" as const };
     } else if (
       result.instance.desiredState !== "stopped" ||
       result.instance.observedState !== "stopped"

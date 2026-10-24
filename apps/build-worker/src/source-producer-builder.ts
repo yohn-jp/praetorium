@@ -149,9 +149,14 @@ export function assertSourceProducerResultWithinBudget(value:unknown):void{
 
 /** The provenance build consumes only a fresh, verified Git checkout. Give
  * its separate metadata Dockerfile the complete checkout, including tracked
- * files ignored by Scriptorium's production image context rules. */
+ * files ignored by Scriptorium's production image context rules. Keep this
+ * override non-empty so Dockerfile frontends cannot mistake it for an absent
+ * file and fall back to the producer's .dockerignore. */
 export function sourceMetadataDockerfileIgnore():Buffer{
-  return Buffer.alloc(0);
+  return Buffer.from(
+    "# Praetorium metadata requires the complete verified checkout, including .git.\n",
+    "utf8",
+  );
 }
 
 function outputRepository(options:SourceBuildOptions,logicalRepository:string):string{

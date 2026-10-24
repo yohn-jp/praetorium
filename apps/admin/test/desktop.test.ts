@@ -300,3 +300,21 @@ it("does not list superseded Source failures as Active incidents while Stable is
   expect(html).not.toContain("SOURCE_BUILD_FAILED");
   expect(html).toContain("No active failed builds");
 });
+
+
+it("does not offer duplicate Source dispatch for an already admitted version", () => {
+  const admitted={...job,sourceId:"scriptorium",releaseId:416422590,
+    version:"0.3.4",tag:"v0.3.4",state:"admitted" as const,
+    admittedReleaseId:"rel_abcd",error:null,retryable:false};
+  const source: SourceReleaseView={
+    source:{id:"scriptorium",label:"Scriptorium",githubRepository:"yohn-jp/scriptorium",adapter:"scriptorium-v1"},
+    releases:[{id:416422590,tag:"v0.3.4",name:"0.3.4",version:"0.3.4",
+      prerelease:false,publishedAt:"2026-10-23T15:58:15Z",notes:""}],
+    error:null,endpoint:"github",status:200,code:null,
+  };
+  const html=renderDesktopConsole(view({section:"releases",
+    builds:dependency("builds",{items:[admitted],nextCursor:null}),
+    sourceViews:dependency("sources",[source])}));
+  expect(html).toContain('href="/releases/rel_abcd?ui=desktop"');
+  expect(html).not.toContain('action="/source-releases/deploy?ui=desktop"');
+});

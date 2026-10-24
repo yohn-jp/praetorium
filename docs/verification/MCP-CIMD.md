@@ -27,11 +27,14 @@ following the advertised challenge can already discover the root metadata.
 
 ## Producer handoff and remaining gates
 
-- **BLOCKED — running producer discovery alias:** the current Scriptorium
-  `packages/api/src/server.ts` handles only the root protected-resource path.
-  Its hosted route must serve the same existing public metadata at the `/mcp`
-  suffix too. This repository changes the stopped Instance Access fallback;
-  it cannot certify the separately coordinated producer source or artifact.
+- **NOT_CHECKED — deployed producer discovery alias:** the companion
+  [Scriptorium change](https://github.com/yohn-jp/scriptorium/pull/37) adds the
+  same public metadata at the `/mcp` suffix to its hosted HTTP boundary, with
+  regression coverage. Its frozen installation, production/test-source/safety
+  type checks, root test command, Core build and Core audit passed. Two existing
+  conditional tests were skipped (IndexedDB browser probes and real CPU
+  semantic/model runtime); they remain unverified. Neither producer publication
+  nor hosted deployment has been performed.
 - **NOT_CHECKED — deployed CIMD:** Gateway changes have not been deployed.
   Public discovery still describes the previous deployment.
 - **NOT_CHECKED — real ChatGPT connection:** requires an updated Gateway and
@@ -47,7 +50,8 @@ certify ChatGPT, the production producer, registry, browser consent or Wake.
 
 ## Local validation
 
-Base: `9ea0680`, isolated branch `fix/mcp-discovery-cimd`.
+Initial base: `9ea0680`; revalidated after merging main `2385b92` into isolated
+branch `fix/mcp-discovery-cimd` without rewriting history.
 
 - `corepack pnpm@11.18.0 install --frozen-lockfile`: **PASS** (Node 24.21.0).
 - `corepack pnpm@11.18.0 check`: **PASS** after correcting the new decoder's
@@ -55,7 +59,7 @@ Base: `9ea0680`, isolated branch `fix/mcp-discovery-cimd`.
   and contract schema checks completed. Nested commands initially selected the
   host's pnpm 12.10.1; a temporary PATH shim invokes Corepack pnpm 11.18.0 for
   every nested `pnpm` without disabling version checks or changing manifests.
-- Gateway: **36 test files / 292 tests PASS**, including 25 metadata validation
+- Gateway: **36 test files / 300 tests PASS**, including 25 metadata validation
   cases and 6 OAuth service cases. CIMD and legacy DCR both exercise consent,
   PKCE exchange, replay rejection, refresh rotation and callback validation.
   CIMD metadata outages leave authorization codes and refresh credentials

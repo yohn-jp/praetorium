@@ -661,6 +661,14 @@ describe("runtime authority checkpoint recovery", () => {
     expect(changedPayload.status).toBe(409);
     expect(await checkpointCount(h.db)).toBe(2);
 
+    for (const fence of [{ leaseToken: "x".repeat(64) }, { leaseEpoch: 2 }]) {
+      const request = checkpointRequest("accepted", 1, accepted);
+      request.body = JSON.stringify({ ...JSON.parse(String(request.body)), ...fence });
+      const wrongFence = await h.app.request("/checkpoint", request);
+      expect(wrongFence.status).toBe(409);
+      expect(await checkpointCount(h.db)).toBe(2);
+    }
+
     const replay = await h.app.request("/checkpoint", checkpointRequest("accepted", 1, accepted));
     expect(replay.status).toBe(200);
     expect(await checkpointCount(h.db)).toBe(2);

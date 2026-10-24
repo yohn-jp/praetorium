@@ -215,6 +215,29 @@ describe("remote buildctl execution", () => {
       .toContain("Cannot find module");
   });
 
+  it("keeps plain stderr failure evidence alongside raw-json logs when no failed Vertex is present", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    const progress = JSON.stringify({
+      logs: [{
+        vertex: "sha256:cached",
+        stream: 2,
+        data: Buffer.from("BuildKit cache: optional cache entry not found\n").toString("base64"),
+      }],
+    });
+    const stderr = "BuildKit compiler error TS5042: required module missing";
+    const script = `process.stderr.write(${JSON.stringify(progress + String.fromCharCode(10) + stderr + String.fromCharCode(10))});process.exitCode=1;`;
+    let failure: unknown;
+    try {
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    const excerpt = (failure as {diagnostic?:{text?:string}}).diagnostic?.text ?? "";
+    expect(excerpt).toContain("optional cache entry not found");
+    expect(excerpt).toContain("compiler error TS5042");
+  });
+
   it("keeps BuildKit errors without a failed Vertex and filters null-identity errors alongside a failed Vertex", async () => {
     const options = await makeOptions();
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });

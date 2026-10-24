@@ -371,7 +371,10 @@ class BuildKitDiagnosticCapture {
       ];
     entries.sort((left,right)=>left.sequence-right.sequence);
     const primary=entries.map((item)=>item.text).join("\n");
-    const captured=primary||this.stderrEntries.map((item)=>item.text).join("\n");
+    const stderr=this.stderrEntries.map((item)=>item.text).join("\n");
+    const captured=failedVertex===null
+      ?[primary,stderr].filter(Boolean).join("\n")
+      :primary||stderr;
     const safe=sanitizeBuildKitDiagnostic(captured);
     if(!safe)return undefined;
     return {text:safe.text,truncated:this.truncated||safe.truncated};

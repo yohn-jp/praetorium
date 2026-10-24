@@ -77,18 +77,22 @@ describe("remote buildctl execution", () => {
       "compiler error TS5100: invalid option",
       "Authorization: Bearer cancel-secret-token",
       "NPM_TOKEN=cancel-env-secret",
+      JSON.stringify({ vertexes: [{ completed: "now" }] }),
     ].join(String.fromCharCode(10));
-    const script = `process.stderr.write(${JSON.stringify(raw)}); setInterval(() => undefined, 1000)`;
-    const run = runner(["-e", script], options);
-    const timer = setTimeout(() => controller.abort(), 30);
+    const script = `process.stderr.write(${JSON.stringify(raw + String.fromCharCode(10))}); setInterval(() => undefined, 1000)`;
+    let progressObserved=false;
+    const run = runner(["-e", script], {
+      ...options,
+      onProgress:()=>{progressObserved=true;controller.abort();},
+    });
     const failure = await run.catch((error:unknown)=>error);
+    expect(progressObserved).toBe(true);
     expect(failure).toMatchObject({
       code: "BUILD_CANCELED",
       diagnostic: { text: expect.stringContaining("compiler error TS5100") },
     });
     expect((failure as {diagnostic?:{text?:string}}).diagnostic?.text ?? "")
       .not.toMatch(/cancel-secret-token|cancel-env-secret/u);
-    clearTimeout(timer);
   });
 
   it("terminates a child that exceeds aggregate progress bytes", async () => {

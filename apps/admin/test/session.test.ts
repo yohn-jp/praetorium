@@ -170,3 +170,24 @@ it("offers the canonical one-time mobile choice without changing Desktop default
   expect((await decided.text())).not.toContain('class="mode-choice"');
   expect(decided.headers.get("Set-Cookie")).toContain("praetorium_ui=mobile");
 });
+
+
+it("does not prompt again once a valid Admin presentation cookie is stored", async () => {
+  const {context}=fixture();
+  const cookies=sessionRequest().headers.get("Cookie") + "; praetorium_ui=mobile";
+  const response=await handleAdminHost(new Request(ADMIN+"/builds",{headers:{Cookie:cookies}}),context);
+  expect(response.status).toBe(200);
+  const html=await response.text();
+  expect(html).toContain('<body data-ui="mobile">');
+  expect(html).not.toContain('class="mode-choice"');
+});
+
+it("restores an expired job detail even if its previous success notice is no longer authoritative", async () => {
+  const {context}=fixture();
+  const id="sr_54a61e4d-088c-453e-98ca-6be8588a4e1f";
+  const result=await handleAdminHost(new Request(ADMIN+"/builds/"+id+
+    "?ui=mobile&notice=Retry%20accepted"),context);
+  expect(result.status).toBe(303);
+  expect(new URL(result.headers.get("Location")!).searchParams.get("return_to")).toBe(
+    "/builds/"+id+"?ui=mobile");
+});

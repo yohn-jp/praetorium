@@ -40,35 +40,48 @@ describe("trusted GitHub Release selection", () => {
     ]) expect(() => configuredReleaseSources(input)).toThrow();
   });
 
-  it("lists published releases only, preserving nonsemver evidence as non-deployable", () => {
+  it("lists only published version-tag releases and hides synthetic evidence tags", () => {
     const list = publishedReleases([
       release({ draft:true,id:1,tag_name:"v0.1.0" }),
       release({ id:2,tag_name:"perf-wave1-git-2026-10-20",prerelease:true }),
       release(),
     ]);
-    expect(list).toHaveLength(2);
-    expect(list.find(x=>x.tag==="v0.2.1")?.version).toBe("0.2.1");
-    expect(list.find(x=>x.id===2)?.version).toBeNull();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.tag).toBe("v0.2.1");
+    expect(list[0]?.version).toBe("0.2.1");
     expect(() => publishedReleases({unexpected:true})).toThrow();
     expect(() => publishedReleases(new Array(101).fill(release()))).toThrow();
   });
 
-  it("escapes untrusted Release notes/title and excludes non-SemVer deployment", () => {
+  it("escapes valid-version Release notes/title and never renders non-version tags", () => {
     const cards = sourceReleaseCards([{
       source, error:null,
       endpoint:"GET /repos/yohn-jp/scriptorium/releases",status:200,code:null,
       releases:publishedReleases([
-        release({id:5,tag_name:"perf-wave1",name:"<script>alert(1)</script>",body:"<img src=x onerror=x>" }),
-        release(),
+        release({id:5,tag_name:"perf-wave1",name:"Synthetic evidence",body:"not deployable" }),
+        release({name:"<script>alert(1)</script>",body:"<img src=x onerror=x>" }),
       ]),
     }],"CSRF-NONCE");
     expect(cards).not.toContain("<script>");
     expect(cards).not.toContain("<img ");
     expect(cards).toContain("&lt;script&gt;");
-    expect(cards).toContain("Not deployable");
+    expect(cards).not.toContain("perf-wave1");
+    expect(cards).not.toContain("Not deployable");
     expect(cards.match(/action="\/source-releases\/deploy"/g)).toHaveLength(1);
     expect(cards).toContain('value="416422590"');
     expect(cards).toContain('name="csrfToken" value="CSRF-NONCE"');
+  });
+
+
+  it("retains valid version tags including SemVer prereleases and rejects non-version labels", () => {
+    const list=publishedReleases([
+      release({id:1,tag_name:"0.3.4"}),
+      release({id:2,tag_name:"v0.3.4"}),
+      release({id:3,tag_name:"v0.3.5-rc.1",prerelease:true}),
+      release({id:4,tag_name:"perf-core64-2026-10-21",prerelease:true}),
+      release({id:5,tag_name:"v01.2.3"}),
+    ]);
+    expect(list.map(r=>r.tag)).toEqual(["v0.3.4","v0.3.5-rc.1"]);
   });
 
   it("re-fetches selected Release by numeric ID, validates published state, resolves annotated tag recursively", async () => {

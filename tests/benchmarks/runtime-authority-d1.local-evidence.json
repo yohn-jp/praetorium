@@ -13,27 +13,27 @@
     },
     "currentFiles": {
       "runtime-authority-source": {
-        "locator": "../praetorium-runtime-authority/packages/persistence/src/d1/runtime-authority.ts",
+        "locator": "packages/persistence/src/d1/runtime-authority.ts",
         "sha256": "2690bef92d4ad632a98f2f910dc746fb03e278dc6f03ae1eb81e1428d808c4ec"
       },
       "credential-store-source": {
-        "locator": "../praetorium-runtime-credential-reuse/packages/persistence/src/d1/runtime-git-credentials-store.ts",
+        "locator": "packages/persistence/src/d1/runtime-git-credentials-store.ts",
         "sha256": "941ac9dcb80d665d1297361cf5cc17feb8e8369771ea882352cab16abf7216a2"
       },
       "credential-routes-source": {
-        "locator": "../praetorium-runtime-credential-reuse/apps/control-plane/src/runtime-git-credential-routes.ts",
+        "locator": "apps/control-plane/src/runtime-git-credential-routes.ts",
         "sha256": "7d6dfff7cec63fe65ef44cff7da226295f80ceda4561f024b0ec135802bd2a4f"
       },
       "gateway-broker-source": {
-        "locator": "../praetorium-runtime-credential-reuse/apps/gateway/src/adapters/runtime-git-broker.ts",
+        "locator": "apps/gateway/src/adapters/runtime-git-broker.ts",
         "sha256": "106b743e9bdff145f466d6df7a180c5d4099b52569d2b5abc06a4092f62ae6b7"
       },
       "github-broker-source": {
-        "locator": "../praetorium-runtime-credential-reuse/plugins/github/src/credential-broker.ts",
+        "locator": "plugins/github/src/credential-broker.ts",
         "sha256": "ed2567096d747bce82301ea2abed81e3702f8dca321b45f909a021af583055ea"
       },
       "authority-migration": {
-        "locator": "../praetorium-runtime-authority/apps/control-plane/migrations/0009_runtime_authority.sql",
+        "locator": "apps/control-plane/migrations/0009_runtime_authority.sql",
         "sha256": "656dd0bef8d88c27a07cf14f3f79de3abcd16c64fd5cb45eb5272b2bedd58a05"
       }
     }
@@ -161,7 +161,7 @@
           "calls": 600,
           "rowsRead": 92244,
           "rowsWritten": 476,
-          "durationMs": 104,
+          "durationMs": 196,
           "resultRows": 400,
           "rowsReadAvailable": true,
           "rowsWrittenAvailable": true,
@@ -170,7 +170,7 @@
               "calls": 100,
               "rowsRead": 22600,
               "rowsWritten": 0,
-              "durationMs": 21,
+              "durationMs": 41,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -179,7 +179,7 @@
               "calls": 100,
               "rowsRead": 22600,
               "rowsWritten": 0,
-              "durationMs": 23,
+              "durationMs": 35,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -188,7 +188,7 @@
               "calls": 100,
               "rowsRead": 24144,
               "rowsWritten": 176,
-              "durationMs": 17,
+              "durationMs": 34,
               "resultRows": 0,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -197,7 +197,7 @@
               "calls": 100,
               "rowsRead": 200,
               "rowsWritten": 300,
-              "durationMs": 12,
+              "durationMs": 23,
               "resultRows": 0,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -206,7 +206,7 @@
               "calls": 100,
               "rowsRead": 100,
               "rowsWritten": 0,
-              "durationMs": 11,
+              "durationMs": 16,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -215,13 +215,13 @@
               "calls": 100,
               "rowsRead": 22600,
               "rowsWritten": 0,
-              "durationMs": 20,
+              "durationMs": 47,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
             }
           },
-          "wallClockMs": 7732.47,
+          "wallClockMs": 14766.341,
           "iterations": 100,
           "credentialRowsCreated": 100,
           "credentialRowsReturned": 100,
@@ -333,7 +333,7 @@
           "calls": 200,
           "rowsRead": 1100,
           "rowsWritten": 0,
-          "durationMs": 22,
+          "durationMs": 45,
           "resultRows": 200,
           "rowsReadAvailable": true,
           "rowsWrittenAvailable": true,
@@ -342,7 +342,7 @@
               "calls": 100,
               "rowsRead": 400,
               "rowsWritten": 0,
-              "durationMs": 15,
+              "durationMs": 18,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -351,13 +351,13 @@
               "calls": 100,
               "rowsRead": 700,
               "rowsWritten": 0,
-              "durationMs": 7,
+              "durationMs": 27,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
             }
           },
-          "wallClockMs": 2402.266,
+          "wallClockMs": 4843.062,
           "iterations": 100,
           "credentialRowsCreated": 0,
           "credentialRowsReturned": 100,
@@ -389,8 +389,8 @@
       "delta": {
         "rowsRead": -91144,
         "rowsWritten": -476,
-        "durationMs": -82,
-        "wallClockMs": -5330.204
+        "durationMs": -151,
+        "wallClockMs": -9923.279
       }
     },
     {
@@ -506,7 +506,7 @@
           "calls": 600,
           "rowsRead": 1290530,
           "rowsWritten": 1400,
-          "durationMs": 454,
+          "durationMs": 715,
           "resultRows": 400,
           "rowsReadAvailable": true,
           "rowsWrittenAvailable": true,
@@ -515,7 +515,7 @@
               "calls": 100,
               "rowsRead": 283900,
               "rowsWritten": 0,
-              "durationMs": 77,
+              "durationMs": 120,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -524,7 +524,7 @@
               "calls": 100,
               "rowsRead": 283900,
               "rowsWritten": 0,
-              "durationMs": 92,
+              "durationMs": 131,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -533,7 +533,7 @@
               "calls": 100,
               "rowsRead": 438530,
               "rowsWritten": 1100,
-              "durationMs": 152,
+              "durationMs": 251,
               "resultRows": 0,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -542,7 +542,7 @@
               "calls": 100,
               "rowsRead": 200,
               "rowsWritten": 300,
-              "durationMs": 20,
+              "durationMs": 28,
               "resultRows": 0,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -551,7 +551,7 @@
               "calls": 100,
               "rowsRead": 100,
               "rowsWritten": 0,
-              "durationMs": 15,
+              "durationMs": 14,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -560,13 +560,13 @@
               "calls": 100,
               "rowsRead": 283900,
               "rowsWritten": 0,
-              "durationMs": 98,
+              "durationMs": 171,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
             }
           },
-          "wallClockMs": 12638.524,
+          "wallClockMs": 17394.124,
           "iterations": 100,
           "credentialRowsCreated": 100,
           "credentialRowsReturned": 100,
@@ -679,7 +679,7 @@
           "calls": 200,
           "rowsRead": 1100,
           "rowsWritten": 0,
-          "durationMs": 45,
+          "durationMs": 44,
           "resultRows": 200,
           "rowsReadAvailable": true,
           "rowsWrittenAvailable": true,
@@ -688,7 +688,7 @@
               "calls": 100,
               "rowsRead": 400,
               "rowsWritten": 0,
-              "durationMs": 20,
+              "durationMs": 15,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
@@ -697,13 +697,13 @@
               "calls": 100,
               "rowsRead": 700,
               "rowsWritten": 0,
-              "durationMs": 25,
+              "durationMs": 29,
               "resultRows": 100,
               "rowsReadAvailable": true,
               "rowsWrittenAvailable": true
             }
           },
-          "wallClockMs": 4570.491,
+          "wallClockMs": 5439.507,
           "iterations": 100,
           "credentialRowsCreated": 0,
           "credentialRowsReturned": 100,
@@ -735,8 +735,8 @@
       "delta": {
         "rowsRead": -1289430,
         "rowsWritten": -1400,
-        "durationMs": -409,
-        "wallClockMs": -8068.033
+        "durationMs": -671,
+        "wallClockMs": -11954.617
       }
     }
   ],

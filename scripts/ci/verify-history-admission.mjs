@@ -17,13 +17,17 @@ const provisioner = "system:serviceaccount:praetorium-system:praetorium-provisio
 
 if (!runtimePath) throw new Error("usage: verify-history-admission.mjs RUNTIME_RENDER.json");
 
-function requestContext(args, { label, object } = {}) {
+function requestContext(
+  args,
+  { label, object, namespace: explicitNamespace, name: explicitName } = {},
+) {
   const verbs = new Set(["apply", "create", "delete", "get", "label", "patch", "replace"]);
   const action = args.find((argument) => verbs.has(argument)) ?? args[0] ?? "unknown";
   const namespaceArg = args.findIndex(
     (argument) => argument === "-n" || argument === "--namespace",
   );
   const namespace =
+    explicitNamespace ??
     object?.metadata?.namespace ??
     (namespaceArg >= 0 ? args[namespaceArg + 1] : undefined) ??
     args.find((argument) => argument.startsWith("--namespace="))?.slice("--namespace=".length) ??
@@ -31,6 +35,7 @@ function requestContext(args, { label, object } = {}) {
   const actionIndex = args.indexOf(action);
   const resource = args[actionIndex + 1];
   const name =
+    explicitName ??
     object?.metadata?.name ??
     (resource && args[actionIndex + 2] && !args[actionIndex + 2].startsWith("-")
       ? args[actionIndex + 2]
@@ -46,7 +51,7 @@ function safeStderr(stderr) {
 
 function kubectl(
   args,
-  { input, expectedPolicy, expectedError, expectedErrors, label, object } = {},
+  { input, expectedPolicy, expectedError, expectedErrors, label, object, namespace, name } = {},
 ) {
   const result = spawnSync("kubectl", args, {
     cwd: root,
@@ -54,7 +59,7 @@ function kubectl(
     input,
     maxBuffer: 8 * 1024 * 1024,
   });
-  const context = requestContext(args, { label, object });
+  const context = requestContext(args, { label, object, namespace, name });
   const stderr = safeStderr(result.stderr);
   const reject = (message) => {
     throw new Error(`${context}: ${message}; kubectl stderr: ${stderr || "<empty>"}`);
@@ -119,6 +124,107 @@ function createObject(
     label,
     object,
   });
+}
+
+function readJsonResource(resource, name, namespace) {
+  const args = ["get", resource, name, "-o", "json"];
+  if (namespace) args.push("-n", namespace);
+  return JSON.parse(
+    kubectl(args, {
+      label: `readiness-${resource}`,
+      name,
+      namespace: namespace ?? "-",
+    }),
+  );
+}
+
+function waitForPolicyGeneration(name, deadline) {
+  const timeoutMs = Math.max(1, deadline - Date.now());
+  kubectl(
+    [
+      "wait",
+      `--for=jsonpath={.status.observedGeneration}=1`,
+      `--timeout=${timeoutMs}ms`,
+      `validatingadmissionpolicy/${name}`,
+    ],
+    { label: "wait-policy-observed-generation", name, namespace: "-" },
+  );
+
+  const policy = readJsonResource("validatingadmissionpolicy", name);
+  const identity = `policy/${name}`;
+  if (policy.metadata?.generation !== 1 || policy.status?.observedGeneration !== 1) {
+    throw new Error(
+      `${identity}: expected metadata.generation=status.observedGeneration=1, got ${policy.metadata?.generation}/${policy.status?.observedGeneration}`,
+    );
+  }
+  const warnings = policy.status?.typeChecking?.expressionWarnings;
+  if (
+    !policy.status?.typeChecking ||
+    (warnings !== undefined && (!Array.isArray(warnings) || warnings.length !== 0))
+  ) {
+    throw new Error(
+      `${identity}: API server has not type-checked the policy cleanly: ${JSON.stringify(policy.status?.typeChecking ?? null)}`,
+    );
+  }
+  const conditions = policy.status?.conditions ?? [];
+  if (
+    !Array.isArray(conditions) ||
+    conditions.some(
+      (condition) =>
+        condition.status === "False" ||
+        /invalid|error|failed/iu.test(`${condition.type ?? ""} ${condition.reason ?? ""}`),
+    )
+  ) {
+    throw new Error(
+      `${identity}: API server reports a policy compile/admission condition: ${JSON.stringify(conditions)}`,
+    );
+  }
+}
+
+function waitForNamespaceQuota(quota, deadline) {
+  let lastObserved;
+  while (Date.now() < deadline) {
+    lastObserved = readJsonResource("resourcequota", quota.metadata.name, quota.metadata.namespace);
+    if (
+      JSON.stringify(
+        Object.entries(lastObserved.status?.hard ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+      ) === JSON.stringify(Object.entries(quota.spec.hard).sort(([a], [b]) => a.localeCompare(b)))
+    ) {
+      return;
+    }
+    Atomics.wait(
+      new Int32Array(new SharedArrayBuffer(4)),
+      0,
+      0,
+      Math.min(250, deadline - Date.now()),
+    );
+  }
+  throw new Error(
+    `quota/${quota.metadata.namespace}/${quota.metadata.name}: status.hard did not match spec.hard within 30s: ${JSON.stringify(lastObserved?.status?.hard ?? null)}`,
+  );
+}
+
+function waitForHistoryAdmissionReadiness(quota) {
+  const deadline = Date.now() + 30_000;
+  const policies = [
+    "praetorium-provisioner-runtime-resources",
+    "praetorium-provisioner-runtime-resource-delete",
+    "praetorium-provisioner-history-pvc",
+    "praetorium-tenant-pods-restricted",
+  ];
+  for (const name of policies) waitForPolicyGeneration(name, deadline);
+  for (const name of policies) {
+    const binding = readJsonResource("validatingadmissionpolicybinding", name);
+    if (
+      binding.spec?.policyName !== name ||
+      JSON.stringify(binding.spec?.validationActions) !== '["Deny"]'
+    ) {
+      throw new Error(
+        `binding/${name}: expected policyName=${name} and validationActions=[Deny], got ${JSON.stringify(binding.spec ?? null)}`,
+      );
+    }
+  }
+  waitForNamespaceQuota(quota, deadline);
 }
 
 function admissionPod(deployment) {
@@ -236,6 +342,7 @@ const relevantOwnerPolicies = ownerPolicies.filter((document) =>
 applyObjects(relevantOwnerPolicies);
 applyObjects(loadYaml("infrastructure/kubernetes/policies/provisioner-history-pvc.yaml"));
 applyObjects(loadYaml("infrastructure/kubernetes/policies/tenant-pod-policy.yaml"));
+waitForHistoryAdmissionReadiness(quota);
 
 // Exercise valid admission first, but keep the PVC absent until every negative
 // CREATE scenario has run so AlreadyExists cannot mask admission behavior.

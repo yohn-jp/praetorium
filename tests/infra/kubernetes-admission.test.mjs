@@ -593,6 +593,29 @@ test("the canonical Kind job runs real server-side history admission scenarios",
   assert.match(runner, /requests\.storage, "512Mi"/u);
   assert.match(runner, /wrongPodClaim/u);
   assert.match(runner, /wrongPodPath/u);
+  const readinessCall = runner.lastIndexOf("waitForHistoryAdmissionReadiness(quota)");
+  const firstScenario = runner.indexOf("createObject(pvc, { dryRun: true, asProvisioner: true })");
+  assert.ok(
+    runner.indexOf(
+      'applyObjects(loadYaml("infrastructure/kubernetes/policies/tenant-pod-policy.yaml"))',
+    ) < readinessCall,
+  );
+  assert.ok(readinessCall >= 0 && readinessCall < firstScenario);
+  for (const policy of [
+    "praetorium-provisioner-runtime-resources",
+    "praetorium-provisioner-runtime-resource-delete",
+    "praetorium-provisioner-history-pvc",
+    "praetorium-tenant-pods-restricted",
+  ])
+    assert.ok(runner.includes(`"${policy}"`), `readiness gate omits ${policy}`);
+  assert.match(runner, /--for=jsonpath=\{\.status\.observedGeneration\}=1/u);
+  assert.match(runner, /--timeout=\$\{timeoutMs\}ms/u);
+  assert.match(runner, /status\?\.observedGeneration !== 1/u);
+  assert.match(runner, /status\?\.typeChecking/u);
+  assert.match(runner, /status\?\.conditions/u);
+  assert.ok(runner.includes(`JSON.stringify(binding.spec?.validationActions) !== '["Deny"]'`));
+  assert.match(runner, /status\?\.hard/u);
+  assert.doesNotMatch(runner, /waitForAdmissionGuards/u);
   const negativePvcCreates = [
     runner.indexOf("createObject(wrongOwnerPvc"),
     runner.indexOf("createObject(wrongClassPvc"),

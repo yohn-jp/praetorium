@@ -147,7 +147,23 @@ function composeServices(env: ControlPlaneEnv) {
             gatewayOrigin: required(env.GATEWAY_ORIGIN),
             workerId: required(env.PROVISIONER_WORKER_ID),
             clusterId: required(env.PROVISIONER_CLUSTER_ID),
-            legacyDrainArtifacts: [],
+            // Verified immutable legacy core/MCP-only artifacts. Their owner
+            // GET /api/jobs serializes pending history writes after quiesce;
+            // the dedicated route still requires the live operation fence,
+            // safe receipt, admitted statement and fresh sole-writer census.
+            // See OPERATIONAL-CONVERGENCE-20261025 for the source/OCI evidence.
+            legacyDrainArtifacts: [
+              {
+                platformManifestDigest: "sha256:2d21804e6a3686ff141afc4299259d60c245a3395d312c943a436ef25dd2e6f4",
+                producerRevision: "588eddcfff20fa2fc76aa8eae54c9551e0c6048b",
+                enabledModuleIds: ["mcp"],
+              },
+              {
+                platformManifestDigest: "sha256:0c46d41281cfec4a25e026f5396ca6a451683acd7bb29335f815359acf07eb5b",
+                producerRevision: "95a66c2c985a66bc2d535392dcc450d8c9df18d5",
+                enabledModuleIds: [],
+              },
+            ],
           }),
         }
       : {}),

@@ -82,7 +82,7 @@ test("actual Gateway Worker partial browser security proof on owned local Minifl
     platform: "browser",
     target: "es2022",
     tsconfig: path.join(sourceRoot, "apps/gateway/tsconfig.json"),
-    external: ["node:*"],
+    external: ["node:*", "cloudflare:workers"],
     write: false,
     logLevel: "silent",
   });

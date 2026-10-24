@@ -457,11 +457,11 @@ export function createPortalService(context: GatewayContext): PortalService {
     async getRepository(actor, rawRepositoryId): Promise<PortalResult<PortalRepositoryDashboard>> {
       const repositoryId = numericId(rawRepositoryId);
       if (repositoryId === null) return failure("INVALID_REQUEST", "Repository identifier is invalid.");
-      const operatorReleaseUrl = isAdmin(context, actor.userId) ? context.config.adminOrigin + "/releases" : undefined;
       const allowed = await authorize(context, actor, repositoryId, "read");
       if (!allowed) return { ok: false, error: accessError() };
       const repository = await accessibleRepository(context, actor.userId, repositoryId);
       if (!repository || repository.installationId !== allowed.installationId) return { ok: false, error: accessError() };
+      const operatorReleaseUrl = isAdmin(context, actor.userId) ? context.config.adminOrigin + "/releases" : undefined;
       try {
         const initial = await context.controlPlane.getByRepositoryId(repositoryId);
         if (!initial) {

@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { test } from "node:test";
 import { readFile, mkdir } from "node:fs/promises";
 import { chromium } from "@playwright/test";
+import { SourceBuildDetailSchema } from "../../packages/contracts/dist/index.js";
 import worker from "../../apps/admin/dist/worker.js";
 
 const ADMIN = "https://admin.praetorium.test";
@@ -23,6 +24,21 @@ const HOSTS = [
     disk:{usedBytes:null,totalBytes:null}, reasons:["metrics_unavailable"], schemaVersion:1 },
 ];
 function fixture() {
+  let buildState = "empty";
+  const jobId = "sr_00000000-0000-4000-a000-000000000001";
+  const sourceDetail = () => SourceBuildDetailSchema.parse({
+    job:{id:jobId,sourceId:"scriptorium",releaseId:101,tag:"v1.2.0",version:"1.2.0",commit:"b".repeat(40),
+      state:buildState,attempt:buildState==="queued"?0:1,revision:buildState==="failed"?0:1,
+      error:buildState==="failed"?"SOURCE_BUILD_FAILED":null,admittedReleaseId:buildState==="admitted"?"rel_owned":null,
+      retryable:buildState==="failed"},
+    attempts:[{id:"owned-failed-attempt",attempt:1,revision:0,leaseEpoch:1,state:"failed",stage:"buildkit",
+      startedAt:1792820000000,finishedAt:1792820001000,failureCode:"SOURCE_BUILD_FAILED",evidence:"expired",expiresAt:null,diagnostic:null},
+      ...(buildState==="building"||buildState==="admitted"?[{id:"owned-later-attempt",attempt:1,revision:1,leaseEpoch:2,
+        state:buildState==="building"?"building":"produced",stage:buildState==="building"?"buildkit":"admission",
+        startedAt:1792820010000,finishedAt:buildState==="building"?null:1792820020000,
+        failureCode:null,evidence:"not_recorded",expiresAt:null,diagnostic:null}]:[])],
+    nextCursor:null,evidence:"expired",
+  });
   const calls = { identity:0, control:0, observer:0 };
   const env = {
     ADMIN_ORIGIN: ADMIN, GATEWAY_ORIGIN: GATEWAY,
@@ -41,6 +57,10 @@ function fixture() {
     CONTROL_PLANE: {fetch: async request => {
       calls.control++;
       const pathname = new URL(typeof request === "string" ? request : request.url).pathname;
+      if (buildState !== "empty" && pathname === "/v1/operator/source-builds/"+jobId)
+        return Response.json(sourceDetail());
+      if (buildState !== "empty" && pathname === "/v1/operator/source-builds")
+        return Response.json({items:[sourceDetail().job],nextCursor:null});
       return Response.json(pathname === "/v1/operator/releases"
         ? {items:[],stableChannel:{currentReleaseId:null,revision:0}}
         : {items:[]});
@@ -62,7 +82,7 @@ function fixture() {
         Response.json({error:"not_found"},{status:404});
     }},
   };
-  return {env,calls};
+  return {env,calls,setBuildState:value=>{buildState=value;},jobId};
 }
 async function listen(env) {
   const server = createServer(async (req,res) => {
@@ -89,7 +109,7 @@ async function listen(env) {
   return {server,origin:"http://127.0.0.1:"+address.port};
 }
 test("dedicated Admin Worker protects host telemetry and renders distinct responsive UI", async t=>{
-  const {env,calls}=fixture();
+  const {env,calls,setBuildState,jobId}=fixture();
   const noAuth=await worker.fetch(new Request(ADMIN+"/api/admin/v1/infrastructure/hosts"),env);
   assert.equal(noAuth.status,403);
   assert.equal(calls.observer,0);
@@ -160,6 +180,21 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.equal(new URL(page.url()).pathname,"/infrastructure/hosts/builder");
   }
 
+  for (const mode of ["desktop","mobile"]) {
+    await page.setViewportSize({width:mode==="desktop"?1440:390,height:900});
+    for (const state of ["failed","queued","building","admitted"]) {
+      setBuildState(state);
+      await page.goto(origin+"/builds/"+jobId+"?ui="+mode);
+      const text=await page.locator("main").innerText();
+      assert.ok(text.includes("owned-failed-attempt"),"prior failure remains immutable history");
+      assert.ok(text.toLowerCase().includes("expired"),"expired evidence is not a successful empty log");
+      if(state==="failed") assert.equal(await page.locator('input[name="expectedRevision"]').inputValue(),"0");
+      else assert.equal(await page.getByRole("button",{name:"Retry source build",exact:true}).count(),0);
+      if(process.env.PRAETORIUM_UI_EVIDENCE_DIR)
+        await page.screenshot({path:process.env.PRAETORIUM_UI_EVIDENCE_DIR+"/admin-"+mode+"-source-"+state+".png",fullPage:true});
+    }
+  }
+  setBuildState("empty");
   // The first touch visit starts as Desktop by policy, then offers a
   // non-forcing Mobile preference backed by the normal cookie.
   const touch = await browser.newContext({

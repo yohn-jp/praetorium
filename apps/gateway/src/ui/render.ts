@@ -219,6 +219,7 @@ export function renderRepositoryDashboard(
     readonly acceptedConfiguration?: { readonly revisionId: string; readonly buildId: string };
     readonly errorMessage?: string;
     readonly pollCount?: number;
+    readonly requestId?: string;
     readonly scriptNonce?: string;
   },
 ): Response {
@@ -228,6 +229,12 @@ export function renderRepositoryDashboard(
     repositoryId: dashboard.repository.repositoryId,
   };
   const actionPath = localUrl(`/repositories/${repositoryId}/actions`, presentation.mode);
+  const trackedRequest = options.requestId ?? options.notice?.operationId ?? options.acceptedConfiguration?.buildId;
+  const requestOperation = trackedRequest ? dashboard.operations.find(item => item.operationId === trackedRequest) : undefined;
+  const requestState = requestOperation ? operationStateLabel(requestOperation.state)
+    : trackedRequest && dashboard.build?.buildId === trackedRequest ? dashboard.build.status : null;
+  const tracking = trackedRequest ? `<p class="request-tracking" role="status" data-request-id="${escapeHtml(trackedRequest)}">Checking request <code>${escapeHtml(trackedRequest)}</code>: ${requestState ? escapeHtml(requestState) : "not included in the current status response; no completion is inferred"}.</p>` : "";
+
   const access =
     `<div class="status-grid">` +
     `<article class="status-card"><h3>GitHub App</h3>${statusBadge(installationLabel(dashboard.repository.installation), dashboard.repository.installation)}</article>` +
@@ -276,7 +283,7 @@ export function renderRepositoryDashboard(
           : `<p class="muted" role="status">Configuration is required before this application can start. Ask a repository maintainer or administrator to choose an approved release and resource profile.</p>`
       : `<p>Application status: ${escapeHtml(instanceStateLabel(instanceState))}</p>` +
         `<p>Wait for the application to become ready, then refresh status.</p>`;
-  const refresh = `<a class="button button-secondary" href="${localUrl(`/repositories/${repositoryId}`, presentation.mode)}">Refresh status</a>`;
+  const refresh = `<a class="button button-secondary" href="${localUrl(`/repositories/${repositoryId}`, presentation.mode)}${trackedRequest ? `&amp;requestId=${encodeURIComponent(trackedRequest)}` : ""}">Refresh status</a>`;
   const stop = canStopDashboard(dashboard)
     ? mutationForm(
         actionPath,
@@ -382,7 +389,7 @@ export function renderRepositoryDashboard(
         configuration: `${options.acceptedConfiguration ? `<p role="status" data-request-id="${escapeHtml(options.acceptedConfiguration.buildId)}">Configuration accepted, completion not yet confirmed. Revision <code>${escapeHtml(options.acceptedConfiguration.revisionId)}</code> · Build <code>${escapeHtml(options.acceptedConfiguration.buildId)}</code>. <a href="#activity">Check build and operation progress</a>.</p>` : ""}${options.errorMessage && options.selection ? `<p class="alert" role="alert">${escapeHtml(options.errorMessage)}</p>` : ""}${configure}`,
         limits: limits(dashboard),
         preview: selectedPreview,
-        operations: `${options.notice ? `<p role="status" data-request-id="${escapeHtml(options.notice.operationId)}">Request accepted. Check the recorded operation state below; acceptance does not mean completion.</p>` : ""}<section aria-labelledby="operations"><div class="panel-heading"><h2 id="operations">Build and operation progress</h2>${activeOperation ? statusBadge("In progress", "running") : ""}</div>${automaticStatus}${buildStatus(dashboard.build)}<div class="operation-list">${operationContent}</div></section>`,
+        operations: `${tracking}${options.notice ? `<p role="status" data-request-id="${escapeHtml(options.notice.operationId)}">Request accepted. Check the recorded operation state below; acceptance does not mean completion.</p>` : ""}<section aria-labelledby="operations"><div class="panel-heading"><h2 id="operations">Build and operation progress</h2>${activeOperation ? statusBadge("In progress", "running") : ""}</div>${automaticStatus}${buildStatus(dashboard.build)}<div class="operation-list">${operationContent}</div></section>`,
         redeploy,
       },
       presentation.mode,

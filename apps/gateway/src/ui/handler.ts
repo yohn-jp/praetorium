@@ -293,6 +293,7 @@ function dashboardResponse(
     readonly acceptedConfiguration?: { readonly revisionId: string; readonly buildId: string };
     readonly errorMessage?: string;
     readonly pollCount?: number;
+    readonly requestId?: string;
   } = {},
 ): Response {
   return renderRepositoryDashboard(dashboard, {
@@ -305,6 +306,7 @@ function dashboardResponse(
     ...(options.acceptedConfiguration ? { acceptedConfiguration: options.acceptedConfiguration } : {}),
     ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
     ...(options.pollCount !== undefined ? { pollCount: options.pollCount } : {}),
+    ...(options.requestId ? { requestId: options.requestId } : {}),
     scriptNonce: dependencies.createToken(),
   });
 }
@@ -401,14 +403,16 @@ export function createPortalHandler(
     if (!route) return renderPortalError("Repository not found.", 404);
     if (isDetail) {
       const result = await loadDashboard(dependencies, identity.session.actor, route.repositoryId);
-      const requestId = url.searchParams.get("requestId");
-      if (!result.ok && requestId && /^[A-Za-z0-9_-]{1,256}$/.test(requestId) &&
+      const requestIds = url.searchParams.getAll("requestId");
+      const requestId = requestIds.length === 1 && /^[A-Za-z0-9_-]{1,256}$/.test(requestIds[0]!) ? requestIds[0] : undefined;
+      if (!result.ok && requestId &&
           (result.error.code === "UNAVAILABLE" || result.error.code === "UPSTREAM_UNAVAILABLE")) {
         return renderAcceptedCommand(route.repositoryId, presentation, [requestId], dependencies.createToken(), false);
       }
       return result.ok
         ? makeDashboardResponse(result.value, dependencies, identity.session, {
             pollCount: pagePollCount(url),
+            ...(requestId ? { requestId } : {}),
           })
         : renderPortalError(result.error.message, errorStatus(result.error.code));
     }

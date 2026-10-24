@@ -868,3 +868,11 @@ it("retains an unavailable request pointer on GET without asserting acceptance o
     expect(html).not.toContain("Request accepted;");
   }
 });
+
+
+it("keeps the requested operation distinct from the latest operation after navigation", async () => {
+  const html=await renderRepositoryDashboard(dashboard,{csrfToken:"fixture",createIdempotencyKey:()=>"fixture",requestId:"older-operation"}).text();
+  expect(html).toContain("Checking request <code>older-operation</code>");
+  expect(html).toContain("not included in the current status response; no completion is inferred");
+  expect(html).toContain("&amp;requestId=older-operation");
+});

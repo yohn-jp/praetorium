@@ -25,7 +25,7 @@ export function adminReturnPath(value: string | null | undefined): string {
   try {
     const url = new URL(value, "https://admin.invalid");
     if (url.origin !== "https://admin.invalid" ||
-        !/^\/(?:builds(?:\/sr_[0-9a-f-]{36})?|releases(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})?|operations\/op_[A-Za-z0-9_.:-]{1,124}|audit)?$/u.test(url.pathname)) return "/";
+        !/^\/(?:builds(?:\/sr_[0-9a-f-]{36})?|releases(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})?|operations\/op_[A-Za-z0-9_.:-]{1,124}|audit|infrastructure(?:\/hosts\/[a-z][a-z0-9-]{0,63}|\/dependencies)?)?$/u.test(url.pathname)) return "/";
     const keys = [...url.searchParams.keys()];
     if (keys.some(key => key !== "ui") || url.searchParams.getAll("ui").length > 1) return "/";
     const ui = url.searchParams.get("ui");
@@ -156,35 +156,16 @@ export async function completeAdminHandoff(request: Request, context: GatewayCon
       codes.length !== 1 || !/^[A-Za-z0-9_-]{43}$/.test(codes[0]!))
     return noStore(400, "Invalid admin handoff");
   try {
-    const digest = await keyedDigest(context.config.handoffPepper, "admin-session:" + codes[0]);
-    const record = await doRequest(context, digest, "consume");
-    if (!record || record.audience !== context.config.adminOrigin ||
-        record.expiresAt <= Date.parse(context.requestNow) ||
-        !isAdmin(context, record.userId)) return noStore(401, "Admin handoff expired");
-    const original = await context.sessionStore.get(record.gatewaySessionDigest);
-    if (!original || original.userId !== record.userId ||
-        original.expiresAt <= context.requestNow ||
-        (original.revokedAt !== null && original.revokedAt <= context.requestNow))
-      return noStore(401, "Gateway session expired");
-    const created = await createSession(context.sessionStore, {
-      userId: record.userId as typeof original.userId,
-      authenticationContext: "github-oauth",
-      now: context.requestNow,
-      ttlSeconds: Math.min(ADMIN_SESSION_TTL_SECONDS,
-        Math.floor((Date.parse(original.expiresAt) - Date.parse(context.requestNow)) / 1000)),
-      pepper: context.config.sessionPepper,
-      concurrentSessionLimit: SESSION_CONCURRENCY_LIMIT,
-    });
-    if (!created.ok) return noStore(503, "Admin session limit reached");
-    const csrf = await sessionCsrfToken(context, created.value.rawSessionId);
-    const response = redirect(adminReturnPath(record.returnTo));
+    const result = await redeemAdminHandoffCode(codes[0]!, context);
+    if (result.kind === "expired") return noStore(401, "Admin handoff expired");
+    if (result.kind === "limit") return noStore(503, "Admin session limit reached");
+    const response = redirect(adminReturnPath(result.returnTo));
     response.headers.append("Set-Cookie",
-      buildSessionCookie({ name: SESSION_COOKIE_NAME,
-        ttlSeconds: Math.min(ADMIN_SESSION_TTL_SECONDS, context.config.sessionTtlSeconds) },
-      created.value.rawSessionId));
+      buildSessionCookie({ name: SESSION_COOKIE_NAME, ttlSeconds: result.ttlSeconds },
+        result.rawSessionId));
     response.headers.append("Set-Cookie",
-      CSRF_COOKIE_NAME + "=" + encodeURIComponent(csrf) +
-      "; Path=/; Secure; SameSite=Lax; Max-Age=" + ADMIN_SESSION_TTL_SECONDS);
+      CSRF_COOKIE_NAME + "=" + encodeURIComponent(result.csrfToken) +
+      "; Path=/; Secure; SameSite=Lax; Max-Age=" + result.ttlSeconds);
     return response;
   } catch {
     return noStore(503, "Admin handoff unavailable");
@@ -232,3 +213,41 @@ export async function logoutAdmin(
 
 /** Only a bounded native form body can reach administrator mutation handlers. */
 export { boundedForm };
+
+export type AdminHandoffRedemption =
+  | { readonly kind: "ok"; readonly rawSessionId: string; readonly csrfToken: string; readonly ttlSeconds: number; readonly returnTo?: string }
+  | { readonly kind: "expired" }
+  | { readonly kind: "limit" };
+
+/** Shared atomically-consumed handoff authority for the existing host and the private RPC entrypoint. */
+export async function redeemAdminHandoffCode(
+  code: string, context: GatewayContext,
+): Promise<AdminHandoffRedemption> {
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(code) || !context.config.adminOrigin)
+    return { kind: "expired" };
+  const digest = await keyedDigest(context.config.handoffPepper, "admin-session:" + code);
+  const record = await doRequest(context, digest, "consume");
+  if (!record || record.audience !== context.config.adminOrigin ||
+      record.expiresAt <= Date.parse(context.requestNow) || !isAdmin(context, record.userId))
+    return { kind: "expired" };
+  const original = await context.sessionStore.get(record.gatewaySessionDigest);
+  if (!original || original.userId !== record.userId ||
+      original.expiresAt <= context.requestNow ||
+      (original.revokedAt !== null && original.revokedAt <= context.requestNow))
+    return { kind: "expired" };
+  const ttlSeconds = Math.min(ADMIN_SESSION_TTL_SECONDS,
+    Math.floor((Date.parse(original.expiresAt) - Date.parse(context.requestNow)) / 1000));
+  if (ttlSeconds <= 0) return { kind: "expired" };
+  const created = await createSession(context.sessionStore, {
+    userId: record.userId as typeof original.userId,
+    authenticationContext: "github-oauth",
+    now: context.requestNow,
+    ttlSeconds,
+    pepper: context.config.sessionPepper,
+    concurrentSessionLimit: SESSION_CONCURRENCY_LIMIT,
+  });
+  if (!created.ok) return { kind: "limit" };
+  return { kind: "ok", rawSessionId: created.value.rawSessionId,
+    csrfToken: await sessionCsrfToken(context, created.value.rawSessionId), ttlSeconds,
+    returnTo: adminReturnPath(record.returnTo) };
+}

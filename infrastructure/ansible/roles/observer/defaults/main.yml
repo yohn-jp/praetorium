@@ -1,0 +1,17 @@
+---
+observer_enabled: false
+observer_service_user: praetorium-observer
+observer_service_group: praetorium-observer
+observer_service_uid: 2002
+observer_service_home: /var/lib/praetorium/observer
+observer_subid_start: 1065536
+observer_subid_size: 65536
+observer_image: ""
+observer_targets: []
+observer_auth_token_src: ""
+observer_quadlet_root: /etc/containers/systemd/users
+observer_token_path: /var/lib/praetorium/credentials/observer/observer.token
+observer_targets_path: /var/lib/praetorium/observer/targets.json
+observer_memory_limit: 256m
+observer_cpu_limit: "0.5"
+observer_pids_limit: 128

@@ -47,6 +47,8 @@ jobs:
         env:
           PRAETORIUM_OPERATOR_EVIDENCE_DIR: ${{ runner.temp }}/operator-console-diagnostics
         run: node --test tests/e2e/operator-console-diagnostics.test.mjs
+      - name: Exercise independent Admin Worker browser and protected infrastructure API
+        run: node --test tests/e2e/independent-admin.test.mjs
       - name: Upload synthetic operator console browser evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -116,6 +118,9 @@ jobs:
             dockerfile: infrastructure/docker/build-worker.Dockerfile
           - service: coordination
             package: "@praetorium/coordination"
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
+          - service: observer
+            package: "@praetorium/observer"
             dockerfile: infrastructure/docker/service-runtime.Dockerfile
     steps:
       - uses: actions/checkout@v4

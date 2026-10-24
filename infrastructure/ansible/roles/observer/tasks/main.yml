@@ -1,0 +1,4 @@
+---
+- name: Configure dedicated rootless read-only Management observer only on explicit opt-in
+  ansible.builtin.include_tasks: install.yml
+  when: observer_enabled | bool

@@ -80,10 +80,6 @@ service = "praetorium-control-plane"
 pattern = "praetorium.yohn.jp"
 custom_domain = true
 
-[[routes]]
-pattern = "admin.praetorium.yohn.jp"
-custom_domain = true
-
 [vars]
 GATEWAY_ENVIRONMENT = "production"
 GATEWAY_ORIGIN = "https://praetorium.yohn.jp"

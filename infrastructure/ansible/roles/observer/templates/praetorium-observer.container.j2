@@ -1,0 +1,32 @@
+[Unit]
+Description=Praetorium read-only Management infrastructure observer
+
+[Container]
+ContainerName=praetorium-observer
+Image={{ observer_image }}
+Pull=never
+Network=bridge
+User=1000:1000
+UserNS=keep-id:uid=1000,gid=1000
+PublishPort=127.0.0.1:8791:8791/tcp
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=all
+PodmanArgs=--cpus={{ observer_cpu_limit }} --memory={{ observer_memory_limit }} --pids-limit={{ observer_pids_limit }}
+HealthCmd=["node","-e","fetch('http://127.0.0.1:8791/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=15s
+Environment=PRAETORIUM_OBSERVER_PORT=8791
+Environment=PRAETORIUM_OBSERVER_TARGETS_FILE=/run/config/targets.json
+Environment=PRAETORIUM_OBSERVER_AUTH_TOKEN_FILE=/run/secrets/observer.token
+Volume={{ observer_targets_path }}:/run/config/targets.json:ro
+Volume={{ observer_token_path }}:/run/secrets/observer.token:ro
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=0
+
+[Install]
+WantedBy=default.target

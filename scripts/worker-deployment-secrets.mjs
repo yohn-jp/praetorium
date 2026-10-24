@@ -7,6 +7,8 @@ export function writeWorkerDeploymentSecrets({
   privateBytes,
   notificationsEnabled,
   hasReleaseOperatorToken,
+  hasAdminCredential = false,
+  hasObserverCredential = false,
 }) {
   // Match the prior Wrangler secret-put stdin normalization exactly.
   const value = (role) => privateBytes(role).toString("utf8").trimEnd();
@@ -24,9 +26,16 @@ export function writeWorkerDeploymentSecrets({
         }
       : {}),
     ...(hasReleaseOperatorToken ? { RELEASE_OPERATOR_TOKEN: value("releaseOperatorToken") } : {}),
+    ...(hasAdminCredential ? { ADMIN_CONTROL_PLANE_AUTH: value("adminControlPlaneAuth") } : {}),
   };
   const files = {};
-  for (const [worker, secrets] of Object.entries({ gateway, control })) {
+  const admin = hasAdminCredential ? {
+    ADMIN_CONTROL_PLANE_AUTH: value("adminControlPlaneAuth"),
+    ...(hasObserverCredential ? { ADMIN_OBSERVER_AUTH: value("adminObserverToken") } : {}),
+  } : null;
+  for (const [worker, secrets] of Object.entries({ gateway, control,
+    ...(admin ? { admin } : {}),
+  })) {
     files[worker] = path.join(directory, `${worker}-secrets.json`);
     writeFileSync(files[worker], JSON.stringify(secrets), { mode: 0o600, flag: "wx" });
   }

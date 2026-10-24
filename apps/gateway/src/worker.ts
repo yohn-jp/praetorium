@@ -8,6 +8,7 @@ import { loadKeyRegistry } from "./adapters/key-registry-kv.js";
 import { publicJwks } from "./router.js";
 import { handle } from "./handle.js";
 
+export { AdminIdentityBroker } from "./admin/broker.js";
 export { EphemeralCodeDurableObject } from "./adapters/durable-objects/ephemeral-code-durable-object.js";
 export { UserAuthStateDurableObject } from "./adapters/durable-objects/user-auth-state-durable-object.js";
 

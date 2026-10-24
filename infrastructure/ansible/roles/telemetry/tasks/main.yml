@@ -1,0 +1,4 @@
+---
+- name: Configure independent node_exporter only when explicitly enabled
+  ansible.builtin.include_tasks: install.yml
+  when: telemetry_enabled | bool

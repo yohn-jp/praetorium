@@ -102,18 +102,20 @@ const generated = mkdtempSync(path.join(root, "infrastructure/workers/.praetoriu
 const conf = {
   gateway: path.join(generated, "gateway.json"),
   control: path.join(generated, "control-plane.json"),
+  admin: path.join(generated, "admin.json"),
 };
 try {
   const workerTemplates = [
     ["control", "control-plane.template.json"],
     ["gateway", "gateway.template.json"],
+    ["admin", "admin.template.json"],
   ];
   for (const [key, name] of workerTemplates) {
     const original = readFileSync(path.join(root, "infrastructure/workers", name), "utf8");
-    const config = JSON.parse(renderWorkerTemplate(original, inventory, key === "control" ? "control-plane" : "gateway"));
+    const config = JSON.parse(renderWorkerTemplate(original, inventory, key === "control" ? "control-plane" : key));
     config.account_id = inventory.cloudflare.accountId;
     // Generated configs live in a private subdirectory; make source and migration paths relative to it.
-    config.main = path.relative(generated, path.join(root, "apps", key === "control" ? "control-plane" : "gateway", "src/worker.ts")).replaceAll(path.sep, "/");
+    config.main = path.relative(generated, path.join(root, "apps", key === "control" ? "control-plane" : key, "src/worker.ts")).replaceAll(path.sep, "/");
     for (const database of config.d1_databases ?? []) {
       if (database.binding === "CONTROL_PLANE_DB") {
         database.migrations_dir = path.relative(generated, path.join(root, "apps/control-plane/migrations")).replaceAll(path.sep, "/");
@@ -121,6 +123,8 @@ try {
     }
     writeFileSync(conf[key], JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
   }
+  if (inventory.gateway.adminObserverVpcServiceId && !privateManifest.values.adminObserverToken)
+    throw new Error("Admin observer VPC requires the independent adminObserverToken source");
   const required = {
     [conf.gateway]: [
       "GITHUB_APP_PRIVATE_KEY", "GITHUB_OAUTH_CLIENT_SECRET", "GATEWAY_GITHUB_WEBHOOK_SECRET",
@@ -129,8 +133,12 @@ try {
       "GATEWAY_CREDENTIAL_DIGEST_PEPPER", "GATEWAY_HANDOFF_DIGEST_PEPPER",
       "GATEWAY_TOKEN_ENCRYPTION_KEY",
     ],
+    [conf.admin]: [
+      "ADMIN_CONTROL_PLANE_AUTH",
+      ...(inventory.gateway.adminObserverVpcServiceId ? ["ADMIN_OBSERVER_AUTH"] : []),
+    ],
     [conf.control]: [
-      "CONTROL_PLANE_GATEWAY_AUTH", "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
+      "ADMIN_CONTROL_PLANE_AUTH", "CONTROL_PLANE_GATEWAY_AUTH", "RUNTIME_CREDENTIAL_RETIREMENT_AUTH",
       "RUNTIME_CONTROL_SIGNING_KEY", "RUNTIME_IDENTITY_SIGNING_KEY",
     ],
   };
@@ -198,14 +206,21 @@ try {
       const secretFiles = writeWorkerDeploymentSecrets({
         directory: generated, privateBytes, notificationsEnabled,
         hasReleaseOperatorToken: Boolean(privateManifest.values.releaseOperatorToken),
+        hasAdminCredential: Boolean(privateManifest.values.adminControlPlaneAuth),
+        hasObserverCredential: Boolean(privateManifest.values.adminObserverToken),
       });
+      if (!secretFiles.admin) throw new Error("Admin dedicated service credential is required");
       wrangler(["deploy", "--config", conf.control, "--secrets-file", secretFiles.control], { capture: false });
       wrangler(["deploy", "--config", conf.gateway, "--secrets-file", secretFiles.gateway], { capture: false });
+      // The Admin custom domain has exactly one owner. Gateway must be updated
+      // before Admin attaches it; no fallback through unauthenticated Gateway routes.
+      wrangler(["deploy", "--config", conf.admin, "--secrets-file", secretFiles.admin], { capture: false });
       for (const [origin, endpoint] of [
         [inventory.domains.controlPlaneUrl, "/healthz"],
         [inventory.domains.gatewayOrigin, "/healthz"],
         [inventory.domains.gatewayOrigin, "/auth/login"],
         [inventory.domains.gatewayOrigin, "/.well-known/jwks.json"],
+        [inventory.gateway.adminOrigin, "/healthz"],
       ]) {
         const response = await fetch(origin + endpoint, { signal: AbortSignal.timeout(20_000) });
         if (!response.ok) throw new Error("Cloudflare HTTPS probe failed: " + origin + endpoint +

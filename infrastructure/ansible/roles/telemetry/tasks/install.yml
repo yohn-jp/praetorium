@@ -1,0 +1,47 @@
+---
+- name: Validate private listen address and pinned node_exporter package
+  ansible.builtin.assert:
+    that:
+      - praetorium_host_role in ['management', 'runtime', 'builder']
+      - telemetry_exporter_package_version | length > 0
+      - telemetry_exporter_port | int >= 1024
+      - telemetry_exporter_port | int <= 65535
+      - telemetry_listen_address is match('^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)[0-9.]+$')
+      - telemetry_listen_address != '0.0.0.0'
+      - telemetry_listen_address == ansible_host
+    fail_msg: "Node exporter is allowed only on the host's explicitly declared private interface."
+
+# Write the restrictive systemd override BEFORE installing the package, so
+# the package's initial service activation cannot bind a public interface.
+- name: Prepare node exporter systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/prometheus-node-exporter.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+- name: Pin node exporter to the private inventory address
+  ansible.builtin.template:
+    src: private-listener.conf.j2
+    dest: /etc/systemd/system/prometheus-node-exporter.service.d/10-praetorium-private.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: telemetry_listener
+- name: Reload daemon before package installation
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode
+- name: Install pinned node_exporter from Ubuntu
+  ansible.builtin.apt:
+    name: "prometheus-node-exporter={{ telemetry_exporter_package_version }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: telemetry_package
+- name: Ensure private node exporter is running
+  ansible.builtin.systemd_service:
+    name: prometheus-node-exporter.service
+    enabled: true
+    state: "{{ 'restarted' if telemetry_listener.changed or telemetry_package.changed else 'started' }}"
+  when: not ansible_check_mode

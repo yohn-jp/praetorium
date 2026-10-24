@@ -26,7 +26,8 @@
     "allowedRepositoryOwner": "yohn-jp",
     "githubAppId": "5355765",
     "githubOauthClientId": "Iv23liUxWil9dmhuYJuA",
-    "tokenEncryptionKeyId": "initial"
+    "tokenEncryptionKeyId": "initial",
+    "adminObserverVpcServiceId": null
   },
   "buildkit": {
     "endpoint": null,

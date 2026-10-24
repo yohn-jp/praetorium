@@ -1,0 +1,5 @@
+---
+telemetry_enabled: false
+telemetry_exporter_package_version: ""
+telemetry_listen_address: ""
+telemetry_exporter_port: 9100

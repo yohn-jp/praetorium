@@ -41,3 +41,13 @@ ansible-playbook -i /path/to/private/hosts.json playbooks/fresh-cluster-bootstra
   -e praetorium_fresh_management_api_host=192.0.2.33 \
   -e praetorium_fresh_k3s_binary_src=/path/to/pinned/k3s
 ```
+
+## Infrastructure Observability
+
+The optional `telemetry` role configures Ubuntu `prometheus-node-exporter` on the **declared private `ansible_host` only**. The service override is installed before the pinned package to prevent initial startup from binding a public address. By default `telemetry_enabled: false`; turn it on for Management, Runtime and Builder only with an exact approved package version and the private interface address.
+
+The optional Management-only `observer` role runs the separate `@praetorium/observer` OCI service under a distinct non-login rootless UID with Quadlet, `UserNS=keep-id`, read-only filesystem, no added capabilities, a dedicated token and fixed-inventory file. Podman must already be installed independently by the Management host role/Coordination prerequisites. By default `observer_enabled: false`; enabling requires an immutable `observer_image`, exact read-only `observer_targets` (node exporter and optional health endpoints), and a protected mode-0600 `observer_auth_token_src`. The role has no k3s unit dependency and does not grant Kubernetes/BuildKit/host execution rights.
+
+Observer publishes **only** `127.0.0.1:8791`. A separately provisioned Cloudflare Workers VPC Service may target that loopback port, projected by optional deployment inventory `gateway.adminObserverVpcServiceId`. `ADMIN_OBSERVER_AUTH` for the Admin Worker comes from the protected `adminObserverToken` secret file. Neither is the Coordination Work Notification token. Ensure the host secret and Worker secret agree without recording the value in Git.
+
+The Admin page returns explicit `OBSERVER_NOT_CONFIGURED` or `OBSERVER_UNAVAILABLE` until those external resources exist. Wiring does not imply that the VPC Service, credentials, exporters or host services have been deployed; verify via current inventory readback after applying a separately approved deployment.

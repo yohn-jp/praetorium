@@ -48,7 +48,7 @@ const Policy = z.strictObject({
  */
 export async function authorizeConfiguredReleaseOperator(
   headers: Headers,
-  input: { operatorToken: string; gatewayServiceSecret: string | undefined; operatorActorId: string },
+  input: { operatorToken: string; gatewayServiceSecret: string | undefined; adminServiceSecret?: string; operatorActorId: string },
 ): Promise<{ actorId: string } | null> {
   if (await equalSecret(
     headers.get("Authorization")?.replace(/^Bearer /u, "") ?? "", input.operatorToken,
@@ -57,6 +57,11 @@ export async function authorizeConfiguredReleaseOperator(
     input.gatewayServiceSecret &&
     headers.get("X-Praetorium-Admin-Actor") === input.operatorActorId &&
     await equalSecret(headers.get("X-Control-Plane-Gateway-Auth") ?? "", input.gatewayServiceSecret)
+  ) return { actorId: input.operatorActorId };
+  if (
+    input.adminServiceSecret &&
+    headers.get("X-Praetorium-Admin-Actor") === input.operatorActorId &&
+    await equalSecret(headers.get("X-Control-Plane-Admin-Auth") ?? "", input.adminServiceSecret)
   ) return { actorId: input.operatorActorId };
   return null;
 }
@@ -71,6 +76,7 @@ export function composeReleaseServices(input: {
   operatorToken: string;
   /** Existing authenticated Gateway service binding, never exposed to browsers. */
   gatewayServiceSecret?: string;
+  adminServiceSecret?: string;
   notifyWorkAvailable?: WorkNotificationDispatcher;
 }) {
   const policy = Policy.parse(JSON.parse(input.policyJson));
@@ -113,6 +119,7 @@ export function composeReleaseServices(input: {
     authorizeOperator: (headers) => authorizeConfiguredReleaseOperator(headers, {
       operatorToken: input.operatorToken,
       gatewayServiceSecret: input.gatewayServiceSecret,
+      ...(input.adminServiceSecret ? {adminServiceSecret: input.adminServiceSecret} : {}),
       operatorActorId: policy.operatorActorId,
     }),
     registry: input.builds.registry,

@@ -95,7 +95,7 @@ describe("independent Admin session boundary", () => {
     const response = await handleAdminHost(new Request(ADMIN + "/builds"), context);
     expect(response.status).toBe(303);
     expect(response.headers.get("Location")).toBe(GATEWAY + "/_admin/entry?return_to=" +
-      encodeURIComponent("/builds?ui=desktop"));
+      encodeURIComponent("/builds"));
     expect((await handleAdminHost(new Request(ADMIN + "/unrecognized"), context)).status).toBe(403);
     expect(cp.fetch).not.toHaveBeenCalled();
   });

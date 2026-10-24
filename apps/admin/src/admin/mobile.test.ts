@@ -445,3 +445,17 @@ it("links Canary operation evidence from the mobile audit trail", () => {
   }));
   expect(html).toContain('href="/operations/op_123?ui=mobile"');
 });
+
+
+it("focuses an admitted newer Source instead of obsolete failed jobs on Overview", () => {
+  const newer={...sourceJob,id:"sr_00000000-0000-4000-a000-000000000003",
+    version:"0.3.4",tag:"v0.3.4",state:"admitted" as const,error:null,
+    retryable:false,admittedReleaseId:"rel_current"};
+  const html=renderMobileConsole(model({section:"overview",
+    builds:dependency({items:[sourceJob,newer],nextCursor:null},"builds")}));
+  const from=html.indexOf('class="admin-mobile-focus"');
+  const focus=html.slice(from,html.indexOf("</section>",from));
+  expect(focus).toContain("v0.3.4");
+  expect(focus).not.toContain("ACTIVE INCIDENT");
+  expect(focus).not.toContain("SOURCE_BUILD_FAILED");
+});

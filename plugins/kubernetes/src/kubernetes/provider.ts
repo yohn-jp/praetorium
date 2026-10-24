@@ -19,6 +19,15 @@ import {
   managedLabels,
 } from "../labels.js";
 import { runtimeNamespaceName, runtimeResourceName, validateNamespace } from "../naming.js";
+import {
+  createEmptyHistorySnapshot,
+  HISTORY_CONTRACT_VERSION,
+  HISTORY_RESTORE_NODE_SCRIPT,
+  HISTORY_SEED_KEY,
+  parseHistorySnapshot,
+  type HistorySnapshot,
+  type HistorySourceDirectory,
+} from "./history.js";
 import type {
   ApplyResult,
   InstanceIdentity,
@@ -35,6 +44,7 @@ import type {
   RuntimeProvider,
   RuntimeResourceProfile,
   RuntimeResourceQuantities,
+  RuntimeInstanceSpec,
   RunningInstanceSpec,
   StoppedInstanceSpec,
   RuntimeWriterCensus,
@@ -74,6 +84,7 @@ const API_VERSIONS: Readonly<Record<KubernetesResourceKind, string>> = {
   IngressRoute: "traefik.io/v1alpha1",
   LimitRange: "v1",
   NetworkPolicy: "networking.k8s.io/v1",
+  PersistentVolumeClaim: "v1",
   ResourceQuota: "v1",
   RoleBinding: "rbac.authorization.k8s.io/v1",
   Secret: "v1",
@@ -86,6 +97,8 @@ const PROVISIONER_SERVICE_ACCOUNT = "praetorium-provisioner";
 const PROVISIONER_TENANT_ROLE = "praetorium-provisioner-tenant-runtime";
 const MAX_LIST_PAGES = 1_000;
 const MAX_TENANT_PODS = 10_000;
+const HISTORY_ANNOTATION = "praetorium.io/history-contract";
+const HISTORY_STORAGE_CLASS = "local-path";
 
 export interface KubernetesRuntimeProviderOptions {
   readonly api: KubernetesApi;
@@ -96,6 +109,8 @@ export interface KubernetesRuntimeProviderOptions {
   readonly now?: () => number;
   readonly maxCapacityAgeMs: number;
   readonly maxActivationEvidenceAgeMs?: number;
+  /** Remains false until the producer contract proves safe-history quiescence. */
+  readonly privateHistoryWriteFreezeProven?: boolean;
   /** Operator-owned Docker config; never part of a RuntimeInstanceSpec. */
   readonly imagePullConfigJson?: string;
 }
@@ -135,6 +150,10 @@ interface ParsedPodEvidence extends RuntimeWriterPodIdentity {
   readonly ownershipValid: boolean;
   readonly applicationImageDigest?: string;
 }
+
+type HistoryPodLayout =
+  | { readonly kind: "legacy"; readonly sourceDirectory: HistorySourceDirectory }
+  | { readonly kind: "persistent" };
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -276,6 +295,63 @@ function namespaceOwnershipLabels(identity: InstanceIdentity): Readonly<Record<s
     [OWNERSHIP_LABEL_KEY]: OWNERSHIP_VERSION,
     [CLUSTER_LABEL_KEY]: identity.clusterId,
   };
+}
+
+function historyLabels(identity: InstanceIdentity): Readonly<Record<string, string>> {
+  return namespaceOwnershipLabels(identity);
+}
+
+function historyClaimName(identity: InstanceIdentity): string {
+  return `${runtimeResourceName(identity.instanceId)}-history`;
+}
+
+function historySeedName(identity: InstanceIdentity): string {
+  return `${runtimeResourceName(identity.instanceId)}-history-seed`;
+}
+
+function stableHistoryResourceMetadata(
+  value: unknown,
+  identity: InstanceIdentity,
+  namespaceName: string,
+  expectedName: string,
+): ObjectMetadata {
+  const metadata = objectMetadata(value);
+  const expected = historyLabels(identity);
+  if (
+    metadata.namespace !== namespaceName ||
+    metadata.name !== expectedName ||
+    metadata.uid === null ||
+    metadata.deleting ||
+    Object.entries(expected).some(([key, label]) => metadata.labels[key] !== label) ||
+    [RUNTIME_EPOCH_LABEL_KEY, GENERATION_LABEL_KEY, RELEASE_LABEL_KEY].some(
+      (key) => key in metadata.labels,
+    ) ||
+    metadata.annotations[HISTORY_ANNOTATION] !== HISTORY_CONTRACT_VERSION
+  ) {
+    throw new RuntimeProviderError(
+      "conflict",
+      "stable private-history resource ownership does not match",
+      "terminal",
+    );
+  }
+  return metadata;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+function decodeBase64Text(value: string): string {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value))
+    throw new TypeError("private-history Secret encoding is invalid");
+  const binary = atob(value);
+  if (btoa(binary) !== value) throw new TypeError("private-history Secret encoding is not canonical");
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }
 
 const RESTRICTED_POD_SECURITY_LABELS = {
@@ -654,6 +730,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
   private readonly namespacePrefix: string;
   private readonly now: () => number;
   private readonly maxActivationEvidenceAgeMs: number;
+  private readonly privateHistoryWriteFreezeProven: boolean;
 
   constructor(private readonly options: KubernetesRuntimeProviderOptions) {
     this.namespacePrefix = validateNamespace(options.namespacePrefix);
@@ -668,6 +745,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       );
     }
     this.maxActivationEvidenceAgeMs = options.maxActivationEvidenceAgeMs ?? 30_000;
+    this.privateHistoryWriteFreezeProven = options.privateHistoryWriteFreezeProven === true;
     if (
       !Number.isSafeInteger(this.maxActivationEvidenceAgeMs) ||
       this.maxActivationEvidenceAgeMs < 1
@@ -820,6 +898,212 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       ...(actualImageDigest === undefined ? {} : { observedImageDigest: actualImageDigest }),
       conditions: deployment === undefined ? [] : deploymentConditions(deployment),
     };
+  }
+
+  /** Captures legacy private history only after the lifecycle's safe quiesce. */
+  async preserveHistoryBeforeStop(
+    spec: StoppedInstanceSpec,
+    signal: AbortSignal,
+    beforeEffect: RuntimeEffectGuard,
+  ): Promise<void> {
+    validateIdentity(spec, this.options.clusterId);
+    const initial = await this.inspect(spec, signal);
+    if (initial.writerCensus.queriedPodCount === 0) return;
+    const firstWriter = initial.writerCensus.pods[0];
+    if (
+      initial.writerCensus.complete !== true ||
+      spec.release === null ||
+      initial.writerCensus.scope !== "instance-repository-all-epochs" ||
+      initial.writerCensus.queriedPodCount !== 1 ||
+      initial.writerCensus.pods.length !== 1 ||
+      initial.writerCensus.namespaceUid === null ||
+      firstWriter === undefined ||
+      firstWriter.uid.length === 0 ||
+      firstWriter.runtimeEpoch !== spec.runtimeEpoch ||
+      firstWriter.generation !== spec.generation ||
+      firstWriter.phase !== "Running" ||
+      firstWriter.deleting ||
+      firstWriter.imageIds.every((imageId) => !imageId.endsWith(spec.release?.platformManifestDigest ?? ""))
+    ) {
+      throw new RuntimeProviderError(
+        "unavailable",
+        "private-history snapshot requires one exact running writer",
+        "retryable",
+      );
+    }
+
+    const namespaceName = this.namespaceFor(spec.instanceId);
+    const pod = await this.getOptional(
+      { kind: "Pod", namespace: namespaceName, name: firstWriter.name },
+      signal,
+    );
+    if (pod === undefined)
+      throw new RuntimeProviderError("unavailable", "history source Pod disappeared", "retryable");
+    const sourceLayout = this.historyPodLayout(pod, spec, firstWriter.uid);
+    const pvcName = historyClaimName(spec);
+    const seedName = historySeedName(spec);
+    const pvc = await this.getOptional(
+      { kind: "PersistentVolumeClaim", namespace: namespaceName, name: pvcName },
+      signal,
+    );
+    const existingSeed = await this.getOptional(
+      { kind: "Secret", namespace: namespaceName, name: seedName },
+      signal,
+    );
+
+    if (sourceLayout.kind === "persistent") {
+      if (pvc === undefined || existingSeed === undefined)
+        throw new RuntimeProviderError(
+          "conflict",
+          "current private-history Pod is missing its stable PVC or seed Secret",
+          "terminal",
+        );
+      this.assertHistoryPvc(pvc, spec, namespaceName, pvcName);
+      this.readHistorySeed(existingSeed, spec, namespaceName, seedName);
+      const readMarker = this.options.api.readHistoryMarker;
+      if (readMarker === undefined)
+        throw new RuntimeProviderError("misconfigured", "private-history marker reader is unavailable", "terminal");
+      let marker: Record<string, unknown>;
+      try {
+        marker = JSON.parse(
+          await readMarker.call(this.options.api, {
+            namespace: namespaceName,
+            podName: firstWriter.name,
+            sourcePodUid: firstWriter.uid,
+            signal,
+          }),
+        ) as Record<string, unknown>;
+      } catch {
+        throw new RuntimeProviderError(
+          "unavailable",
+          "stable private-history ownership marker could not be verified",
+          "retryable",
+        );
+      }
+      if (
+        marker.schemaVersion !== 1 ||
+        marker.instanceId !== spec.instanceId ||
+        marker.repositoryId !== String(spec.repositoryId) ||
+        marker.clusterId !== spec.clusterId ||
+        marker.claimName !== pvcName ||
+        typeof marker.sourcePodUid !== "string" ||
+        typeof marker.seedManifestSha256 !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(marker.seedManifestSha256)
+      ) {
+        throw new RuntimeProviderError(
+          "conflict",
+          "stable private-history ownership marker does not match this instance",
+          "terminal",
+        );
+      }
+      return;
+    }
+
+    if (pvc !== undefined)
+      throw new RuntimeProviderError(
+        "conflict",
+        "legacy history Pod conflicts with an existing stable PVC",
+        "terminal",
+      );
+    if (!this.privateHistoryWriteFreezeProven)
+      throw new RuntimeProviderError(
+        "unavailable",
+        "producer contract does not yet prove private-history writes freeze during safe quiesce",
+        "retryable",
+      );
+
+    const readSnapshot = this.options.api.readHistorySnapshot;
+    if (readSnapshot === undefined)
+      throw new RuntimeProviderError("misconfigured", "private-history snapshot reader is unavailable", "terminal");
+    await beforeEffect();
+    const firstSnapshot = parseHistorySnapshot(
+      await readSnapshot.call(this.options.api, {
+        namespace: namespaceName,
+        podName: firstWriter.name,
+        sourceDirectory: sourceLayout.sourceDirectory,
+        sourcePodUid: firstWriter.uid,
+        signal,
+      }),
+      firstWriter.uid,
+    );
+    const secondCensus = await this.inspect(spec, signal);
+    const secondWriter = secondCensus.writerCensus.pods[0];
+    if (
+      secondCensus.writerCensus.complete !== true ||
+      secondCensus.writerCensus.scope !== "instance-repository-all-epochs" ||
+      secondCensus.writerCensus.queriedPodCount !== 1 ||
+      secondCensus.writerCensus.pods.length !== 1 ||
+      secondCensus.writerCensus.namespaceUid !== initial.writerCensus.namespaceUid ||
+      secondWriter?.uid !== firstWriter.uid ||
+      secondWriter.runtimeEpoch !== spec.runtimeEpoch ||
+      secondWriter.generation !== spec.generation ||
+      secondWriter.phase !== "Running" ||
+      secondWriter.deleting
+    ) {
+      throw new RuntimeProviderError(
+        "conflict",
+        "private-history source writer changed during the post-quiesce snapshot",
+        "retryable",
+      );
+    }
+    const secondPod = await this.getOptional(
+      { kind: "Pod", namespace: namespaceName, name: firstWriter.name },
+      signal,
+    );
+    if (secondPod === undefined) throw new RuntimeProviderError("unavailable", "history source Pod disappeared", "retryable");
+    const secondLayout = this.historyPodLayout(secondPod, spec, firstWriter.uid);
+    if (secondLayout.kind !== "legacy" || secondLayout.sourceDirectory !== sourceLayout.sourceDirectory)
+      throw new RuntimeProviderError("conflict", "private-history source mount changed", "retryable");
+
+    await beforeEffect();
+    const secondSnapshot = parseHistorySnapshot(
+      await readSnapshot.call(this.options.api, {
+        namespace: namespaceName,
+        podName: firstWriter.name,
+        sourceDirectory: sourceLayout.sourceDirectory,
+        sourcePodUid: firstWriter.uid,
+        signal,
+      }),
+      firstWriter.uid,
+    );
+    if (secondSnapshot.manifestSha256 !== firstSnapshot.manifestSha256)
+      throw new RuntimeProviderError(
+        "conflict",
+        "private history changed during the post-quiesce snapshot",
+        "retryable",
+      );
+
+    const snapshotSecret = this.historySeedResource(spec, namespaceName, secondSnapshot);
+    if (existingSeed !== undefined) {
+      const stored = this.readHistorySeed(existingSeed, spec, namespaceName, seedName);
+      if (stored.manifestSha256 !== secondSnapshot.manifestSha256)
+        throw new RuntimeProviderError(
+          "conflict",
+          "a different retained private-history seed already exists",
+          "terminal",
+        );
+      return;
+    }
+    await beforeEffect();
+    try {
+      await this.options.api.create(snapshotSecret, signal);
+    } catch (error) {
+      if (!(error instanceof KubernetesApiError) || error.statusCode !== 409)
+        throw mapKubernetesError(error);
+      const raced = await this.getOptional(
+        { kind: "Secret", namespace: namespaceName, name: seedName },
+        signal,
+      );
+      if (raced === undefined)
+        throw new RuntimeProviderError("conflict", "private-history seed create raced", "retryable");
+      const stored = this.readHistorySeed(raced, spec, namespaceName, seedName);
+      if (stored.manifestSha256 !== secondSnapshot.manifestSha256)
+        throw new RuntimeProviderError(
+          "conflict",
+          "a different retained private-history seed already exists",
+          "terminal",
+        );
+    }
   }
 
   /** Reads the current Provisioner-owned Hosted assignment and identity projection. */
@@ -1029,13 +1313,18 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     await this.deactivateCurrentEndpoint(spec, signal, beforeEffect);
     await this.ensureNamespace(spec, signal, beforeEffect);
     await this.ensureRuntimeRoleBinding(spec, signal, beforeEffect);
+    if (spec.scriptoriumAssignment !== undefined)
+      await this.prepareHistorySeed(spec, signal, beforeEffect);
     const resources = this.options.renderer.renderRunning(spec);
     this.validateRenderedResources(resources, spec);
     const imagePullSecret = this.imagePullSecretResource(spec);
     if (imagePullSecret !== undefined)
       await this.upsertResource(imagePullSecret, spec, signal, beforeEffect);
-    for (const resource of resources)
-      await this.upsertResource(resource, spec, signal, beforeEffect);
+    for (const resource of resources) {
+      if (resource.kind === "PersistentVolumeClaim")
+        await this.ensureHistoryPvc(resource, spec, signal, beforeEffect);
+      else await this.upsertResource(resource, spec, signal, beforeEffect);
+    }
 
     observation = await this.inspect(spec, signal);
     const ready = this.isDesiredAndReady(observation, spec);
@@ -1478,6 +1767,290 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     );
   }
 
+  private historyPodLayout(
+    pod: unknown,
+    spec: StoppedInstanceSpec,
+    expectedUid: string,
+  ): HistoryPodLayout {
+    const namespaceName = this.namespaceFor(spec.instanceId);
+    const metadata = assertObjectOwned(pod, spec, namespaceName);
+    const identity = identityFromLabels(metadata.labels, this.options.clusterId);
+    const podSpec = record(record(pod)?.spec);
+    const status = record(record(pod)?.status);
+    const containers = Array.isArray(podSpec?.containers) ? podSpec.containers : [];
+    const application = containers.find((container) => record(container)?.name === "scriptorium");
+    const applicationRecord = record(application);
+    const volumes = Array.isArray(podSpec?.volumes) ? podSpec.volumes.map(record) : [];
+    const mounts = Array.isArray(applicationRecord?.volumeMounts)
+      ? applicationRecord.volumeMounts.map(record)
+      : [];
+    const environment = Array.isArray(applicationRecord?.env) ? applicationRecord.env.map(record) : [];
+    const usageDirectory = environment.find((item) => item?.name === "SCRIPTORIUM_USAGE_DIR")?.value;
+    const hasWorkspace = volumes.some(
+      (volume) => volume?.name === "workspace" && record(volume.emptyDir) !== undefined,
+    );
+    const workspaceMount = mounts.find((mount) => mount?.name === "workspace");
+    const historyVolume = volumes.find((volume) => volume?.name === "history");
+    const historyMount = mounts.find((mount) => mount?.name === "history");
+    const expectedImage = spec.release?.artifactRef;
+    if (
+      metadata.uid !== expectedUid ||
+      metadata.deleting ||
+      identity === null ||
+      identity.runtimeEpoch !== spec.runtimeEpoch ||
+      identity.generation !== spec.generation ||
+      status?.phase !== "Running" ||
+      applicationRecord?.image !== expectedImage ||
+      hasWorkspace !== true ||
+      workspaceMount?.mountPath !== "/data" ||
+      workspaceMount.readOnly === true
+    ) {
+      throw new RuntimeProviderError(
+        "conflict",
+        "private-history source Pod identity or workspace mount is invalid",
+        "terminal",
+      );
+    }
+    if (historyVolume !== undefined) {
+      const claim = record(historyVolume.persistentVolumeClaim);
+      const seedVolume = volumes.find((volume) => volume?.name === "history-seed");
+      const seed = record(seedVolume?.secret);
+      const initContainers = Array.isArray(podSpec?.initContainers)
+        ? podSpec.initContainers.map(record)
+        : [];
+      const restore = initContainers.find((container) => container?.name === "history-restore");
+      const restoreMounts = Array.isArray(restore?.volumeMounts)
+        ? restore.volumeMounts.map(record)
+        : [];
+      const restoreCommand = Array.isArray(restore?.command) ? restore.command : [];
+      const initStatuses = Array.isArray(status?.initContainerStatuses)
+        ? status.initContainerStatuses.map(record)
+        : [];
+      const restoreStatus = initStatuses.find((item) => item?.name === "history-restore");
+      const terminated = record(record(restoreStatus?.state)?.terminated);
+      if (
+        claim?.claimName !== historyClaimName(spec) ||
+        claim.readOnly === true ||
+        historyMount?.mountPath !== "/history" ||
+        historyMount.readOnly === true ||
+        usageDirectory !== "/history" ||
+        seed?.secretName !== historySeedName(spec) ||
+        restore?.image !== expectedImage ||
+        restoreCommand.length !== 3 ||
+        restoreCommand[0] !== "node" ||
+        restoreCommand[1] !== "-e" ||
+        restoreCommand[2] !== HISTORY_RESTORE_NODE_SCRIPT ||
+        !restoreMounts.some((mount) => mount?.name === "history" && mount.mountPath === "/history") ||
+        !restoreMounts.some((mount) => mount?.name === "history-seed" && mount.mountPath === "/history-seed" && mount.readOnly === true) ||
+        terminated?.exitCode !== 0
+      ) {
+        throw new RuntimeProviderError(
+          "conflict",
+          "private-history PVC mount or restore init identity is invalid",
+          "terminal",
+        );
+      }
+      return { kind: "persistent" };
+    }
+    if (
+      historyMount !== undefined ||
+      usageDirectory !== "/data/history" ||
+      volumes.some((volume) => volume?.persistentVolumeClaim !== undefined)
+    ) {
+      throw new RuntimeProviderError(
+        "conflict",
+        "private-history Pod layout is unsupported",
+        "terminal",
+      );
+    }
+    return { kind: "legacy", sourceDirectory: "/data/history" };
+  }
+
+  private historySeedResource(
+    identity: InstanceIdentity,
+    namespaceName: string,
+    snapshot: HistorySnapshot,
+  ): KubernetesResource {
+    const name = historySeedName(identity);
+    const content = new TextEncoder().encode(JSON.stringify(snapshot));
+    if (content.byteLength > 768 * 1024)
+      throw new RuntimeProviderError("capacity", "private-history seed exceeds its manifest bound", "terminal");
+    return {
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: {
+        name,
+        namespace: namespaceName,
+        labels: historyLabels(identity),
+        annotations: { [HISTORY_ANNOTATION]: HISTORY_CONTRACT_VERSION },
+      },
+      type: "Opaque",
+      immutable: true,
+      data: { [HISTORY_SEED_KEY]: encodeBase64(content) },
+    };
+  }
+
+  private readHistorySeed(
+    value: unknown,
+    identity: InstanceIdentity,
+    namespaceName: string,
+    expectedName: string,
+  ): HistorySnapshot {
+    stableHistoryResourceMetadata(value, identity, namespaceName, expectedName);
+    const resource = record(value);
+    const data = record(resource?.data);
+    if (
+      resource?.kind !== "Secret" ||
+      resource.apiVersion !== "v1" ||
+      resource.type !== "Opaque" ||
+      resource.immutable !== true ||
+      data === undefined ||
+      Object.keys(data).length !== 1 ||
+      typeof data[HISTORY_SEED_KEY] !== "string" ||
+      data[HISTORY_SEED_KEY].length > 1_000_000
+    ) {
+      throw new RuntimeProviderError(
+        "conflict",
+        "stable private-history seed Secret has an invalid shape",
+        "terminal",
+      );
+    }
+    try {
+      const text = decodeBase64Text(data[HISTORY_SEED_KEY] as string);
+      const root = record(JSON.parse(text) as unknown);
+      if (typeof root?.sourcePodUid !== "string") throw new TypeError("seed source uid missing");
+      return parseHistorySnapshot(text, root.sourcePodUid);
+    } catch {
+      throw new RuntimeProviderError(
+        "conflict",
+        "stable private-history seed failed validation",
+        "terminal",
+      );
+    }
+  }
+
+  private assertHistoryPvc(
+    value: unknown,
+    identity: InstanceIdentity & Pick<RuntimeInstanceSpec, "resourceProfile">,
+    namespaceName: string,
+    expectedName: string,
+  ): void {
+    stableHistoryResourceMetadata(value, identity, namespaceName, expectedName);
+    const resource = record(value);
+    const spec = record(resource?.spec);
+    const accessModes = Array.isArray(spec?.accessModes) ? spec.accessModes : [];
+    const resources = record(spec?.resources);
+    const requests = record(resources?.requests);
+    const request = requests?.storage;
+    const match = typeof request === "string" ? /^([1-9]\d*)Mi$/u.exec(request) : null;
+    const requestedMiB = match === null ? null : Number(match[1]);
+    if (
+      resource?.kind !== "PersistentVolumeClaim" ||
+      resource.apiVersion !== "v1" ||
+      spec?.storageClassName !== HISTORY_STORAGE_CLASS ||
+      accessModes.length !== 1 ||
+      accessModes[0] !== "ReadWriteOnce" ||
+      requestedMiB === null ||
+      !Number.isSafeInteger(requestedMiB) ||
+      requestedMiB < 1 ||
+      requestedMiB > identity.resourceProfile.request.ephemeralStorageMiB
+    ) {
+      throw new RuntimeProviderError(
+        "conflict",
+        "stable private-history PVC exceeds its admitted storage profile",
+        "terminal",
+      );
+    }
+  }
+
+  private async prepareHistorySeed(
+    spec: RunningInstanceSpec,
+    signal: AbortSignal,
+    beforeEffect: RuntimeEffectGuard,
+  ): Promise<void> {
+    const namespaceName = this.namespaceFor(spec.instanceId);
+    const claimName = historyClaimName(spec);
+    const seedName = historySeedName(spec);
+    const pvc = await this.getOptional(
+      { kind: "PersistentVolumeClaim", namespace: namespaceName, name: claimName },
+      signal,
+    );
+    if (pvc !== undefined) this.assertHistoryPvc(pvc, spec, namespaceName, claimName);
+    const seed = await this.getOptional(
+      { kind: "Secret", namespace: namespaceName, name: seedName },
+      signal,
+    );
+    if (seed !== undefined) {
+      this.readHistorySeed(seed, spec, namespaceName, seedName);
+      return;
+    }
+    if (pvc !== undefined)
+      throw new RuntimeProviderError(
+        "conflict",
+        "stable private-history PVC exists without its retained seed Secret",
+        "terminal",
+      );
+    const oldDeployment = await this.getOptional(
+      { kind: "Deployment", namespace: namespaceName, name: runtimeResourceName(spec.instanceId) },
+      signal,
+    );
+    if (oldDeployment !== undefined)
+      throw new RuntimeProviderError(
+        "unavailable",
+        "existing runtime has no preserved private-history seed or PVC",
+        "terminal",
+      );
+    const emptySeed = this.historySeedResource(
+      spec,
+      namespaceName,
+      createEmptyHistorySnapshot(),
+    );
+    await beforeEffect();
+    try {
+      await this.options.api.create(emptySeed, signal);
+    } catch (error) {
+      if (!(error instanceof KubernetesApiError) || error.statusCode !== 409)
+        throw mapKubernetesError(error);
+      const raced = await this.getOptional(
+        { kind: "Secret", namespace: namespaceName, name: seedName },
+        signal,
+      );
+      if (raced === undefined) throw new RuntimeProviderError("conflict", "history seed create raced", "retryable");
+      this.readHistorySeed(raced, spec, namespaceName, seedName);
+    }
+  }
+
+  private async ensureHistoryPvc(
+    resource: KubernetesResource,
+    spec: RunningInstanceSpec | ReleaseSpec,
+    signal: AbortSignal,
+    beforeEffect: RuntimeEffectGuard,
+  ): Promise<void> {
+    const namespaceName = this.namespaceFor(spec.instanceId);
+    const name = historyClaimName(spec);
+    const current = await this.getOptional(
+      { kind: "PersistentVolumeClaim", namespace: namespaceName, name },
+      signal,
+    );
+    if (current !== undefined) {
+      this.assertHistoryPvc(current, spec, namespaceName, name);
+      return;
+    }
+    await beforeEffect();
+    try {
+      await this.options.api.create(resource, signal);
+    } catch (error) {
+      if (!(error instanceof KubernetesApiError) || error.statusCode !== 409)
+        throw mapKubernetesError(error);
+      const raced = await this.getOptional(
+        { kind: "PersistentVolumeClaim", namespace: namespaceName, name },
+        signal,
+      );
+      if (raced === undefined) throw new RuntimeProviderError("conflict", "history PVC create raced", "retryable");
+      this.assertHistoryPvc(raced, spec, namespaceName, name);
+    }
+  }
+
   private namespaceFor(instanceId: InstanceIdentity["instanceId"]): string {
     return runtimeNamespaceName(this.namespacePrefix, instanceId);
   }
@@ -1844,6 +2417,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       baseName + "-network",
       baseName + "-quota",
       baseName + "-limits",
+      ...(spec.scriptoriumAssignment === undefined ? [] : [baseName + "-history"]),
       ...(spec.scriptoriumAssignment === undefined ? [] : [baseName + "-runtime"]),
     ]);
     const namespaceName = this.namespaceFor(spec.instanceId);
@@ -1861,6 +2435,34 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
           "terminal",
         );
       }
+      if (resource.kind === "PersistentVolumeClaim") {
+        const expectedStableLabels = historyLabels(spec);
+        const pvcSpec = record(resource.spec);
+        const accessModes = Array.isArray(pvcSpec?.accessModes) ? pvcSpec.accessModes : [];
+        const requests = record(record(pvcSpec?.resources)?.requests);
+        if (
+          spec.scriptoriumAssignment === undefined ||
+          resource.metadata.name !== `${baseName}-history` ||
+          Object.entries(expectedStableLabels).some(
+            ([key, value]) => resource.metadata.labels[key] !== value,
+          ) ||
+          [RUNTIME_EPOCH_LABEL_KEY, GENERATION_LABEL_KEY, RELEASE_LABEL_KEY].some(
+            (key) => key in resource.metadata.labels,
+          ) ||
+          resource.metadata.annotations?.[HISTORY_ANNOTATION] !== HISTORY_CONTRACT_VERSION ||
+          pvcSpec?.storageClassName !== HISTORY_STORAGE_CLASS ||
+          accessModes.length !== 1 ||
+          accessModes[0] !== "ReadWriteOnce" ||
+          requests?.storage !== `${spec.resourceProfile.request.ephemeralStorageMiB}Mi`
+        ) {
+          throw new RuntimeProviderError(
+            "invalid_spec",
+            "renderer returned an invalid stable private-history PVC",
+            "terminal",
+          );
+        }
+        continue;
+      }
       const expected = resourceLabels(spec, spec.release.releaseId);
       if (
         Object.entries(expected).some(([key, value]) => resource.metadata.labels[key] !== value)
@@ -1875,6 +2477,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     const hostedSecrets = resources.filter(
       (resource) => resource.kind === "Secret" && resource.metadata.name === `${baseName}-runtime`,
     );
+    const historyClaims = resources.filter((resource) => resource.kind === "PersistentVolumeClaim");
     if (hostedSecrets.length !== (spec.scriptoriumAssignment === undefined ? 0 : 1)) {
       throw new RuntimeProviderError(
         "invalid_spec",
@@ -1882,6 +2485,12 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
         "terminal",
       );
     }
+    if (historyClaims.length !== (spec.scriptoriumAssignment === undefined ? 0 : 1))
+      throw new RuntimeProviderError(
+        "invalid_spec",
+        "renderer did not return the stable private-history PVC",
+        "terminal",
+      );
     const deployment = resources.find((resource) => resource.kind === "Deployment");
     if (deployment === undefined || appContainerImage(deployment) !== spec.release.artifactRef) {
       throw new RuntimeProviderError(

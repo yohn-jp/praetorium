@@ -49,6 +49,7 @@ export interface InClusterRuntimeOptions {
     readonly ephemeralStorageMiB: number;
   };
   readonly maxCapacityAgeMs: number;
+  readonly privateHistoryWriteFreezeProven?: boolean;
   /** Operator-owned Docker config; kept outside RuntimeInstanceSpec. */
   readonly imagePullConfigJson?: string;
   readonly convergenceTimeoutMs?: number;
@@ -264,6 +265,9 @@ export class KubernetesLifecycleRuntimeAdapter
       namespacePrefix: options.namespacePrefix,
       clusterId: options.clusterId,
       maxCapacityAgeMs: options.maxCapacityAgeMs,
+      ...(options.privateHistoryWriteFreezeProven === undefined
+        ? {}
+        : { privateHistoryWriteFreezeProven: options.privateHistoryWriteFreezeProven }),
       ...(options.imagePullConfigJson === undefined
         ? {}
         : { imagePullConfigJson: options.imagePullConfigJson }),
@@ -375,6 +379,12 @@ export class KubernetesLifecycleRuntimeAdapter
   ): Promise<void> {
     const spec = runtimeSpec(assignment);
     const deadline = this.now() + this.convergenceTimeoutMs;
+    await beforeEffect();
+    await this.provider.preserveHistoryBeforeStop(
+      spec,
+      signal ?? new AbortController().signal,
+      beforeEffect,
+    );
     do {
       await beforeEffect();
       const result = await this.provider.ensureStopped(

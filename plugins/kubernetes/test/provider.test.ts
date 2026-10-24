@@ -175,6 +175,7 @@ class FakeKubernetesApi implements KubernetesApi {
   readonly writes: string[] = [];
   readonly gets: KubernetesResourceReference[] = [];
   readonly deletes: KubernetesResourceReference[] = [];
+  readonly historySnapshotCalls: Array<{ readonly podName: string; readonly sourcePodUid: string }> = [];
   readonly deletePreconditions: Array<{
     readonly reference: KubernetesResourceReference;
     readonly preconditions: KubernetesObjectPreconditions;
@@ -264,6 +265,14 @@ class FakeKubernetesApi implements KubernetesApi {
 
   async apply(resource: KubernetesResource): Promise<unknown> {
     return this.put(resource.kind, resource.metadata.namespace, resource.metadata.name, resource);
+  }
+
+  async readHistorySnapshot(input: {
+    readonly podName: string;
+    readonly sourcePodUid: string;
+  }): Promise<string> {
+    this.historySnapshotCalls.push(input);
+    return "{}";
   }
 
   async create(resource: KubernetesResource): Promise<unknown> {
@@ -474,6 +483,76 @@ function provider(
   });
 }
 
+function addLegacyWriter(api: FakeKubernetesApi): void {
+  api.namespaces.set(NAMESPACE, ownedTenantNamespace());
+  const renderer = createKubernetesResourceRenderer({
+    namespacePrefix: PREFIX,
+    clusterId: CLUSTER_ID,
+    ingressNamespace: "traefik",
+    instanceAccessNamespace: "praetorium-system",
+    instanceAccessService: "instance-access",
+    controlNamespace: "praetorium-system",
+    controlService: "provisioner",
+    maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
+  });
+  const resources = renderer.renderRunning(hostedSpec());
+  const deployment = resources.find((resource) => resource.kind === "Deployment")!;
+  const template = record(record(deployment.spec).template);
+  const podSpec = record(template.spec);
+  const volumes = (podSpec.volumes as unknown[]).map(record).filter(
+    (volume) => volume.name !== "history" && volume.name !== "history-seed",
+  );
+  const podTemplateSpec = {
+    ...podSpec,
+    volumes,
+    initContainers: [],
+    containers: (podSpec.containers as unknown[]).map((container) => {
+      const value = record(container);
+      return {
+        ...value,
+        env: (value.env as unknown[]).map(record).map((item) =>
+          item.name === "SCRIPTORIUM_USAGE_DIR" ? { ...item, value: "/data/history" } : item,
+        ),
+        volumeMounts: (value.volumeMounts as unknown[]).map(record).filter(
+          (mount) => mount.name !== "history",
+        ),
+      };
+    }),
+  };
+  api.objects.set(key("Deployment", NAMESPACE, DEPLOYMENT), {
+    ...deployment,
+    metadata: {
+      ...deployment.metadata,
+      uid: "deployment-legacy",
+      resourceVersion: "10",
+      annotations: { "arcadia.io/release-digest": INDEX_DIGEST },
+    },
+    spec: { ...record(deployment.spec), template: { ...template, spec: podTemplateSpec } },
+    status: { readyReplicas: 1 },
+  });
+  api.objects.set(key("Pod", NAMESPACE, "legacy-writer"), {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: "legacy-writer",
+      namespace: NAMESPACE,
+      uid: "legacy-pod-uid",
+      resourceVersion: "11",
+      labels: record(template.metadata).labels,
+    },
+    spec: { ...podTemplateSpec, nodeName: "node-a" },
+    status: {
+      phase: "Running",
+      containerStatuses: [
+        {
+          name: "scriptorium",
+          imageID: `containerd://ghcr.io/praetorium/scriptorium@${CHILD_DIGEST}`,
+        },
+      ],
+    },
+  });
+}
+
 function reservation(
   overrides: Partial<KubernetesCapacityReservation> = {},
 ): KubernetesCapacityReservation {
@@ -491,6 +570,20 @@ function reservation(
 }
 
 describe("Kubernetes runtime provider", () => {
+  it("fails closed before stopping a legacy history writer while quiesce freeze is unproven", async () => {
+    const api = new FakeKubernetesApi();
+    addLegacyWriter(api);
+    await expect(
+      provider(api).preserveHistoryBeforeStop(
+        { ...hostedSpec(), release: hostedSpec().release },
+        new AbortController().signal,
+        async () => undefined,
+      ),
+    ).rejects.toThrow("producer contract does not yet prove private-history writes freeze");
+    expect(api.historySnapshotCalls).toHaveLength(0);
+    expect(api.writes).toHaveLength(0);
+    expect(api.deletes).toHaveLength(0);
+  });
 
   it("transfers fields only for an owned exact-epoch stop using resourceVersion and a live effect guard", async () => {
     const api = new FakeKubernetesApi();
@@ -785,7 +878,7 @@ describe("Kubernetes runtime provider", () => {
       { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
       { name: "SCRIPTORIUM_TRUST_PROXY", value: "1" },
       { name: "SCRIPTORIUM_DATA_DIR", value: "/data/workspace" },
-      { name: "SCRIPTORIUM_USAGE_DIR", value: "/data/history" },
+      { name: "SCRIPTORIUM_USAGE_DIR", value: "/history" },
       {
         name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
         value: "/run/scriptorium/runtime-assignment.json",
@@ -799,6 +892,53 @@ describe("Kubernetes runtime provider", () => {
     expect(volume).toMatchObject({
       name: "scriptorium-runtime",
       secret: { secretName: `${DEPLOYMENT}-runtime`, defaultMode: 0o444 },
+    });
+    const historyPvc = resources.find((resource) => resource.kind === "PersistentVolumeClaim");
+    expect(historyPvc).toMatchObject({
+      metadata: {
+        name: `${DEPLOYMENT}-history`,
+        labels: {
+          "arcadia.io/instance-id": INSTANCE_ID,
+          "praetorium.io/repository-id": String(REPOSITORY_ID),
+          "arcadia.io/runtime-cluster-id": CLUSTER_ID,
+          "arcadia.io/ownership-version": "v1",
+        },
+        annotations: { "praetorium.io/history-contract": "v1" },
+      },
+      spec: {
+        storageClassName: "local-path",
+        accessModes: ["ReadWriteOnce"],
+        resources: { requests: { storage: "1024Mi" } },
+      },
+    });
+    const init = record((podSpec.initContainers as unknown[])[0]);
+    expect(init).toMatchObject({
+      name: "history-restore",
+      image: hosted.release?.artifactRef,
+      command: ["node", "-e", expect.any(String)],
+      securityContext: {
+        allowPrivilegeEscalation: false,
+        readOnlyRootFilesystem: true,
+        runAsNonRoot: true,
+        runAsUser: 1_000,
+        runAsGroup: 1_000,
+        capabilities: { drop: ["ALL"] },
+      },
+      volumeMounts: [
+        { name: "history", mountPath: "/history", readOnly: false },
+        { name: "history-seed", mountPath: "/history-seed", readOnly: true },
+      ],
+    });
+    const historyVolume = (podSpec.volumes as unknown[])
+      .map(record)
+      .find((candidate) => candidate.name === "history");
+    expect(historyVolume).toMatchObject({
+      persistentVolumeClaim: { claimName: `${DEPLOYMENT}-history`, readOnly: false },
+    });
+    expect((container.volumeMounts as unknown[]).map(record)).toContainEqual({
+      name: "history",
+      mountPath: "/history",
+      readOnly: false,
     });
     const recoveryService = resources.find(
       (resource) =>

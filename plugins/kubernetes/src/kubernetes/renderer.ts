@@ -4,7 +4,14 @@ import {
   CLUSTER_LABEL_KEY,
   GENERATION_LABEL_KEY,
   INSTANCE_LABEL_KEY,
+  MANAGED_BY_LABEL_KEY,
+  MANAGED_BY_LABEL_VALUE,
+  OWNERSHIP_LABEL_KEY,
+  OWNERSHIP_VERSION,
+  PLATFORM_LABEL_KEY,
+  PLATFORM_LABEL_VALUE,
   RUNTIME_EPOCH_LABEL_KEY,
+  REPOSITORY_LABEL_KEY,
   managedLabels,
 } from "../labels.js";
 import { runtimeNamespaceName, runtimeResourceName } from "../naming.js";
@@ -18,6 +25,7 @@ import type {
   StoppedInstanceSpec,
 } from "../types.js";
 import type { KubernetesResource, KubernetesResourceRenderer } from "./types.js";
+import { HISTORY_CONTRACT_VERSION, HISTORY_RESTORE_NODE_SCRIPT } from "./history.js";
 
 const APPLICATION_LABEL_KEY = "app.kubernetes.io/name";
 const APPLICATION_LABEL_VALUE = "scriptorium";
@@ -28,6 +36,55 @@ const RUNTIME_NODE_ROLE_LABEL_VALUE = "runtime";
 // writable for this non-root runtime while retaining explicit pod identity.
 const SCRIPTORIUM_RUNTIME_UID = 1_000;
 const SCRIPTORIUM_RUNTIME_GID = 1_000;
+const HISTORY_STORAGE_CLASS = "local-path";
+
+function historyResourceName(spec: RuntimeInstanceSpec): string {
+  return `${runtimeResourceName(spec.instanceId)}-history`;
+}
+
+function historySeedName(spec: RuntimeInstanceSpec): string {
+  return `${runtimeResourceName(spec.instanceId)}-history-seed`;
+}
+
+function historyLabels(spec: RuntimeInstanceSpec): Readonly<Record<string, string>> {
+  return {
+    [PLATFORM_LABEL_KEY]: PLATFORM_LABEL_VALUE,
+    [MANAGED_BY_LABEL_KEY]: MANAGED_BY_LABEL_VALUE,
+    [INSTANCE_LABEL_KEY]: spec.instanceId,
+    [REPOSITORY_LABEL_KEY]: String(spec.repositoryId),
+    [CLUSTER_LABEL_KEY]: spec.clusterId,
+    [OWNERSHIP_LABEL_KEY]: OWNERSHIP_VERSION,
+  };
+}
+
+function historyMetadata(
+  options: KubernetesResourceRendererOptions,
+  spec: RuntimeInstanceSpec,
+  name: string,
+): KubernetesResource["metadata"] {
+  return {
+    name,
+    namespace: namespace(spec, options.namespacePrefix),
+    labels: historyLabels(spec),
+    annotations: { "praetorium.io/history-contract": HISTORY_CONTRACT_VERSION },
+  };
+}
+
+function historyClaim(
+  options: KubernetesResourceRendererOptions,
+  spec: RuntimeInstanceSpec,
+): KubernetesResource {
+  return {
+    apiVersion: "v1",
+    kind: "PersistentVolumeClaim",
+    metadata: historyMetadata(options, spec, historyResourceName(spec)),
+    spec: {
+      accessModes: ["ReadWriteOnce"],
+      storageClassName: HISTORY_STORAGE_CLASS,
+      resources: { requests: { storage: memory(spec.resourceProfile.request.ephemeralStorageMiB) } },
+    },
+  };
+}
 
 export interface KubernetesResourceRendererOptions {
   /** Prefix for deterministic per-instance tenant namespaces. */
@@ -364,6 +421,9 @@ function baseResources(
           "requests.cpu": cpu(profile.cpuMilli),
           "requests.memory": memory(profile.memoryMiB),
           "requests.ephemeral-storage": memory(profile.ephemeralStorageMiB),
+          ...(spec.scriptoriumAssignment === undefined
+            ? {}
+            : { "requests.storage": memory(profile.ephemeralStorageMiB) }),
           "limits.cpu": cpu(limits.cpuMilli),
           "limits.memory": memory(limits.memoryMiB),
           "limits.ephemeral-storage": memory(limits.ephemeralStorageMiB),
@@ -431,6 +491,7 @@ function deployment(
   const ns = namespace(spec, options.namespacePrefix);
   const name = runtimeResourceName(spec.instanceId);
   const profile = spec.resourceProfile.request;
+  const limits = options.maximumResources;
   const hostedProjection = runtimeProjection(options, spec);
   const podLabels = {
     ...managedLabels({
@@ -510,7 +571,7 @@ function deployment(
                       { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
                       { name: "SCRIPTORIUM_TRUST_PROXY", value: "1" },
                       { name: "SCRIPTORIUM_DATA_DIR", value: "/data/workspace" },
-                      { name: "SCRIPTORIUM_USAGE_DIR", value: "/data/history" },
+                      { name: "SCRIPTORIUM_USAGE_DIR", value: "/history" },
                       {
                         name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
                         value: "/run/scriptorium/runtime-assignment.json",
@@ -560,14 +621,84 @@ function deployment(
                 { name: "workspace", mountPath: "/data", readOnly: false },
                 { name: "temporary", mountPath: "/tmp", readOnly: false },
                 ...(hostedProjection
+                  ? [{ name: "history", mountPath: "/history", readOnly: false }]
+                  : []),
+                ...(hostedProjection
                   ? [{ name: "scriptorium-runtime", mountPath: "/run/scriptorium", readOnly: true }]
                   : []),
               ],
             },
           ],
+          ...(hostedProjection === null
+            ? {}
+            : {
+                initContainers: [
+                  {
+                    name: "history-restore",
+                    image: spec.release?.artifactRef ?? "",
+                    imagePullPolicy: "IfNotPresent",
+                    command: ["node", "-e", HISTORY_RESTORE_NODE_SCRIPT],
+                    env: [
+                      {
+                        name: "PRAETORIUM_HISTORY_INSTANCE_ID",
+                        value: spec.instanceId,
+                      },
+                      {
+                        name: "PRAETORIUM_HISTORY_REPOSITORY_ID",
+                        value: String(spec.repositoryId),
+                      },
+                      { name: "PRAETORIUM_HISTORY_CLUSTER_ID", value: spec.clusterId },
+                      {
+                        name: "PRAETORIUM_HISTORY_CLAIM_NAME",
+                        value: historyResourceName(spec),
+                      },
+                    ],
+                    resources: {
+                      requests: {
+                        cpu: cpu(profile.cpuMilli),
+                        memory: memory(profile.memoryMiB),
+                        "ephemeral-storage": memory(profile.ephemeralStorageMiB),
+                      },
+                      limits: {
+                        cpu: cpu(limits.cpuMilli),
+                        memory: memory(limits.memoryMiB),
+                        "ephemeral-storage": memory(limits.ephemeralStorageMiB),
+                      },
+                    },
+                    securityContext: {
+                      allowPrivilegeEscalation: false,
+                      readOnlyRootFilesystem: true,
+                      runAsNonRoot: true,
+                      runAsUser: SCRIPTORIUM_RUNTIME_UID,
+                      runAsGroup: SCRIPTORIUM_RUNTIME_GID,
+                      seccompProfile: { type: "RuntimeDefault" },
+                      capabilities: { drop: ["ALL"] },
+                    },
+                    volumeMounts: [
+                      { name: "history", mountPath: "/history", readOnly: false },
+                      { name: "history-seed", mountPath: "/history-seed", readOnly: true },
+                    ],
+                  },
+                ],
+              }),
           volumes: [
             { name: "workspace", emptyDir: { sizeLimit: memory(profile.ephemeralStorageMiB) } },
             { name: "temporary", emptyDir: { sizeLimit: memory(profile.ephemeralStorageMiB) } },
+            ...(hostedProjection
+              ? [
+                  {
+                    name: "history",
+                    persistentVolumeClaim: {
+                      claimName: historyResourceName(spec),
+                      readOnly: false,
+                    },
+                  },
+                  {
+                    name: "history-seed",
+                    secret: { secretName: historySeedName(spec), defaultMode: 0o444 },
+                  },
+                ]
+              : []),
             ...(hostedProjection
               ? [
                   {
@@ -609,6 +740,7 @@ export function createKubernetesResourceRenderer(
       const projection = runtimeProjection(options, spec);
       return [
         ...baseResources(options, spec),
+        ...(projection === null ? [] : [historyClaim(options, spec)]),
         ...(projection ? [projection.resource] : []),
         deployment(options, spec, 1),
       ];
@@ -618,6 +750,7 @@ export function createKubernetesResourceRenderer(
       const projection = runtimeProjection(options, spec);
       return [
         ...baseResources(options, spec),
+        ...(projection === null ? [] : [historyClaim(options, spec)]),
         ...(projection ? [projection.resource] : []),
         deployment(options, spec, 0),
       ];
@@ -626,6 +759,7 @@ export function createKubernetesResourceRenderer(
       const projection = runtimeProjection(options, spec);
       return [
         ...baseResources(options, spec),
+        ...(projection === null ? [] : [historyClaim(options, spec)]),
         ...(projection ? [projection.resource] : []),
         deployment(options, spec, 1),
       ];

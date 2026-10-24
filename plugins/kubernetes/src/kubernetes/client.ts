@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
 import type { IncomingMessage } from "node:http";
+import WebSocket, { type RawData } from "ws";
 import { RuntimeProviderError as ProviderError } from "../errors.js";
+import {
+  MAX_HISTORY_EXEC_STDOUT_BYTES,
+  HISTORY_SNAPSHOT_NODE_SCRIPT,
+  HISTORY_MARKER_NODE_SCRIPT,
+  type HistorySourceDirectory,
+} from "./history.js";
 import type {
   KubernetesListResult,
   KubernetesNamespace,
@@ -23,6 +30,7 @@ const RESOURCE_DEFINITIONS: Record<
   NetworkPolicy: { apiPrefix: "/apis/networking.k8s.io/v1", plural: "networkpolicies" },
   Node: { apiPrefix: "/api/v1", plural: "nodes" },
   Pod: { apiPrefix: "/api/v1", plural: "pods" },
+  PersistentVolumeClaim: { apiPrefix: "/api/v1", plural: "persistentvolumeclaims" },
   ResourceQuota: { apiPrefix: "/api/v1", plural: "resourcequotas" },
   RoleBinding: { apiPrefix: "/apis/rbac.authorization.k8s.io/v1", plural: "rolebindings" },
   Secret: { apiPrefix: "/api/v1", plural: "secrets" },
@@ -54,6 +62,18 @@ export interface KubernetesTransportWatchEvent {
 export interface KubernetesTransport {
   request(request: KubernetesTransportRequest): Promise<KubernetesTransportResponse>;
   watch(request: KubernetesTransportRequest): AsyncIterable<KubernetesTransportWatchEvent>;
+  readHistorySnapshot?(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly sourceDirectory: HistorySourceDirectory;
+    readonly sourcePodUid: string;
+    readonly signal?: AbortSignal;
+  }): Promise<string>;
+  readHistoryMarker?(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly signal?: AbortSignal;
+  }): Promise<string>;
 }
 
 export interface KubernetesApi {
@@ -100,6 +120,20 @@ export interface KubernetesApi {
     resourceVersion: string,
     signal: AbortSignal,
   ): AsyncIterable<KubernetesWatchEvent>;
+  /** Fixed read-only history reader; it exposes no arbitrary exec command or arguments. */
+  readHistorySnapshot?(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly sourceDirectory: HistorySourceDirectory;
+    readonly sourcePodUid: string;
+    readonly signal?: AbortSignal;
+  }): Promise<string>;
+  /** Reads only the fixed ownership marker from the stable /history claim. */
+  readHistoryMarker?(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly signal?: AbortSignal;
+  }): Promise<string>;
 }
 
 export class KubernetesApiError extends Error {
@@ -219,6 +253,35 @@ export class KubernetesApiClient implements KubernetesApi {
       path: resourcePath(reference),
       signal,
     });
+  }
+
+  async readHistorySnapshot(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly sourceDirectory: HistorySourceDirectory;
+    readonly sourcePodUid: string;
+    readonly signal?: AbortSignal;
+  }): Promise<string> {
+    if (this.transport.readHistorySnapshot === undefined)
+      throw new KubernetesApiError(503, "history_reader_unavailable");
+    await this.assertPodUid(input.namespace, input.podName, input.sourcePodUid, input.signal);
+    const snapshot = await this.transport.readHistorySnapshot(input);
+    await this.assertPodUid(input.namespace, input.podName, input.sourcePodUid, input.signal);
+    return snapshot;
+  }
+
+  async readHistoryMarker(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly sourcePodUid: string;
+    readonly signal?: AbortSignal;
+  }): Promise<string> {
+    if (this.transport.readHistoryMarker === undefined)
+      throw new KubernetesApiError(503, "history_reader_unavailable");
+    await this.assertPodUid(input.namespace, input.podName, input.sourcePodUid, input.signal);
+    const marker = await this.transport.readHistoryMarker(input);
+    await this.assertPodUid(input.namespace, input.podName, input.sourcePodUid, input.signal);
+    return marker;
   }
 
   async getNamespace(name: string, signal?: AbortSignal): Promise<unknown> {
@@ -430,6 +493,24 @@ export class KubernetesApiClient implements KubernetesApi {
     return response.body;
   }
 
+  private async assertPodUid(
+    namespace: string,
+    podName: string,
+    expectedUid: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const pod = asRecord(await this.get({ kind: "Pod", namespace, name: podName }, signal));
+    const metadata = asRecord(pod?.metadata);
+    if (
+      metadata?.namespace !== namespace ||
+      metadata.name !== podName ||
+      metadata.uid !== expectedUid ||
+      typeof metadata.deletionTimestamp === "string"
+    ) {
+      throw new KubernetesApiError(409, "history_source_pod_changed");
+    }
+  }
+
   private normalizeTransportError(error: unknown): KubernetesApiError {
     if (error instanceof KubernetesApiError) return error;
     if (error instanceof KubernetesTransportError) {
@@ -568,6 +649,155 @@ export class InClusterKubernetesTransport implements KubernetesTransport {
     }
   }
 
+  readHistorySnapshot(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly sourceDirectory: HistorySourceDirectory;
+    readonly sourcePodUid: string;
+    readonly signal?: AbortSignal;
+  }): Promise<string> {
+    if (input.sourceDirectory !== "/data/history" && input.sourceDirectory !== "/history")
+      return Promise.reject(new KubernetesApiError(400, "invalid_history_source"));
+    if (!/^[A-Za-z0-9-]{1,128}$/u.test(input.sourcePodUid))
+      return Promise.reject(new KubernetesApiError(400, "invalid_pod_uid"));
+    return this.readFixedHistoryCommand({
+      namespace: input.namespace,
+      podName: input.podName,
+      command: HISTORY_SNAPSHOT_NODE_SCRIPT,
+      args: [input.sourceDirectory, input.sourcePodUid],
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+  }
+
+  readHistoryMarker(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly signal?: AbortSignal;
+  }): Promise<string> {
+    return this.readFixedHistoryCommand({
+      namespace: input.namespace,
+      podName: input.podName,
+      command: HISTORY_MARKER_NODE_SCRIPT,
+      args: [],
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+      maximumStdoutBytes: 4096,
+    });
+  }
+
+  private readFixedHistoryCommand(input: {
+    readonly namespace: string;
+    readonly podName: string;
+    readonly command: string;
+    readonly args: readonly string[];
+    readonly signal?: AbortSignal;
+    readonly maximumStdoutBytes?: number;
+  }): Promise<string> {
+    if (
+      !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(input.namespace) ||
+      !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u.test(input.podName)
+    )
+      return Promise.reject(new KubernetesApiError(400, "invalid_pod_reference"));
+    if (input.signal?.aborted)
+      return Promise.reject(new KubernetesTransportError("cancelled"));
+
+    const query = new URLSearchParams({
+      container: "scriptorium",
+      stdin: "false",
+      stdout: "true",
+      stderr: "true",
+      tty: "false",
+    });
+    for (const arg of ["node", "-e", input.command, ...input.args]) query.append("command", arg);
+    const path = `/api/v1/namespaces/${pathSegment(input.namespace)}/pods/${pathSegment(input.podName)}/exec?${query.toString()}`;
+    const socket = new WebSocket(
+      `wss://${this.host}:${this.port}${path}`,
+      ["v5.channel.k8s.io"],
+      {
+        method: "GET",
+        headers: { authorization: `Bearer ${this.token}` },
+        ca: this.ca,
+        rejectUnauthorized: true,
+        perMessageDeflate: false,
+        handshakeTimeout: this.requestTimeoutMs,
+        maxPayload: MAX_HISTORY_EXEC_STDOUT_BYTES + 4096,
+      },
+    );
+    const maximumStdoutBytes = input.maximumStdoutBytes ?? MAX_HISTORY_EXEC_STDOUT_BYTES;
+    return new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const stdout: Buffer[] = [];
+      let stdoutBytes = 0;
+      let executionFailed = false;
+      const cleanup = () => {
+        input.signal?.removeEventListener("abort", onAbort);
+        clearTimeout(timeout);
+        socket.removeAllListeners();
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
+          socket.close();
+      };
+      const finish = (error?: Error, output?: string) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error !== undefined) reject(error);
+        else resolve(output ?? "");
+      };
+      const onAbort = () => finish(new KubernetesTransportError("cancelled"));
+      const timeout = setTimeout(
+        () => finish(new KubernetesTransportError("timeout")),
+        this.requestTimeoutMs,
+      );
+      input.signal?.addEventListener("abort", onAbort, { once: true });
+      socket.once("open", () => {
+        if (socket.protocol !== "v5.channel.k8s.io")
+          finish(new KubernetesApiError(502, "remotecommand_protocol_mismatch"));
+      });
+      socket.on("message", (data: RawData, isBinary: boolean) => {
+        if (!isBinary) {
+          finish(new KubernetesApiError(502, "remotecommand_invalid_frame"));
+          return;
+        }
+        const frame = websocketBuffer(data);
+        if (frame.length === 0) {
+          finish(new KubernetesApiError(502, "remotecommand_invalid_frame"));
+          return;
+        }
+        const channel = frame[0];
+        const payload = frame.subarray(1);
+        if (channel === 1) {
+          stdoutBytes += payload.byteLength;
+          if (stdoutBytes > maximumStdoutBytes) {
+            finish(new KubernetesApiError(413, "history_snapshot_too_large"));
+            return;
+          }
+          stdout.push(payload);
+        } else if (channel === 3) {
+          try {
+            const status = JSON.parse(payload.toString("utf8")) as { status?: unknown };
+            if (status.status !== "Success") executionFailed = true;
+          } catch {
+            executionFailed = true;
+          }
+        } else if (channel !== 2 && channel !== 4) {
+          finish(new KubernetesApiError(502, "remotecommand_invalid_channel"));
+        }
+      });
+      socket.once("unexpected-response", (_request, response) => {
+        response.resume();
+        finish(new KubernetesApiError(response.statusCode ?? 502, "remotecommand_rejected"));
+      });
+      socket.once("error", () => finish(new KubernetesTransportError("unavailable")));
+      socket.once("close", (code) => {
+        if (settled) return;
+        if (code !== 1000 || executionFailed) {
+          finish(new KubernetesApiError(409, "remotecommand_exec_failed"));
+          return;
+        }
+        finish(undefined, Buffer.concat(stdout, stdoutBytes).toString("utf8"));
+      });
+    });
+  }
+
   private parseWatchLine(line: string): KubernetesTransportWatchEvent {
     try {
       const parsed = JSON.parse(line) as unknown;
@@ -625,6 +855,13 @@ export class InClusterKubernetesTransport implements KubernetesTransport {
       req.end();
     });
   }
+}
+
+function websocketBuffer(value: RawData): Buffer {
+  if (Buffer.isBuffer(value)) return value;
+  if (Array.isArray(value)) return Buffer.concat(value);
+  if (value instanceof ArrayBuffer) return Buffer.from(value);
+  return Buffer.from(value as Buffer);
 }
 
 export function createInClusterKubernetesApi(

@@ -57,6 +57,7 @@ interface IdleCandidateRow {
   readonly generation: number;
   readonly runtime_epoch: number;
   readonly desired_generation: number;
+  readonly desired_runtime_epoch: number;
   readonly desired_state: "running" | "stopped";
   readonly cluster_id: string;
   readonly has_active_operation: number;
@@ -431,7 +432,8 @@ async function readIdleCandidateRows(
   const statement = db.prepare(
     `SELECT i.instance_id, i.repository_id,
             i.observed_generation AS generation, i.observed_runtime_epoch AS runtime_epoch,
-            i.generation AS desired_generation, i.desired_state,
+            i.generation AS desired_generation, i.runtime_epoch AS desired_runtime_epoch,
+            i.desired_state,
             r.cluster_id,
             EXISTS (
               SELECT 1 FROM operations o
@@ -447,10 +449,11 @@ async function readIdleCandidateRows(
        WHERE r.cluster_id = ?
          AND i.observed_state = 'ready'
          AND i.observed_generation IS NOT NULL
-         AND i.observed_runtime_epoch = i.runtime_epoch
          AND (
-           (i.desired_state = 'running' AND i.observed_generation = i.generation)
+           (i.desired_state = 'running' AND i.observed_generation = i.generation
+             AND i.observed_runtime_epoch = i.runtime_epoch)
            OR (i.desired_state = 'stopped' AND i.observed_generation < i.generation
+             AND i.observed_runtime_epoch <= i.runtime_epoch
              AND b.suspended = 0)
          )
          ${instanceFilter}
@@ -479,14 +482,16 @@ function isCurrentCandidate(
       snapshot.instance.instanceId === row.instance_id &&
       snapshot.instance.generation === row.desired_generation &&
       snapshot.instance.desiredState === row.desired_state &&
-      snapshot.instance.runtimeEpoch === row.runtime_epoch &&
+      snapshot.instance.runtimeEpoch === row.desired_runtime_epoch &&
       snapshot.instance.observedGeneration === row.generation &&
       snapshot.instance.observedRuntimeEpoch === row.runtime_epoch &&
       snapshot.instance.observedState === "ready" &&
       (row.desired_state !== "running" ||
-        snapshot.instance.observedGeneration === row.desired_generation) &&
+        (snapshot.instance.observedGeneration === row.desired_generation &&
+          row.runtime_epoch === row.desired_runtime_epoch)) &&
       (row.desired_state !== "stopped" ||
-        row.generation < row.desired_generation) &&
+        (row.generation < row.desired_generation &&
+          row.runtime_epoch <= row.desired_runtime_epoch)) &&
       snapshot.instance.clusterId === clusterId &&
       row.cluster_id === clusterId,
   );

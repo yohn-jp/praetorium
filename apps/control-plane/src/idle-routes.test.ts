@@ -233,11 +233,14 @@ describe("Control Plane provisioner idle routes", () => {
     await h.addReadyInstance("ins_retained_suspended", 771, { suspended: true });
     await h.addReadyInstance("ins_retained_active", 772);
     await h.addReadyInstance("ins_retained_epoch_changed", 773);
+    await h.addReadyInstance("ins_retained_unknown", 774);
+    await h.addReadyInstance("ins_running_epoch_changed", 775);
     for (const instanceId of [
       "ins_retained",
       "ins_retained_suspended",
       "ins_retained_active",
       "ins_retained_epoch_changed",
+      "ins_retained_unknown",
     ]) {
       h.database
         .prepare(
@@ -252,12 +255,41 @@ describe("Control Plane provisioner idle routes", () => {
       .run("ins_retained_epoch_changed");
     h.database
       .prepare(
+        `UPDATE logical_instances
+         SET generation = 4, runtime_epoch = 2, observed_generation = 2, observed_runtime_epoch = 1
+         WHERE instance_id = 'ins_retained_epoch_changed'`,
+      )
+      .run();
+    h.database
+      .prepare(
+        `UPDATE runtime_reservations SET generation = 2
+         WHERE instance_id = 'ins_retained_epoch_changed'`,
+      )
+      .run();
+    h.database
+      .prepare("UPDATE logical_instances SET observed_state = 'unknown' WHERE instance_id = ?")
+      .run("ins_retained_unknown");
+    h.database
+      .prepare("UPDATE logical_instances SET runtime_epoch = 2 WHERE instance_id = ?")
+      .run("ins_running_epoch_changed");
+    h.database
+      .prepare(
         `INSERT INTO operations (
            operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase,
            idempotency_scope, idempotency_key, request_hash, actor_id, authorization_revision,
            created_at, updated_at
          ) VALUES ('op_retained_active', 'ins_retained_active', 772, 2, 1, 'update', 'running', 'waiting-for-capacity',
                    'repository:772', 'user-update-active', 'hash', 'user-772', 3, ?, ?)`,
+      )
+      .run(NOW, NOW);
+    h.database
+      .prepare(
+        `INSERT INTO operations (
+           operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase,
+           idempotency_scope, idempotency_key, request_hash, actor_id, authorization_revision,
+           created_at, updated_at
+         ) VALUES ('op_retained_epoch_active', 'ins_retained_epoch_changed', 773, 3, 2, 'update', 'running', 'waiting-for-capacity',
+                   'repository:773', 'user-update-epoch-active', 'hash', 'user-773', 3, ?, ?)`,
       )
       .run(NOW, NOW);
     const schedule = vi.fn(async () => ({
@@ -300,6 +332,32 @@ describe("Control Plane provisioner idle routes", () => {
       hasActiveOperation: true,
       currentRuntime: { instanceId: "ins_retained_active", repositoryId: 772, runtimeEpoch: 1 },
     });
+    const retainedAcrossEpoch = await h.request(
+      "/internal/provisioner/idle-candidate",
+      { workerId: WORKER_ID, clusterId: CLUSTER_ID, instanceId: "ins_retained_epoch_changed" },
+      schedule,
+    );
+    expect(retainedAcrossEpoch.status).toBe(200);
+    await expect(retainedAcrossEpoch.json()).resolves.toMatchObject({
+      instanceId: "ins_retained_epoch_changed",
+      repositoryId: 773,
+      generation: 2,
+      runtimeEpoch: 1,
+      desiredState: "stopped",
+      hasActiveOperation: true,
+      currentRuntime: { instanceId: "ins_retained_epoch_changed", repositoryId: 773, runtimeEpoch: 1 },
+    });
+    expect(h.resolveCurrentRuntime).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        instance: expect.objectContaining({
+          generation: 4,
+          runtimeEpoch: 2,
+          observedGeneration: 2,
+          observedRuntimeEpoch: 1,
+        }),
+      }),
+      expect.anything(),
+    );
 
     const inventory = await h.request("/internal/provisioner/idle-candidates", {
       workerId: WORKER_ID,
@@ -314,7 +372,14 @@ describe("Control Plane provisioner idle routes", () => {
       desiredState: "stopped",
       hasActiveOperation: true,
     }));
-    for (const instanceId of ["ins_retained_suspended", "ins_retained_epoch_changed"]) {
+    expect(inventoryBody.items).toContainEqual(expect.objectContaining({
+      instanceId: "ins_retained_epoch_changed",
+      generation: 2,
+      runtimeEpoch: 1,
+      desiredState: "stopped",
+      hasActiveOperation: true,
+    }));
+    for (const instanceId of ["ins_retained_suspended", "ins_retained_unknown", "ins_running_epoch_changed"]) {
       const excluded = await h.request("/internal/provisioner/idle-candidate", {
         workerId: WORKER_ID,
         clusterId: CLUSTER_ID,

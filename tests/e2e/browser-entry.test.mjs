@@ -1548,10 +1548,17 @@ test(
             config.timeouts.mcpSeconds * 1_000,
           );
         }),
-      ]).finally(() => clearTimeout(callbackTimeout));
-      ensureOwnerLifetime(inventory, 10);
-      await mcpPage.getByRole("button", { name: "Allow", exact: true }).click();
-      const authorization = await callbackWait;
+      ]);
+      // Handle the pending wait if the browser click fails before it is awaited.
+      void callbackWait.catch(() => {});
+      let authorization;
+      try {
+        ensureOwnerLifetime(inventory, 10);
+        await mcpPage.getByRole("button", { name: "Allow", exact: true }).click();
+        authorization = await callbackWait;
+      } finally {
+        clearTimeout(callbackTimeout);
+      }
       assert.equal(authorization.error, null, "MCP consent must not return an OAuth error");
       assert.equal(authorization.state, oauthState, "OAuth callback must preserve PKCE state");
       assert.equal(authorization.issuer, derived.gatewayOrigin.origin);

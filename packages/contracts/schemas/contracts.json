@@ -187,6 +187,16 @@
               "type": "string",
               "pattern": "^[a-z][a-z0-9-]{0,63}$"
             },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
             "version": {
               "type": "string",
               "minLength": 1,
@@ -3011,6 +3021,16 @@
                         "type": "string",
                         "pattern": "^[a-z][a-z0-9-]{0,63}$"
                       },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
                       "version": {
                         "type": "string",
                         "minLength": 1,
@@ -4768,6 +4788,16 @@
                         "type": "string",
                         "pattern": "^[a-z][a-z0-9-]{0,63}$"
                       },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      },
                       "version": {
                         "type": "string",
                         "minLength": 1,
@@ -5069,6 +5099,16 @@
                 "id": {
                   "type": "string",
                   "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
                 },
                 "version": {
                   "type": "string",
@@ -7749,6 +7789,16 @@
                 "id": {
                   "type": "string",
                   "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
                 },
                 "version": {
                   "type": "string",

@@ -487,10 +487,111 @@ describe("server-rendered management UI", () => {
     expect(html).toContain(
       `<option value="rel_01" selected>Stable 1.2 · sha256:${"c".repeat(12)}…</option>`,
     );
-    expect(html).toContain(
-      `type="checkbox" name="moduleIds" value="editor" checked><span>Editor <span class="field-help">2.0.0 · sha256:${"c".repeat(12)}…</span>`,
-    );
+    expect(html).toContain(`type="checkbox" name="moduleIds" value="editor" checked><span class="module-option-copy"><strong>Editor</strong>`);
+    expect(html).toContain(`2.0.0 · sha256:${"c".repeat(12)}…`);
     expect(html).not.toContain(longDigest);
+  });
+
+  it.each(["desktop", "mobile"] as const)("shows catalog module guidance and truthful MCP setup on %s", async (mode) => {
+    const mcpDashboard: PortalRepositoryDashboard = {
+      ...dashboard,
+      current: {
+        ...dashboard.current!,
+        requestedModules: ["editor", "mcp"],
+        includedModules: ["editor", "search", "mcp"],
+      },
+      desired: {
+        ...dashboard.desired!,
+        requestedModules: ["editor", "mcp"],
+        includedModules: ["editor", "search", "mcp"],
+      },
+      modules: [
+        { moduleId: "editor", label: "Editor", description: "Edit the manuscript.", version: "2.0.0", artifactDigest: "sha256:editor" },
+        { moduleId: "search", label: "Search and terminology", description: "Search manuscript text and link terms to references.", version: "1.4.0", artifactDigest: "sha256:search", requires: ["nlp"] },
+        { moduleId: "mcp", label: "MCP connections", description: "Connect an authorized MCP client using Praetorium OAuth.", version: "1.0.0", artifactDigest: "sha256:mcp" },
+      ],
+    };
+    const html = await renderRepositoryDashboard(mcpDashboard, {
+      presentation: { mode, repositoryId: summary.repositoryId },
+      csrfToken: "csrf-token-value",
+      createIdempotencyKey: () => "token_12345678901234567890",
+      scriptNonce: "nonce_nonce_nonce_01",
+    }).text();
+
+    expect(html).toContain("Search and terminology");
+    expect(html).toContain("Search manuscript text and link terms to references.");
+    expect(html).toContain("Requires: nlp");
+    expect(html).toContain("<strong>Current:</strong> Included as a selected module");
+    expect(html).toContain("<strong>Desired:</strong> Included as a selected module");
+    expect(html).toContain("Connect an MCP client");
+    expect(html).toContain('value="https://123456789.scriptorium.yohn.jp/mcp"');
+    expect(html).toContain('data-copy-mcp-endpoint="https://123456789.scriptorium.yohn.jp/mcp"');
+    expect(html).toContain("Authorization Code with PKCE S256 and no client secret");
+    expect(html).toContain("Client ID Metadata Documents (CIMD)");
+    expect(html).toContain("This page has not tested an MCP connection.");
+    expect(html).toContain(`body data-ui="${mode}"`);
+    expect(html).not.toContain("Connection successful");
+  });
+
+  it("states when a historical approved catalog has no module description", async () => {
+    const html = await renderRepositoryDashboard({
+      ...dashboard,
+      modules: [{ moduleId: "editor", label: "editor", version: "2.0.0", artifactDigest: "sha256:editor" }],
+    }, {
+      csrfToken: "csrf-token-value",
+      createIdempotencyKey: () => "token_12345678901234567890",
+    }).text();
+    expect(html).toContain("Description is not included in this approved signed catalog.");
+  });
+
+  it("copies the MCP endpoint only after clipboard success and selects it when copying fails", async () => {
+    const mcpDashboard: PortalRepositoryDashboard = {
+      ...dashboard,
+      current: { ...dashboard.current!, requestedModules: ["mcp"], includedModules: ["mcp"] },
+      desired: { ...dashboard.desired!, requestedModules: ["mcp"], includedModules: ["mcp"] },
+      modules: [{ moduleId: "mcp", label: "MCP connections", description: "Connect an MCP client.", version: "1.0.0", artifactDigest: "sha256:mcp" }],
+    };
+    const html = await renderRepositoryDashboard(mcpDashboard, {
+      csrfToken: "csrf-token-value",
+      createIdempotencyKey: () => "token_12345678901234567890",
+      scriptNonce: "nonce_nonce_nonce_01",
+    }).text();
+    const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/u.exec(html)?.[1];
+    expect(script).toBeDefined();
+    const endpoint = "https://123456789.scriptorium.yohn.jp/mcp";
+
+    const runCopy = async (writeText: (value: string) => Promise<void>) => {
+      const listeners: Record<string, (event: unknown) => unknown> = {};
+      const status = { textContent: "" };
+      const input = { focus: vi.fn(), select: vi.fn() };
+      const button = { dataset: { copyMcpEndpoint: endpoint } };
+      runInNewContext(script!, {
+        URL,
+        location: { href: "https://praetorium.yohn.jp/repositories/123456789?ui=desktop" },
+        history: { replaceState: vi.fn() },
+        addEventListener: vi.fn(),
+        document: {
+          querySelector: () => null,
+          querySelectorAll: () => [],
+          addEventListener: (name: string, listener: (event: unknown) => unknown) => { listeners[name] = listener; },
+          getElementById: (id: string) => id === "mcp-endpoint" ? input : id === "mcp-copy-status" ? status : null,
+        },
+        navigator: { clipboard: { writeText } },
+      });
+      await listeners.click!({ target: { closest: () => button } });
+      return { input, status };
+    };
+
+    const copied = vi.fn(async (_value: string) => undefined);
+    const success = await runCopy(copied);
+    expect(copied).toHaveBeenCalledWith(endpoint);
+    expect(success.status.textContent).toBe("MCP endpoint copied.");
+    expect(success.input.select).not.toHaveBeenCalled();
+
+    const failure = await runCopy(vi.fn(async () => { throw new Error("permission denied"); }));
+    expect(failure.status.textContent).toContain("Automatic copy is unavailable.");
+    expect(failure.input.focus).toHaveBeenCalledOnce();
+    expect(failure.input.select).toHaveBeenCalledOnce();
   });
 
   it("routes preview and save buttons with the shared configuration selection", async () => {

@@ -248,7 +248,8 @@ function dashboard(
     moduleId: module.id,
     requires: module.requires,
     conflicts: module.conflicts,
-    label: module.id,
+    label: module.name ?? module.id,
+    ...(module.description ? { description: module.description } : {}),
     version: module.version,
     artifactDigest: module.artifactDigest,
   })) ?? [];

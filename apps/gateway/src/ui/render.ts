@@ -334,6 +334,7 @@ export function renderRepositoryDashboard(
           actionPath,
           preview,
           options.selection,
+          options.scriptNonce,
         )
       : canConfigure
         ? `<section class="configuration-panel"><p class="eyebrow">Configuration</p><h2>Desired configuration</h2>` +

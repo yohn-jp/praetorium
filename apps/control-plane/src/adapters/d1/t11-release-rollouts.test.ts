@@ -1547,6 +1547,18 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       kind: "stop" as const,
       status: stopStatus,
       deploymentRevisionId: "canary-revision",
+      checkpoint: {
+        writerAbsenceProof: {
+          instanceId: "canary-instance",
+          repositoryId: 101,
+          retiredRuntimeEpoch: 4,
+          providerObservationId: "writer-census-zero",
+          censusObservedAt: new Date(currentTime - 1_000).toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: ["census:canary-instance:4"],
+          source: "runtime-provider-census",
+        },
+      },
       result: null,
     });
     const startOperation = {

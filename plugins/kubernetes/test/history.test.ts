@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -29,6 +29,12 @@ function snapshot(path: string, contents: string, sourcePodUid = "pod-1"): strin
   });
 }
 
+function sourceSnapshotScript(root: string): string {
+  return HISTORY_SNAPSHOT_NODE_SCRIPT
+    .replace("const root = process.argv[1];", `const root = ${JSON.stringify(root)};`)
+    .replace("if (root !== '/data/history') throw new Error('invalid source path');", `if (root !== ${JSON.stringify(root)}) throw new Error('invalid source path');`);
+}
+
 describe("private history snapshot validation", () => {
   it("accepts a canonical bounded regular-file manifest", () => {
     expect(parseHistorySnapshot(snapshot("activity/recent.json", "{}"), "pod-1")).toMatchObject({
@@ -36,6 +42,40 @@ describe("private history snapshot validation", () => {
       sourcePodUid: "pod-1",
       files: [{ path: "activity/recent.json" }],
     });
+  });
+
+  it("returns a canonical empty snapshot when only the exact history directory is absent", () => {
+    const temporary = mkdtempSync(path.join(tmpdir(), "praetorium-history-missing-root-"));
+    try {
+      const missingHistoryRoot = path.join(temporary, "history");
+      const result = spawnSync(process.execPath, ["-e", sourceSnapshotScript(missingHistoryRoot), missingHistoryRoot, "pod-42"]);
+      expect(result.status, result.stderr.toString()).toBe(0);
+      expect(parseHistorySnapshot(result.stdout.toString(), "pod-42")).toMatchObject({
+        schemaVersion: 1,
+        sourcePodUid: "pod-42",
+        files: [],
+      });
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the history parent is not a real directory or the root is a symlink", () => {
+    const temporary = mkdtempSync(path.join(tmpdir(), "praetorium-history-invalid-root-"));
+    try {
+      const parentFile = path.join(temporary, "not-a-directory");
+      writeFileSync(parentFile, "");
+      const notDirectory = path.join(parentFile, "history");
+      const symlinkRoot = path.join(temporary, "history-link");
+      symlinkSync(path.join(temporary, "missing-target"), symlinkRoot);
+      for (const root of [notDirectory, symlinkRoot]) {
+        const result = spawnSync(process.execPath, ["-e", sourceSnapshotScript(root), root, "pod-42"]);
+        expect(result.status).not.toBe(0);
+        expect(result.stdout.length).toBe(0);
+      }
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
   });
 
   it.each(["../outside", "/absolute", "a\\b", ".praetorium-initialized", "nested//empty"]) (

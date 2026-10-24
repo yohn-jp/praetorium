@@ -145,8 +145,17 @@ const maxDepth = 16;
 const segment = /^[A-Za-z0-9._-]{1,128}$/;
 if (root !== '/data/history') throw new Error('invalid source path');
 if (typeof podUid !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(podUid)) throw new Error('invalid source pod identity');
-const rootStat = fs.lstatSync(root);
-if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('history root is not a real directory');
+const parent = path.dirname(root);
+const parentStat = fs.lstatSync(parent);
+if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) throw new Error('history parent is not a real directory');
+let rootStat;
+try {
+  rootStat = fs.lstatSync(root);
+} catch (error) {
+  if (!error || error.code !== 'ENOENT') throw error;
+  rootStat = null;
+}
+if (rootStat !== null && (!rootStat.isDirectory() || rootStat.isSymbolicLink())) throw new Error('history root is not a real directory');
 let total = 0;
 let count = 0;
 let entryCount = 0;
@@ -190,7 +199,7 @@ function walk(directory, relative, depth) {
     } finally { fs.closeSync(fd); }
   }
 }
-walk(root, '', 0);
+if (rootStat !== null) walk(root, '', 0);
 files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 const manifest = { schemaVersion: 1, sourcePodUid: podUid, files };
 const canonical = JSON.stringify(manifest);

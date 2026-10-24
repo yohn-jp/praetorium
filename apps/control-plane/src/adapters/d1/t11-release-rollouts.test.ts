@@ -595,11 +595,11 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     noHistory.db.database.prepare(
       `UPDATE release_candidate_workflows
           SET cleanup_evidence_json = json_set(cleanup_evidence_json,
-            '$.writerAbsence.retiredEpoch', NULL) WHERE release_id = ?`,
+            '$.writerAbsence.retiredEpoch', 9) WHERE release_id = ?`,
     ).run(noHistory.command.releaseId);
     noHistory.db.database.prepare(
       `UPDATE operations SET checkpoint_json = json_set(checkpoint_json,
-        '$.writerAbsenceProof.retiredRuntimeEpoch', NULL) WHERE operation_id = 'operation-stop20'`,
+        '$.writerAbsenceProof.retiredRuntimeEpoch', 9) WHERE operation_id = 'operation-stop20'`,
     ).run();
     expect(await noHistory.releases.retryFailedCanaryRuntime(noHistory.command)).toMatchObject({
       kind: "accepted",

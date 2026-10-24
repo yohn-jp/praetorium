@@ -228,6 +228,7 @@ export function createReleaseCanaryObservationReader(
         !parsed.success ||
         parsed.data.instanceId !== input.instanceId ||
         parsed.data.repositoryId !== input.repositoryId ||
+        parsed.data.retiredEpoch === null ||
         parsed.data.retiredEpoch !== input.retiredEpoch ||
         parsed.data.remainingWriters !== 0 ||
         parsed.data.providerObservationId.length === 0 ||

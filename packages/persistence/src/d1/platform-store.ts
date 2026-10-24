@@ -1532,7 +1532,7 @@ export class D1PlatformStore implements OperationStore {
                    AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.instanceId') = operations.instance_id
                    AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') = 'integer'
                    AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') = operations.repository_id
-                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') IN ('integer', 'null')
+                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'integer'
                    AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.providerObservationId') = 'text'
                    AND length(trim(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.providerObservationId'))) > 0
                    AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.censusObservedAt') = 'text'
@@ -1560,7 +1560,8 @@ export class D1PlatformStore implements OperationStore {
                              = stopped_instance.observed_runtime_epoch)
                           OR (stopped_instance.observed_runtime_epoch IS NULL
                            AND stopped_instance.observed_state IN ('absent', 'stopped')
-                           AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'null')
+                           AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch')
+                             = operations.runtime_epoch)
                         )
                    ))
                  OR (operations.kind <> 'stop' AND operations.phase = 'complete' AND ? = 'ready' AND EXISTS (

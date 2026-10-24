@@ -10,6 +10,11 @@ import {
   OperationFenceConflict,
   OperationService,
 } from "../../application/src/operations/index.js";
+import { LifecycleService } from "../../application/src/lifecycle/index.js";
+import type {
+  LifecycleDependencies,
+  LifecycleOperation,
+} from "../../application/src/lifecycle/index.js";
 import {
   RepositoryNotFound,
   RepositoryStateConflict,
@@ -854,7 +859,7 @@ describe("D1PlatformStore with SQLite transactions", () => {
     });
   });
 
-  it("reports an epoch-zero stop with a null retired epoch only when the instance has no observed writer", async () => {
+  it("reports an epoch-zero stop with the lifecycle fallback epoch when no writer was observed", async () => {
     const { database, registry, instances, operations } = createPlatform();
     const { binding } = await registry.resolveOrCreate(registryInput("instance-no-history", "request-no-history"));
     database.prepare("UPDATE logical_instances SET desired_state = 'running' WHERE instance_id = ?")
@@ -879,16 +884,86 @@ describe("D1PlatformStore with SQLite transactions", () => {
       leaseToken: claimed.operation.leaseToken!,
       leaseEpoch: claimed.operation.leaseEpoch,
     };
-    const proof = {
+    let lifecycleOperation: LifecycleOperation = {
+      id: claimed.operation.id,
+      version: 0,
       instanceId: binding.instanceId,
       repositoryId: binding.repositoryId,
-      retiredRuntimeEpoch: null,
-      providerObservationId: "complete-no-writer-census",
-      censusObservedAt: new Date(102).toISOString(),
-      remainingWriters: 0,
-      evidenceIdentities: [],
-      source: "runtime-provider-census",
-    } as const;
+      clusterId: "cluster-a",
+      generation: 1,
+      kind: "stop",
+      reason: "user",
+      phase: "accepted",
+      runtimeEpoch: 0,
+      targetRevisionId: null,
+      current: null,
+      target: null,
+      targetEpoch: null,
+      targetReservationId: null,
+      rollbackEpoch: null,
+      quiesceRequest: null,
+      quiesceReceipt: null,
+      writerAbsenceProof: null,
+      readinessEvidence: null,
+      rollbackCompatibilityEvidence: null,
+      rollbackCompatible: null,
+      buildId: null,
+      failureCode: null,
+      failureReason: null,
+      lastAuthenticatedActivityAt: null,
+    };
+    const observedAt = new Date().toISOString();
+    const lifecycle = new LifecycleService({
+      journal: {
+        async load(id) { return id === lifecycleOperation.id ? lifecycleOperation : null; },
+        async advance(id, version, patch) {
+          if (id !== lifecycleOperation.id || version !== lifecycleOperation.version) return null;
+          lifecycleOperation = { ...lifecycleOperation, ...patch, version: version + 1 };
+          return lifecycleOperation;
+        },
+        async allocateRollbackEpoch() { throw new Error("stop does not allocate rollback epochs"); },
+      },
+      builds: {
+        async resolveOrBuild() { throw new Error("stop does not resolve builds"); },
+        async isRollbackCompatible() { throw new Error("stop does not verify rollback compatibility"); },
+      },
+      capacity: {
+        async reserve() { throw new Error("stop does not reserve capacity"); },
+        async release() { throw new Error("no prior reservation exists"); },
+      },
+      producer: {
+        async status() { throw new Error("no producer assignment exists"); },
+        async quiesce() { throw new Error("no producer assignment exists"); },
+        async resume() { throw new Error("no producer assignment exists"); },
+      },
+      authProbe: { async verify() { throw new Error("no producer assignment exists"); } },
+      runtime: {
+        async censusWriters() {
+          return {
+            complete: true,
+            providerObservationId: "lifecycle-no-writer-census",
+            observedAt,
+            matchedWriterCount: 0,
+            writers: [],
+          };
+        },
+        async stop() { throw new Error("no writer exists to stop"); },
+        async start() { throw new Error("stop does not start a writer"); },
+        async readiness() { throw new Error("stop has no readiness target"); },
+      },
+      routes: {
+        async activate() { throw new Error("stop does not activate routes"); },
+        async deactivate() {},
+      },
+      now: () => Date.parse(observedAt),
+    } satisfies LifecycleDependencies);
+    await expect(lifecycle.execute(claimed.operation.id, {
+      signal: new AbortController().signal,
+      async assertLease() {},
+    })).resolves.toEqual({ status: "complete", observed: null });
+    const proof = lifecycleOperation.writerAbsenceProof;
+    expect(proof).toMatchObject({ retiredRuntimeEpoch: claimed.operation.runtimeEpoch, remainingWriters: 0 });
+    if (!proof) throw new Error("expected actual lifecycle writer-absence proof");
     await operations.checkpoint({
       ...lease,
       expectedCheckpointSequence: 0,
@@ -913,7 +988,7 @@ describe("D1PlatformStore with SQLite transactions", () => {
     expect(await operations.getById(claimed.operation.id)).toMatchObject({
       status: "succeeded",
       runtimeEpoch: 0,
-      checkpoint: { writerAbsenceProof: { retiredRuntimeEpoch: null, remainingWriters: 0 } },
+      checkpoint: { writerAbsenceProof: { retiredRuntimeEpoch: 0, remainingWriters: 0 } },
     });
   });
 
@@ -923,7 +998,7 @@ describe("D1PlatformStore with SQLite transactions", () => {
     { cause: "invalid provider proof", retiredEpoch: 7, override: { source: "operator-assertion" } },
     { cause: "newer desired generation", retiredEpoch: 7, override: {}, generation: 21 },
     { cause: "expired worker lease", retiredEpoch: 7, override: {}, expireLease: true },
-  ])("rejects a retained-writer stop report with $cause", async ({ cause: _cause, retiredEpoch, override, generation, expireLease }) => {
+  ])("rejects a retained-writer stop report with $cause", async ({ retiredEpoch, override, generation, expireLease }) => {
     const fixture = await prepareRetainedStopReservationRelease();
     await checkpointRetainedStopAbsence(fixture, retiredEpoch, override);
     const current = await fixture.operations.getById(fixture.operation.id);

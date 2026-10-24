@@ -554,7 +554,7 @@ describe("service-backed disposable release canary", () => {
     expect(stopRequests).toBe(1);
   });
 
-  it("uses the stop checkpoint's null retired epoch for an empty no-history cleanup", async () => {
+  it("uses the stop operation epoch for an empty no-history cleanup", async () => {
     const started = {
       id: "operation-no-history-start",
       instanceId: "canary-instance",
@@ -579,7 +579,7 @@ describe("service-backed disposable release canary", () => {
         writerAbsenceProof: {
           instanceId: "canary-instance",
           repositoryId: 900,
-          retiredRuntimeEpoch: null,
+          retiredRuntimeEpoch: 0,
           providerObservationId: "no-history-zero-writer-census",
           censusObservedAt: new Date(NOW - 31_000).toISOString(),
           remainingWriters: 0,
@@ -624,11 +624,11 @@ describe("service-backed disposable release canary", () => {
       observations: {
         async latestHealth() { return null; },
         async writerAbsence(input) {
-          expect(input).toMatchObject({ retiredEpoch: null, afterOperationId: stop.id });
+          expect(input).toMatchObject({ retiredEpoch: 0, afterOperationId: stop.id });
           return {
             instanceId: "canary-instance",
             repositoryId: 900,
-            retiredEpoch: null,
+            retiredEpoch: 0,
             providerObservationId: "no-history-zero-writer-census",
             censusObservedAt: NOW - 31_000,
             remainingWriters: 0,
@@ -646,7 +646,7 @@ describe("service-backed disposable release canary", () => {
       idempotencyKey: "stable-canary-stop:no-history",
     })).resolves.toMatchObject({
       kind: "stopped",
-      evidence: { writerAbsence: { retiredEpoch: null, remainingWriters: 0 } },
+      evidence: { writerAbsence: { retiredEpoch: 0, remainingWriters: 0 } },
     });
   });
 

@@ -171,7 +171,7 @@ export interface CanaryProvisionerObservationReader {
   writerAbsence(input: {
     readonly instanceId: string;
     readonly repositoryId: number;
-    readonly retiredEpoch: number | null;
+    readonly retiredEpoch: number;
     readonly afterOperationId: string;
   }): Promise<unknown | null>;
 }
@@ -499,9 +499,8 @@ export class ServiceBackedDisposableCanary
         const stopProof = persistedStopWriterAbsence(readOnlyStop);
         const retiredEpoch = stopProof?.retiredRuntimeEpoch;
         if (
-          !(retiredEpoch === null ||
-            (typeof retiredEpoch === "number" && Number.isSafeInteger(retiredEpoch) &&
-              retiredEpoch >= 0 && retiredEpoch <= readOnlyStop.runtimeEpoch))
+          typeof retiredEpoch !== "number" || !Number.isSafeInteger(retiredEpoch) ||
+          retiredEpoch < 0 || retiredEpoch > readOnlyStop.runtimeEpoch
         ) {
           return { kind: "blocked" as const };
         }
@@ -634,11 +633,9 @@ export class ServiceBackedDisposableCanary
     if (!terminalStop || terminalStop.status !== "succeeded") return { kind: "pending" as const };
     stopOperation = terminalStop;
     const retiredEpoch = persistedStopWriterAbsence(stopOperation)?.retiredRuntimeEpoch;
-    if (
-      !(retiredEpoch === null ||
-        (typeof retiredEpoch === "number" && Number.isSafeInteger(retiredEpoch) &&
-          retiredEpoch >= 0 && retiredEpoch <= stopOperation.runtimeEpoch))
-    ) return { kind: "pending" as const };
+    if (typeof retiredEpoch !== "number" || !Number.isSafeInteger(retiredEpoch) ||
+        retiredEpoch < 0 || retiredEpoch > stopOperation.runtimeEpoch)
+      return { kind: "pending" as const };
     const proof = await this.options.observations.writerAbsence({
       instanceId: this.options.binding.instanceId,
       repositoryId: this.options.binding.repositoryId,

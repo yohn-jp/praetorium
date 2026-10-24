@@ -603,6 +603,44 @@ describe("Kubernetes runtime provider", () => {
     expect(api.objects.has(key("PersistentVolumeClaim", NAMESPACE, `${DEPLOYMENT}-history`))).toBe(false);
   });
 
+  it("does not invent empty history for an owned stopped legacy Deployment with no retained data", async () => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    api.namespaces.set(NAMESPACE, ownedTenantNamespace());
+    const renderer = createKubernetesResourceRenderer({
+      namespacePrefix: PREFIX,
+      clusterId: CLUSTER_ID,
+      ingressNamespace: "traefik",
+      instanceAccessNamespace: "praetorium-system",
+      instanceAccessService: "instance-access",
+      controlNamespace: "praetorium-system",
+      controlService: "provisioner",
+      maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
+    });
+    const deployment = renderer
+      .renderRunning(hostedSpec())
+      .find((resource) => resource.kind === "Deployment")!;
+    api.objects.set(key("Deployment", NAMESPACE, DEPLOYMENT), {
+      ...deployment,
+      metadata: { ...deployment.metadata, uid: "legacy-stopped-deployment", resourceVersion: "17" },
+      spec: { ...record(deployment.spec), replicas: 0 },
+      status: { readyReplicas: 0 },
+    });
+
+    await expect(
+      provider(api).ensureRunning(hostedSpec(), new AbortController().signal, () => undefined),
+    ).rejects.toMatchObject({
+      code: "unavailable",
+      classification: "terminal",
+      message: "existing runtime has no preserved private-history seed or PVC",
+    });
+    expect(api.objects.has(key("Pod", NAMESPACE, "legacy-writer"))).toBe(false);
+    expect(api.objects.has(key("PersistentVolumeClaim", NAMESPACE, `${DEPLOYMENT}-history`))).toBe(false);
+    expect(api.objects.has(key("Secret", NAMESPACE, `${DEPLOYMENT}-history-seed`))).toBe(false);
+    expect(api.writes).not.toContain("write:PersistentVolumeClaim");
+    expect(api.writes).not.toContain("write:Secret");
+  });
+
   it("fails closed before stopping a legacy history writer without an epoch-scoped drain", async () => {
     const api = new FakeKubernetesApi();
     addLegacyWriter(api);

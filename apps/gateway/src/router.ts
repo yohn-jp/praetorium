@@ -970,7 +970,7 @@ async function handleDirectEntry(request: Request, context: GatewayContext, rawR
     const dashboard = new URL(`/repositories/${repositoryId}`, context.config.origin).toString();
     return new Response(
       `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Configuration required</title><body><main><h1>Configuration required</h1><p>This repository instance has no approved artifact configured yet. Review its available setup before starting it.</p><p><a href="${escapeHtml(dashboard)}">Open repository dashboard</a></p></main></body></html>`,
-      { status: 409, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } },
+      { status: 409, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store, no-transform", "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } },
     );
   }
   // This hint is not authorization: authenticate and recheck repository access
@@ -1009,7 +1009,7 @@ async function handleDirectEntry(request: Request, context: GatewayContext, rawR
     : "";
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${automaticRefresh}<title>Starting repository instance</title></head><body><main><h1>Repository instance is starting</h1><p>${operation ? escapeHtml(operation.message ?? operation.state) : "The runtime has no ready observation yet."}</p>${operationDetail}<p><a href="${escapeHtml(continueUrl.pathname)}">Check status</a></p></main></body></html>`,
-    { status: 202, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Retry-After": String(INSTANCE_STARTING_RETRY_SECONDS), "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } },
+    { status: 202, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store, no-transform", "Retry-After": String(INSTANCE_STARTING_RETRY_SECONDS), "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" } },
   );
 }
 

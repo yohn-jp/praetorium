@@ -45,7 +45,7 @@ export function page(
     {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store",
+        "Cache-Control": "no-store, no-transform",
         "Content-Security-Policy":
           `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; ` +
           `form-action ${formAction}; style-src 'sha256-${PORTAL_STYLE_HASHES[presentation.mode]}'${scriptPolicy}`,

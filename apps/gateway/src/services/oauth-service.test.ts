@@ -158,6 +158,7 @@ describe("generic service MCP OAuth", () => {
       headers: { Cookie: f.cookie },
     }), f.context);
     expect(consent.status).toBe(200);
+    expect(consent.headers.get("Cache-Control")).toBe("no-store, no-transform");
     expect(consent.headers.get("Referrer-Policy")).toBe("same-origin");
     expect(consent.headers.get("Content-Security-Policy")).toContain("form-action 'self' https://client.example.test;");
     const consentHtml = await consent.text();

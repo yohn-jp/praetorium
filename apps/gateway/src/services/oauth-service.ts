@@ -309,7 +309,7 @@ export async function authorizeOAuth(
         htmlEscape(session.session.csrfToken) + '">' +
         '<button type="submit" name="decision" value="approve">Allow</button>' +
         '<button type="submit" name="decision" value="deny">Deny</button></form></main></html>', {
-          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store, no-transform",
             "Referrer-Policy": "same-origin", "Content-Security-Policy":
               "default-src 'none'; form-action 'self' " + callbackOrigin + "; base-uri 'none'; frame-ancestors 'none'; style-src 'none'" },
         });

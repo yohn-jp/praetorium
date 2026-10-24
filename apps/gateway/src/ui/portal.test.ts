@@ -711,7 +711,8 @@ describe("server-rendered management UI", () => {
       "token_12345678901234567890",
     ), { isProductionLike: true });
     const html = await response.text();
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
+    expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
     expect(response.headers.get("Referrer-Policy")).toBe("strict-origin");
     expect(html).toContain('<meta name="referrer" content="strict-origin">');
     expect(html).not.toContain('<header class="topbar">');

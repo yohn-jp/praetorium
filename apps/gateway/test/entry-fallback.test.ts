@@ -61,7 +61,8 @@ describe("instance fallback entry", () => {
     expect(html).toContain(`/repositories/${REPOSITORY}`);
     expect(html).toContain(`/entry/scriptorium/${REPOSITORY}`);
     expect(html).not.toMatch(/http-equiv=["']refresh|\.submit\(/i);
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
+    expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
     expect(execute).not.toHaveBeenCalled();
   });
 

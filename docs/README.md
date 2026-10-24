@@ -12,6 +12,7 @@
 
 | 文書 | 役割 | 信頼レベル |
 | --- | --- | --- |
+| [Design and UX contract](design/UX-CONTRACT.md) | 利用者・運営者の情報設計、操作、Desktop/Mobile、受入シナリオ | **UI/UXの設計正本。実装済み・本番合格の報告ではない** |
 | [3VM Management/Execution](architecture/MANAGEMENT-PLANE.md) | 物理VMと論理Planeの配置、実装と目標の責務境界 | 合意済みターゲット + 明示した観測 |
 | [Admin Plane](architecture/ADMINISTRATION.md) | 独立Worker、認証、観測API、可視化、障害、セキュリティ、移行ゲート | **固定目標、未実装機能を含む** |
 | [Migration/残受入](architecture/MANAGEMENT-PLANE-MIGRATION.md) | 移行実行条件、通知/Hosted/Adminの受入条件 | 実装ステータスは検証資料で管理 |

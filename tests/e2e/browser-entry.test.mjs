@@ -265,30 +265,130 @@ async function saveEvidenceScreenshot(page, evidence, name) {
   if (contents) await writePrivateEvidenceFile(evidence, filename, contents);
 }
 
-async function finishBrowserEvidence(evidence, context, outcome) {
-  if (!evidence) return;
-  if (evidence.traceStarted) {
-    const tracePath = path.join(evidence.directory, "playwright-trace.zip");
+function markEvidenceFailed(outcome, stage) {
+  outcome.status = "FAILED";
+  outcome.reasonCode = "ACCEPTANCE_ASSERTION_FAILED";
+  outcome.stage = stage;
+}
+
+async function stopBrowserEvidenceTrace(evidence, context) {
+  if (!evidence?.traceStarted) return null;
+  const tracePath = path.join(evidence.directory, "playwright-trace.zip");
+  try {
     await context.tracing.stop({ path: tracePath });
     const traceInfo = await stat(tracePath).catch(() => null);
-    if (!traceInfo?.isFile()) throw new Error("private Playwright trace was not written");
+    if (!traceInfo?.isFile()) throw new Error("trace not written");
     await chmod(tracePath, 0o600);
     const privateTraceInfo = await stat(tracePath);
     if (privateTraceInfo.uid !== process.getuid?.() || (privateTraceInfo.mode & 0o777) !== 0o600) {
-      throw new Error("private Playwright trace permissions are invalid");
+      throw new Error("trace permissions invalid");
     }
+    return null;
+  } catch (error) {
+    const traceInfo = await stat(tracePath).catch(() => null);
+    if (traceInfo?.isFile()) await chmod(tracePath, 0o600).catch(() => {});
+    appendBrowserEvidenceEvent(evidence, {
+      type: "trace-failure",
+      messageSha256: hashEvidenceText(error instanceof Error ? error.message : "unknown"),
+    });
+    return error;
+  } finally {
     evidence.traceStarted = false;
+  }
+}
+
+async function finishBrowserEvidence(evidence, outcome, reportFailure = writeRunnerResult) {
+  if (!evidence) return false;
+  const hadLateOwnedErrors = evidence.ownedPageErrors > 0 || evidence.ownedConsoleErrors > 0;
+  if (outcome.status === "PASSED" && hadLateOwnedErrors) {
+    markEvidenceFailed(outcome, "late-owned-browser-errors");
+    await reportFailure("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
   }
   const summary = {
     events: evidence.events,
     ownedPageErrors: evidence.ownedPageErrors,
     ownedConsoleErrors: evidence.ownedConsoleErrors,
   };
-  await writePrivateEvidenceFile(
-    evidence,
-    "events.json",
-    `${JSON.stringify({ evidenceVersion: 1, ...summary, outcome })}\n`,
-  );
+  try {
+    await writePrivateEvidenceFile(
+      evidence,
+      "events.json",
+      `${JSON.stringify({ evidenceVersion: 1, ...summary, outcome })}\n`,
+    );
+  } catch (error) {
+    markEvidenceFailed(outcome, "browser-evidence-write");
+    await reportFailure("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
+    throw error;
+  }
+  return hadLateOwnedErrors;
+}
+
+async function closeBrowserResources({ closeCallbackServer, context, browser }) {
+  let closeError = null;
+  try {
+    await context?.close();
+  } catch (error) {
+    closeError ??= error;
+  }
+  try {
+    await closeCallbackServer?.();
+  } catch (error) {
+    closeError ??= error;
+  } finally {
+    try {
+      await browser?.close();
+    } catch (error) {
+      closeError ??= error;
+    }
+  }
+  return closeError;
+}
+
+async function finalizeBrowserRun({
+  evidence,
+  outcome,
+  context,
+  browser,
+  closeCallbackServer,
+  reportFailure = writeRunnerResult,
+}) {
+  const wasAccepted = outcome.status === "PASSED";
+  let finalizationError = null;
+  try {
+    finalizationError = await stopBrowserEvidenceTrace(evidence, context);
+    if (finalizationError) {
+      markEvidenceFailed(outcome, "browser-trace-finalization");
+      await reportFailure("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
+    }
+  } catch (error) {
+    finalizationError ??= error;
+    markEvidenceFailed(outcome, "browser-trace-finalization");
+    await reportFailure("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
+  } finally {
+    const closeError = await closeBrowserResources({ closeCallbackServer, context, browser });
+    if (closeError) {
+      markEvidenceFailed(outcome, "browser-resource-cleanup");
+      appendBrowserEvidenceEvent(evidence, {
+        type: "cleanup-failure",
+        messageSha256: hashEvidenceText(
+          closeError instanceof Error ? closeError.message : "unknown",
+        ),
+      });
+      await reportFailure("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
+      finalizationError ??= closeError;
+    }
+  }
+  try {
+    await finishBrowserEvidence(evidence, outcome, reportFailure);
+  } catch (error) {
+    markEvidenceFailed(outcome, "browser-evidence-finalization");
+    await reportFailure("FAILED", "ACCEPTANCE_ASSERTION_FAILED");
+    finalizationError ??= error;
+  }
+  if (wasAccepted && outcome.status !== "PASSED") {
+    finalizationError ??= new Error("browser-entry acceptance failed during finalization");
+  }
+  return finalizationError;
 }
 
 function validateInventory(inventory) {
@@ -963,7 +1063,7 @@ test("stable public origin binds the numeric repository under the owner suffix",
   );
 });
 
-test("browser evidence guard requires a private owner directory and redacts URL details", async () => {
+test("owner admission guard validates private browser evidence and URL redaction", async () => {
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "praetorium-browser-evidence-"));
   try {
     const evidenceDirectory = path.join(temporaryRoot, "evidence");
@@ -991,6 +1091,81 @@ test("browser evidence guard requires a private owner directory and redacts URL 
     const message = "authorization code secret was rejected";
     assert.equal(hashEvidenceText(message), createHash("sha256").update(message).digest("hex"));
     assert.notEqual(hashEvidenceText(message), message);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("owner admission guard records late errors and closes browser resources after trace failure", async () => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "praetorium-browser-finalize-"));
+  try {
+    const evidenceDirectory = path.join(temporaryRoot, "evidence");
+    await mkdir(evidenceDirectory, { mode: 0o700 });
+    const lateEvidence = await createRunEvidenceDirectory(evidenceDirectory);
+    lateEvidence.events = [];
+    lateEvidence.ownedPageErrors = 0;
+    lateEvidence.ownedConsoleErrors = 0;
+    lateEvidence.traceStarted = false;
+    const lateOutcome = { status: "PASSED", reasonCode: null, stage: "complete" };
+    const lateResults = [];
+    const lateFinalizationError = await finalizeBrowserRun({
+      evidence: lateEvidence,
+      outcome: lateOutcome,
+      context: {
+        close: async () => {
+          lateEvidence.ownedPageErrors += 1;
+        },
+      },
+      browser: { close: async () => {} },
+      reportFailure: async (...result) => lateResults.push(result),
+    });
+    assert.ok(lateFinalizationError instanceof Error);
+    assert.deepEqual(lateResults, [["FAILED", "ACCEPTANCE_ASSERTION_FAILED"]]);
+    assert.deepEqual(lateOutcome, {
+      status: "FAILED",
+      reasonCode: "ACCEPTANCE_ASSERTION_FAILED",
+      stage: "late-owned-browser-errors",
+    });
+    const lateEvents = JSON.parse(
+      await readFile(path.join(lateEvidence.directory, "events.json"), "utf8"),
+    );
+    assert.equal(lateEvents.outcome.status, "FAILED");
+
+    const traceEvidence = await createRunEvidenceDirectory(evidenceDirectory);
+    traceEvidence.events = [];
+    traceEvidence.ownedPageErrors = 0;
+    traceEvidence.ownedConsoleErrors = 0;
+    traceEvidence.traceStarted = true;
+    const traceFailure = new Error("private trace failure");
+    const traceOutcome = { status: "PASSED", reasonCode: null, stage: "complete" };
+    const traceResults = [];
+    const closed = [];
+    const finalizationError = await finalizeBrowserRun({
+      evidence: traceEvidence,
+      outcome: traceOutcome,
+      context: {
+        tracing: { stop: async () => Promise.reject(traceFailure) },
+        close: async () => closed.push("context"),
+      },
+      browser: { close: async () => closed.push("browser") },
+      closeCallbackServer: async () => {
+        closed.push("callback");
+        throw traceFailure;
+      },
+      reportFailure: async (...result) => traceResults.push(result),
+    });
+    assert.equal(finalizationError, traceFailure);
+    assert.deepEqual(closed, ["context", "callback", "browser"]);
+    assert.deepEqual(traceResults, [
+      ["FAILED", "ACCEPTANCE_ASSERTION_FAILED"],
+      ["FAILED", "ACCEPTANCE_ASSERTION_FAILED"],
+    ]);
+    assert.equal(traceOutcome.status, "FAILED");
+    const traceEvents = JSON.parse(
+      await readFile(path.join(traceEvidence.directory, "events.json"), "utf8"),
+    );
+    assert.equal(traceEvents.outcome.status, "FAILED");
+    assert.equal(traceEvents.events[0].type, "trace-failure");
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -1378,6 +1553,7 @@ test(
     const handoffPosts = [];
     let ownerWindowExpired = false;
     let evidenceOutcome = { status: "FAILED", reasonCode: "ACCEPTANCE_ASSERTION_FAILED", stage };
+    let browserFinalizationError = null;
     try {
       try {
         browser = await chromium.launch({ executablePath, headless: true });
@@ -2366,11 +2542,20 @@ test(
       ).catch(() => {});
       throw new Error(`${reasonCode}: ${stage}`);
     } finally {
-      await finishBrowserEvidence(evidence, context, evidenceOutcome);
-      if (callbackServer)
-        await new Promise((resolve) => callbackServer.close(resolve)).catch(() => {});
-      await context?.close().catch(() => {});
-      await browser?.close().catch(() => {});
+      browserFinalizationError = await finalizeBrowserRun({
+        evidence,
+        outcome: evidenceOutcome,
+        context,
+        browser,
+        closeCallbackServer: callbackServer
+          ? () =>
+              new Promise((resolve, reject) => {
+                callbackServer.close((error) => (error ? reject(error) : resolve()));
+              })
+          : undefined,
+      });
+      callbackServer = null;
     }
+    if (browserFinalizationError) throw browserFinalizationError;
   },
 );

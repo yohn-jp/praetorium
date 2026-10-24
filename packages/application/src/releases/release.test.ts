@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compareReleaseVersions } from "./semver.js";
 import { discoverStableCandidates } from "./discovery.js";
 import { ingestReleaseCandidate } from "./ingest.js";
+import { ConfigurationConflictError } from "../configurations/types.js";
 import {
   advanceStablePromotions,
   STABLE_CANARY_HEALTH_WINDOW_MS,
@@ -368,6 +369,30 @@ async function advanceOnce(store: MemoryReleaseStore, deps: ReleasePromotionDeps
 }
 
 describe("stable release candidate application", () => {
+  it("persists configuration conflicts without exposing exception text and retries normally", async () => {
+    for (const failure of [
+      new ConfigurationConflictError("private repository details"),
+      new Error("private provider details"),
+    ]) {
+      const store = new MemoryReleaseStore();
+      const clock = new MutableClock();
+      const item = candidate();
+      store.candidates.set(item.id, item);
+      store.workflows.set(item.id, { ...queuedWorkflow(item.id), state: "canary_building" });
+      const result = await advanceStablePromotions(promotionDeps(store, clock, {
+        canaryComposition: { compose: async () => { throw failure; } },
+      }));
+      const workflow = store.workflows.get(item.id)!;
+      expect(result.retried).toBe(1);
+      expect(workflow.state).toBe("canary_building");
+      expect(workflow.failureCode).toBe(failure instanceof ConfigurationConflictError
+        ? "canary_configuration_conflict" : "promotion_step_failed");
+      expect(workflow.nextAttemptAt).toBeGreaterThan(clock.nowMs());
+      expect(store.channel.currentReleaseId).toBeNull();
+      expect(JSON.stringify(workflow)).not.toContain("private");
+    }
+  });
+
   it("orders strict SemVer including prereleases and ignores build metadata", () => {
     expect(compareReleaseVersions("1.0.0-alpha.10", "1.0.0-alpha.2")).toBe(1);
     expect(compareReleaseVersions("1.0.0", "1.0.0-rc.9")).toBe(1);

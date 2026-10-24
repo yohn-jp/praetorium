@@ -832,6 +832,7 @@ async function createRuntimeFixture(root, kit) {
     sourceIdentity: { host: registryHost, repositoryPath: producerRepository.slice("ghcr.io/".length) },
     workerEnvironment: workerEnv,
     simulatedNow: () => simulatedNow,
+    finishSimulatedCanaryStart,
     advanceClock: (milliseconds) => {
       simulatedNow += milliseconds;
     },
@@ -1074,7 +1075,7 @@ async function runSourceToStable(root, kit) {
       WHERE instance_id=?`,
     )
     .run(fixture.simulatedNow(), INSTANCE_ID);
-  await finishSimulatedCanaryStart(canaryOperation.operation_id);
+  await fixture.finishSimulatedCanaryStart(canaryOperation.operation_id);
 
   const promotionDependencies = { ...fixture.t11.scheduled.promotions, healthWindowMs: 0 };
   // This disposable test has no provisioner event callback. Advance the

@@ -776,3 +776,16 @@ describe("operator-only admin origin", () => {
     ).toBe(303);
   });
 });
+
+
+it("preserves only allowlisted Admin read query context across the Gateway OAuth handoff", () => {
+  expect(adminReturnPath("/builds?ui=mobile&sort=attempt&state=failed&cursor=older_1")).toBe(
+    "/builds?ui=mobile&sort=attempt&state=failed&cursor=older_1");
+  expect(adminReturnPath("/audit?ui=desktop&q=lease+epoch&cursor=12:evt_1")).toBe(
+    "/audit?ui=desktop&q=lease+epoch&cursor=12%3Aevt_1");
+  for (const invalid of [
+    "//attacker.test/", "/source-builds/sr_00000000-0000-4000-a000-000000000001/retry",
+    "/audit?ui=mobile&ui=desktop", "/audit?q=%0A",
+    "/releases?state=failed", "/audit?redirect_to=https://evil.test",
+  ]) expect(adminReturnPath(invalid)).toBe("/");
+});

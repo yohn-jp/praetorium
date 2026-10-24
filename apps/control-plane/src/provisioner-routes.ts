@@ -112,6 +112,7 @@ export interface ProvisionerRoutesDependencies {
     operation: Awaited<ReturnType<OperationService["checkpoint"]>>,
     now: number,
   ) => Promise<boolean | void>;
+  afterCanaryStopReported?: (operationId: string) => Promise<void>;
   issueControlCredential?: (input: unknown) => Promise<unknown>;
   resolveRuntimeContext: (claim: ClaimedOperation) => Promise<unknown>;
 }
@@ -237,14 +238,35 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
   app.post("/report", async (c) => {
     const input = Report.parse(await boundedJson(c.req.raw));
     scoped(input);
-    return c.json(
-      await deps.operations.report({
+    const result = await deps.operations.report({
         ...input,
         terminal: input.terminal ?? null,
         observation: input.observation ? { ...input.observation, reportedAt: deps.now() } : null,
         now: deps.now(),
-      }),
-    );
+      });
+    const operation = result.operation;
+    if (
+      result.applied &&
+      !result.duplicate &&
+      operation.kind === "stop" &&
+      operation.status === "succeeded" &&
+      operation.idempotencyKey.startsWith("stable-canary-stop:") &&
+      deps.afterCanaryStopReported
+    ) {
+      const work = Promise.resolve()
+        .then(() => deps.afterCanaryStopReported?.(operation.id))
+        .then(
+          () => undefined,
+          () => undefined,
+        );
+      try {
+        c.executionCtx.waitUntil(work);
+      } catch {
+        // The operation report is durable; the bounded callback is a wake hint.
+        void work;
+      }
+    }
+    return c.json(result);
   });
   app.post("/reservations/current", async (c) => {
     const input = z.strictObject({ clusterId: Id }).parse(await boundedJson(c.req.raw));

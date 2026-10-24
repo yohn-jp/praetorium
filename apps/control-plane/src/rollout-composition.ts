@@ -17,6 +17,7 @@ import {
   type ReleaseCandidateManifest,
   type ReleaseClock,
   type ReleaseIdSource,
+  type ReleasePromotionDeps,
   type RegistryBackedReleaseVerifierDeps,
 } from "@praetorium/application/releases";
 import {
@@ -55,6 +56,7 @@ export type T11RolloutCompositionDependencies = RegistryBackedReleaseVerifierDep
   readonly clock: ReleaseClock;
   readonly ids: ReleaseIdSource;
   readonly workerId: string;
+  readonly healthWindowMs?: number;
   readonly authorizeOperator: (headers: Headers) => Promise<{ readonly actorId: string } | null>;
   readonly requestId?: () => string;
   readonly notifyWorkAvailable?: WorkNotificationDispatcher;
@@ -165,6 +167,7 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     rolloutPlanner: createStableRolloutPlanner(rolloutDependencies),
     clock: deps.clock,
     workerId: deps.workerId,
+    ...(deps.healthWindowMs === undefined ? {} : { healthWindowMs: deps.healthWindowMs }),
     notifyCanaryHealthScheduleAvailable: (instanceId: string) =>
       notifyWork("operation", instanceId),
   };
@@ -174,14 +177,26 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     return progressCanaryHealthAfterEvidence({
       findReleaseId: () => releases.findCanaryReleaseId(operationId),
       prepare: () => releases.prepareCanaryHealthProgress({ operationId, now: deps.clock.nowMs() }),
-      advance: async (releaseId) =>
-        (
-          await advanceStablePromotions(
-            { ...promotions, workerId: healthProgressWorkerId },
-            { limit: 1, releaseId },
-          )
-        ).claimed,
+      advance: (releaseId) =>
+        advanceCanaryStages(
+          { ...promotions, workerId: healthProgressWorkerId },
+          releaseId,
+          3,
+        ),
     });
+  };
+  const progressCanaryStop = async (operationId: string) => {
+    const releaseId = await releases.wakeCanaryCleanupAfterStop(
+      operationId,
+      deps.clock.nowMs(),
+    );
+    if (!releaseId) return;
+    const stopProgressWorkerId = `${deps.workerId}:canary-stop:${crypto.randomUUID()}`;
+    await advanceCanaryStages(
+      { ...promotions, workerId: stopProgressWorkerId },
+      releaseId,
+      2,
+    );
   };
   const operatorReleaseAdmission = createOperatorReleaseAdmissionRoutes({
     releases,
@@ -219,6 +234,7 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     getCanaryHealthSchedule: (input: Parameters<typeof releases.getCanaryHealthSchedule>[0]) =>
       releases.getCanaryHealthSchedule(input),
     progressCanaryHealth,
+    progressCanaryStop,
     afterAcceptedCanaryBuild: async (buildId: string) => {
       const releaseId = await releases.wakeSuccessfulCanaryBuild({
         buildId,
@@ -238,6 +254,20 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     },
     operatorReleaseAdmission,
   };
+}
+
+async function advanceCanaryStages(
+  promotions: ReleasePromotionDeps,
+  releaseId: string,
+  maximumStages: number,
+): Promise<number> {
+  let claimed = 0;
+  for (let stage = 0; stage < maximumStages; stage += 1) {
+    const batch = await advanceStablePromotions(promotions, { limit: 1, releaseId });
+    claimed += batch.claimed;
+    if (batch.claimed === 0 || batch.advanced === 0) break;
+  }
+  return claimed;
 }
 
 const CANARY_HEALTH_PROGRESS_TIMEOUT_MS = 15_000;

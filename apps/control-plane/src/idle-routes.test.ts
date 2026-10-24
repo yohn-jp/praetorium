@@ -16,6 +16,7 @@ import {
   createProvisionerIdleRoutes,
   type ProvisionerIdleRoutesDependencies,
 } from "./idle-routes.js";
+import { createProvisionerRoutes } from "./provisioner-routes.js";
 import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 
 const schemaUrl = new URL("../../../docs/migration/tasks/T03-schema.sql", import.meta.url);
@@ -670,6 +671,65 @@ describe("Control Plane provisioner idle routes", () => {
     await expect(response.json()).resolves.toEqual({
       error: { code: "WORKER_SCOPE_MISMATCH" },
     });
+  });
+});
+
+describe("Provisioner canary stop completion notification", () => {
+  it("continues only a newly applied successful release-canary stop report", async () => {
+    let result = {
+      operation: {
+        id: "op_canary_stop",
+        kind: "stop",
+        status: "succeeded",
+        idempotencyKey: "stable-canary-stop:release-1",
+      },
+      applied: true,
+      duplicate: false,
+    };
+    const report = vi.fn(async () => result);
+    const afterCanaryStopReported = vi.fn(async () => undefined);
+    const routes = createProvisionerRoutes({
+      operations: { report } as unknown as OperationService,
+      workerId: WORKER_ID,
+      clusterId: CLUSTER_ID,
+      now: () => NOW,
+      afterCanaryStopReported,
+      resolveRuntimeContext: async () => null,
+    });
+    const input = {
+      operationId: "op_canary_stop",
+      workerId: WORKER_ID,
+      leaseToken: "lease-token-aaaaaaaaaaaaaaaaaaaaaaaa",
+      leaseEpoch: 1,
+      sequence: 1,
+      terminal: "succeeded",
+      observation: {
+        instanceId: "ins_canary_stop",
+        repositoryId: 701,
+        generation: 2,
+        runtimeEpoch: 1,
+        sequence: 1,
+        observedState: "stopped",
+        observedArtifactDigest: null,
+        observedRevisionId: null,
+      },
+    };
+    const request = () =>
+      routes.request("/report", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
+
+    expect((await request()).status).toBe(200);
+    await vi.waitFor(() => expect(afterCanaryStopReported).toHaveBeenCalledExactlyOnceWith("op_canary_stop"));
+
+    result = { ...result, applied: false, duplicate: true };
+    expect((await request()).status).toBe(200);
+    result = { ...result, applied: true, duplicate: false,
+      operation: { ...result.operation, idempotencyKey: "ordinary-stop-1" } };
+    expect((await request()).status).toBe(200);
+    expect(afterCanaryStopReported).toHaveBeenCalledTimes(1);
   });
 });
 

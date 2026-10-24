@@ -249,6 +249,9 @@ function composeServices(env: ControlPlaneEnv) {
       ? {
           provisioner: {
             operations,
+            ...(releases
+              ? { afterCanaryStopReported: releases.progressCanaryStop }
+              : {}),
             publishRuntimeAuthority: (operation, now) => publishRuntimeAuthority(env.CONTROL_PLANE_DB, operation, now),
             retireCredentials: createCredentialRetirementBarrier({
               db: env.CONTROL_PLANE_DB,

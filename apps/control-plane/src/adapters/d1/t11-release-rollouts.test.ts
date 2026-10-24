@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { ReleaseCandidateSchema, type ReleaseCandidate } from "@praetorium/application/releases";
 import type { StableFollower } from "@praetorium/application/rollouts";
+import type { InstanceService } from "@praetorium/application/instances";
+import type { OperationService } from "@praetorium/application/operations";
 import { buildKey, canonicalBuildInput, type BuildInput } from "@praetorium/contracts";
 import { D1BuildStore } from "@praetorium/persistence/d1";
 import {
@@ -10,6 +12,8 @@ import {
   stableRolloutStageIdempotencyKey,
 } from "@praetorium/application/rollouts";
 import { D1StableFollowerRepository } from "./stable-followers.js";
+import { createProvisionerRoutes } from "../../provisioner-routes.js";
+import { createT11RolloutComposition } from "../../rollout-composition.js";
 import {
   D1T11ReleaseRolloutStore,
   type D1BindValue,
@@ -1069,6 +1073,288 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       releaseId: release.id,
     });
     expect(targeted.map(({ candidate: item }) => item.id)).toEqual([release.id]);
+  });
+
+  it("matches a successful canonical canary stop only to its promoting cleanup workflow", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const release = candidate();
+    const releases = store(db);
+    await releases.createCandidate(release);
+    seedCanaryHealthFixture(db, release.id, NOW + 300_000);
+    db.database
+      .prepare(
+        `UPDATE release_candidate_workflows
+            SET state = 'canary_cleanup', cleanup_disposition = 'promote'
+          WHERE release_id = ?`,
+      )
+      .run(release.id);
+    db.database
+      .prepare(
+        `INSERT INTO operations (
+           operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status,
+           phase, idempotency_scope, idempotency_key, request_hash, actor_id,
+           authorization_revision, created_at, updated_at
+         ) VALUES ('canary-stop-operation', 'canary-instance', 101, 7, 4, 'stop', 'succeeded',
+                   'complete', 'canary-test', ?, 'hash', 'system:stable-release-canary', 3, ?, ?)`,
+      )
+      .run(`stable-canary-stop:${release.id}`, NOW, NOW);
+
+    await expect(
+      releases.wakeCanaryCleanupAfterStop("canary-stop-operation", NOW + 60_000),
+    ).resolves.toBe(
+      release.id,
+    );
+    expect(
+      db.database
+        .prepare("SELECT next_attempt_at FROM release_candidate_workflows WHERE release_id = ?")
+        .get(release.id),
+    ).toEqual({ next_attempt_at: NOW + 60_000 });
+    db.database
+      .prepare("UPDATE operations SET actor_id = 'operator-test' WHERE operation_id = ?")
+      .run("canary-stop-operation");
+    await expect(
+      releases.wakeCanaryCleanupAfterStop("canary-stop-operation", NOW + 60_000),
+    ).resolves.toBeNull();
+  });
+
+  it("promotes automatically from the second 60-second health sample through reported stop completion", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const release = candidate();
+    const releases = store(db);
+    await releases.createCandidate(release);
+    const firstHealth = {
+      artifactDigest: DIGEST,
+      runtimeId: "canary-instance",
+      operationId: "canary-operation",
+      runtimeEpoch: 4,
+      providerObservationId: "health-first",
+      source: "runtime-provisioner-observation" as const,
+      imageIdentityVerified: true as const,
+      observedAt: NOW,
+      checks: { startup: true as const, auth: true as const, uiApiMcp: true as const, persistence: true as const },
+      checkEvidence: { startup: "startup-1", auth: "auth-1", uiApiMcp: "mcp-1", persistence: "persistence-1" },
+    };
+    const secondHealth = {
+      ...firstHealth,
+      providerObservationId: "health-second",
+      observedAt: NOW + 60_000,
+    };
+    seedCanaryHealthFixture(db, release.id, NOW + 60_000);
+    db.database
+      .prepare(
+        `UPDATE release_candidate_workflows
+            SET healthy_since = ?, last_healthy_at = ?, last_health_evidence_json = ?
+          WHERE release_id = ?`,
+      )
+      .run(NOW, NOW, JSON.stringify(firstHealth), release.id);
+    db.database
+      .prepare(
+        `INSERT INTO runtime_health_observations (
+           instance_id, repository_id, runtime_epoch, generation, cluster_id, operation_id,
+           provider_observation_id, observed_at, evidence_json
+         ) VALUES ('canary-instance', 101, 4, 7, 'cluster-canary', 'canary-operation', ?, ?, '{}')`,
+      )
+      .run(secondHealth.providerObservationId, secondHealth.observedAt);
+    db.database
+      .prepare(
+        `INSERT INTO operations (
+           operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status,
+           phase, idempotency_scope, idempotency_key, request_hash, actor_id,
+           authorization_revision, created_at, updated_at
+         ) VALUES ('canary-stop-operation', 'canary-instance', 101, 7, 4, 'stop', 'pending',
+                   'accepted', 'canary-test', ?, 'hash', 'system:stable-release-canary', 3, ?, ?)`,
+      )
+      .run(`stable-canary-stop:${release.id}`, NOW, NOW);
+
+    let currentTime = NOW + 60_000;
+    let stopStatus: "pending" | "succeeded" = "pending";
+    const stopOperation = () => ({
+      id: "canary-stop-operation",
+      idempotencyKey: `stable-canary-stop:${release.id}`,
+      instanceId: "canary-instance",
+      repositoryId: 101,
+      generation: 7,
+      runtimeEpoch: 4,
+      kind: "stop" as const,
+      status: stopStatus,
+      deploymentRevisionId: "canary-revision",
+      result: null,
+    });
+    const startOperation = {
+      id: "canary-operation",
+      instanceId: "canary-instance",
+      repositoryId: 101,
+      generation: 7,
+      runtimeEpoch: 4,
+      kind: "start" as const,
+      status: "succeeded" as const,
+      deploymentRevisionId: "canary-revision",
+      result: null,
+    };
+    const proof = {
+      instanceId: "canary-instance",
+      repositoryId: 101,
+      retiredEpoch: 4,
+      providerObservationId: "writer-census-zero",
+      censusObservedAt: NOW + 61_000,
+      remainingWriters: 0 as const,
+      evidenceIdentities: ["census:canary-instance:4"],
+      source: "runtime-provider-census" as const,
+    };
+    const composition = createT11RolloutComposition({
+      db,
+      configurations: {
+        stage: async () => { throw new Error("not needed for canary promotion"); },
+        findStageByIdempotency: async () => null,
+        activateStageUnderClusterFence: async () => null,
+      },
+      canaryConfigurations: {
+        plan: async () => { throw new Error("canary is already running"); },
+        findByIdempotency: async () => null,
+      },
+      instances: {
+        async getByRepositoryId() {
+          return {
+            binding: {
+              repositoryId: 101,
+              instanceId: "canary-instance",
+              bindingEpoch: 2,
+              authorizationRevision: 3,
+              suspended: false,
+            },
+            instance: { instanceId: "canary-instance", repositoryId: 101 },
+          };
+        },
+        async requestDesiredState() {
+          return {
+            instance: {
+              instanceId: "canary-instance",
+              repositoryId: 101,
+              generation: 8,
+              runtimeEpoch: 4,
+              desiredState: "stopped" as const,
+              observedState: "stopped" as const,
+              observedRuntimeEpoch: 4,
+            },
+            operation: stopOperation(),
+          };
+        },
+      } as unknown as InstanceService,
+      operations: {
+        async getById(operationId: string) {
+          return operationId === "canary-operation" ? startOperation : stopOperation();
+        },
+      } as unknown as OperationService,
+      canaryBinding: {
+        repositoryId: 101,
+        instanceId: "canary-instance",
+        bindingEpoch: 2,
+        authorizationRevision: 3,
+        requestedModules: [],
+        resourceProfileId: "small",
+      },
+      canaryObservations: {
+        latestHealth: async () => secondHealth,
+        writerAbsence: async () => ({ ...proof, censusObservedAt: currentTime - 1_000 }),
+      },
+      defaultClusterId: "cluster-canary",
+      clock: {
+        now: () => new Date(currentTime).toISOString(),
+        nowMs: () => currentTime,
+      },
+      ids: { newReleaseId: () => "unused-release" },
+      workerId: "canary-promotion-test",
+      healthWindowMs: 60_000,
+      authorizeOperator: async () => null,
+      registry: {
+        async verifyImage(repository, manifestDigest, platform) {
+          return { repository, manifestDigest, platform };
+        },
+      },
+      provenance: { async verify() { return { verified: true, evidence: [] }; } },
+      producerMetadata: { async verify() { return { kind: "verified", evidence: [] }; } },
+    });
+
+    await composition.progressCanaryHealth("canary-operation");
+    expect(
+      db.database
+        .prepare("SELECT state, next_attempt_at FROM release_candidate_workflows WHERE release_id = ?")
+        .get(release.id),
+    ).toMatchObject({ state: "canary_cleanup", next_attempt_at: expect.any(Number) });
+    expect((await composition.releases.getStableChannel()).currentReleaseId).toBeNull();
+
+    currentTime += 10_000;
+    stopStatus = "succeeded";
+    db.database
+      .prepare("UPDATE operations SET status = 'succeeded', phase = 'complete', updated_at = ? WHERE operation_id = ?")
+      .run(currentTime, "canary-stop-operation");
+    const stopReportRoutes = createProvisionerRoutes({
+      operations: {
+        async report() {
+          return { operation: stopOperation(), applied: true, duplicate: false };
+        },
+      } as unknown as OperationService,
+      workerId: "provisioner-test",
+      clusterId: "cluster-canary",
+      now: () => currentTime,
+      afterCanaryStopReported: composition.progressCanaryStop,
+      resolveRuntimeContext: async () => null,
+    });
+    const background: Promise<unknown>[] = [];
+    const stopReport = await stopReportRoutes.fetch(
+      new Request("https://control.example/report", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operationId: "canary-stop-operation",
+          workerId: "provisioner-test",
+          leaseToken: "lease-token-aaaaaaaaaaaaaaaaaaaaaaaa",
+          leaseEpoch: 1,
+          sequence: 1,
+          terminal: "succeeded",
+          observation: {
+            instanceId: "canary-instance",
+            repositoryId: 101,
+            generation: 8,
+            runtimeEpoch: 4,
+            sequence: 1,
+            observedState: "stopped",
+            observedArtifactDigest: null,
+            observedRevisionId: null,
+          },
+        }),
+      }),
+      {},
+      {
+        waitUntil(promise) { background.push(promise); },
+        passThroughOnException() {},
+        props: {},
+      },
+    );
+    expect(stopReport.status).toBe(200);
+    await Promise.all(background);
+
+    expect((await composition.releases.getStableChannel()).currentReleaseId).toBe(release.id);
+    expect((await composition.releases.findById(release.id))?.status).toBe("available");
+    expect(
+      db.database
+        .prepare(
+          `SELECT state, canary_cleanup_complete, cleanup_evidence_json
+             FROM release_candidate_workflows WHERE release_id = ?`,
+        )
+        .get(release.id),
+    ).toMatchObject({
+      state: "promoted",
+      canary_cleanup_complete: 1,
+      cleanup_evidence_json: expect.any(String),
+    });
+    expect(
+      db.database
+        .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'release.stable.promoted'")
+        .get(),
+    ).toMatchObject({ count: 1 });
   });
 
   it("keeps same-owner same-timestamp targeted claims isolated by release", async () => {

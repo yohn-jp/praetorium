@@ -1154,6 +1154,54 @@ export class D1T11ReleaseRolloutStore
     return row?.release_id ?? null;
   }
 
+  /** Makes only the matching successful canary cleanup due for event-driven continuation. */
+  async wakeCanaryCleanupAfterStop(operationId: string, now: number): Promise<string | null> {
+    if (!Number.isSafeInteger(now) || now < 0) throw new TypeError("canary stop wake time is invalid");
+    const row = await this.db
+      .prepare(
+        `SELECT w.release_id, w.revision, w.next_attempt_at,
+                w.lease_owner, w.lease_expires_at
+           FROM release_candidate_workflows w
+           JOIN operations o
+             ON o.instance_id = w.canary_runtime_id
+            AND o.idempotency_key = 'stable-canary-stop:' || w.release_id
+          WHERE o.operation_id = ? AND o.kind = 'stop' AND o.status = 'succeeded'
+            AND o.actor_id = 'system:stable-release-canary'
+            AND w.state = 'canary_cleanup' AND w.cleanup_disposition = 'promote'
+          ORDER BY w.updated_at DESC, w.release_id LIMIT 1`,
+      )
+      .bind(operationId)
+      .first<{
+        readonly release_id: string;
+        readonly revision: number;
+        readonly next_attempt_at: number | null;
+        readonly lease_owner: string | null;
+        readonly lease_expires_at: number | null;
+      }>();
+    if (!row) return null;
+    if (row.next_attempt_at === null || row.next_attempt_at <= now) return row.release_id;
+    if (row.lease_owner !== null && row.lease_expires_at !== null && row.lease_expires_at > now)
+      return null;
+    const woken = await this.db
+      .prepare(
+        `UPDATE release_candidate_workflows SET next_attempt_at = ?, revision = revision + 1,
+                updated_at = ?
+          WHERE release_id = ? AND state = 'canary_cleanup' AND cleanup_disposition = 'promote'
+            AND revision = ? AND next_attempt_at = ?
+            AND (lease_owner IS NULL OR lease_expires_at <= ?)
+            AND EXISTS (
+              SELECT 1 FROM operations o
+               WHERE o.operation_id = ? AND o.instance_id = canary_runtime_id
+                 AND o.idempotency_key = 'stable-canary-stop:' || release_id
+                 AND o.kind = 'stop' AND o.status = 'succeeded'
+                 AND o.actor_id = 'system:stable-release-canary'
+            )`,
+      )
+      .bind(now, now, row.release_id, row.revision, row.next_attempt_at, now, operationId)
+      .run();
+    return woken.meta.changes === 1 ? row.release_id : null;
+  }
+
   async findById(id: string): Promise<ReleaseCandidate | null> {
     const row = await this.db
       .prepare(

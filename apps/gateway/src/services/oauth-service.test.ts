@@ -114,10 +114,11 @@ describe("generic service MCP OAuth", () => {
     expect(metadata).toMatchObject({
       issuer: GATEWAY, code_challenge_methods_supported: ["S256"],
       token_endpoint: GATEWAY + "/oauth/token",
+      registration_endpoint: GATEWAY + "/oauth/register",
       client_id_metadata_document_supported: true,
       token_endpoint_auth_methods_supported: ["none"],
     });
-    expect(metadata).not.toHaveProperty("registration_endpoint");
+    expect(metadata.registration_endpoint).toBe(GATEWAY + "/oauth/register");
   });
 
   it.each(["legacy DCR", "CIMD"])("%s consents, exchanges one-use PKCE code and atomically rotates refresh", async (kind) => {

@@ -39,6 +39,29 @@ describe("dedicated Admin service-credential scope", () => {
     expect((await cp.request("/v1/operator/source-builds", { headers })).status).toBe(404);
   });
 
+  it("admits canonical system-canary UUID evidence without admitting mutation or unsafe IDs", async () => {
+    const cp = app();
+    const id = "operation_7e53e854-11d8-4722-b8d5-278a796a47d4";
+    const path = `/v1/operations/${id}/evidence`;
+    expect((await cp.request(path, { headers })).status).toBe(404);
+    expect((await cp.request(path)).status).toBe(401);
+    expect((await cp.request(path, {
+      headers: { "X-Control-Plane-Admin-Auth": gateway },
+    })).status).toBe(401);
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      expect((await cp.request(path, { method, headers })).status).toBe(401);
+    }
+    expect((await cp.request(`/v1/operations/${id}/retry`, {
+      method: "POST", headers,
+    })).status).toBe(401);
+    for (const invalidId of [
+      "operation_invalid", `${id}-extra`, "op_" + "a".repeat(125),
+      `${id}%2Fretry`,
+    ]) {
+      expect((await cp.request(`/v1/operations/${invalidId}/evidence`, { headers })).status).toBe(401);
+    }
+  });
+
   it("keeps runtime credential reuse behind Gateway service authentication", async () => {
     const credentialRoutes = new Hono();
     credentialRoutes.post("/internal/runtime-credentials/reuse", (context) =>

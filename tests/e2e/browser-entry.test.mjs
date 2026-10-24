@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash, randomBytes } from "node:crypto";
 import { access, lstat, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { createServer } from "node:http";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -60,6 +62,11 @@ function ensureOwnerLifetime(inventory, requiredSeconds) {
   const requiredMs = requiredSeconds * 1_000 + 5_000;
   if (remainingMs < requiredMs) block("INSUFFICIENT_LIFETIME");
   return Math.min(requiredSeconds * 1_000, remainingMs - 5_000);
+}
+
+function ownerBoundSignal(inventory, maximumMs) {
+  const remainingMs = Date.parse(inventory.environment.expiresAt) - Date.now();
+  return AbortSignal.timeout(Math.max(1, Math.min(maximumMs, remainingMs)));
 }
 
 function isRecord(value) {
@@ -241,6 +248,49 @@ function validateWriteProbe(value) {
   return body;
 }
 
+function validHostnameSuffix(value) {
+  return (
+    typeof value === "string" &&
+    value.length <= 253 &&
+    value === value.toLowerCase() &&
+    value.includes(".") &&
+    !/^\d+(?:\.\d+){3}$/u.test(value) &&
+    /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(
+      value,
+    ) &&
+    !/(?:^|\.)(?:localhost|local|internal|onion|example\.(?:com|net|org)|invalid|test)$/u.test(
+      value,
+    )
+  );
+}
+
+function ownedApplicationOriginMatches(repositoryId, hostnameSuffix, rawOrigin) {
+  const origin = parseOrigin(rawOrigin);
+  return (
+    Number.isSafeInteger(repositoryId) &&
+    repositoryId > 0 &&
+    validHostnameSuffix(hostnameSuffix) &&
+    origin?.origin === `https://${repositoryId}.${hostnameSuffix}`
+  );
+}
+
+function rpcBodyFromText(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const eventData = text
+      .split(/\r?\n/u)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .join("\n");
+    try {
+      return eventData ? JSON.parse(eventData) : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 function validateConfig(config, inventory) {
   if (
     !exactKeys(config, [
@@ -253,6 +303,7 @@ function validateConfig(config, inventory) {
       "producer",
       "writeProbe",
       "selection",
+      "mcp",
       "timeouts",
     ]) ||
     config.schemaVersion !== 1
@@ -282,9 +333,10 @@ function validateConfig(config, inventory) {
     !Number.isSafeInteger(config.repository.id) ||
     config.repository.id < 1 ||
     !/^[A-Za-z0-9_.-]{1,255}\/[A-Za-z0-9_.-]{1,255}$/u.test(config.repository.fullName) ||
-    !exactKeys(config.instance, ["id", "origin", "applicationHeading"]) ||
+    !exactKeys(config.instance, ["id", "origin", "hostnameSuffix", "applicationHeading"]) ||
     !ID_PATTERN.test(config.instance.id) ||
     !parseOrigin(config.instance.origin) ||
+    !validHostnameSuffix(config.instance.hostnameSuffix) ||
     !safeText(config.instance.applicationHeading, 256)
   ) {
     block("OWNER_INPUT_MISSING");
@@ -292,13 +344,15 @@ function validateConfig(config, inventory) {
 
   const instanceOrigin = parseOrigin(config.instance.origin);
   const gatewayOrigin = parseOrigin(config.gateway.origin);
-  const expectedInstanceLabel = `ins-${config.instance.id.slice(4).toLowerCase()}.`;
   if (
     !instanceOrigin ||
     !gatewayOrigin ||
     instanceOrigin.origin === gatewayOrigin.origin ||
-    !instanceOrigin.hostname.startsWith(expectedInstanceLabel) ||
-    instanceOrigin.hostname.split(".").length < 3
+    !ownedApplicationOriginMatches(
+      config.repository.id,
+      config.instance.hostnameSuffix,
+      instanceOrigin.origin,
+    )
   ) {
     block("OWNER_INPUT_MISSING");
   }
@@ -339,11 +393,26 @@ function validateConfig(config, inventory) {
   }
 
   if (
+    !exactKeys(config.mcp, ["clientName", "requiredTools"]) ||
+    !safeText(config.mcp.clientName, 80) ||
+    !Array.isArray(config.mcp.requiredTools) ||
+    config.mcp.requiredTools.length === 0 ||
+    config.mcp.requiredTools.length > 32 ||
+    config.mcp.requiredTools.some(
+      (tool) => !safeText(tool, 64) || !/^[a-z][a-z0-9_-]{0,63}$/u.test(tool),
+    ) ||
+    new Set(config.mcp.requiredTools).size !== config.mcp.requiredTools.length
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+
+  if (
     !exactKeys(config.timeouts, [
       "loginSeconds",
       "wakeSeconds",
       "configurationSeconds",
       "redeploySeconds",
+      "mcpSeconds",
     ]) ||
     Object.values(config.timeouts).some(
       (seconds) => !Number.isSafeInteger(seconds) || seconds < 10 || seconds > 1800,
@@ -414,6 +483,61 @@ async function loadInputs() {
   }
   return { inventory, config, storageState, derived, executablePath };
 }
+
+test("stable public origin binds the numeric repository under the owner suffix", () => {
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.yohn.jp",
+      "https://1423923158.scriptorium.yohn.jp",
+    ),
+    true,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.yohn.jp",
+      "https://1423923159.scriptorium.yohn.jp",
+    ),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.yohn.jp",
+      "https://ins-01arz3ndektsv4rrffq69g5fav.instances.praetorium.yohn.jp",
+    ),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.test",
+      "https://1423923158.scriptorium.test",
+    ),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.internal",
+      "https://1423923158.scriptorium.internal",
+    ),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(1423923158, "127.0.0.1", "https://1423923158.127.0.0.1"),
+    false,
+  );
+  assert.equal(
+    ownedApplicationOriginMatches(
+      1423923158,
+      "scriptorium.yohn.jp",
+      "https://1423923158.scriptorium.yohn.jp:8443",
+    ),
+    false,
+  );
+});
 
 async function writeRunnerResult(status, reasonCode) {
   if (!BLOCKED_CODES.has(reasonCode) && reasonCode !== "ACCEPTANCE_ASSERTION_FAILED") return;
@@ -627,9 +751,7 @@ async function waitForDeployment(page, config, derived, inventory, expectedModul
     }
     const selectedModuleNames =
       snapshot.selection && snapshot.moduleDisplayNames
-        ? snapshot.selection.moduleIds.map((moduleId) =>
-            snapshot.moduleDisplayNames.get(moduleId),
-          )
+        ? snapshot.selection.moduleIds.map((moduleId) => snapshot.moduleDisplayNames.get(moduleId))
         : null;
     const deployedAndRequestedModulesMatch =
       snapshot.currentModules !== null &&
@@ -724,10 +846,15 @@ async function readRemoteScene(page, projectId, sceneId, snapshot, inventory) {
 
 async function readCodeMirrorText(textbox) {
   return textbox.evaluate((element) => {
-    if (element.getAttribute("role") !== "textbox" || element.getAttribute("contenteditable") !== "true") {
+    if (
+      element.getAttribute("role") !== "textbox" ||
+      element.getAttribute("contenteditable") !== "true"
+    ) {
       throw new Error("expected the Scriptorium CodeMirror manuscript editor");
     }
-    const lines = Array.from(element.children).filter((child) => child.classList.contains("cm-line"));
+    const lines = Array.from(element.children).filter((child) =>
+      child.classList.contains("cm-line"),
+    );
     if (lines.length === 0 || lines.length !== element.children.length) {
       throw new Error("the manuscript editor has an unexpected CodeMirror line structure");
     }
@@ -785,6 +912,8 @@ test(
     const { inventory, config, storageState, derived, executablePath } = inputs;
     let browser;
     let context;
+    let callbackServer;
+    let callbackOrigin = null;
     let stage = "browser-launch";
     const gatewayRequests = [];
     const instanceRequests = [];
@@ -808,6 +937,7 @@ test(
         if (
           url.origin === derived.gatewayOrigin.origin ||
           url.origin === derived.instanceOrigin.origin ||
+          url.origin === callbackOrigin ||
           (url.protocol === "https:" && isGithubHost(url.hostname))
         ) {
           await route.continue();
@@ -908,7 +1038,10 @@ test(
       );
 
       stage = "repository-selection";
-      const repositoryLink = page.getByRole("link", { name: config.repository.fullName, exact: true });
+      const repositoryLink = page.getByRole("link", {
+        name: config.repository.fullName,
+        exact: true,
+      });
       assert.equal(
         await repositoryLink.count(),
         1,
@@ -1070,6 +1203,228 @@ test(
         undefined,
         "replayed code must not mint application cookies",
       );
+
+      stage = "mcp-read-only-oauth-and-tools-list";
+      ensureOwnerLifetime(inventory, config.timeouts.mcpSeconds);
+      const callbackPath = `/oauth/callback/${randomBytes(16).toString("hex")}`;
+      let resolveCallback;
+      const callbackResult = new Promise((resolve) => {
+        resolveCallback = resolve;
+      });
+      callbackServer = createServer((request, response) => {
+        if (request.method !== "GET") {
+          response.writeHead(405);
+          response.end();
+          return;
+        }
+        const callbackUrl = new URL(request.url ?? "/", callbackOrigin ?? "http://127.0.0.1");
+        if (callbackUrl.pathname !== callbackPath) {
+          response.writeHead(404);
+          response.end();
+          return;
+        }
+        const codes = callbackUrl.searchParams.getAll("code");
+        const states = callbackUrl.searchParams.getAll("state");
+        const issuers = callbackUrl.searchParams.getAll("iss");
+        const errors = callbackUrl.searchParams.getAll("error");
+        resolveCallback({
+          code: codes.length === 1 ? codes[0] : null,
+          state: states.length === 1 ? states[0] : null,
+          issuer: issuers.length === 1 ? issuers[0] : null,
+          error: errors.length <= 1 ? (errors[0] ?? null) : "duplicate_error",
+        });
+        response.writeHead(200, {
+          "Cache-Control": "no-store",
+          "Content-Type": "text/plain; charset=utf-8",
+        });
+        response.end("MCP authorization completed. You may close this page.");
+      });
+      await new Promise((resolve, reject) => {
+        callbackServer.once("error", reject);
+        callbackServer.listen(0, "127.0.0.1", resolve);
+      });
+      const callbackAddress = callbackServer.address();
+      assert.ok(callbackAddress && typeof callbackAddress === "object");
+      callbackOrigin = `http://127.0.0.1:${callbackAddress.port}`;
+      const redirectUri = `${callbackOrigin}${callbackPath}`;
+
+      ensureOwnerLifetime(inventory, 10);
+      const registrationResponse = await fetch(`${derived.gatewayOrigin.origin}/oauth/register`, {
+        method: "POST",
+        redirect: "manual",
+        signal: ownerBoundSignal(inventory, 10_000),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_name: config.mcp.clientName,
+          redirect_uris: [redirectUri],
+          token_endpoint_auth_method: "none",
+          grant_types: ["authorization_code"],
+          response_types: ["code"],
+        }),
+      });
+      assert.equal(
+        registrationResponse.status,
+        201,
+        "Gateway must register the ephemeral public MCP client",
+      );
+      const registration = await registrationResponse.json();
+      assert.match(registration.client_id, /^praetorium_cl_[A-Za-z0-9_-]{22}$/u);
+      assert.deepEqual(registration.redirect_uris, [redirectUri]);
+
+      const verifier = randomBytes(32).toString("base64url");
+      const challenge = createHash("sha256").update(verifier).digest("base64url");
+      const oauthState = randomBytes(24).toString("base64url");
+      const authorizeUrl = new URL("/oauth/authorize", derived.gatewayOrigin.origin);
+      for (const [key, value] of Object.entries({
+        response_type: "code",
+        client_id: registration.client_id,
+        redirect_uri: redirectUri,
+        resource: derived.instanceOrigin.origin,
+        scope: "read",
+        state: oauthState,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      })) {
+        authorizeUrl.searchParams.set(key, value);
+      }
+      const mcpPage = await context.newPage();
+      mcpPage.setDefaultTimeout(15_000);
+      mcpPage.setDefaultNavigationTimeout(
+        ensureOwnerLifetime(inventory, config.timeouts.mcpSeconds),
+      );
+      await mcpPage.goto(authorizeUrl.toString(), { waitUntil: "domcontentloaded" });
+      assert.equal(
+        await mcpPage.getByRole("heading", { name: "Allow MCP access?", exact: true }).count(),
+        1,
+        "read-only MCP authorization must use Gateway's real consent screen",
+      );
+      let callbackTimeout;
+      const callbackWait = Promise.race([
+        callbackResult,
+        new Promise((_, reject) => {
+          callbackTimeout = setTimeout(
+            () => reject(new Error("MCP authorization callback timed out")),
+            config.timeouts.mcpSeconds * 1_000,
+          );
+        }),
+      ]).finally(() => clearTimeout(callbackTimeout));
+      ensureOwnerLifetime(inventory, 10);
+      await mcpPage.getByRole("button", { name: "Allow", exact: true }).click();
+      const authorization = await callbackWait;
+      assert.equal(authorization.error, null, "MCP consent must not return an OAuth error");
+      assert.equal(authorization.state, oauthState, "OAuth callback must preserve PKCE state");
+      assert.equal(authorization.issuer, derived.gatewayOrigin.origin);
+      assert.ok(authorization.code, "Gateway consent must issue an authorization code");
+
+      ensureOwnerLifetime(inventory, 10);
+      const tokenResponse = await fetch(`${derived.gatewayOrigin.origin}/oauth/token`, {
+        method: "POST",
+        redirect: "manual",
+        signal: ownerBoundSignal(inventory, 10_000),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          client_id: registration.client_id,
+          code: authorization.code,
+          redirect_uri: redirectUri,
+          resource: derived.instanceOrigin.origin,
+          code_verifier: verifier,
+        }),
+      });
+      assert.equal(
+        tokenResponse.status,
+        200,
+        "PKCE code exchange must issue an instance-scoped token",
+      );
+      const tokenBody = await tokenResponse.json();
+      assert.equal(tokenBody.scope, "read", "MCP access must remain read-only");
+      assert.equal(tokenBody.token_type, "Bearer");
+      assert.ok(Number.isSafeInteger(tokenBody.expires_in) && tokenBody.expires_in > 0);
+      assert.ok(tokenBody.expires_in <= 300);
+      assert.ok(safeText(tokenBody.access_token, 16_384));
+      assert.ok(safeText(tokenBody.refresh_token, 1_024));
+      const accept = "application/json, text/event-stream";
+      async function mcpRequest(body, bearerToken, sessionId = null, protocolVersion = null) {
+        ensureOwnerLifetime(inventory, 10);
+        const headers = {
+          Accept: accept,
+          "Cache-Control": "no-store",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${bearerToken}`,
+          ...(sessionId ? { "MCP-Session-Id": sessionId } : {}),
+          ...(protocolVersion ? { "MCP-Protocol-Version": protocolVersion } : {}),
+        };
+        const response = await fetch(`${derived.instanceOrigin.origin}/mcp`, {
+          method: "POST",
+          redirect: "manual",
+          signal: ownerBoundSignal(inventory, 10_000),
+          headers,
+          body: JSON.stringify(body),
+        });
+        return {
+          status: response.status,
+          headers: response.headers,
+          body: rpcBodyFromText(await response.text()),
+        };
+      }
+      const invalidCredential = await mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "praetorium-invalid-credential-check", version: "1.0" },
+          },
+        },
+        "invalid-praetorium-t14-credential",
+      );
+      assert.equal(invalidCredential.status, 401, "invalid MCP bearer credential must fail closed");
+      assert.match(invalidCredential.headers.get("www-authenticate") ?? "", /^Bearer\b/iu);
+
+      const initialized = await mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: config.mcp.clientName, version: "1.0" },
+          },
+        },
+        tokenBody.access_token,
+      );
+      assert.equal(initialized.status, 200, "valid read token must initialize MCP");
+      assert.equal(initialized.body?.jsonrpc, "2.0");
+      assert.equal(initialized.body?.id, 1);
+      assert.equal(initialized.body?.result?.protocolVersion, "2025-03-26");
+      const mcpSessionId = initialized.headers.get("mcp-session-id");
+      const notification = await mcpRequest(
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        tokenBody.access_token,
+        mcpSessionId,
+        initialized.body.result.protocolVersion,
+      );
+      assert.ok([200, 202, 204].includes(notification.status));
+      const listedTools = await mcpRequest(
+        { jsonrpc: "2.0", id: 2, method: "tools/list" },
+        tokenBody.access_token,
+        notification.headers.get("mcp-session-id") ?? mcpSessionId,
+        initialized.body.result.protocolVersion,
+      );
+      assert.equal(listedTools.status, 200, "authorized read token must list MCP tools");
+      assert.equal(listedTools.body?.jsonrpc, "2.0");
+      assert.equal(listedTools.body?.id, 2);
+      assert.ok(Array.isArray(listedTools.body?.result?.tools));
+      const toolNames = listedTools.body.result.tools.map((tool) => tool.name);
+      for (const requiredTool of config.mcp.requiredTools) {
+        assert.ok(toolNames.includes(requiredTool), `MCP tools/list must include ${requiredTool}`);
+      }
+      await mcpPage.close();
+      await new Promise((resolve) => callbackServer.close(resolve));
+      callbackServer = null;
 
       stage = "owned-manuscript-edit-checkpoint-publish-reload";
       context.setDefaultNavigationTimeout(
@@ -1320,9 +1675,7 @@ test(
           response.request().method() === "POST",
       );
       ensureOwnerLifetime(inventory, 10);
-      await page
-        .getByRole("button", { name: "Save configuration and build", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Save configuration and build", exact: true }).click();
       const saveResponse = await saveResponsePromise;
       assert.equal(saveResponse.status(), 202, "UI configuration must queue the build");
       const pendingBuild = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
@@ -1523,6 +1876,8 @@ test(
       );
       throw new Error(`${reasonCode}: ${stage}`);
     } finally {
+      if (callbackServer)
+        await new Promise((resolve) => callbackServer.close(resolve)).catch(() => {});
       await context?.close().catch(() => {});
       await browser?.close().catch(() => {});
     }

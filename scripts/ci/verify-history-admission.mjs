@@ -287,9 +287,27 @@ const rendered = runtime.kind === "List" ? runtime.items : [];
 const deployment = rendered.find((item) => item.kind === "Deployment");
 const pvc = rendered.find((item) => item.kind === "PersistentVolumeClaim");
 const quota = rendered.find((item) => item.kind === "ResourceQuota");
+const runtimeServiceAccounts = rendered.filter(
+  (item) =>
+    item.kind === "ServiceAccount" &&
+    item.metadata?.namespace === deployment?.metadata?.namespace &&
+    item.metadata?.labels?.["arcadia.io/instance-id"] ===
+      deployment?.spec?.template?.metadata?.labels?.["arcadia.io/instance-id"],
+);
 assert.ok(deployment, "runtime renderer did not emit a Deployment");
 assert.ok(pvc, "runtime renderer did not emit the stable history PVC");
 assert.ok(quota, "runtime renderer did not emit a ResourceQuota");
+assert.equal(
+  runtimeServiceAccounts.length,
+  1,
+  "runtime renderer must emit one owned app ServiceAccount",
+);
+const runtimeServiceAccount = runtimeServiceAccounts[0];
+assert.equal(
+  runtimeServiceAccount.metadata.name,
+  deployment.spec.template.spec.serviceAccountName,
+  "runtime Deployment must bind the rendered owned app ServiceAccount",
+);
 
 const instanceId = deployment.spec.template.metadata.labels["arcadia.io/instance-id"];
 const repositoryId = deployment.spec.template.metadata.labels["praetorium.io/repository-id"];
@@ -493,6 +511,14 @@ kubectl(
 );
 
 const pod = admissionPod(deployment);
+// The admitted Pod references these concrete namespace objects. Materialize the
+// exact renderer-owned ServiceAccount and stable seed Secret in the disposable
+// namespace before asking the API server to admit the Pod.
+createObject(seedSecret, { asProvisioner: true, label: "history-seed-pod-prerequisite" });
+createObject(runtimeServiceAccount, {
+  asProvisioner: true,
+  label: "runtime-app-service-account-prerequisite",
+});
 createObject(pod, { dryRun: true });
 
 const wrongPodClaim = structuredClone(pod);

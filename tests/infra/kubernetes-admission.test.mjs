@@ -709,6 +709,18 @@ test("the canonical Kind job runs real server-side history admission scenarios",
   const firstPvcUpdate = runner.indexOf("kubectl(\n  [", runner.indexOf("const badSizePatch"));
   assert.ok(negativePvcCreates.every((index) => index >= 0 && index < validPvcUpdateFixture));
   assert.ok(validPvcUpdateFixture < firstPvcUpdate);
+  assert.match(runner, /const runtimeServiceAccounts = rendered\.filter/u);
+  assert.match(
+    runner,
+    /runtimeServiceAccount\.metadata\.name,[\s\S]*deployment\.spec\.template\.spec\.serviceAccountName/u,
+  );
+  const positivePodAdmission = runner.indexOf("createObject(pod, { dryRun: true })");
+  const seedPrerequisite = runner.indexOf(
+    'createObject(seedSecret, { asProvisioner: true, label: "history-seed-pod-prerequisite" })',
+  );
+  const serviceAccountPrerequisite = runner.indexOf("createObject(runtimeServiceAccount,");
+  assert.ok(seedPrerequisite >= 0 && seedPrerequisite < positivePodAdmission);
+  assert.ok(serviceAccountPrerequisite >= 0 && serviceAccountPrerequisite < positivePodAdmission);
   assert.match(runner, /function safeStderr\(stderr\)/u);
   assert.match(runner, /subarray\(0, 4096\)/u);
   assert.ok(runner.includes("replace(/\\u001b\\[[0-?]*"));

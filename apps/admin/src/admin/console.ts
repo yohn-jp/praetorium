@@ -467,9 +467,9 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   const withCursor = cursor ? "?cursor=" + encodeURIComponent(cursor) : "";
   const empty = <T>(value: T): OperatorSection<T> => ({ endpoint: "", status: 200, code: null, value });
   const [catalog, audit, builds, sourceViews, detail, releaseDetail, infrastructure, hostDetail, hostServices, dependencies] = await Promise.all([
-    section === "overview" || (section === "releases" && !selectedReleaseId && !selectedOperationId)
+    section === "overview" || (section === "releases" && !selectedOperationId)
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases",
-        "/v1/operator/releases" + (section === "releases" ? withCursor : ""), isCatalog)
+        "/v1/operator/releases" + (section === "releases" && !selectedReleaseId ? withCursor : ""), isCatalog)
       : Promise.resolve(empty({ items: [] as Summary[], stableChannel: null })),
     section === "audit"
       ? controlPlaneSection(context, session.actor.userId, "GET /v1/operator/releases/audit",

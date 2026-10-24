@@ -184,6 +184,10 @@ describe("mobile operator console", () => {
     expect(html).toContain('name="expectedRevision" value="5"');
     expect(html).toContain('name="csrfToken" value="csrf-fixture"');
     expect(html).toContain('name="idempotencyKey"');
+    const sourceRetryKey = html.match(
+      /<form method="post" action="\/source-builds\/sr_54a61e4d-088c-453e-98ca-6be8588a4e1f\/retry\?ui=mobile"[^>]*>[\s\S]*?name="idempotencyKey" value="([^"]+)"/u,
+    )?.[1];
+    expect(sourceRetryKey).toMatch(/^cmd_[A-Za-z0-9_-]{22}$/u);
     expect(html).toContain("Retry Source build");
     expect(html).toContain("The recorded failure remains available");
   });

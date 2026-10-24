@@ -6,7 +6,6 @@ const CSRF = "__Host-praetorium_csrf";
 const MAX_FORM = 4096;
 
 export { adminReturnPath } from "@praetorium/auth";
-}
 
 export interface AdminSession {
   readonly actor: { readonly userId: string };

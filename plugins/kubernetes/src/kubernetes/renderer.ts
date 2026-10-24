@@ -571,7 +571,7 @@ function deployment(
                       { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
                       { name: "SCRIPTORIUM_TRUST_PROXY", value: "1" },
                       { name: "SCRIPTORIUM_DATA_DIR", value: "/data/workspace" },
-                      { name: "SCRIPTORIUM_USAGE_DIR", value: "/history" },
+                      { name: "SCRIPTORIUM_USAGE_DIR", value: "/history/private" },
                       {
                         name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
                         value: "/run/scriptorium/runtime-assignment.json",

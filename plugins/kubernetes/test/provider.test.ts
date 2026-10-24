@@ -570,6 +570,23 @@ function reservation(
 }
 
 describe("Kubernetes runtime provider", () => {
+  it("does not migrate an already-running legacy target during an idempotent start", async () => {
+    const api = new FakeKubernetesApi();
+    addLegacyWriter(api);
+    const result = await provider(api).ensureRunning(
+      hostedSpec(),
+      new AbortController().signal,
+      async () => undefined,
+    );
+    expect(result.status).toBe("pending");
+    expect(result.progress[0]?.phase).toBe("prior_writer_pods_present");
+    expect(api.historySnapshotCalls).toHaveLength(0);
+    expect(api.writes).toHaveLength(0);
+    expect(api.conditionalWrites).toHaveLength(0);
+    expect(api.deletes).toHaveLength(0);
+    expect(api.objects.has(key("PersistentVolumeClaim", NAMESPACE, `${DEPLOYMENT}-history`))).toBe(false);
+  });
+
   it("fails closed before stopping a legacy history writer while quiesce freeze is unproven", async () => {
     const api = new FakeKubernetesApi();
     addLegacyWriter(api);
@@ -878,7 +895,7 @@ describe("Kubernetes runtime provider", () => {
       { name: "SCRIPTORIUM_HOSTED_MODE", value: "1" },
       { name: "SCRIPTORIUM_TRUST_PROXY", value: "1" },
       { name: "SCRIPTORIUM_DATA_DIR", value: "/data/workspace" },
-      { name: "SCRIPTORIUM_USAGE_DIR", value: "/history" },
+      { name: "SCRIPTORIUM_USAGE_DIR", value: "/history/private" },
       {
         name: "SCRIPTORIUM_RUNTIME_ASSIGNMENT_PATH",
         value: "/run/scriptorium/runtime-assignment.json",

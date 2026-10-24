@@ -7,7 +7,7 @@ export const MAX_HISTORY_EXEC_STDOUT_BYTES = 1024 * 1024;
 export const HISTORY_MARKER_NAME = ".praetorium-initialized";
 export const HISTORY_SEED_KEY = "snapshot.json";
 
-export type HistorySourceDirectory = "/data/history" | "/history";
+export type HistorySourceDirectory = "/data/history";
 
 export interface HistorySnapshotFile {
   readonly path: string;
@@ -138,7 +138,7 @@ const root = process.argv[1];
 const podUid = process.argv[2];
 const maxBytes = 512 * 1024;
 const segment = /^[A-Za-z0-9._-]{1,128}$/;
-if (root !== '/data/history' && root !== '/history') throw new Error('invalid source path');
+if (root !== '/data/history') throw new Error('invalid source path');
 if (typeof podUid !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(podUid)) throw new Error('invalid source pod identity');
 const rootStat = fs.lstatSync(root);
 if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('history root is not a real directory');
@@ -187,6 +187,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const root = '/history';
+const privateRoot = path.join(root, 'private');
 const marker = path.join(root, '.praetorium-initialized');
 const progressMarker = path.join(root, '.praetorium-restore-in-progress');
 const seedPath = '/history-seed/snapshot.json';
@@ -201,11 +202,35 @@ const safePath = value => typeof value === 'string' && value.length <= 512 && !v
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const stat = fs.lstatSync(root);
 if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('history volume root is unsafe');
+try {
+  const privateStat = fs.lstatSync(privateRoot);
+  if (!privateStat.isDirectory() || privateStat.isSymbolicLink()) throw new Error('private history root is unsafe');
+} catch (error) {
+  if (!error || error.code !== 'ENOENT') throw error;
+  fs.mkdirSync(privateRoot, { mode: 0o700 });
+}
+fs.chmodSync(privateRoot, 0o700);
+function enforcePrivateModes(directory) {
+  for (const name of fs.readdirSync(directory)) {
+    const target = path.join(directory, name);
+    const item = fs.lstatSync(target);
+    if (item.isSymbolicLink()) throw new Error('private history links are not allowed');
+    if (item.isDirectory()) {
+      enforcePrivateModes(target);
+      fs.chmodSync(target, 0o700);
+    } else if (item.isFile() && item.nlink === 1) {
+      fs.chmodSync(target, 0o600);
+    } else {
+      throw new Error('private history entry is not a regular file or directory');
+    }
+  }
+}
 if (fs.existsSync(marker)) {
   const markerStat = fs.lstatSync(marker);
   if (!markerStat.isFile() || markerStat.isSymbolicLink()) throw new Error('history ownership marker is unsafe');
   const state = JSON.parse(fs.readFileSync(marker, 'utf8'));
   if (state.schemaVersion !== 1 || state.instanceId !== expected.instanceId || state.repositoryId !== expected.repositoryId || state.clusterId !== expected.clusterId || state.claimName !== expected.claimName || typeof state.seedManifestSha256 !== 'string') throw new Error('history volume belongs to another assignment');
+  fs.chmodSync(marker, 0o600);
   if (fs.existsSync(progressMarker)) {
     const progressStat = fs.lstatSync(progressMarker);
     if (!progressStat.isFile() || progressStat.isSymbolicLink()) throw new Error('history restore progress marker is unsafe');
@@ -213,6 +238,7 @@ if (fs.existsSync(marker)) {
     if (progress.schemaVersion !== 1 || progress.instanceId !== expected.instanceId || progress.repositoryId !== expected.repositoryId || progress.clusterId !== expected.clusterId || progress.claimName !== expected.claimName || progress.seedManifestSha256 !== state.seedManifestSha256) throw new Error('history restore progress does not match its completion marker');
     fs.unlinkSync(progressMarker);
   }
+  enforcePrivateModes(privateRoot);
   process.exit(0);
 }
 const seedStat = fs.lstatSync(seedPath);
@@ -228,7 +254,7 @@ if (fs.existsSync(progressMarker)) {
   const existing = JSON.parse(fs.readFileSync(progressMarker, 'utf8'));
   if (JSON.stringify(existing) !== JSON.stringify(progressState)) throw new Error('history restore progress belongs to another seed');
 } else {
-  if (fs.readdirSync(root).length !== 0) throw new Error('uninitialized history volume is not empty');
+  if (fs.readdirSync(privateRoot).length !== 0) throw new Error('uninitialized history volume is not empty');
   const progressFd = fs.openSync(progressMarker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
   try { fs.writeFileSync(progressFd, JSON.stringify(progressState)); fs.fsyncSync(progressFd); } finally { fs.closeSync(progressFd); }
 }
@@ -242,11 +268,11 @@ for (const file of seed.files) {
   if (bytes.toString('base64') !== file.contentBase64 || digest(bytes) !== file.sha256) throw new Error('history seed file digest failed');
   total += bytes.length;
   if (total > 512 * 1024) throw new Error('history seed exceeds the 512 KiB bound');
-  const target = path.join(root, ...file.path.split('/'));
-  let parent = root;
+  const target = path.join(privateRoot, ...file.path.split('/'));
+  let parent = privateRoot;
   for (const part of file.path.split('/').slice(0, -1)) {
     parent = path.join(parent, part);
-    expectedDirectories.add(path.relative(root, parent));
+    expectedDirectories.add(path.relative(privateRoot, parent));
     try {
       const parentStat = fs.lstatSync(parent);
       if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) throw new Error('history directory is unsafe');
@@ -279,18 +305,34 @@ function verifyTree(directory, relative = '') {
     } else if (!item.isFile() || !expectedFiles.has(rel)) throw new Error('unrecognized history file');
   }
 }
-verifyTree(root);
+verifyTree(privateRoot);
 const state = { schemaVersion: 1, ...expected, seedManifestSha256: seed.manifestSha256, sourcePodUid: seed.sourcePodUid };
 const markerFd = fs.openSync(marker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
 try { fs.writeFileSync(markerFd, JSON.stringify(state)); fs.fsyncSync(markerFd); } finally { fs.closeSync(markerFd); }
 fs.unlinkSync(progressMarker);
+enforcePrivateModes(privateRoot);
 `;
 
 /** Fixed read-only reader for the marker under the owned /history PVC. */
 export const HISTORY_MARKER_NODE_SCRIPT = String.raw`
 const fs = require('node:fs');
-const file = '/history/.praetorium-initialized';
+const privateRoot = '/history/private';
+const rootStat = fs.lstatSync(privateRoot);
+if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || (rootStat.mode & 0o777) !== 0o700) throw new Error('private history root mode is invalid');
+const path = require('node:path');
+function verifyModes(directory) {
+  for (const name of fs.readdirSync(directory)) {
+    const target = path.join(directory, name);
+    const item = fs.lstatSync(target);
+    if (item.isSymbolicLink() || (!item.isDirectory() && (!item.isFile() || item.nlink !== 1))) throw new Error('private history entry is unsafe');
+    if (item.isDirectory()) verifyModes(target);
+    const expectedMode = item.isDirectory() ? 0o700 : 0o600;
+    if ((item.mode & 0o777) !== expectedMode) throw new Error('private history entry mode is invalid');
+  }
+}
+verifyModes(privateRoot);
+const file = path.join('/history', '.praetorium-initialized');
 const stat = fs.lstatSync(file);
-if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) throw new Error('history ownership marker is invalid');
+if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4096 || (stat.mode & 0o777) !== 0o600) throw new Error('history ownership marker is invalid');
 process.stdout.write(fs.readFileSync(file, 'utf8'));
 `;

@@ -1833,7 +1833,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
         claim.readOnly === true ||
         historyMount?.mountPath !== "/history" ||
         historyMount.readOnly === true ||
-        usageDirectory !== "/history" ||
+        usageDirectory !== "/history/private" ||
         seed?.secretName !== historySeedName(spec) ||
         restore?.image !== expectedImage ||
         restoreCommand.length !== 3 ||

@@ -5,7 +5,15 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
-import { renderWorkerTemplate } from "../infrastructure/scripts/worker-config.mjs";
+import {
+  remoteDisposableWorkerNames,
+  renderWorkerTemplate,
+} from "../infrastructure/scripts/worker-config.mjs";
+import {
+  assertWorkersDevOriginForAccount,
+  readCloudflareApiToken,
+  readWorkersDevSubdomain,
+} from "./cloudflare-workers-dev.mjs";
 import {
   assertRemoteDisposableSecretMaterials,
   remoteDisposableSecretRoles,
@@ -104,6 +112,21 @@ if (remoteDisposable) {
   if (!appId || appId === "5355765" || inventory.gateway.githubOauthClientId === "Iv23liUxWil9dmhuYJuA") {
     throw new Error("remote-disposable Gateway must use its test-only GitHub App and OAuth application");
   }
+  const accountSubdomain = await readWorkersDevSubdomain({
+    accountId: inventory.cloudflare.accountId,
+    token: readCloudflareApiToken(),
+  });
+  const workerNames = remoteDisposableWorkerNames(inventory);
+  assertWorkersDevOriginForAccount(
+    inventory.domains.controlPlaneUrl,
+    workerNames.controlPlane,
+    accountSubdomain,
+  );
+  assertWorkersDevOriginForAccount(
+    inventory.domains.gatewayOrigin,
+    workerNames.gateway,
+    accountSubdomain,
+  );
 }
 const notificationsEnabled = workNotificationsEnabled(inventory);
 const notificationTokenBytes = notificationsEnabled

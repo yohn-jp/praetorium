@@ -191,3 +191,14 @@ it("restores an expired job detail even if its previous success notice is no lon
   expect(new URL(result.headers.get("Location")!).searchParams.get("return_to")).toBe(
     "/builds/"+id+"?ui=mobile");
 });
+
+
+it("does not silently select Desktop before first-visit OAuth has completed", async () => {
+  const {context}=fixture();
+  const first=await handleAdminHost(new Request(ADMIN+"/"),context);
+  expect(first.status).toBe(303);
+  expect(first.headers.get("Location")).toBe(GATEWAY+"/_admin/entry");
+  const deep=await handleAdminHost(new Request(ADMIN+"/builds?state=failed"),context);
+  expect(new URL(deep.headers.get("Location")!).searchParams.get("return_to")).toBe(
+    "/builds?state=failed");
+});

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
+import { readFile, mkdir } from "node:fs/promises";
 import { chromium } from "@playwright/test";
 import worker from "../../apps/admin/dist/worker.js";
 
@@ -39,7 +40,7 @@ function fixture() {
     },
     CONTROL_PLANE: {fetch: async request => {
       calls.control++;
-      const pathname = new URL(request.url).pathname;
+      const pathname = new URL(typeof request === "string" ? request : request.url).pathname;
       return Response.json(pathname === "/v1/operator/releases"
         ? {items:[],stableChannel:{currentReleaseId:null,revision:0}}
         : {items:[]});
@@ -107,13 +108,17 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
 
   const {server,origin}=await listen(env);
   t.after(()=>new Promise(resolve=>server.close(resolve)));
-  const browser=await chromium.launch({headless:true,args:["--no-sandbox","--disable-background-networking"]});
+  const browserEnv = process.env.PRAETORIUM_UI_CHROMIUM_ENV
+    ? JSON.parse(await readFile(process.env.PRAETORIUM_UI_CHROMIUM_ENV, "utf8")) : null;
+  const browser=await chromium.launch({headless:true,
+    ...(browserEnv ? { executablePath: browserEnv.executablePath, env: { ...process.env, LD_LIBRARY_PATH: browserEnv.LD_LIBRARY_PATH } } : {}),
+    args:["--no-sandbox","--disable-background-networking"]});
   t.after(()=>browser.close());
   const context=await browser.newContext();
   const page=await context.newPage();
   const errors=[];
   page.on("pageerror",error=>errors.push(String(error)));
-  for (const [mode,width] of [["mobile",320],["mobile",375],["mobile",390],["mobile",430],["desktop",1440]]) {
+  for (const [mode,width] of [["mobile",320],["mobile",375],["mobile",390],["mobile",430],["desktop",1440],["desktop",1920],["desktop",640]]) {
     await page.setViewportSize({width,height:950});
     const response=await page.goto(origin+"/infrastructure?ui="+mode,{waitUntil:"networkidle"});
     assert.equal(response.status(),200);
@@ -130,6 +135,18 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.ok(dimensions.body<=width+1,mode+" body overflow: "+JSON.stringify(dimensions));
     assert.equal(dimensions.nav,true);
     assert.equal(dimensions.sidebar,mode==="desktop");
+    assert.ok((await page.locator("main").innerText()).includes("Existing runtimes may remain available"));
+    if (process.env.PRAETORIUM_UI_EVIDENCE_DIR) {
+      await mkdir(process.env.PRAETORIUM_UI_EVIDENCE_DIR, {recursive:true});
+      await page.screenshot({path:process.env.PRAETORIUM_UI_EVIDENCE_DIR+"/admin-"+mode+"-"+width+".png", fullPage:true});
+    }
+  }
+  for (const mode of ["desktop", "mobile"]) {
+    await page.goto(origin+"/?ui="+mode);
+    const content = await page.locator("main").innerText();
+    assert.ok(content.includes("No release promoted yet"));
+    assert.ok(!content.includes("OPERATOR_UNAVAILABLE"), "canonical catalog and build fixture must validate");
+    await page.getByRole("link",{name:mode==="desktop"?"Releases":"Releases",exact:true}).first().click();
   }
   // The refresh affordance must retain the selected host and must not claim
   // an unavailable metric is currently being collected.

@@ -5,6 +5,7 @@ import {
 } from "./presentation.js";
 import {
   renderHandoff,
+  renderAcceptedCommand,
   renderPortalError as renderError,
   renderRepositoryDashboard,
   renderRepositoryList,
@@ -289,6 +290,7 @@ function dashboardResponse(
     readonly selection?: ConfigurationSelection;
     readonly preview?: PortalModulePreview;
     readonly notice?: PortalOperation;
+    readonly acceptedConfiguration?: { readonly revisionId: string; readonly buildId: string };
     readonly errorMessage?: string;
     readonly pollCount?: number;
   } = {},
@@ -300,6 +302,7 @@ function dashboardResponse(
     createIdempotencyKey: dependencies.createToken,
     ...(options.preview ? { preview: options.preview } : {}),
     ...(options.notice ? { notice: options.notice } : {}),
+    ...(options.acceptedConfiguration ? { acceptedConfiguration: options.acceptedConfiguration } : {}),
     ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
     ...(options.pollCount !== undefined ? { pollCount: options.pollCount } : {}),
     scriptNonce: dependencies.createToken(),
@@ -398,6 +401,11 @@ export function createPortalHandler(
     if (!route) return renderPortalError("Repository not found.", 404);
     if (isDetail) {
       const result = await loadDashboard(dependencies, identity.session.actor, route.repositoryId);
+      const requestId = url.searchParams.get("requestId");
+      if (!result.ok && requestId && /^[A-Za-z0-9_-]{1,256}$/.test(requestId) &&
+          (result.error.code === "UNAVAILABLE" || result.error.code === "UPSTREAM_UNAVAILABLE")) {
+        return renderAcceptedCommand(route.repositoryId, presentation, [requestId], dependencies.createToken(), false);
+      }
       return result.ok
         ? makeDashboardResponse(result.value, dependencies, identity.session, {
             pollCount: pagePollCount(url),
@@ -485,18 +493,19 @@ export function createPortalHandler(
             }),
             202,
           )
-        : renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
+        : renderAcceptedCommand(route.repositoryId, presentation, [start.value.operation.operationId], dependencies.createToken());
     }
 
     if (result.value.kind === "configuration") {
+      const accepted = result.value;
       const dashboard = await loadDashboard(
         dependencies,
         identity.session.actor,
         route.repositoryId,
       );
       return dashboard.ok
-        ? withStatus(makeDashboardResponse(dashboard.value, dependencies, identity.session), 202)
-        : renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
+        ? withStatus(makeDashboardResponse(dashboard.value, dependencies, identity.session, { acceptedConfiguration: accepted }), 202)
+        : renderAcceptedCommand(route.repositoryId, presentation, [accepted.revisionId, accepted.buildId], dependencies.createToken());
     }
 
     const commandResult = requireCommandResult(result, "operation");
@@ -510,14 +519,18 @@ export function createPortalHandler(
           }),
           202,
         )
-      : renderPortalError(dashboard.error.message, errorStatus(dashboard.error.code));
+      : renderAcceptedCommand(route.repositoryId, presentation, [commandResult.value.operation.operationId], dependencies.createToken());
   };
   return async (request) => {
     const selection = resolvePresentation(request);
-    const route = repositoryRoute(new URL(request.url).pathname);
+    const requestUrl = new URL(request.url);
+    const route = repositoryRoute(requestUrl.pathname);
+    const queries = requestUrl.searchParams.getAll("q");
+    const repositoryQuery = requestUrl.pathname === "/" && queries.length === 1 && queries[0]!.length <= 256 && !Array.from(queries[0]!).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ? queries[0] : undefined;
     const response = await handle(request, {
       mode: selection.mode,
       offerModeChoice: selection.offerModeChoice,
+      ...(repositoryQuery ? { repositoryQuery } : {}),
       ...(route ? { repositoryId: route.repositoryId } : {}),
     });
     if (!selection.cookie) return response;

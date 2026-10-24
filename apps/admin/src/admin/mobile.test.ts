@@ -447,7 +447,7 @@ it("links Canary operation evidence from the mobile audit trail", () => {
 });
 
 
-it("focuses an admitted newer Source instead of obsolete failed jobs on Overview", () => {
+it("keeps an independently failed Source visible after a different version is admitted", () => {
   const newer={...sourceJob,id:"sr_00000000-0000-4000-a000-000000000003",
     version:"0.3.4",tag:"v0.3.4",state:"admitted" as const,error:null,
     retryable:false,admittedReleaseId:"rel_current"};
@@ -455,9 +455,9 @@ it("focuses an admitted newer Source instead of obsolete failed jobs on Overview
     builds:dependency({items:[sourceJob,newer],nextCursor:null},"builds")}));
   const from=html.indexOf('class="admin-mobile-focus"');
   const focus=html.slice(from,html.indexOf("</section>",from));
-  expect(focus).toContain("v0.3.4");
-  expect(focus).not.toContain("ACTIVE INCIDENT");
-  expect(focus).not.toContain("SOURCE_BUILD_FAILED");
+  expect(focus).toContain("v0.3.3");
+  expect(focus).toContain("ACTIVE INCIDENT");
+  expect(focus).toContain("SOURCE_BUILD_FAILED");
 });
 
 

@@ -582,7 +582,7 @@ describe("server-rendered management UI", () => {
     )?.[1];
     expect(script).toBeDefined();
 
-    const run = (dirty: boolean): string[] => {
+    const run = (dirty: boolean, visibilityState = "visible"): string[] => {
       const replacements: string[] = [];
       runInNewContext(script!, {
         URL,
@@ -591,7 +591,7 @@ describe("server-rendered management UI", () => {
           hash: "#configuration",
           replace: (value: string) => replacements.push(value),
         },
-        document: { querySelector: () => ({ dataset: { dirty: String(dirty) } }) },
+        document: { visibilityState, querySelector: () => ({ dataset: { dirty: String(dirty) } }) },
         setTimeout: (callback: () => void) => callback(),
       });
       return replacements;
@@ -601,6 +601,7 @@ describe("server-rendered management UI", () => {
       "https://gateway.example/repositories/123456789?ui=desktop&poll=1#configuration",
     ]);
     expect(run(true)).toEqual([]);
+    expect(run(false, "hidden")).toEqual([]);
   });
 
   it("keeps handoff codes in a no-store POST body and rejects untrusted destinations", async () => {
@@ -794,4 +795,76 @@ it("retains unavailable draft choices without presenting an older preview as the
   expect(html).toContain('data-dirty="true"');
   expect(html).not.toContain("Supported module configuration");
   expect(html).toContain("No configuration preview is available yet.");
+});
+
+
+it("distinguishes missing Release and Profile prerequisites without offering a mutation", async () => {
+  for (const [releases, profiles] of [[[], dashboard.resourceProfiles], [dashboard.approvedReleases, []], [[], []]] as const) {
+    const html = await renderRepositoryDashboard({ ...dashboard, approvedReleases: releases, resourceProfiles: profiles }, {
+      csrfToken: "fixture", createIdempotencyKey: () => "fixture-key",
+    }).text();
+    expect(html.includes("<strong>No approved release.</strong>")).toBe(releases.length === 0);
+    expect(html.includes("<strong>No resource profile.</strong>")).toBe(profiles.length === 0);
+    expect(html).toContain("platform operator");
+    expect(html).not.toContain('name="action" value="configure"');
+  }
+});
+
+it("retains accepted configuration and operation identifiers when subsequent status reads fail", async () => {
+  for (const value of [
+    { kind: "configuration" as const, revisionId: "revision-accepted", buildId: "build-accepted" },
+    { kind: "operation" as const, operation: { ...operation, operationId: "operation-accepted", state: "queued" as const } },
+  ]) {
+    const handler = createPortalHandler(sessionDependencies({
+      listRepositories: async () => ({ ok: true, value: repositoryList }),
+      getRepository: async () => ({ ok: false, error: { code: "UNAVAILABLE", message: "Status read interrupted" } }),
+      execute: async () => ({ ok: true, value }),
+    }));
+    const response = await handler(actionRequest({ action: value.kind === "configuration" ? "configure" : "stop",
+      expectedGeneration: "4", idempotencyKey: "accepted-key-1234567890123456", releasePolicy: "stable", releaseId: "rel_01", resourceProfileId: "balanced" }));
+    const html = await response.text();
+    expect(response.status).toBe(202);
+    expect(html).toContain("Request accepted; result unknown");
+    expect(html).toContain(value.kind === "configuration" ? "build-accepted" : "operation-accepted");
+    expect(html).toContain("Check existing request");
+    expect(html).not.toContain('method="post"');
+  }
+});
+
+it("discloses mutation impact and requires native acknowledgement while preserving safety fields", async () => {
+  const html = await renderRepositoryDashboard(dashboard, { csrfToken: "fixture", createIdempotencyKey: () => "fixture-key" }).text();
+  expect(html).toContain("Review impact: Stop application");
+  expect(html).toContain("unpublished checkpoints");
+  expect(html).toContain('type="checkbox" required');
+  expect(html).toContain('name="expectedGeneration" value="4"');
+});
+
+
+it("distinguishes authorized search zero results from an empty inventory and retains the query across modes", async () => {
+  const handler = createPortalHandler(sessionDependencies({
+    listRepositories: async () => ({ok:true,value:repositoryList}),
+    getRepository: async () => ({ok:true,value:dashboard}),
+    execute: async () => ({ok:false,error:{code:"UNAVAILABLE",message:"unused"}}),
+  }));
+  const response = await handler(new Request("https://gateway.example/?ui=desktop&q=no-match"));
+  const html = await response.text();
+  expect(html).toContain("No matching repositories");
+  expect(html).not.toContain("No repositories available");
+  expect(html).toContain('href="/?ui=mobile&amp;q=no-match"');
+  expect(html).toContain('value="no-match"');
+});
+
+it("retains an unavailable request pointer on GET without asserting acceptance or changing authorization", async () => {
+  for (const code of ["UNAVAILABLE", "FORBIDDEN"] as const) {
+    const handler = createPortalHandler(sessionDependencies({
+      listRepositories: async () => ({ok:true,value:repositoryList}),
+      getRepository: async () => ({ok:false,error:{code,message:"Not available"}}),
+      execute: async () => ({ok:false,error:{code:"UNAVAILABLE",message:"unused"}}),
+    }));
+    const response = await handler(new Request("https://gateway.example/repositories/123456789?requestId=existing-operation"));
+    const html = await response.text();
+    expect(response.status).toBe(code === "FORBIDDEN" ? 403 : 503);
+    expect(html.includes("existing-operation")).toBe(code === "UNAVAILABLE");
+    expect(html).not.toContain("Request accepted;");
+  }
 });

@@ -30,11 +30,17 @@ function failure<T>(title: string, dependency: ConsoleDependency<T> | null | und
 function detailUrl(id: string, mode: ConsoleMode): string {
   return "/infrastructure/hosts/" + encodeURIComponent(id) + "?ui=" + mode;
 }
+const impact: Record<HostObservation["role"], string> = {
+  management: "Coordination and cluster control depend on Management. This observation does not establish tenant runtime availability.",
+  runtime: "Tenant applications depend on Runtime. Review the affected operation before requesting recovery; host telemetry alone does not prove writer absence.",
+  builder: "Source and composition builds depend on Builder. Existing runtimes may remain available while builds are blocked.",
+};
 function hostCard(host: HostObservation, mode: ConsoleMode, mobile: boolean): string {
   const state = host.freshness === "fresh" ? host.state : host.freshness;
   return '<article class="infra-host-card" aria-label="' + escapeHtml(label[host.role] + " " + host.id) +
     '"><div class="infra-host-head"><div><span class="infra-role">' + label[host.role] +
     '</span><h3>' + escapeHtml(host.id) + "</h3></div>" + stateBadge(state) + "</div>" +
+    '<p class="infra-impact">' + escapeHtml(impact[host.role]) + '</p>' +
     '<dl class="infra-host-metrics">' +
     '<div><dt>CPU</dt><dd>' + (host.cpu.usedPercent === null ? (host.freshness === "fresh" && host.reasons.includes("cpu_baseline_pending") ? "Collecting baseline" : "Not collected") : host.cpu.usedPercent.toFixed(1) + "%") + "</dd></div>" +
     '<div><dt>Memory</dt><dd>' + metric(host.memory.usedBytes, host.memory.totalBytes) + "</dd></div>" +

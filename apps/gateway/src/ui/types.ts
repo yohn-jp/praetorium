@@ -77,6 +77,8 @@ export interface PortalRepositoryList {
 }
 
 export interface PortalArtifact {
+  readonly revisionId?: string;
+  readonly generation?: number;
   readonly releaseId: string;
   readonly releaseLabel: string | null;
   readonly baseImageDigest: string | null;
@@ -107,6 +109,8 @@ export interface PortalApprovedRelease {
 }
 
 export interface PortalModuleOption {
+  readonly requires?: readonly string[];
+  readonly conflicts?: readonly string[];
   readonly moduleId: string;
   readonly label: string;
   readonly version: string;
@@ -178,6 +182,8 @@ export interface PortalRepositoryDashboard {
   readonly resourceLimits: PortalResourceLimits;
   readonly operations: readonly PortalOperation[];
   readonly canConfigure: boolean;
+  /** Trusted separate Admin origin; only projected for an allowlisted platform operator. */
+  readonly operatorReleaseUrl?: string;
 }
 
 export type PortalCommand =

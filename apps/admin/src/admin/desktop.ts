@@ -131,11 +131,11 @@ function overview(model: ConsoleViewModel): string {
   const blocked = activeReleaseFailures(releases).length;
   return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">OPERATOR / CONTROL PLANE</p>` +
     `<h1>Overview</h1><p>See current release health, active work, and actionable failures.</p></section>` +
-    notice(model.notice) + infrastructureOverview(model) + stablePanel(model) +
+    notice(model.notice) +
     `<section class="desktop-section" aria-labelledby="desktop-incidents-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">NEEDS ATTENTION</p><h2 id="desktop-incidents-title">Active incidents</h2></div>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Open Builds</a></div>` +
-    activeIncidents(model) + `</section>` +
+    activeIncidents(model) + `</section>` + infrastructureOverview(model) + stablePanel(model) +
     `<section class="desktop-section" aria-labelledby="desktop-activity-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">CURRENT WORK</p><h2 id="desktop-activity-title">Build activity</h2></div>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">View build queue</a></div>` +

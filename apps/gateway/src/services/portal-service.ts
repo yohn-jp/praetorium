@@ -1,3 +1,4 @@
+import { isAdmin } from "../admin/session.js";
 import { createHandoffCode } from "@praetorium/auth";
 import type { UserId } from "@praetorium/auth";
 import { applicationHostname, physicalInstanceId } from "@praetorium/contracts";
@@ -211,6 +212,7 @@ function dashboard(
   snapshot: RepositorySnapshot | null,
   managed: InstanceDashboard | null,
   availableReleases: readonly InstanceDashboard["releases"][number][] = [],
+  operatorReleaseUrl?: string,
 ): PortalRepositoryDashboard {
   const operations = managed?.operations.map((op) => operation(op, snapshot?.instance.generation)) ?? [];
   const repo = summary(repository, snapshot, operations[0] ?? null);
@@ -221,6 +223,8 @@ function dashboard(
     if (!revision) return null;
     const release = releaseFor(revision.selection.releaseId);
     return {
+      revisionId: revision.revisionId,
+      generation: revision.generation,
       releaseId: revision.selection.releaseId,
       releaseLabel: release?.version ?? null,
       baseImageDigest: release?.imageDigest ?? null,
@@ -242,6 +246,8 @@ function dashboard(
   }));
   const modules = selectedRelease?.catalog.modules.map((module) => ({
     moduleId: module.id,
+    requires: module.requires,
+    conflicts: module.conflicts,
     label: module.id,
     version: module.version,
     artifactDigest: module.artifactDigest,
@@ -268,6 +274,7 @@ function dashboard(
     : null;
   return {
     repository: repo,
+    ...(operatorReleaseUrl ? { operatorReleaseUrl } : {}),
     generation: instance?.generation ?? 0,
     releasePolicy: instance?.policy === "pinned"
       ? { kind: "pinned", releaseId: desired?.releaseId ?? current?.releaseId ?? null }
@@ -438,7 +445,9 @@ export function createPortalService(context: GatewayContext): PortalService {
         }));
         return success({
           repositories,
-          githubApp: { installationState: "active", message: "Connected through current GitHub App permissions." },
+          githubApp: repositories.length
+            ? { installationState: "active", message: "Connected through current GitHub App permissions." }
+            : { installationState: "unknown", message: "No accessible repositories returned. Installation status and repository permissions could not be determined from this result. A repository administrator can check the GitHub App installation and repository access." },
         });
       } catch (error) {
         return { ok: false, error: mapControlPlaneError(error) };
@@ -448,6 +457,7 @@ export function createPortalService(context: GatewayContext): PortalService {
     async getRepository(actor, rawRepositoryId): Promise<PortalResult<PortalRepositoryDashboard>> {
       const repositoryId = numericId(rawRepositoryId);
       if (repositoryId === null) return failure("INVALID_REQUEST", "Repository identifier is invalid.");
+      const operatorReleaseUrl = isAdmin(context, actor.userId) ? context.config.adminOrigin + "/releases" : undefined;
       const allowed = await authorize(context, actor, repositoryId, "read");
       if (!allowed) return { ok: false, error: accessError() };
       const repository = await accessibleRepository(context, actor.userId, repositoryId);
@@ -456,7 +466,7 @@ export function createPortalService(context: GatewayContext): PortalService {
         const initial = await context.controlPlane.getByRepositoryId(repositoryId);
         if (!initial) {
           const releases = await context.controlPlane.listReleases();
-          return success(dashboard(repository, null, null, releases));
+          return success(dashboard(repository, null, null, releases, operatorReleaseUrl));
         }
         const managed = await context.controlPlane.getDashboard(initial.instance.instanceId);
         const snapshot = managed.snapshot;
@@ -468,7 +478,7 @@ export function createPortalService(context: GatewayContext): PortalService {
           snapshot.instance.instanceId !== initial.instance.instanceId ||
           snapshot.binding.instanceId !== initial.instance.instanceId
         ) return { ok: false, error: accessError() };
-        return success(dashboard(repository, snapshot, managed));
+        return success(dashboard(repository, snapshot, managed, [], operatorReleaseUrl));
       } catch (error) {
         return { ok: false, error: mapControlPlaneError(error) };
       }

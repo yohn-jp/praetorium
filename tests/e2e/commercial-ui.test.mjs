@@ -54,7 +54,7 @@ function repository(id = "123456789") {
       permission: readonly ? "read" : "maintain",
       instance: {
         ...summary.instance,
-        state: blocked ? "blocked" : "ready",
+        state: scenario === "unknown" ? "unknown" : scenario === "stopped" ? "stopped" : blocked ? "blocked" : "ready",
         reason: blocked
           ? "Choose an approved configuration before starting."
           : scenario === "long"
@@ -64,6 +64,8 @@ function repository(id = "123456789") {
     },
     current,
     desired,
+    approvedReleases: scenario === "no-release" || scenario === "no-catalog" ? [] : dashboard.approvedReleases,
+    resourceProfiles: scenario === "no-profile" || scenario === "no-catalog" ? [] : dashboard.resourceProfiles,
     preview: blocked ? null : dashboard.preview,
     canConfigure: !readonly,
     build: blocked
@@ -105,7 +107,9 @@ const service = {
         scenario === "empty" ? [] : [repository().repository, repository("2").repository],
     },
   }),
-  getRepository: async (_actor, id) => ({ ok: true, value: repository(id) }),
+  getRepository: async (_actor, id) => scenario === "receipt-unknown" && commands.length
+    ? { ok:false, error:{code:"UNAVAILABLE",message:"Owned fixture read interrupted"} }
+    : ({ ok: true, value: repository(id) }),
   execute: async (_actor, id, command) => {
     commands.push(structuredClone(command));
     if (scenario === "error")
@@ -258,6 +262,7 @@ try {
     });
     try {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await context.tracing.start({screenshots:true,snapshots:true,sources:true});
       const page = await context.newPage();
       const errors = [];
       const contrast = new Map();
@@ -345,7 +350,7 @@ try {
             await page
               .locator("main button")
               .evaluateAll((elements) =>
-                elements.every((e) => e.getBoundingClientRect().height >= 44),
+                elements.filter((e) => e.getBoundingClientRect().width > 0).every((e) => e.getBoundingClientRect().height >= 44),
               ),
           );
         return response;
@@ -385,7 +390,7 @@ try {
           if (state === "empty")
             await page.getByRole("heading", { name: "No repositories available" }).waitFor();
         }
-        for (const width of [320, 390, 768]) {
+        for (const width of mode === "mobile" ? [320, 375, 390, 430] : [320, 640, 1440, 1920]) {
           await visit("/", mode, "long", width);
           await visit("/repositories/123456789", mode, "long", width, 460);
           for (const disclosure of await page
@@ -397,6 +402,10 @@ try {
             true,
             "expanded full digests fit",
           );
+          if (mode === "mobile") {
+            await page.getByRole("link", { name:"Configuration", exact:true }).click();
+            await page.waitForFunction(() => document.activeElement?.id === "configuration");
+          }
           await page.locator('select[name="releasePolicy"]').focus();
           assert.equal(
             await page
@@ -417,6 +426,7 @@ try {
           });
         }
         await visit("/repositories/123456789", mode);
+        if (mode === "mobile") await page.getByRole("link", { name:"Configuration", exact:true }).click();
         const form = page.locator("[data-configuration-form]");
         assert.equal(await form.count(), 1);
         await page.getByLabel("Search", { exact: false }).check();
@@ -475,11 +485,18 @@ try {
           ["Open application", "enter", "populated"],
         ]) {
           await visit("/repositories/123456789", mode, state);
+          if (mode === "mobile" && ["redeploy","retry"].includes(kind)) await page.getByRole("link", { name:"Activity", exact:true }).click();
+          if (kind !== "enter") {
+            await page.getByText("Review impact: "+label,{exact:true}).click();
+            const mutation = page.getByRole("button", { name: label, exact: true }).locator("..");
+            await mutation.getByRole("checkbox").check();
+          }
           await page.getByRole("button", { name: label, exact: true }).click();
           await page.waitForLoadState();
           assert.equal(commands.at(-1).kind, kind);
         }
         await visit("/repositories/123456789", mode);
+        if (mode === "mobile") await page.getByRole("link", { name:"Configuration", exact:true }).click();
         scenario = "unsupported";
         await page.getByRole("button", { name: "Preview selection", exact: true }).click();
         await page.waitForLoadState();
@@ -499,6 +516,7 @@ try {
         assert.equal(await page.locator("[data-configuration-form]").count(), 0);
         assert.equal(await page.getByRole("button", { name: "Stop application" }).count(), 0);
         await visit("/repositories/123456789", mode, "running");
+        if (mode === "mobile") await page.getByRole("link", { name:"Configuration", exact:true }).click();
         await page.getByLabel("Search", { exact: false }).check();
         await page.waitForTimeout(1300);
         assert.equal(new URL(page.url()).searchParams.has("poll"), false);
@@ -514,6 +532,45 @@ try {
             .click({ noWaitAfter: true }),
         ]);
         await page.waitForLoadState();
+      }
+      await visit("/", "desktop");
+      await page.getByRole("searchbox",{name:"Find a repository"}).fill("no-such-repository");
+      await page.getByRole("button",{name:"Search repositories"}).click();
+      await page.getByRole("heading",{name:"No matching repositories"}).waitFor();
+      await page.getByRole("navigation",{name:"Presentation"}).getByRole("link",{name:"Mobile",exact:true}).click();
+      assert.equal(new URL(page.url()).searchParams.get("q"),"no-such-repository");
+      await page.getByRole("link",{name:"Clear search"}).click();
+      await page.getByRole("link",{name:"example/the-winter-atlas",exact:true}).waitFor();
+      await page.emulateMedia({reducedMotion:"reduce"});
+      await visit("/repositories/123456789","desktop","long",640,900);
+      await page.evaluate(()=>{document.documentElement.style.fontSize="200%";});
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,"200% text reflow");
+      for (const mode of ["desktop", "mobile"]) {
+        for (const state of ["no-release", "no-profile", "no-catalog", "unknown", "stopped"]) {
+          await visit("/repositories/123456789", mode, state);
+          if (state.startsWith("no-")) {
+            if (mode === "mobile") await page.getByRole("link", { name:"Configuration", exact:true }).click();
+            assert.equal(await page.getByRole("button",{name:"Save configuration and build",exact:true}).count(),0);
+            const text=await page.locator("#configuration").innerText();
+            assert.equal(text.includes("No approved release."),state!=="no-profile");
+            assert.equal(text.includes("No resource profile."),state!=="no-release");
+          } else if (state==="unknown") {
+            assert.equal(await page.getByRole("button",{name:"Open application",exact:true}).count(),0);
+          }
+          await page.screenshot({path:`${output}/${name}-${mode}-${state}.png`,fullPage:true});
+        }
+        commands.length=0;
+        await visit("/repositories/123456789",mode,"receipt-unknown");
+        await page.getByRole("button",{name:"Open application",exact:true}).click();
+        await page.getByRole("heading",{name:"Request accepted; result unknown"}).waitFor();
+        const sent=commands.length;
+        assert.equal(new URL(page.url()).pathname,"/repositories/123456789");
+        await page.screenshot({path:`${output}/${name}-${mode}-receipt-unknown.png`,fullPage:true});
+        await page.reload();
+        assert.equal(commands.length,sent,"reload reads existing target without replaying the POST");
+        assert.equal(new URL(page.url()).searchParams.get("requestId"),"fixture-1");
+        await page.getByRole("heading",{name:"Request status unavailable"}).waitFor();
+        scenario="populated";
       }
       await visit("/repositories/123456789", "desktop");
       await page
@@ -549,11 +606,13 @@ try {
         "rgb(243, 245, 240)",
       );
       assert.deepEqual(errors, []);
+      await context.tracing.stop({path:`${output}/${name}-ux-contract-trace.zip`});
       await context.close();
       const native = await browser.newContext({ javaScriptEnabled: false });
       const nativePage = await native.newPage();
       scenario = "populated";
       await nativePage.goto(`${origin}/repositories/123456789?ui=mobile`);
+      await nativePage.getByRole("link", {name:"Configuration", exact:true}).click();
       await nativePage.getByLabel("Search", { exact: false }).check();
       await nativePage.getByRole("button", { name: "Preview selection" }).click();
       assert.equal(commands.at(-1).kind, "preview");
@@ -563,7 +622,7 @@ try {
         browser: name,
         version: browser.version(),
         status: "PASS",
-        screenshots: 18,
+        screenshots: "See evidence directory; count is not an acceptance claim",
         contrast: Object.fromEntries(contrast),
         assertions:
           "layouts, CSP enforcement, fields, dirty navigation, polling, preview/error/configure, stop/redeploy/retry/enter, mode/cookie/section/back-forward, keyboard, no-JS",

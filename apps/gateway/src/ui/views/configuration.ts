@@ -27,7 +27,7 @@ export function modulePreview(
     : "";
   return (
     `<div role="status" aria-live="polite">${statusBadge(stateText, preview.state)}` +
-    `<dl class="preview-facts">` +
+    `<p>Preview only: no build or runtime change has been requested. Compare this selection with the current deployment before saving.</p><dl class="preview-facts">` +
     `<div><dt>Requested modules:</dt><dd>${moduleNames(preview.requestedModules, dashboard)}</dd></div>` +
     `<div><dt>Included modules:</dt><dd>${moduleNames(preview.includedModules, dashboard)}</dd></div>` +
     `<div><dt>Required dependencies:</dt><dd>${moduleNames(
@@ -75,7 +75,7 @@ function optionsForModules(
       dashboard.modules
         .map(
           (module, index) =>
-            `<label class="module-option" for="configuration-module-${index}"><input id="configuration-module-${index}" type="checkbox" name="moduleIds" value="${escapeHtml(module.moduleId)}"${selected.has(module.moduleId) ? " checked" : ""}><span>${escapeHtml(module.label)} <span class="field-help">${escapeHtml(module.version)} · ${escapeHtml(shortDigest(module.artifactDigest))}</span></span></label>`,
+            `<label class="module-option" for="configuration-module-${index}"><input id="configuration-module-${index}" type="checkbox" name="moduleIds" value="${escapeHtml(module.moduleId)}"${selected.has(module.moduleId) ? " checked" : ""}><span>${escapeHtml(module.label)} <span class="field-help">${escapeHtml(module.version)} · ${escapeHtml(shortDigest(module.artifactDigest))}</span>${module.requires?.length ? `<span class="field-help">Requires: ${module.requires.map(escapeHtml).join(", ")}</span>` : ""}${module.conflicts?.length ? `<span class="field-help">Incompatible with: ${module.conflicts.map(escapeHtml).join(", ")}</span>` : ""}</span></label>`,
         )
         .join("") || `<p class="muted">No optional modules are available.</p>`
   );
@@ -95,7 +95,7 @@ function optionsForResources(
     dashboard.resourceProfiles
       .map((profile) => {
         const selected = profile.profileId === selectedProfileId ? " selected" : "";
-        return `<option value="${escapeHtml(profile.profileId)}"${selected}>${escapeHtml(profile.label)}</option>`;
+        return `<option value="${escapeHtml(profile.profileId)}"${selected}>${escapeHtml(profile.label)} · ${profile.resources.cpuMilli} mCPU / ${profile.resources.memoryMiB} MiB memory / ${profile.resources.ephemeralStorageMiB} MiB storage</option>`;
       })
       .join("")
   );
@@ -137,7 +137,7 @@ export function configurationForm(
     `<span class="field-help">Choose an approved release. Unavailable selections are retained for review.</span></label>` +
     `<fieldset class="module-options" aria-describedby="configuration-module-ids-help"><legend>Requested modules</legend>` +
     `${optionsForModules(dashboard, selectedModules)}` +
-    `<span class="field-help" id="configuration-module-ids-help">Select optional modules. Required dependencies are shown separately in the preview.</span></fieldset>` +
+    `<span class="field-help" id="configuration-module-ids-help">The approved producer catalog supplies module identities and dependencies; module descriptions are not provided. Select optional modules. Required dependencies are shown separately in the preview.</span></fieldset>` +
     `<label class="form-field" for="configuration-resource-profile"><span>Resource profile</span><select id="configuration-resource-profile" name="resourceProfileId" required>${optionsForResources(dashboard, resourceProfileId)}</select>` +
     `<span class="field-help">The application service checks this profile against current operator limits.</span></label></div>`;
   return (
@@ -146,9 +146,9 @@ export function configurationForm(
     `<p class="muted">Preview your selection before saving. A saved configuration starts a verified build.</p>` +
     `<form data-configuration-form data-dirty="${selection ? "true" : "false"}" method="post" action="${actionPath}#configuration">` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
-    `<input type="hidden" name="idempotencyKey" value="${escapeHtml(createIdempotencyKey())}">` +
+    `<input type="hidden" name="idempotencyKey" value="${escapeHtml(selection?.idempotencyKey ?? createIdempotencyKey())}">` +
     `<input type="hidden" name="expectedGeneration" value="${dashboard.generation}">` +
-    `${formFields()}<div class="form-actions">` +
+    `${formFields()}<p class="field-help" data-configuration-status role="status">Preview selections to review dependencies before saving.</p><p class="field-help">Saving requests a new desired configuration and verified build. The current runtime is separate; replacement may interrupt access and must pass checkpoint and writer safety checks.</p><div class="form-actions">` +
     `<button class="button" type="submit" name="action" value="configure"${canSave ? "" : " disabled"}>Save configuration and build</button>` +
     `<button type="submit" class="button button-secondary" name="action" value="preview">Preview selection</button>` +
     `</div></form></section>`

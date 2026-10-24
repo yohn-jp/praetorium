@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { quotaStatusMatchesLiveSpec } from "../../scripts/ci/history-admission-readiness.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(resolve(repositoryRoot, "package.json"));
@@ -34,6 +35,28 @@ const namespacePolicy = namespaceDocuments.find(
 const namespaceBinding = namespaceDocuments.find(
   (document) => document.kind === "ValidatingAdmissionPolicyBinding",
 );
+
+test("quota readiness compares API-canonicalized live spec and status quantities", () => {
+  const renderedQuota = {
+    spec: { hard: { "limits.ephemeral-storage": "8192Mi", "requests.storage": "512Mi" } },
+  };
+  const liveQuota = {
+    spec: { hard: { "requests.storage": "512Mi", "limits.ephemeral-storage": "8Gi" } },
+    status: { hard: { "limits.ephemeral-storage": "8Gi", "requests.storage": "512Mi" } },
+  };
+  assert.equal(renderedQuota.spec.hard["limits.ephemeral-storage"], "8192Mi");
+  assert.equal(liveQuota.spec.hard["limits.ephemeral-storage"], "8Gi");
+  assert.equal(quotaStatusMatchesLiveSpec(liveQuota), true);
+  assert.equal(
+    quotaStatusMatchesLiveSpec({
+      ...liveQuota,
+      status: { hard: { ...liveQuota.status.hard, "limits.ephemeral-storage": "7Gi" } },
+    }),
+    false,
+  );
+  assert.equal(quotaStatusMatchesLiveSpec({ spec: liveQuota.spec }), false);
+  assert.equal(quotaStatusMatchesLiveSpec({ spec: { hard: {} }, status: { hard: {} } }), false);
+});
 const roleBindingPolicy = roleBindingDocuments.find(
   (document) => document.kind === "ValidatingAdmissionPolicy",
 );
@@ -614,7 +637,7 @@ test("the canonical Kind job runs real server-side history admission scenarios",
   assert.match(runner, /status\?\.typeChecking/u);
   assert.match(runner, /status\?\.conditions/u);
   assert.ok(runner.includes(`JSON.stringify(binding.spec?.validationActions) !== '["Deny"]'`));
-  assert.match(runner, /status\?\.hard/u);
+  assert.match(runner, /quotaStatusMatchesLiveSpec\(lastObserved\)/u);
   assert.doesNotMatch(runner, /waitForAdmissionGuards/u);
   assert.match(runner, /DEFAULT_KUBECTL_TIMEOUT_MS = 60_000/u);
   assert.equal((runner.match(/spawnSync\("kubectl"/gu) ?? []).length, 1);

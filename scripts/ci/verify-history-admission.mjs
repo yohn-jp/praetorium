@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { quotaStatusMatchesLiveSpec } from "./history-admission-readiness.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(resolve(root, "package.json"));
@@ -216,11 +217,7 @@ function waitForNamespaceQuota(quota, deadline) {
       quota.metadata.namespace,
       deadline,
     );
-    if (
-      JSON.stringify(
-        Object.entries(lastObserved.status?.hard ?? {}).sort(([a], [b]) => a.localeCompare(b)),
-      ) === JSON.stringify(Object.entries(quota.spec.hard).sort(([a], [b]) => a.localeCompare(b)))
-    ) {
+    if (quotaStatusMatchesLiveSpec(lastObserved)) {
       return;
     }
     Atomics.wait(

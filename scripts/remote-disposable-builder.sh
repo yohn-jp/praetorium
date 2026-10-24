@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # Root-applied, bounded substrate for the T14 disposable Kind/BuildKit host.
 # This does not alter the production BuildKit service or open host firewall ports.
 readonly OWNER='praetorium-t14'
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly STATE_MODULE="$SCRIPT_DIR/remote-disposable-builder-state.mjs"
 readonly BASE='/var/lib/praetorium-t14'
 readonly IMAGE="$BASE/state.img"
 readonly MOUNT="$BASE/state"
 readonly MARKER="$BASE/owner.json"
+readonly CGROUP_RECEIPT="$BASE/cgroup-verification.json"
+readonly JOURNAL='/var/lib/.praetorium-t14-setup.json'
 readonly CLUSTER='praetorium-t14-canary'
 readonly CONTEXT='kind-praetorium-t14-canary'
 readonly MOUNT_UNIT='var-lib-praetorium\x2dt14-state.mount'
@@ -18,10 +23,12 @@ readonly SUBID_START=3000000
 readonly SUBID_COUNT=65536
 readonly EXPECTED_NODE_IMAGE='kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f'
 
-usage() { echo "usage: $0 plan|setup|cleanup" >&2; exit 2; }
-[[ $# == 1 ]] || usage
+usage() { echo "usage: $0 plan|setup|run|verify-cgroup|cleanup [command ...]" >&2; exit 2; }
+[[ $# -ge 1 ]] || usage
 action=$1
-[[ $action == plan || $action == setup || $action == cleanup ]] || usage
+shift
+[[ $action == plan || $action == setup || $action == run || $action == verify-cgroup || $action == cleanup ]] || usage
+if [[ $action != run && $# != 0 ]]; then usage; fi
 
 fail() { echo "BLOCKED: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "missing required tool: $1"; }
@@ -34,7 +41,8 @@ check_subid_free() {
 }
 
 check_tools() {
-  need systemctl; need podman; need kind; need kubectl; need node; need pnpm; need ss; need newuidmap; need newgidmap; need losetup; need realpath
+  local required_root_free=${1:-10737418240}
+  need systemctl; need systemd-run; need systemd-analyze; need podman; need kind; need kubectl; need node; need pnpm; need ss; need newuidmap; need newgidmap; need losetup; need realpath; need useradd; need usermod; need getent; need fallocate; need mkfs.ext4; need blkid; need python3
   [[ $(podman --version) == 'podman version 5.7.0' ]] || fail 'Podman must be the observed apt version 5.7.0'
   [[ $(kind --version) == 'kind v0.31.0 '* ]] || fail 'Kind must be pinned to v0.31.0'
   [[ $(node --version) == v24.* ]] || fail 'Node must be v24'
@@ -53,33 +61,53 @@ check_tools() {
   done
   [[ $(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 0) == 1 ]] || fail 'unprivileged user namespaces unavailable'
   [[ $(awk '/MemAvailable:/ {print $2}' /proc/meminfo) -ge 8388608 ]] || fail 'less than 8 GiB MemAvailable'
-  [[ $(df -B1 --output=avail / | tail -1 | tr -d ' ') -ge 10737418240 ]] || fail 'less than 10 GiB free on / for the preallocated image'
+  [[ $(df -B1 --output=avail / | tail -1 | tr -d ' ') -ge $required_root_free ]] || fail "less than required free root space ($required_root_free bytes)"
+}
+
+recovery_root_headroom() {
+  local allocated=0 remaining
+  if [[ -e $IMAGE || -L $IMAGE ]]; then
+    [[ -f $IMAGE && ! -L $IMAGE && $(stat -c '%u' "$IMAGE") == 0 ]] || fail 'journaled state image path is not a root-owned regular file'
+    allocated=$(du -B1 "$IMAGE" | awk '{print $1}')
+  fi
+  remaining=$((IMAGE_BYTES - allocated))
+  (( remaining < 0 )) && remaining=0
+  printf '%s' "$((4294967296 + remaining))"
 }
 
 write_marker() {
-  local uuid=$1 expires mount_hash slice_hash
-  expires=$(date -u -d '+7 days' +%Y-%m-%dT%H:%M:%SZ)
+  local uuid=$1 owner_uid=$2 owner_gid=$3 mount_hash slice_hash
   mount_hash=$(sha256sum "/etc/systemd/system/$MOUNT_UNIT" | awk '{print $1}')
   slice_hash=$(sha256sum "/etc/systemd/system/$SLICE_UNIT" | awk '{print $1}')
-  install -d -o root -g root -m 0700 "$BASE"
-  printf '{"schema":"praetorium.t14-builder-owner/v1","owner":"%s","image":"%s","imageBytes":%s,"mount":"%s","mountUnit":"%s","mountUnitSha256":"%s","sliceUnit":"%s","sliceUnitSha256":"%s","testBuildkitUnit":"%s","filesystemUuid":"%s","cluster":"%s","context":"%s","buildkitHostPort":1235,"expiresAt":"%s"}\n' \
-    "$OWNER" "$IMAGE" "$IMAGE_BYTES" "$MOUNT" "$MOUNT_UNIT" "$mount_hash" "$SLICE_UNIT" "$slice_hash" "$TEST_BUILDKIT_UNIT" "$uuid" "$CLUSTER" "$CONTEXT" "$expires" > "$MARKER"
-  chmod 0600 "$MARKER"
+  if [[ ! -e $MARKER ]]; then
+    node "$STATE_MODULE" write \
+      "$MARKER" "$uuid" "$mount_hash" "$slice_hash" "$owner_uid" "$owner_gid"
+  else
+    node "$STATE_MODULE" validate "$MARKER"
+  fi
+  node "$STATE_MODULE" validate "$MARKER"
+  [[ $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["filesystemUuid"])' "$MARKER") == "$uuid" ]] || fail 'owner marker UUID differs from the mounted image'
+  [[ $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mountUnitSha256"])' "$MARKER") == "$mount_hash" ]] || fail 'owner marker mount unit hash differs'
+  [[ $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sliceUnitSha256"])' "$MARKER") == "$slice_hash" ]] || fail 'owner marker slice unit hash differs'
   install -d -o root -g root -m 0700 "$MOUNT/.praetorium-t14"
-  install -m 0600 -o root -g root "$MARKER" "$MOUNT/.praetorium-t14/owner.json"
+  if [[ ! -e "$MOUNT/.praetorium-t14/owner.json" ]]; then
+    install -m 0600 -o root -g root "$MARKER" "$MOUNT/.praetorium-t14/owner.json"
+  else
+    cmp -s "$MARKER" "$MOUNT/.praetorium-t14/owner.json" || fail 'existing in-volume owner marker differs'
+  fi
 }
 
 verify_marker() {
   [[ -f $MARKER && ! -L $MARKER ]] || fail 'owner marker missing or symlinked'
   [[ $(stat -c '%u:%a' "$MARKER") == '0:600' ]] || fail 'owner marker must be root-owned mode 0600'
+  node "$STATE_MODULE" validate "$MARKER"
+  marker_uid=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ownerUid"])' "$MARKER")
+  marker_gid=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ownerGid"])' "$MARKER")
+  [[ $(id -u "$OWNER") == "$marker_uid" && $(id -g "$OWNER") == "$marker_gid" ]] || fail 'T14 account UID/GID differs from owner marker'
   python3 - "$MARKER" <<'PY'
-import json,sys
+import hashlib,json,os,stat,sys
 p=json.load(open(sys.argv[1]))
-expected={'schema':'praetorium.t14-builder-owner/v1','owner':'praetorium-t14','image':'/var/lib/praetorium-t14/state.img','imageBytes':6442450944,'mount':'/var/lib/praetorium-t14/state','mountUnit':'var-lib-praetorium\\x2dt14-state.mount','sliceUnit':'praetorium-t14.slice','testBuildkitUnit':'praetorium-buildkit-t14.service','cluster':'praetorium-t14-canary','context':'kind-praetorium-t14-canary','buildkitHostPort':1235}
-if any(p.get(k)!=v for k,v in expected.items()) or not p.get('filesystemUuid') or not p.get('expiresAt'):
-    raise SystemExit('owner marker contract mismatch')
 for key,path in [('mountUnitSha256','/etc/systemd/system/'+p['mountUnit']),('sliceUnitSha256','/etc/systemd/system/'+p['sliceUnit'])]:
-    import hashlib,os,stat
     st=os.lstat(path)
     if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode & 0o022:
         raise SystemExit('owned systemd unit is unsafe: '+path)
@@ -99,11 +127,21 @@ PY
 
 if [[ $action == plan ]]; then
   (( EUID == 0 )) || fail 'run plan through the Builder host with sudo for an authoritative preflight'
+  if [[ -e $JOURNAL || -L $JOURNAL ]]; then
+    node "$STATE_MODULE" journal-validate "$JOURNAL"
+    check_tools "$(recovery_root_headroom)"
+    printf 'RECOVERY_REQUIRED: exact staged journal exists; rerun setup to continue forward recovery\n'
+    exit 0
+  fi
   check_tools
-  [[ ! -e $BASE && ! -L $BASE && ! -e $MARKER && ! -L $MARKER && ! -e $IMAGE && ! -L $IMAGE && ! -e $MOUNT && ! -L $MOUNT ]] || fail 'T14 state already exists; inspect ownership marker before proceeding'
-  [[ $(systemctl show "$TEST_BUILDKIT_UNIT" -p LoadState --value 2>/dev/null || true) == not-found ]] || fail 'T14 BuildKit unit name is already occupied; refusing to adopt it'
+  [[ ! -e $BASE && ! -L $BASE && ! -e $IMAGE && ! -L $IMAGE && ! -e $MOUNT && ! -L $MOUNT ]] || fail 'T14 state already exists; inspect ownership before proceeding'
+  [[ ! -e "/etc/systemd/system/$MOUNT_UNIT" && ! -L "/etc/systemd/system/$MOUNT_UNIT" ]] || fail 'T14 mount unit path is occupied'
+  [[ ! -e "/etc/systemd/system/$SLICE_UNIT" && ! -L "/etc/systemd/system/$SLICE_UNIT" ]] || fail 'T14 slice unit path is occupied'
+  [[ $(systemctl show "$TEST_BUILDKIT_UNIT" -p LoadState --value 2>/dev/null || true) == not-found ]] || fail 'T14 BuildKit unit name is already occupied'
+  ! getent passwd "$OWNER" >/dev/null || fail "account $OWNER exists without an owner journal"
+  ! getent group "$OWNER" >/dev/null || fail "group $OWNER exists without an owner journal"
   check_subid_free /etc/subuid; check_subid_free /etc/subgid
-  printf 'READY: rootless test account=%s subids=%s:%s state=%s bytes=%s cgroup=2CPU/4GiB/2048tasks BuildKit=10.7.0.32:1235 protected=10.7.0.32:1234 cluster=%s node=%s\n' \
+  printf 'READY: rootless test account=%s subids=%s:%s state=%s bytes=%s cgroup=2CPU/4GiB/2048tasks testport=10.7.0.32:1235 protected=10.7.0.32:1234 cluster=%s node=%s\n' \
     "$OWNER" "$SUBID_START" "$SUBID_COUNT" "$IMAGE" "$IMAGE_BYTES" "$CLUSTER" "$EXPECTED_NODE_IMAGE"
   exit 0
 fi
@@ -111,52 +149,75 @@ fi
 (( EUID == 0 )) || fail "$action requires root"
 
 if [[ $action == setup ]]; then
-  check_tools
-  [[ ! -e $BASE && ! -L $BASE && ! -e $MARKER && ! -L $MARKER && ! -e $IMAGE && ! -L $IMAGE && ! -e $MOUNT && ! -L $MOUNT ]] || fail 'T14 paths already exist; refusing to adopt unmarked state'
-  [[ $(systemctl show "$TEST_BUILDKIT_UNIT" -p LoadState --value 2>/dev/null || true) == not-found ]] || fail 'T14 BuildKit unit name is already occupied; refusing to adopt it'
-  check_subid_free /etc/subuid; check_subid_free /etc/subgid
-  [[ -x /usr/bin/fallocate && -x /usr/sbin/mkfs.ext4 ]] || fail 'fallocate/mkfs.ext4 unavailable'
-  getent passwd "$OWNER" >/dev/null && fail "account $OWNER already exists without this owner marker"
-  install -d -o root -g root -m 0700 "$BASE" "$MOUNT"
-  useradd --system --home-dir "$MOUNT/home" --shell /usr/sbin/nologin "$OWNER"
-  usermod --add-subuids "$SUBID_START-$((SUBID_START + SUBID_COUNT - 1))" "$OWNER"
-  usermod --add-subgids "$SUBID_START-$((SUBID_START + SUBID_COUNT - 1))" "$OWNER"
-  fallocate -l "$IMAGE_BYTES" "$IMAGE"
+  if [[ -e $JOURNAL || -L $JOURNAL ]]; then
+    node "$STATE_MODULE" journal-validate "$JOURNAL"
+    check_tools "$(recovery_root_headroom)"
+  else
+    check_tools
+    [[ ! -e $BASE && ! -L $BASE && ! -e $IMAGE && ! -L $IMAGE && ! -e $MOUNT && ! -L $MOUNT ]] || fail 'T14 paths already exist without a setup journal; refusing to adopt'
+    [[ ! -e "/etc/systemd/system/$MOUNT_UNIT" && ! -L "/etc/systemd/system/$MOUNT_UNIT" ]] || fail 'T14 mount unit path is occupied'
+    [[ ! -e "/etc/systemd/system/$SLICE_UNIT" && ! -L "/etc/systemd/system/$SLICE_UNIT" ]] || fail 'T14 slice unit path is occupied'
+    [[ $(systemctl show "$TEST_BUILDKIT_UNIT" -p LoadState --value 2>/dev/null || true) == not-found ]] || fail 'T14 BuildKit unit name is already occupied; refusing to adopt it'
+    ! getent passwd "$OWNER" >/dev/null || fail "account $OWNER exists without a setup journal"
+    ! getent group "$OWNER" >/dev/null || fail "group $OWNER exists without a setup journal"
+    check_subid_free /etc/subuid; check_subid_free /etc/subgid
+    node "$STATE_MODULE" journal-init "$JOURNAL"
+  fi
+  if [[ ! -e $BASE ]]; then install -d -o root -g root -m 0711 "$BASE"; fi
+  [[ -d $BASE && ! -L $BASE && $(stat -c '%u:%a' "$BASE") == '0:711' ]] || fail 'T14 base directory must be root-owned mode 0711'
+  if [[ ! -e $MOUNT ]]; then install -d -o root -g root -m 0700 "$MOUNT"; fi
+  if [[ $(findmnt -rn -o TARGET --target "$MOUNT" 2>/dev/null || true) != "$MOUNT" ]]; then
+    [[ -d $MOUNT && ! -L $MOUNT && $(stat -c '%u:%a' "$MOUNT") == '0:700' ]] || fail 'T14 mountpoint must be root-owned mode 0700 before mounting'
+  fi
+  if ! getent passwd "$OWNER" >/dev/null; then
+    useradd --system --user-group --home-dir "$MOUNT/home" --shell /bin/bash "$OWNER"
+  fi
+  account=$(getent passwd "$OWNER") || fail 'disposable account readback failed'
+  account_home=$(cut -d: -f6 <<<"$account")
+  account_shell=$(cut -d: -f7 <<<"$account")
+  account_uid=$(id -u "$OWNER")
+  account_gid=$(id -g "$OWNER")
+  [[ $account_home == "$MOUNT/home" && $account_shell == /bin/bash && $(getent group "$OWNER" | cut -d: -f3) == "$account_gid" ]] || fail 'disposable account/group identity differs from T14 contract'
+  for file in /etc/subuid /etc/subgid; do
+    lines=$(grep -Fc "$OWNER:$SUBID_START:$SUBID_COUNT" "$file" || true)
+    if [[ $lines == 0 ]]; then
+      check_subid_free "$file"
+      if [[ $file == /etc/subuid ]]; then usermod --add-subuids "$SUBID_START-$((SUBID_START + SUBID_COUNT - 1))" "$OWNER"; else usermod --add-subgids "$SUBID_START-$((SUBID_START + SUBID_COUNT - 1))" "$OWNER"; fi
+    elif [[ $lines != 1 ]]; then
+      fail "unexpected subordinate ID entries for $OWNER in $file"
+    fi
+  done
+  [[ $(grep -Fc "$OWNER:$SUBID_START:$SUBID_COUNT" /etc/subuid) == 1 && $(grep -Fc "$OWNER:$SUBID_START:$SUBID_COUNT" /etc/subgid) == 1 ]] || fail 'subordinate ID readback does not match exact allocation'
+  node "$STATE_MODULE" journal-stage "$JOURNAL" account "$account_uid" "$account_gid"
+  if [[ ! -e $IMAGE ]]; then fallocate -l "$IMAGE_BYTES" "$IMAGE"; fi
+  [[ -f $IMAGE && ! -L $IMAGE && $(stat -c '%u' "$IMAGE") == 0 ]] || fail 'T14 state image is not a root-owned regular file'
+  [[ $(stat -c '%s' "$IMAGE") == "$IMAGE_BYTES" ]] || fallocate -l "$IMAGE_BYTES" "$IMAGE"
   chmod 0600 "$IMAGE"
-  mkfs.ext4 -F -q "$IMAGE"
+  [[ $(stat -c '%u:%a:%s' "$IMAGE") == "0:600:$IMAGE_BYTES" ]] || fail 'T14 state image is not a root-owned 6 GiB private file'
+  image_type=$(blkid -s TYPE -o value "$IMAGE" 2>/dev/null || true)
+  if [[ -z $image_type ]]; then mkfs.ext4 -F -q "$IMAGE"; elif [[ $image_type != ext4 ]]; then fail 'journal-owned image has unexpected filesystem type'; fi
   local_uuid=$(blkid -s UUID -o value "$IMAGE")
-  cat > "/etc/systemd/system/$MOUNT_UNIT" <<EOF
-[Unit]
-Description=Praetorium T14 bounded disposable state
-Before=praetorium-t14.slice
-
-[Mount]
-What=$IMAGE
-Where=$MOUNT
-Type=ext4
-Options=loop,nodev,nosuid
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  chmod 0644 "/etc/systemd/system/$MOUNT_UNIT"
-  cat > "/etc/systemd/system/$SLICE_UNIT" <<'EOF'
-[Unit]
-Description=Praetorium T14 disposable resource ceiling
-
-[Slice]
-CPUAccounting=yes
-CPUQuota=200%
-MemoryAccounting=yes
-MemoryMax=4G
-TasksAccounting=yes
-TasksMax=2048
-Delegate=yes
-EOF
-  chmod 0644 "/etc/systemd/system/$SLICE_UNIT"
+  node "$STATE_MODULE" journal-stage "$JOURNAL" image "$account_uid" "$account_gid" "$local_uuid"
+  mount_unit_tmp=$(mktemp)
+  node "$STATE_MODULE" render-mount > "$mount_unit_tmp"
+  slice_unit_tmp=$(mktemp)
+  node "$STATE_MODULE" render-slice > "$slice_unit_tmp"
+  for entry in "$MOUNT_UNIT:$mount_unit_tmp" "$SLICE_UNIT:$slice_unit_tmp"; do
+    unit=${entry%%:*}; source=${entry#*:}; destination="/etc/systemd/system/$unit"
+    chmod 0644 "$source"
+    if [[ -e $destination || -L $destination ]]; then
+      [[ -f $destination && ! -L $destination ]] && cmp -s "$source" "$destination" || fail "existing unit differs from T14 contract: $unit"
+    else
+      install -o root -g root -m 0644 "$source" "$destination"
+    fi
+  done
+  rm -f "$mount_unit_tmp" "$slice_unit_tmp"
+  systemd-analyze verify "/etc/systemd/system/$MOUNT_UNIT" "/etc/systemd/system/$SLICE_UNIT"
+  node "$STATE_MODULE" journal-stage "$JOURNAL" units "$account_uid" "$account_gid" "$local_uuid"
   systemctl daemon-reload
   systemctl enable --now "$MOUNT_UNIT"
-  write_marker "$local_uuid"
+  node "$STATE_MODULE" journal-stage "$JOURNAL" mounted "$account_uid" "$account_gid" "$local_uuid"
+  write_marker "$local_uuid" "$account_uid" "$account_gid"
   chown "$OWNER:$OWNER" "$MOUNT"
   install -d -o "$OWNER" -g "$OWNER" -m 0700 "$MOUNT/home" "$MOUNT/podman" "$MOUNT/kube" "$MOUNT/logs" "$MOUNT/credentials"
   install -d -o "$OWNER" -g "$OWNER" -m 0700 "$MOUNT/home/.config/containers"
@@ -170,24 +231,89 @@ EOF
   chown "$OWNER:$OWNER" "$MOUNT/home/.config/containers/storage.conf"
   install -d -o "$OWNER" -g "$OWNER" -m 0700 "/run/user/$(id -u "$OWNER")" "/run/user/$(id -u "$OWNER")/containers"
   verify_marker
-  echo "READY: T14 host substrate created. No Kind cluster or workload started; use canonical deploy-infrastructure runner."
+  node "$STATE_MODULE" journal-stage "$JOURNAL" ready "$account_uid" "$account_gid" "$local_uuid"
+  node "$STATE_MODULE" journal-remove "$JOURNAL"
+  echo "READY: T14 host substrate created. No Kind cluster or workload started. Use a Delegate=yes transient scope inside $SLICE_UNIT."
+  exit 0
+fi
+
+if [[ $action == run ]]; then
+  (( EUID == 0 )) || fail 'run must be invoked through sudo so systemd can place the process in the bounded system slice'
+  [[ $# -gt 0 ]] || usage
+  verify_marker
+  test_uid=$(id -u "$OWNER")
+  slice_hash=$(sha256sum "/etc/systemd/system/$SLICE_UNIT" | awk '{print $1}')
+  node "$STATE_MODULE" cgroup-validate "$CGROUP_RECEIPT" "$test_uid" "$slice_hash"
+  install -d -o "$OWNER" -g "$OWNER" -m 0700 "/run/user/$test_uid" "/run/user/$test_uid/containers"
+  exec systemd-run --scope --slice="$SLICE_UNIT" --uid="$OWNER" \
+    --property=Delegate=yes --working-directory="$PWD" \
+    --setenv="CONTAINERS_STORAGE_CONF=$MOUNT/home/.config/containers/storage.conf" \
+    --setenv="XDG_CONFIG_HOME=$MOUNT/home/.config" \
+    --setenv="XDG_DATA_HOME=$MOUNT/home/.local/share" \
+    --setenv="XDG_RUNTIME_DIR=/run/user/$test_uid" \
+    --setenv=KIND_EXPERIMENTAL_PROVIDER=podman -- "$@"
+fi
+
+if [[ $action == verify-cgroup ]]; then
+  (( EUID == 0 )) || fail 'verify-cgroup requires root'
+  verify_marker
+  probe="praetorium-t14-cgroup-probe-$$.scope"
+  systemd-run --scope --slice="$SLICE_UNIT" --unit="$probe" --uid="$OWNER" \
+    --property=Delegate=yes -- /usr/bin/sleep 5 &
+  runner_pid=$!
+  stop_probe() { kill "$runner_pid" 2>/dev/null || true; wait "$runner_pid" 2>/dev/null || true; }
+  trap stop_probe EXIT
+  control_group=''
+  for _ in {1..40}; do
+    kill -0 "$runner_pid" 2>/dev/null || fail 'transient delegated scope exited before cgroup readback'
+    control_group=$(systemctl show "$probe" -p ControlGroup --value 2>/dev/null || true)
+    [[ -n $control_group ]] && break
+    sleep 0.1
+  done
+  [[ $control_group == *"$SLICE_UNIT/"* ]] || fail 'transient scope is not beneath the T14 slice'
+  slice_path="/sys/fs/cgroup${control_group%/*}"
+  [[ -r $slice_path/cpu.max && -r $slice_path/memory.max && -r $slice_path/pids.max ]] || fail 'slice cgroup controller files are unavailable'
+  cpu_limit=$(cat "$slice_path/cpu.max")
+  memory_limit=$(cat "$slice_path/memory.max")
+  process_limit=$(cat "$slice_path/pids.max")
+  [[ $cpu_limit == '200000 100000' && $memory_limit == '4294967296' && $process_limit == '2048' ]] || fail "effective T14 slice limits differ (cpu=$cpu_limit memory=$memory_limit pids=$process_limit)"
+  test_uid=$(id -u "$OWNER")
+  slice_hash=$(sha256sum "/etc/systemd/system/$SLICE_UNIT" | awk '{print $1}')
+  node "$STATE_MODULE" cgroup-write "$CGROUP_RECEIPT" "$test_uid" "$slice_hash"
+  echo "CGROUP_READY: scope=$probe slice=$SLICE_UNIT cpu=$cpu_limit memory=$memory_limit pids=$process_limit"
+  stop_probe
+  trap - EXIT
   exit 0
 fi
 
 verify_marker
+if [[ -e $JOURNAL || -L $JOURNAL ]]; then
+  node "$STATE_MODULE" journal-validate "$JOURNAL"
+  node "$STATE_MODULE" journal-remove "$JOURNAL"
+fi
 getent passwd "$OWNER" >/dev/null || fail 'owned test account is missing; do not infer ownership'
 need kind; need podman
 test_uid=$(id -u "$OWNER")
+account=$(getent passwd "$OWNER")
+[[ $(cut -d: -f6 <<<"$account") == "$MOUNT/home" && $(cut -d: -f7 <<<"$account") == /bin/bash ]] || fail 'T14 account home/shell differs from owner contract'
+account_gid=$(id -g "$OWNER")
+group=$(getent group "$OWNER") || fail 'T14 primary group is missing'
+[[ $(cut -d: -f3 <<<"$group") == "$account_gid" && -z $(cut -d: -f4 <<<"$group") ]] || fail 'T14 primary group ownership/membership differs from contract'
+install -d -o "$OWNER" -g "$OWNER" -m 0700 "/run/user/$test_uid" "/run/user/$test_uid/containers"
 if [[ ! -f /etc/subuid || $(grep -Fc "$OWNER:$SUBID_START:$SUBID_COUNT" /etc/subuid) != 1 || ! -f /etc/subgid || $(grep -Fc "$OWNER:$SUBID_START:$SUBID_COUNT" /etc/subgid) != 1 ]]; then
   fail 'disposable account subordinate ID records differ from the exact allocated range'
 fi
-if systemctl is-active --quiet "$TEST_BUILDKIT_UNIT"; then fail 'T14 BuildKit unit is active; stop and verify it separately before substrate cleanup'; fi
-clusters=$(runuser -u "$OWNER" -- env HOME="$MOUNT/home" XDG_CONFIG_HOME="$MOUNT/home/.config" \
+if [[ $(systemctl show "$TEST_BUILDKIT_UNIT" -p LoadState --value 2>/dev/null || true) != not-found ]]; then fail 'T14 BuildKit unit exists; verify and remove it separately before substrate cleanup'; fi
+if [[ -e $CGROUP_RECEIPT || -L $CGROUP_RECEIPT ]]; then
+  [[ -f $CGROUP_RECEIPT && ! -L $CGROUP_RECEIPT && $(stat -c '%u:%a' "$CGROUP_RECEIPT") == '0:600' ]] || fail 'cgroup receipt path is not a private owner file'
+  rm -f "$CGROUP_RECEIPT"
+fi
+clusters=$(runuser --login --user "$OWNER" -- env XDG_CONFIG_HOME="$MOUNT/home/.config" \
     XDG_DATA_HOME="$MOUNT/home/.local/share" XDG_RUNTIME_DIR="/run/user/$test_uid" \
     CONTAINERS_STORAGE_CONF="$MOUNT/home/.config/containers/storage.conf" \
     KIND_EXPERIMENTAL_PROVIDER=podman kind get clusters)
 if grep -Fxq "$CLUSTER" <<<"$clusters"; then
-  runuser -u "$OWNER" -- env HOME="$MOUNT/home" XDG_CONFIG_HOME="$MOUNT/home/.config" \
+  runuser --login --user "$OWNER" -- env XDG_CONFIG_HOME="$MOUNT/home/.config" \
     XDG_DATA_HOME="$MOUNT/home/.local/share" XDG_RUNTIME_DIR="/run/user/$test_uid" \
     CONTAINERS_STORAGE_CONF="$MOUNT/home/.config/containers/storage.conf" \
     KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name "$CLUSTER"
@@ -204,12 +330,18 @@ if pgrep -u "$OWNER" >/dev/null 2>&1; then fail 'disposable account still has pr
 # Delete only contents of the exact, marker-verified, single filesystem. This is
 # deliberately done before unmount so the image can be removed without touching
 # any adjacent Builder state.
-find "$MOUNT" -xdev -mindepth 1 -depth -delete
+find "$MOUNT" -xdev -mindepth 1 -depth \
+  ! -path "$MOUNT/.praetorium-t14" \
+  ! -path "$MOUNT/.praetorium-t14/owner.json" -delete
 systemctl disable --now "$MOUNT_UNIT"
 [[ $(findmnt -rn -o TARGET --target "$MOUNT" 2>/dev/null || true) != "$MOUNT" ]] || fail 'owned state is still mounted after unit stop'
 rm -f "/etc/systemd/system/$SLICE_UNIT" "/etc/systemd/system/$MOUNT_UNIT"
 systemctl daemon-reload
 userdel "$OWNER"
+if getent group "$OWNER" >/dev/null; then
+  [[ $(getent group "$OWNER" | cut -d: -f3) == "$account_gid" ]] || fail 'same-name group changed during cleanup; preserve it'
+  groupdel "$OWNER"
+fi
 sed -i "/^$OWNER:${SUBID_START}:${SUBID_COUNT}$/d" /etc/subuid /etc/subgid
 rm -f "$IMAGE" "$MARKER"
 rmdir "$MOUNT" "$BASE" 2>/dev/null || fail 'T14 directories contain unexpected data; preserve and inspect'

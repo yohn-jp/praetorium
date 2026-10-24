@@ -1,4 +1,4 @@
-// Service-image preparation for deploy-platform; this module is not a second deploy CLI.
+// CI image adoption for deploy-platform; this module is not a second deploy CLI.
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -119,7 +119,7 @@ export function verifiedMain(root, execute = (command, args) => run(root, comman
   if (!ci) throw new Error("Current main has no successful service verification CI run");
   const jobs = JSON.parse(
     execute("gh", ["api", `repos/${REPOSITORY}/actions/runs/${ci.id}/jobs?per_page=100`]),
-  ).jobs;
+  ).jobs?.filter((job) => !((job.name === "candidate-images" || job.name.startsWith("candidate-images (")) && job.conclusion === "skipped"));
   const verifiedServices = [...serviceImages.map(({ service }) => service), "observer"];
   if (
     !Array.isArray(jobs) ||
@@ -129,7 +129,7 @@ export function verifiedMain(root, execute = (command, args) => run(root, comman
       jobs.some((job) => job.name === name),
     ) ||
     !verifiedServices.every((service) =>
-      jobs.some((job) => job.name.startsWith(`candidate-images (${service},`)),
+      jobs.some((job) => job.name.startsWith(`publish-images (${service},`)),
     )
   ) {
     throw new Error("Current main requires every expected verification job to pass");
@@ -239,6 +239,7 @@ export async function prepareServiceImages({
   build,
   directory,
   record = () => {},
+  published,
 }) {
   if (!/^[a-f0-9]{40}$/u.test(source.revision)) throw new Error("Invalid publication revision");
   const result = structuredClone(inventory);
@@ -250,23 +251,34 @@ export async function prepareServiceImages({
       );
     }
   }
-  const tag = `source-${source.revision}-${randomUUID()}`;
+  const tag = published ? `source-${source.revision}` : `source-${source.revision}-${randomUUID()}`;
   const images = {};
   for (const image of serviceImages) {
     const repository = `${REPOSITORY}/${image.service}`;
-    try {
-      await registry.discoverTag(repository, tag);
-      throw new Error("Refusing to replace an existing service publication tag");
-    } catch (error) {
-      if (error.reason !== "not_found") throw error;
+    let digest;
+    if (published) {
+      const receipt = published[image.service];
+      if (!receipt || receipt.schema !== "praetorium.ci-service-image/v1" ||
+          receipt.revision !== source.revision || receipt.ciRunId !== source.ciRunId ||
+          receipt.service !== image.service || receipt.repository !== repository ||
+          !DIGEST.test(receipt.digest ?? ""))
+        throw new Error("CI service image receipt does not match the verified workflow");
+      digest = receipt.digest;
+    } else {
+      try {
+        await registry.discoverTag(repository, tag);
+        throw new Error("Refusing to replace an existing service publication tag");
+      } catch (error) {
+        if (error.reason !== "not_found") throw error;
+      }
+      const metadata = path.join(directory, `${image.service}.json`);
+      await build({ ...image, tag, metadata });
+      const meta = lstatSync(metadata);
+      if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 1024 * 1024)
+        throw new Error("Invalid BuildKit metadata file");
+      digest = JSON.parse(readFileSync(metadata, "utf8"))["containerimage.digest"];
+      if (!DIGEST.test(digest ?? "")) throw new Error("BuildKit returned an invalid image digest");
     }
-    const metadata = path.join(directory, `${image.service}.json`);
-    await build({ ...image, tag, metadata });
-    const meta = lstatSync(metadata);
-    if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 1024 * 1024)
-      throw new Error("Invalid BuildKit metadata file");
-    const digest = JSON.parse(readFileSync(metadata, "utf8"))["containerimage.digest"];
-    if (!DIGEST.test(digest ?? "")) throw new Error("BuildKit returned an invalid image digest");
     const discovered = await registry.discoverTag(repository, tag);
     if (discovered.digest !== digest) throw new Error("Published tag differs from BuildKit digest");
     const verified = await registry.verifyImage(repository, digest, {
@@ -350,124 +362,64 @@ export async function admitServiceInventory({ inventoryPath, original, candidate
   }
 }
 
-export async function publishPlatformImages({
-  root,
-  inventoryPath,
-  secretFilesPath,
-  buildctlPath,
-  buildkitAddress,
-  preflight,
+/** Deploy only images produced by the successful workflow for current main.
+ * No Builder access or registry publication credential is used on this path. */
+export async function adoptCiServiceImages({
+  root, inventoryPath, secretFilesPath, preflight,
 }) {
   const source = verifiedMain(root);
   privateFile(inventoryPath, "deployment inventory");
   let directory;
   try {
-    directory = mkdtempSync(path.join(path.dirname(inventoryPath), ".service-publication-"));
+    directory = mkdtempSync(path.join(path.dirname(inventoryPath), ".ci-service-images-"));
     const original = readFileSync(inventoryPath);
     const inventory = JSON.parse(original);
     const secrets = JSON.parse(
       readFileSync(privateFile(secretFilesPath, "secret manifest")),
     ).values;
-    for (const [key, filename] of Object.entries(secrets.buildkitClient ?? {}))
-      privateFile(filename, `BuildKit ${key}`);
-    privateFile(secrets.buildWorkerRegistryPush, "registry push config");
     const { readRegistryPullCredential } = await import(
       pathToFileURL(path.join(root, "apps/build-worker/dist/registry-credential.js"))
     );
     const { GhcrRegistryClient } = await import(
       pathToFileURL(path.join(root, "plugins/ghcr/dist/index.js"))
     );
-    const { createBuildctlRunner, validateRegistryAuth, readBuildKitRegistryCredential } =
-      await import(pathToFileURL(path.join(root, "plugins/buildkit/dist/index.js")));
-    const pullCredential = await readRegistryPullCredential(secrets.buildWorkerRegistryPull);
     const registry = new GhcrRegistryClient({
-      pullCredential,
+      pullCredential: await readRegistryPullCredential(secrets.buildWorkerRegistryPull),
       allowedRepositories: serviceImages.map(({ service }) => `${REPOSITORY}/${service}`),
       maxImageLayerBytes: inventory.buildPolicy.maxImageLayerBytes,
       maxImageVerificationMs: inventory.buildPolicy.maxImageVerificationMs,
       maxRegistryRequestMs: inventory.buildPolicy.maxRegistryRequestMs,
     });
-    const context = path.join(directory, "context");
-    const dockerConfigDirectory = path.join(directory, "docker");
-    mkdirSync(context, { mode: 0o700 });
-    mkdirSync(dockerConfigDirectory, { mode: 0o700 });
-    writeFileSync(
-      path.join(dockerConfigDirectory, "config.json"),
-      readFileSync(secrets.buildWorkerRegistryPush),
-      { mode: 0o600 },
-    );
-    const registryConfig = {
-      dockerConfigDirectory,
-      outputRepository: `ghcr.io/${REPOSITORY}/build-worker`,
-      buildkitRepository: `ghcr.io/${REPOSITORY}/build-worker`,
-    };
-    await validateRegistryAuth(registryConfig);
-    assertSeparateRegistryCredentials(
-      pullCredential,
-      await readBuildKitRegistryCredential(registryConfig, "ghcr.io"),
-    );
-    const archive = path.join(directory, "source.tar");
-    archiveServiceSource({ root, revision: source.revision, archive, context });
-    const runner = createBuildctlRunner({ buildctlPath });
-    console.log("Checking Builder mTLS connectivity before publication...");
-    await runner(
-      [...buildctlConnectionArguments({ inventory, secrets, buildkitAddress }), "debug", "workers"],
-      {
-        cwd: context,
-        dockerConfigDirectory,
-        temporaryDirectory: directory,
-        safePath: process.env.PATH,
-        buildTimeoutMs: 30_000,
-        maxProgressBytes: 1024 * 1024,
-        signal: AbortSignal.timeout(30_000),
-        onProgress: () => {},
-      },
-    );
+    const published = {};
+    for (const { service } of serviceImages) {
+      const artifactDirectory = path.join(directory, service);
+      mkdirSync(artifactDirectory, { mode: 0o700 });
+      console.log(`Using CI-published ${service} from workflow ${source.ciRunId}...`);
+      run(root, "gh", ["run", "download", String(source.ciRunId), "--repo", REPOSITORY,
+        "--name", `service-image-${service}`, "--dir", artifactDirectory]);
+      const filename = path.join(artifactDirectory, "receipt.json");
+      const meta = lstatSync(filename);
+      if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 16 * 1024)
+        throw new Error("Invalid CI service image receipt");
+      published[service] = JSON.parse(readFileSync(filename, "utf8"));
+    }
     const receiptPath = `${inventoryPath}.publication-${source.revision}-${randomUUID()}.json`;
     const prepared = await prepareServiceImages({
-      inventory,
-      source,
-      registry,
-      directory,
-      record: (receipt) =>
-        writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n", { mode: 0o600 }),
-      build: async (image) => {
-        console.log(`Building and publishing ${image.service} from ${source.revision}...`);
-        await runner(
-          serviceBuildArguments({
-            inventory,
-            secrets,
-            buildkitAddress,
-            context,
-            revision: source.revision,
-            ...image,
-          }),
-          {
-            cwd: context,
-            dockerConfigDirectory,
-            temporaryDirectory: directory,
-            safePath: process.env.PATH,
-            buildTimeoutMs: 90 * 60_000,
-            maxProgressBytes: 16 * 1024 * 1024,
-            signal: AbortSignal.timeout(90 * 60_000),
-            onProgress: () => {},
-          },
-        );
-      },
+      inventory, source, registry, directory, published,
+      record: (receipt) => writeFileSync(receiptPath,
+        JSON.stringify({ ...receipt, publicationAuthority: "GITHUB_ACTIONS" }, null, 2) + "\n",
+        { mode: 0o600 }),
     });
     const backup = await admitServiceInventory({
-      inventoryPath,
-      original,
-      candidate: prepared.inventory,
+      inventoryPath, original, candidate: prepared.inventory,
       preflight: async (candidate) => {
         await preflight(candidate);
-        // Recheck after both the long build and the candidate's remote preflights.
         if (verifiedMain(root).revision !== source.revision)
-          throw new Error("Main changed during publication");
+          throw new Error("Main changed during image admission");
       },
     });
-    console.log(`Verified four service images. Prior inventory retained at ${backup}`);
-    console.log(`Publication receipt: ${receiptPath}`);
+    console.log(`Adopted four CI-published service images. Prior inventory retained at ${backup}`);
+    console.log(`Image receipt: ${receiptPath}`);
     return prepared.receipt;
   } finally {
     if (directory) rmSync(directory, { recursive: true, force: true });

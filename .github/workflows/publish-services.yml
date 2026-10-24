@@ -1,4 +1,4 @@
-name: Verify Praetorium service images (disposable)
+name: Verify and publish Praetorium service images
 
 on:
   pull_request:
@@ -104,7 +104,7 @@ jobs:
           retention-days: 7
 
   candidate-images:
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request'
     needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -156,6 +156,99 @@ jobs:
             SERVICE_PACKAGE=${{ matrix.package }}
       - name: Assert image exists locally
         run: docker image inspect "praetorium-ci/${{ matrix.service }}:${{ github.event.pull_request.head.sha || github.sha }}" >/dev/null
+
+  publish-images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: provisioner
+            package: "@praetorium/provisioner"
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
+          - service: instance-access
+            package: "@praetorium/instance-access"
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
+          - service: build-worker
+            package: "@praetorium/build-worker"
+            dockerfile: infrastructure/docker/build-worker.Dockerfile
+          - service: coordination
+            package: "@praetorium/coordination"
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
+          - service: observer
+            package: "@praetorium/observer"
+            dockerfile: infrastructure/docker/service-runtime.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.0"
+      - uses: docker/setup-buildx-action@v3
+      - name: Authenticate to GHCR for this repository's service images
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish the exact main service image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          outputs: type=image,oci-mediatypes=true
+          tags: ghcr.io/yohn-jp/praetorium/${{ matrix.service }}:source-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/yohn-jp/praetorium
+          cache-from: type=gha,scope=service-${{ matrix.service }}
+          cache-to: type=gha,scope=service-${{ matrix.service }},mode=max
+          build-args: |
+            NODE_BUILD_IMAGE=docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
+            NODE_RUNTIME_IMAGE=docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
+            BUILDKIT_CLIENT_IMAGE=docker.io/moby/buildkit@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
+            BUILDKIT_CLIENT_BUILDCTL_PATH=/usr/bin/buildctl
+            PRAETORIUM_BUILDKIT_BUILDCTL_PATH=/usr/local/bin/buildctl
+            SERVICE_PACKAGE=${{ matrix.package }}
+      - name: Record the immutable image for deployment
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SERVICE: ${{ matrix.service }}
+          REVISION: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'JS'
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          import path from 'node:path';
+          const { IMAGE_DIGEST: digest, SERVICE: service, REVISION: revision } = process.env;
+          if (!/^sha256:[a-f0-9]{64}$/.test(digest) || !/^[a-f0-9]{40}$/.test(revision))
+            throw new Error('Immutable CI image identity is missing');
+          const directory = path.join(process.env.RUNNER_TEMP, 'service-image');
+          mkdirSync(directory, { recursive: true });
+          writeFileSync(path.join(directory, 'receipt.json'), JSON.stringify({
+            schema: 'praetorium.ci-service-image/v1', revision,
+            ciRunId: Number(process.env.GITHUB_RUN_ID), service,
+            repository: 'yohn-jp/praetorium/' + service, digest,
+          }));
+          JS
+      - name: Upload the deployment image receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-image-${{ matrix.service }}
+          path: ${{ runner.temp }}/service-image/receipt.json
+          if-no-files-found: error
+          retention-days: 7
 
   kubernetes-admission:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')

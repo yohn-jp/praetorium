@@ -65,7 +65,12 @@ For noninteractive Cloudflare CLI access, use an already authorized Wrangler log
 
 Run from a clean checkout of the exact released commit **on the operator workstation** that has Node 24, `kubectl`, the pinned Flux CLI and reachability to the K3s management API. The actual VM role bootstrap above is one-time. Both Cloudflare and cluster preflights run **before any remote mutation**:
 
-For `--apply`, the checkout must be **current main** with all eight expected jobs in the existing service verification workflow passing on that SHA, including Observer image verification. The workstation additionally needs authenticated read-only `gh` access for that verification, the existing mTLS BuildKit client, `ansible-playbook`, and the existing Management Ansible host inventory. GitHub Actions remains verification-only (`push: false`); the regular deploy command owns publication. No release, dispatch workflow, parallel publisher or new BuildKit daemon is needed.
+For `--apply`, the checkout must be **current main** with all eight expected
+successful jobs in the service workflow, including the five `publish-images`
+jobs. Main CI builds and publishes service images to GHCR; PR jobs remain
+read-only. The workstation needs authenticated read-only `gh` artifact access,
+registry pull access, `ansible-playbook`, and the existing Management inventory.
+Platform delivery does not rebuild images or require an mTLS Builder connection.
 
 ```sh
 node scripts/deploy-platform.mjs \
@@ -79,20 +84,30 @@ node scripts/deploy-platform.mjs \
   --secret-files /root/praetorium/secret-files.json \
   --kubeconfig /root/praetorium/kubeconfig \
   --management-inventory /root/praetorium/ansible/hosts.json \
-  --buildctl /usr/local/bin/buildctl \
   --confirm praetorium-runtime --apply
 ```
 
 Optionally append `--cloudflare-token-file /root/praetorium/cloudflare-token` to both calls.
 
-If the Builder firewall permits only the Runtime VM, retain that boundary. Open an operator SSH tunnel using the existing host config, for example `ssh -N -L 127.0.0.1:16445:10.7.0.32:1234 runtime.praetorium.vm`, and append `--buildkit-address tcp://127.0.0.1:16445` to the regular apply command. This optional override accepts only an explicit loopback TCP endpoint; the original inventory Builder hostname remains the mTLS server identity, and the runtime inventory endpoint is unchanged. The existing BuildKit runner performs a bounded read-only worker-list connectivity check before publishing. Do not broaden the Builder CIDR allowlist or disable TLS to make an operator workstation reach it.
+Builder mTLS and its existing firewall remain required for the product's
+Scriptorium Source/composition builds, independently of platform delivery.
+Legacy `--buildctl` and `--buildkit-address` arguments remain accepted for command
+compatibility but are unused by platform delivery.
 
 The controller performs these actions in order, stopping on first failure:
 
 1. Install/build the frozen workspace; validate the existing private inputs, K3s identity/context and ownership, Kustomize bundle, Cloudflare Secret names/public JWK and compatible remote D1 history. These checks do not publish images or migrate D1. `--check` remains read-only and separately requires exact migration readback; pending known migrations therefore make `--check` fail, while `--apply` can apply them after compatible-history preflight.
-2. Verify clean current main and its eight successful verification jobs. Archive only tracked source into a private build context. Reuse the existing four service Dockerfile/package mappings and pinned Node/BuildKit images with `createBuildctlRunner` against the existing mTLS Builder. Push Provisioner, Instance Access, Build Worker and Coordination to their canonical GHCR repositories under fresh `source-<SHA>-<UUID>` tags, requesting BuildKit provenance. Existing tags/digests are retained. Registry push credentials stay in a private temporary Docker config outside the source context; raw BuildKit output and credentials are not logged.
-3. Require all four BuildKit metadata digests to match GHCR tag readback. Reuse `GhcrRegistryClient.verifyImage` to verify the immutable manifest, selected linux/amd64 manifest and config; verify the source SHA/repository labels. This checks layer descriptors and budgets, not downloaded layer bodies or independent OCI attestation verification; the receipt labels provenance as requested. Preserve a private publication receipt containing exact source, CI run, base inputs and verified digests. Partial publication can leave new unreferenced GHCR images; it never changes the old Inventory or live services.
-4. Stage all four digests in one candidate inventory. Rerun the K3s and compatible Cloudflare/D1 preflight plus the existing Management Coordination role in Ansible check mode, including a bounded exact-digest manifest read using the actual rootless service identity. Recheck current main/CI. Only after all checks pass, retain the exact previous inventory bytes in a mode-0600 `*.before-publication-*` backup and atomically replace the inventory once. A changed inventory during publication fails closed. A publication or candidate-preflight failure leaves the original inventory unchanged. Temporary credential/source files are removed. A `*.deploy-lock` prevents concurrent local publication and rollout; after an interrupted process, inspect its PID and reconcile any partial receipts before an operator removes a stale lock.
+2. Verify clean current main and its eight successful workflow jobs. Download
+   `service-image-<service>` receipts from that exact run for Provisioner,
+   Instance Access, Build Worker and Coordination. Require each receipt's commit,
+   run ID, repository and immutable digest to match. Missing receipts fail closed;
+   there is no local-build fallback and no registry push credential is used.
+3. Require receipt digests to match GHCR readback. Reuse
+   `GhcrRegistryClient.verifyImage` to verify the immutable manifest, selected
+   linux/amd64 manifest and config; require OCI revision/source labels to match
+   the exact canonical repository and commit. Only verified digests are staged.
+
+4. Stage all four digests in one candidate inventory. Rerun the K3s and compatible Cloudflare/D1 preflight plus the existing Management Coordination role in Ansible check mode, including a bounded exact-digest manifest read using the actual rootless service identity. Recheck current main/CI. Only after all checks pass, retain the exact previous inventory bytes in a mode-0600 `*.before-publication-*` backup and atomically replace the inventory once. A changed inventory during publication fails closed. A publication or candidate-preflight failure leaves the original inventory unchanged. Temporary receipt files are removed. A `*.deploy-lock` prevents concurrent local publication and rollout; after an interrupted process, inspect its PID and reconcile any partial receipts before an operator removes a stale lock.
 5. Apply canonical additive D1 migrations, including the historically duplicated `0004` names and `0007_source_release_recovery.sql`, and verify exact readback before service rollout. Never down-migrate `0007` for code rollback.
 6. Use the existing Management `host-bootstrap.yml` Coordination role, limited/tagged to `management`/`coordination`, with the verified `images.coordination`; do not run host/K3s bootstrap or unrelated roles. Existing private host inputs and rootless Podman registry authorization must already be available. The role preserves its ownership guards and manages the digest-pinned Quadlet and readiness. The earlier manifest-access check proves registry authorization for that identity; layer pulling and candidate service readiness are verified during rollout.
 7. Run the existing K3s deploy: preserve namespace/Flux ownership, verify controller readiness, refuse implicit Secret rotation, server-dry-run the rendered bundle, enforce Admission guards and apply static policies/resources. Wait for Provisioner, Instance Access, Build Worker, Prometheus and certificates to become Ready. Verify work notification receivers when enabled.

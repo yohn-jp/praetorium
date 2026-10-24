@@ -141,8 +141,34 @@ function fixture(t, fault) {
         published.add(`yohn-jp/praetorium/${service}`);
       },
     });
-  return { directory, value, inventoryPath, original, calls, prepare };
+  return { directory, value, inventoryPath, original, calls, prepare, registry, published };
 }
+
+test("CI image adoption uses the workflow-bound digest without rebuilding", async (t) => {
+  const f = fixture(t);
+  const published = {};
+  for (const { service } of serviceImages) {
+    const repository = `yohn-jp/praetorium/${service}`;
+    f.published.add(repository);
+    published[service] = { schema: "praetorium.ci-service-image/v1",
+      revision, ciRunId: source.ciRunId, service, repository, digest };
+  }
+  const prepare = (receipts) => prepareServiceImages({
+    inventory: f.value, source, registry: f.registry, directory: f.directory,
+    published: receipts, build: () => { throw new Error("CI images must not be rebuilt"); },
+  });
+  const prepared = await prepare(published);
+  assert.equal(prepared.receipt.complete, true);
+  assert.deepEqual(f.calls, []);
+  for (const patch of [{ revision: "c".repeat(40) }, { ciRunId: 99 },
+    { repository: "other/repository" }, { digest: "latest" }]) {
+    await assert.rejects(prepare({ ...published,
+      provisioner: { ...published.provisioner, ...patch },
+    }), /CI service image receipt/u);
+  }
+  await assert.rejects(prepare({}), /CI service image receipt/u);
+  assert.deepEqual(readFileSync(f.inventoryPath), f.original);
+});
 
 test("four published images and final preflight admit one inventory while retaining exact rollback bytes", async (t) => {
   const f = fixture(t);
@@ -249,8 +275,8 @@ test("verified-main gate rejects stale main, failed/missing CI and unexpected jo
     "verify",
     "source-stable-fixture",
     "kubernetes-admission",
-    ...serviceImages.map(({ service }) => `candidate-images (${service}, package, dockerfile)`),
-    "candidate-images (observer, package, dockerfile)",
+    ...serviceImages.map(({ service }) => `publish-images (${service}, package, dockerfile)`),
+    "publish-images (observer, package, dockerfile)",
   ].map((name) => ({ name, conclusion: "success" }));
   const execute = (fault) => (_command, args) => {
     if (args[0] === "rev-parse") return revision;
@@ -278,11 +304,11 @@ test("verified-main gate rejects stale main, failed/missing CI and unexpected jo
         fault === "failed-job"
           ? jobs.map((j, n) => ({ ...j, conclusion: n === 0 ? "failure" : j.conclusion }))
           : fault === "failed-observer"
-            ? jobs.map(j => j.name.startsWith("candidate-images (observer,") ? {...j,conclusion:"failure"} : j)
+            ? jobs.map(j => j.name.startsWith("publish-images (observer,") ? {...j,conclusion:"failure"} : j)
           : fault === "unexpected-job"
             ? [...jobs,{name:"unexpected",conclusion:"success"}]
           : fault === "missing-observer"
-            ? jobs.filter(j => !j.name.startsWith("candidate-images (observer,"))
+            ? jobs.filter(j => !j.name.startsWith("publish-images (observer,"))
           : fault === "missing-job"
             ? jobs.slice(1)
             : jobs,

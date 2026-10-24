@@ -19,14 +19,14 @@ const sourceStableFixture = readFileSync(
   "utf8",
 );
 
-test("Actions retain PR and main verification while removing publication and runtime admission", () => {
+test("Actions keep PR builds read-only and publish platform services only from main", () => {
   assert.match(
     verificationWorkflow,
     /^on:\n {2}pull_request:\n {2}push:\n {4}branches:\n {6}- main/mu,
   );
   assert.doesNotMatch(
     verificationWorkflow,
-    /workflow_dispatch|refs\/tags|packages:\s*write|PRAETORIUM_RELEASE_OPERATOR_TOKEN|RELEASE_OPERATOR_TOKEN|\/v1\/operator\/releases|release create/iu,
+    /workflow_dispatch|refs\/tags|PRAETORIUM_RELEASE_OPERATOR_TOKEN|RELEASE_OPERATOR_TOKEN|\/v1\/operator\/releases|release create/iu,
   );
   assert.match(verificationWorkflow, /service: build-worker/u);
   assert.match(verificationWorkflow, /push: false/u);
@@ -34,7 +34,7 @@ test("Actions retain PR and main verification while removing publication and run
   assert.match(verificationWorkflow, /jobs:\n {2}verify:/u);
   assert.match(
     verificationWorkflow,
-    / {2}candidate-images:\n {4}if: github\.event_name == 'pull_request' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\)/u,
+    / {2}candidate-images:\n {4}if: github\.event_name == 'pull_request'/u,
   );
   assert.match(
     verificationWorkflow,
@@ -75,7 +75,17 @@ test("Actions retain PR and main verification while removing publication and run
     assert.match(checkout[1], /persist-credentials: false/u);
   }
   assert.match(verificationWorkflow, /permissions:\n {2}contents: read/u);
-  assert.doesNotMatch(verificationWorkflow, /secrets\.[A-Z0-9_]+/u);
+  assert.deepEqual([...verificationWorkflow.matchAll(/secrets\.([A-Z0-9_]+)/gu)]
+    .map((match) => match[1]), ["GITHUB_TOKEN"]);
+  assert.match(verificationWorkflow,
+    / {2}publish-images:\n {4}if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/u);
+  const publisher = verificationWorkflow.split("  publish-images:\n")[1].split("  kubernetes-admission:\n")[0];
+  const candidates = verificationWorkflow.split("  candidate-images:\n")[1].split("  publish-images:\n")[0];
+  assert.match(publisher, /packages: write/u);
+  assert.match(publisher, /push: true/u);
+  assert.match(publisher, /provenance: mode=max/u);
+  assert.match(publisher, /service-image-\$\{\{ matrix.service \}\}/u);
+  assert.doesNotMatch(candidates, /packages: write|secrets\./u);
   const buildKitClientImage =
     "docker.io/moby/buildkit@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c";
   assert.ok(
@@ -113,7 +123,7 @@ test("legacy Actions producer publication and Admission workflows are absent", (
     .join("\n");
   assert.doesNotMatch(
     workflows,
-    /PRAETORIUM_RELEASE_OPERATOR_TOKEN|packages:\s*write|admit_release:\s*true/iu,
+    /PRAETORIUM_RELEASE_OPERATOR_TOKEN|admit_release:\s*true/iu,
   );
   const manualCandidates = readFileSync(
     path.join(workflowDirectory, "verify-service-images.yml"),

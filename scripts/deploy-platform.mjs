@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { readInventory } from "../infrastructure/scripts/inventory.mjs";
 import { workNotificationsEnabled } from "../infrastructure/scripts/work-notifications.mjs";
 import { platformDeploymentSteps } from "./deployment-plan.mjs";
-import { privateFile, publishPlatformImages, withDeploymentLock } from "./service-image-publication.mjs";
+import { privateFile, adoptCiServiceImages, withDeploymentLock } from "./service-image-publication.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = {};
@@ -33,9 +33,7 @@ if (inventoryResult.errors.length || inventoryResult.blockers.length) {
 const notificationsEnabled = workNotificationsEnabled(inventoryResult.inventory);
 // The KV read has no Wrangler config argument: explicitly select the same account as the inventory.
 process.env.CLOUDFLARE_ACCOUNT_ID = inventoryResult.inventory.cloudflare.accountId;
-const buildctlPath = options["--buildctl"] ?? inventoryResult.inventory.buildWorker.buildctlPath;
 if (options.mode === "--apply") {
-  if (!path.isAbsolute(buildctlPath)) throw new Error("--buildctl must be an absolute executable path");
   if (!options["--management-inventory"]) throw new Error("--apply requires --management-inventory for the existing Coordination role");
   privateFile(options["--management-inventory"], "Management Ansible inventory");
 }
@@ -100,8 +98,8 @@ async function deploy() {
  for (const step of platformDeploymentSteps(options.mode, notificationsEnabled)) {
   console.log(step.stage + "...");
   if (step.script === "service-image-publication.mjs") {
-    await publishPlatformImages({ root, inventoryPath: options["--inventory"],
-      secretFilesPath: options["--secret-files"], buildctlPath, buildkitAddress: options["--buildkit-address"], preflight });
+    await adoptCiServiceImages({ root, inventoryPath: options["--inventory"],
+      secretFilesPath: options["--secret-files"], preflight });
   } else if (step.script === "coordination") {
     coordination(options["--inventory"], false);
   } else if (step.script === "verify-work-notifications.mjs") {

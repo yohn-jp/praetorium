@@ -1,10 +1,20 @@
-# Continuous integration verification
+# Continuous integration and service image publication
 
 `.github/workflows/publish-services.yml` runs on pull requests and pushes to
 `main`. It installs the frozen workspace, runs `pnpm check` and deployment
-regressions, builds each service image into the disposable runner with
-`push: false`, and validates Kubernetes admission using an ephemeral Kind
-cluster. It grants no package-write or runtime operator credential.
+regressions, and validates Kubernetes admission using an ephemeral Kind cluster.
+Pull requests build service images without publication and have read-only
+permissions. On main, the separate `publish-images` matrix builds and pushes
+the five platform service images to GHCR with `source-<commit>` tags and maximum
+BuildKit provenance. Only this main-only job receives `packages: write` and the
+ephemeral `GITHUB_TOKEN`; no runtime operator credential is available to CI.
+
+Each image job uploads a `service-image-<service>` receipt binding the workflow
+run, commit, repository and immutable OCI digest. `deploy-platform.mjs` consumes
+these receipts from the successful workflow for current main, rereads the exact
+GHCR digests and source labels, and stages the existing guarded inventory. It
+does not rebuild or push service images, and does not need Builder connectivity
+for platform delivery. Scriptorium Source Producer execution remains on Builder.
 
 The same workflow runs `scripts/ci/source-stable-fixture.mjs` on a Linux Node 24
 runner with Docker, passwordless `sudo`, and at least 8 GiB free. It pins

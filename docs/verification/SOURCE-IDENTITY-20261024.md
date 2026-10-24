@@ -72,3 +72,28 @@ published scripts or replace clean checks with an arbitrary revision variable.
 
 Private working logs and test inputs are outside Git under
 `/tmp/praetorium-source-contract-probe/`; no credentials are included here.
+
+## Authorized production delivery
+
+Executable source `4325be76406b3e11402568cf929724714e0f2cbe` was committed and
+pushed to main, then deployed through the existing `deploy-platform.mjs --apply`
+to the owned `praetorium-runtime` environment. The command completed its K3s,
+Management Coordination and Cloudflare rollout. Admin Worker version:
+`86b1edcf-b519-47f5-a535-66c203acd83f`.
+
+CI run `40094023022` passed all eight required jobs on attempt 2. Attempt 1
+completed real v0.3.7 build/proof/Admission/composition and synthetic Stable CAS,
+then failed its disposable directory cleanup timeout; that failure is preserved.
+The initial production image build also failed during Corepack's download with
+`UND_ERR_SOCKET` through the internal BuildKit proxy. The subsequent deployment
+attempt completed without changing egress policy, keys or data.
+
+At the owner's request, no additional hosted acceptance or Source retry was
+initiated after deployment. Their own v0.3.7 retry was distinct from this work.
+Production Source/Canary/Stable acceptance therefore remains NOT_CHECKED here.
+
+The owner subsequently designated CI as the canonical platform service image
+publisher. The follow-up pipeline change makes main CI publish GHCR digests and
+makes deployment consume its exact workflow receipts without rebuilding.
+Additional local install/check runs for that change were omitted at the owner's
+explicit instruction; the configured CI remains responsible for its normal jobs.

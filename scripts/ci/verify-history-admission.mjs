@@ -17,7 +17,7 @@ const provisioner = "system:serviceaccount:praetorium-system:praetorium-provisio
 
 if (!runtimePath) throw new Error("usage: verify-history-admission.mjs RUNTIME_RENDER.json");
 
-function kubectl(args, { input, expectedPolicy, expectedError } = {}) {
+function kubectl(args, { input, expectedPolicy, expectedError, expectedErrors } = {}) {
   const result = spawnSync("kubectl", args, {
     cwd: root,
     encoding: "utf8",
@@ -33,11 +33,16 @@ function kubectl(args, { input, expectedPolicy, expectedError } = {}) {
     );
     return;
   }
-  if (expectedError) {
-    assert.notEqual(result.status, 0, `expected rejection containing ${expectedError}`);
+  if (expectedError || expectedErrors) {
+    const acceptedErrors = expectedErrors ?? [expectedError];
+    assert.notEqual(
+      result.status,
+      0,
+      `expected rejection containing ${acceptedErrors.join(" or ")}`,
+    );
     assert.ok(
-      result.stderr.includes(expectedError),
-      `request failed without the expected rejection ${expectedError}`,
+      acceptedErrors.some((message) => result.stderr.includes(message)),
+      `request failed without an expected rejection (${acceptedErrors.join(" or ")})`,
     );
     return;
   }
@@ -59,7 +64,7 @@ function applyObjects(objects) {
 
 function createObject(
   object,
-  { dryRun = false, asProvisioner = false, expectedPolicy, expectedError } = {},
+  { dryRun = false, asProvisioner = false, expectedPolicy, expectedError, expectedErrors } = {},
 ) {
   const args = [];
   if (asProvisioner) args.push(`--as=${provisioner}`);
@@ -72,7 +77,12 @@ function createObject(
     "-o",
     "name",
   );
-  return kubectl(args, { input: JSON.stringify(object), expectedPolicy, expectedError });
+  return kubectl(args, {
+    input: JSON.stringify(object),
+    expectedPolicy,
+    expectedError,
+    expectedErrors,
+  });
 }
 
 function admissionPod(deployment) {
@@ -114,6 +124,7 @@ assert.equal(pvc.metadata.labels["app.kubernetes.io/name"], "scriptorium");
 assert.equal(pvc.metadata.annotations["praetorium.io/history-contract"], "v1");
 assert.equal(pvc.spec.storageClassName, "local-path");
 assert.deepEqual(pvc.spec.accessModes, ["ReadWriteOnce"]);
+assert.equal(pvc.spec.resources.requests.storage, "512Mi");
 assert.equal(quota.spec.hard.persistentvolumeclaims, "1");
 assert.equal(quota.spec.hard["requests.storage"], pvc.spec.resources.requests.storage);
 
@@ -244,7 +255,7 @@ createObject(extraDataSeed, {
   expectedPolicy: "praetorium-provisioner-runtime-resources",
 });
 
-const badSizePatch = JSON.stringify({ spec: { resources: { requests: { storage: "512Mi" } } } });
+const badSizePatch = JSON.stringify({ spec: { resources: { requests: { storage: "256Mi" } } } });
 kubectl(
   [
     `--as=${provisioner}`,
@@ -255,6 +266,32 @@ kubectl(
     namespace,
     "--type=merge",
     `--patch=${badSizePatch}`,
+    "--dry-run=server",
+    "-o",
+    "name",
+  ],
+  {
+    expectedErrors: [
+      "spec is immutable after creation",
+      "field can not be less than previous value",
+      "field can not be less than status.capacity",
+    ],
+  },
+);
+
+const badContractPatch = JSON.stringify({
+  metadata: { annotations: { "praetorium.io/history-contract": "v2" } },
+});
+kubectl(
+  [
+    `--as=${provisioner}`,
+    "patch",
+    "persistentvolumeclaim",
+    pvc.metadata.name,
+    "-n",
+    namespace,
+    "--type=merge",
+    `--patch=${badContractPatch}`,
     "--dry-run=server",
     "-o",
     "name",
@@ -278,5 +315,5 @@ wrongPodPath.spec.initContainers
 expectPodDenied(wrongPodPath);
 
 process.stdout.write(
-  "PASS: real API-server admission accepted the owned history PVC, seed Secret, and Pod; rejected wrong owner/class/name, extra seed data, changed PVC size, wrong Pod claim, and wrong mount path.\n",
+  "PASS: real API-server admission accepted the owned history PVC, seed Secret, and Pod; rejected wrong owner/class/name, extra seed data, oversized claim, changed PVC size/contract, wrong Pod claim, and wrong mount path.\n",
 );

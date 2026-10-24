@@ -589,6 +589,8 @@ test("the canonical Kind job runs real server-side history admission scenarios",
   assert.match(runner, /wrongOwnerPvc/u);
   assert.match(runner, /oversizedPvc/u);
   assert.match(runner, /badSizePatch/u);
+  assert.match(runner, /badContractPatch/u);
+  assert.match(runner, /requests\.storage, "512Mi"/u);
   assert.match(runner, /wrongPodClaim/u);
   assert.match(runner, /wrongPodPath/u);
 });

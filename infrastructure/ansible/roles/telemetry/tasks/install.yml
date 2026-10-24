@@ -9,7 +9,15 @@
       - telemetry_listen_address is match('^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)[0-9.]+$')
       - telemetry_listen_address != '0.0.0.0'
       - telemetry_listen_address == ansible_host
+      - telemetry_systemd_units is sequence and telemetry_systemd_units is not string
+      - telemetry_systemd_units | length <= 16
     fail_msg: "Node exporter is allowed only on the host's explicitly declared private interface."
+
+- name: Validate the fixed read-only systemd service allowlist
+  ansible.builtin.assert:
+    that:
+      - item is match('^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.service$')
+  loop: "{{ telemetry_systemd_units }}"
 
 # Write the restrictive systemd override BEFORE installing the package, so
 # the package's initial service activation cannot bind a public interface.

@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { access, lstat, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { chromium } from "@playwright/test";
@@ -27,6 +39,7 @@ const MAX_CONFIG_BYTES = 32 * 1024;
 const MAX_STORAGE_STATE_BYTES = 2 * 1024 * 1024;
 const MAX_WRITE_BODY_BYTES = 8 * 1024;
 const MAX_BROWSER_MANUSCRIPT_CHARS = 16 * 1024;
+const MAX_BROWSER_EVIDENCE_EVENTS = 5_000;
 const BROWSER_EDIT_MARKER = "Praetorium T14 browser edit:";
 const OWNED_MANUSCRIPT_PATH = "manuscript/vol-1/ch-1/scene-1.md";
 const ID_PATTERN = /^ins_[0-9A-HJKMNP-TV-Z]{26}$/u;
@@ -116,6 +129,166 @@ function parseOrigin(value) {
 
 function safeAbsolutePath(value) {
   return typeof value === "string" && path.isAbsolute(value) && !value.includes("\0");
+}
+
+async function validateEvidenceDirectory(directoryPath) {
+  if (!safeAbsolutePath(directoryPath)) block("OWNER_INPUT_MISSING");
+  const linkInfo = await lstat(directoryPath).catch(() => null);
+  const actualPath = await realpath(directoryPath).catch(() => null);
+  const directoryInfo = actualPath ? await stat(actualPath).catch(() => null) : null;
+  if (
+    !linkInfo?.isDirectory() ||
+    linkInfo.isSymbolicLink() ||
+    !actualPath ||
+    actualPath !== path.resolve(directoryPath) ||
+    !directoryInfo?.isDirectory() ||
+    directoryInfo.uid !== process.getuid?.() ||
+    (directoryInfo.mode & 0o777) !== 0o700
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+  return actualPath;
+}
+
+async function createRunEvidenceDirectory(directoryPath) {
+  const parentPath = await validateEvidenceDirectory(directoryPath);
+  const runPath = path.join(
+    parentPath,
+    `run-${new Date().toISOString().replace(/[:.]/gu, "-")}-${randomBytes(8).toString("hex")}`,
+  );
+  await mkdir(runPath, { mode: 0o700 }).catch(() => block("OWNER_INPUT_MISSING"));
+  const runInfo = await lstat(runPath).catch(() => null);
+  const resolvedRunPath = await realpath(runPath).catch(() => null);
+  if (
+    !runInfo?.isDirectory() ||
+    runInfo.isSymbolicLink() ||
+    resolvedRunPath !== runPath ||
+    runInfo.uid !== process.getuid?.() ||
+    (runInfo.mode & 0o777) !== 0o700
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+  return { directory: runPath, ownedOrigins: new Set() };
+}
+
+async function writePrivateEvidenceFile(evidence, filename, contents) {
+  const filePath = path.join(evidence.directory, filename);
+  await writeFile(filePath, contents, { flag: "wx", mode: 0o600 });
+  await chmod(filePath, 0o600);
+  const fileInfo = await stat(filePath);
+  if (
+    !fileInfo.isFile() ||
+    fileInfo.uid !== process.getuid?.() ||
+    (fileInfo.mode & 0o777) !== 0o600
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+  return filePath;
+}
+
+function ownedEvidencePath(value, ownedOrigins) {
+  try {
+    const url = new URL(value);
+    return ownedOrigins.has(url.origin) ? `${url.origin}${url.pathname}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function hashEvidenceText(value) {
+  return createHash("sha256").update(String(value)).digest("hex");
+}
+
+function appendBrowserEvidenceEvent(evidence, event) {
+  if (evidence.events.length < MAX_BROWSER_EVIDENCE_EVENTS) evidence.events.push(event);
+}
+
+function attachBrowserEvidence(page, evidence) {
+  const isOwnedPage = () => {
+    try {
+      return evidence.ownedOrigins.has(new URL(page.url()).origin);
+    } catch {
+      return false;
+    }
+  };
+  page.on("pageerror", (error) => {
+    if (!isOwnedPage()) return;
+    evidence.ownedPageErrors += 1;
+    appendBrowserEvidenceEvent(evidence, {
+      type: "pageerror",
+      url: ownedEvidencePath(page.url(), evidence.ownedOrigins),
+      name: safeText(error.name, 80) ? error.name : "Error",
+      messageSha256: hashEvidenceText(error.message),
+    });
+  });
+  page.on("console", (message) => {
+    if (message.type() !== "error" || !isOwnedPage()) return;
+    evidence.ownedConsoleErrors += 1;
+    const location = message.location().url;
+    appendBrowserEvidenceEvent(evidence, {
+      type: "console-error",
+      url: ownedEvidencePath(page.url(), evidence.ownedOrigins),
+      source: ownedEvidencePath(location, evidence.ownedOrigins),
+      messageSha256: hashEvidenceText(message.text()),
+    });
+  });
+  page.on("requestfailed", (request) => {
+    const url = ownedEvidencePath(request.url(), evidence.ownedOrigins);
+    if (!url) return;
+    appendBrowserEvidenceEvent(evidence, {
+      type: "http-failure",
+      url,
+      method: request.method(),
+      failureSha256: hashEvidenceText(request.failure()?.errorText ?? "unknown"),
+    });
+  });
+  page.on("response", (response) => {
+    const url = ownedEvidencePath(response.url(), evidence.ownedOrigins);
+    if (!url || response.status() < 400) return;
+    appendBrowserEvidenceEvent(evidence, {
+      type: "http-failure",
+      url,
+      method: response.request().method(),
+      status: response.status(),
+    });
+  });
+}
+
+async function saveEvidenceScreenshot(page, evidence, name) {
+  if (!page || page.isClosed()) return;
+  const pageUrl = page.url();
+  if (!ownedEvidencePath(pageUrl, evidence.ownedOrigins)) return;
+  const filename = `${name}.png`;
+  const contents = await page
+    .screenshot({ type: "png", fullPage: true, timeout: 10_000 })
+    .catch(() => null);
+  if (contents) await writePrivateEvidenceFile(evidence, filename, contents);
+}
+
+async function finishBrowserEvidence(evidence, context, outcome) {
+  if (!evidence) return;
+  if (evidence.traceStarted) {
+    const tracePath = path.join(evidence.directory, "playwright-trace.zip");
+    await context.tracing.stop({ path: tracePath });
+    const traceInfo = await stat(tracePath).catch(() => null);
+    if (!traceInfo?.isFile()) throw new Error("private Playwright trace was not written");
+    await chmod(tracePath, 0o600);
+    const privateTraceInfo = await stat(tracePath);
+    if (privateTraceInfo.uid !== process.getuid?.() || (privateTraceInfo.mode & 0o777) !== 0o600) {
+      throw new Error("private Playwright trace permissions are invalid");
+    }
+    evidence.traceStarted = false;
+  }
+  const summary = {
+    events: evidence.events,
+    ownedPageErrors: evidence.ownedPageErrors,
+    ownedConsoleErrors: evidence.ownedConsoleErrors,
+  };
+  await writePrivateEvidenceFile(
+    evidence,
+    "events.json",
+    `${JSON.stringify({ evidenceVersion: 1, ...summary, outcome })}\n`,
+  );
 }
 
 function validateInventory(inventory) {
@@ -541,6 +714,7 @@ function validateConfig(config, inventory) {
       "repository",
       "instance",
       "browser",
+      "evidenceDirectory",
       "producer",
       "producerAdmission",
       "writeProbe",
@@ -602,7 +776,8 @@ function validateConfig(config, inventory) {
   if (
     !exactKeys(config.browser, ["executablePath", "githubStorageStatePath"]) ||
     !safeAbsolutePath(config.browser.executablePath) ||
-    !safeAbsolutePath(config.browser.githubStorageStatePath)
+    !safeAbsolutePath(config.browser.githubStorageStatePath) ||
+    !safeAbsolutePath(config.evidenceDirectory)
   ) {
     block("OWNER_INPUT_MISSING");
   }
@@ -703,6 +878,7 @@ async function loadInputs() {
   const configPath = inventory.resources[CATEGORY].reference;
   const config = await readJsonFile(configPath, MAX_CONFIG_BYTES, true);
   const derived = validateConfig(config, inventory);
+  const evidenceParentPath = await validateEvidenceDirectory(config.evidenceDirectory);
 
   const executablePath = await realpath(config.browser.executablePath).catch(() => null);
   if (!executablePath || !(await stat(executablePath).catch(() => null))?.isFile()) {
@@ -722,7 +898,14 @@ async function loadInputs() {
   validateBrowserState(storageState);
 
   await verifyCurrentProducerAdmission(config, inventory);
-  return { inventory, config, storageState, derived, executablePath };
+  const evidence = await createRunEvidenceDirectory(evidenceParentPath);
+  evidence.ownedOrigins.add(derived.gatewayOrigin.origin);
+  evidence.ownedOrigins.add(derived.instanceOrigin.origin);
+  evidence.events = [];
+  evidence.ownedPageErrors = 0;
+  evidence.ownedConsoleErrors = 0;
+  evidence.traceStarted = false;
+  return { inventory, config, storageState, derived, executablePath, evidence };
 }
 
 test("stable public origin binds the numeric repository under the owner suffix", () => {
@@ -778,6 +961,39 @@ test("stable public origin binds the numeric repository under the owner suffix",
     ),
     false,
   );
+});
+
+test("browser evidence guard requires a private owner directory and redacts URL details", async () => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "praetorium-browser-evidence-"));
+  try {
+    const evidenceDirectory = path.join(temporaryRoot, "evidence");
+    await mkdir(evidenceDirectory, { mode: 0o700 });
+    assert.equal(await validateEvidenceDirectory(evidenceDirectory), evidenceDirectory);
+    const runEvidence = await createRunEvidenceDirectory(evidenceDirectory);
+    assert.equal((await stat(runEvidence.directory)).mode & 0o777, 0o700);
+    runEvidence.events = [];
+    const evidenceFile = await writePrivateEvidenceFile(runEvidence, "events.json", "{}\n");
+    assert.equal((await stat(evidenceFile)).mode & 0o777, 0o600);
+    await chmod(evidenceDirectory, 0o755);
+    await assert.rejects(
+      () => validateEvidenceDirectory(evidenceDirectory),
+      (error) => error instanceof GateBlocked && error.reasonCode === "OWNER_INPUT_MISSING",
+    );
+    const ownedOrigins = new Set(["https://gateway.example.test"]);
+    assert.equal(
+      ownedEvidencePath(
+        "https://gateway.example.test/repositories/42?token=secret#fragment",
+        ownedOrigins,
+      ),
+      "https://gateway.example.test/repositories/42",
+    );
+    assert.equal(ownedEvidencePath("https://github.com/login?code=secret", ownedOrigins), null);
+    const message = "authorization code secret was rejected";
+    assert.equal(hashEvidenceText(message), createHash("sha256").update(message).digest("hex"));
+    assert.notEqual(hashEvidenceText(message), message);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 async function writeRunnerResult(status, reasonCode) {
@@ -1150,9 +1366,10 @@ test(
       throw new Error(`BLOCKED: ${reasonCode}`);
     }
 
-    const { inventory, config, storageState, derived, executablePath } = inputs;
+    const { inventory, config, storageState, derived, executablePath, evidence } = inputs;
     let browser;
     let context;
+    let page;
     let callbackServer;
     let callbackOrigin = null;
     let stage = "browser-launch";
@@ -1160,6 +1377,7 @@ test(
     const instanceRequests = [];
     const handoffPosts = [];
     let ownerWindowExpired = false;
+    let evidenceOutcome = { status: "FAILED", reasonCode: "ACCEPTANCE_ASSERTION_FAILED", stage };
     try {
       try {
         browser = await chromium.launch({ executablePath, headless: true });
@@ -1168,6 +1386,8 @@ test(
       }
       context = await browser.newContext({ serviceWorkers: "block", storageState });
       context.setDefaultTimeout(15_000);
+      await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+      evidence.traceStarted = true;
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         if (Date.parse(inventory.environment.expiresAt) <= Date.now()) {
@@ -1186,7 +1406,8 @@ test(
           await route.abort("blockedbyclient");
         }
       });
-      const page = await context.newPage();
+      page = await context.newPage();
+      attachBrowserEvidence(page, evidence);
       page.on("request", (request) => {
         const url = new URL(request.url());
         const entry = { origin: url.origin, pathname: url.pathname, method: request.method() };
@@ -1245,6 +1466,7 @@ test(
       ) {
         block("OWNED_ENVIRONMENT_UNAVAILABLE");
       }
+      await saveEvidenceScreenshot(page, evidence, "01-gateway-authenticated");
       assert.equal(
         gatewayRequests.filter((request) => request.pathname === "/auth/github/callback").length,
         1,
@@ -1306,6 +1528,7 @@ test(
 
       stage = "repository-and-stopped-dashboard";
       const dashboard = await dashboardSnapshot(page, config, derived.gatewayOrigin, inventory);
+      await saveEvidenceScreenshot(page, evidence, "02-stopped-repository-dashboard");
       if (dashboard.state !== "Stopped" || !dashboard.currentDigest || !dashboard.desiredDigest) {
         block("OWNED_ENVIRONMENT_UNAVAILABLE");
       }
@@ -1423,6 +1646,7 @@ test(
       );
       assert.equal(firstHandoff.referer, "", "handoff code must not be sent in a Referer header");
       await verifyApplicationCookies(context, derived);
+      await saveEvidenceScreenshot(page, evidence, "03-ready-application-handoff");
 
       ensureOwnerLifetime(inventory, 10);
       const replay = await context.request.post(
@@ -1533,12 +1757,14 @@ test(
       mcpPage.setDefaultNavigationTimeout(
         ensureOwnerLifetime(inventory, config.timeouts.mcpSeconds),
       );
+      attachBrowserEvidence(mcpPage, evidence);
       await mcpPage.goto(authorizeUrl.toString(), { waitUntil: "domcontentloaded" });
       assert.equal(
         await mcpPage.getByRole("heading", { name: "Allow MCP access?", exact: true }).count(),
         1,
         "read-only MCP authorization must use Gateway's real consent screen",
       );
+      await saveEvidenceScreenshot(mcpPage, evidence, "04-mcp-read-consent");
       let callbackTimeout;
       const callbackWait = Promise.race([
         callbackResult,
@@ -1670,6 +1896,7 @@ test(
       for (const requiredTool of config.mcp.requiredTools) {
         assert.ok(toolNames.includes(requiredTool), `MCP tools/list must include ${requiredTool}`);
       }
+      await saveEvidenceScreenshot(page, evidence, "05-mcp-read-tools-listed");
       await mcpPage.close();
       await new Promise((resolve) => callbackServer.close(resolve));
       callbackServer = null;
@@ -1862,6 +2089,7 @@ test(
         inventory,
       );
       assert.ok(afterReloadScene.document.content.includes(editMarker));
+      await saveEvidenceScreenshot(page, evidence, "06-owned-manuscript-saved");
 
       stage = "ui-selection-preview";
       context.setDefaultNavigationTimeout(
@@ -2111,6 +2339,10 @@ test(
         ),
         false,
       );
+      assert.equal(evidence.ownedPageErrors, 0, "owned pages must not raise uncaught exceptions");
+      assert.equal(evidence.ownedConsoleErrors, 0, "owned pages must not emit console errors");
+      await saveEvidenceScreenshot(page, evidence, "07-browser-entry-accepted");
+      evidenceOutcome = { status: "PASSED", reasonCode: null, stage: "complete" };
     } catch (error) {
       const reasonCode =
         error instanceof GateBlocked && BLOCKED_CODES.has(error.reasonCode)
@@ -2122,8 +2354,19 @@ test(
         reasonCode === "ACCEPTANCE_ASSERTION_FAILED" ? "FAILED" : "BLOCKED",
         reasonCode,
       );
+      evidenceOutcome = {
+        status: reasonCode === "ACCEPTANCE_ASSERTION_FAILED" ? "FAILED" : "BLOCKED",
+        reasonCode,
+        stage,
+      };
+      await saveEvidenceScreenshot(
+        page,
+        evidence,
+        `failure-${stage.replace(/[^a-z0-9-]/giu, "-")}`,
+      ).catch(() => {});
       throw new Error(`${reasonCode}: ${stage}`);
     } finally {
+      await finishBrowserEvidence(evidence, context, evidenceOutcome);
       if (callbackServer)
         await new Promise((resolve) => callbackServer.close(resolve)).catch(() => {});
       await context?.close().catch(() => {});

@@ -47,6 +47,7 @@ import { hasReadyCurrentRuntime, runtimeEpochForAccess } from "./active-runtime.
 import { page } from "./ui/views/document.js";
 import { createPortalHandler } from "./ui/index.js";
 import type { PortalActor, PortalSession } from "./ui/index.js";
+import { SESSION_CACHE_COOKIE_NAME, isSessionCacheRead, readSessionCache, issueSessionCache } from "./http/session-cache.js";
 import { createPortalService } from "./services/portal-service.js";
 import { enterAdminFromGateway } from "./admin/session.js";
 import { requestAuthorizedServiceWake } from "./services/service-wake.js";
@@ -60,6 +61,7 @@ import {
   hasValidGatewayCsrf,
   readCookie,
   requireSession,
+  rawSessionCookie,
   sessionCsrfToken,
 } from "./http/session.js";
 
@@ -429,7 +431,7 @@ async function handleLogout(request: Request, context: GatewayContext, now: stri
     status: isForm ? 303 : 204,
     headers: { "Cache-Control": "no-store", ...(isForm ? { Location: "/auth/login" } : {}) },
   });
-  return setCookie(setCookie(response, buildExpiredSessionCookie({ name: SESSION_COOKIE_NAME })), expiredCsrfCookie());
+  return setCookie(setCookie(setCookie(response, buildExpiredSessionCookie({ name: SESSION_COOKIE_NAME })), expiredCsrfCookie()), buildExpiredSessionCookie({ name: SESSION_CACHE_COOKIE_NAME }));
 }
 
 async function handleCreateMcpCredential(request: Request, context: GatewayContext, now: string): Promise<Response> {
@@ -1063,18 +1065,33 @@ export function createGatewayRouter(context: GatewayContext): Hono {
   } else {
     app.post("/api/github/webhooks", (c) => c.json({ error: { code: "WEBHOOK_AUTHORITY_UNAVAILABLE" } }, 503));
   }
-  const portal = createPortalHandler({
-    service: createPortalService(context),
-    authenticate: async (request) => {
-      const result = await requireSession(request, context);
-      if (!result.ok) return { ok: false, response: loginRedirect(request, context) };
-      const actor = Object.assign({}, result.session.actor, { gatewaySessionDigest: result.session.resolved.digest }) as PortalActor;
-      const session: PortalSession = { actor, csrfToken: result.session.csrfToken };
-      return { ok: true, session };
-    },
-    verifyCsrf: (request, session, form) => hasValidGatewayCsrf(request, context, session, form),
-    createToken: () => generateToken(256),
-  });
+  const portal = async (request: Request): Promise<Response> => {
+    let cacheCookie: string | null = null;
+    const eligible = isSessionCacheRead(request, context);
+    const handler = createPortalHandler({
+      service: createPortalService(context),
+      authenticate: async (request) => {
+        const raw = rawSessionCookie(request);
+        const cached = eligible && raw ? await readSessionCache(request, context, raw) : null;
+        if (cached && raw) {
+          return { ok: true, session: {
+            actor: Object.assign({}, cached.actor, { gatewaySessionDigest: cached.digest }) as PortalActor,
+            csrfToken: await sessionCsrfToken(context, raw),
+          } };
+        }
+        const result = await requireSession(request, context);
+        if (!result.ok) return { ok: false, response: loginRedirect(request, context) };
+        if (eligible) cacheCookie = await issueSessionCache(context, result.session.resolved);
+        const actor = Object.assign({}, result.session.actor, { gatewaySessionDigest: result.session.resolved.digest }) as PortalActor;
+        const session: PortalSession = { actor, csrfToken: result.session.csrfToken };
+        return { ok: true, session };
+      },
+      verifyCsrf: (request, session, form) => hasValidGatewayCsrf(request, context, session, form),
+      createToken: () => generateToken(256),
+    });
+    const response = await handler(request);
+    return cacheCookie ? setCookie(response, cacheCookie) : response;
+  };
 
   app.get("/healthz", () => json({ status: "ok" }));
   app.get("/readyz", async () => {

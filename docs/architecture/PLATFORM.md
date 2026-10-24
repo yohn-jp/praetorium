@@ -52,6 +52,26 @@ Installation tokens are bearer capabilities, not branch locks. Stop issuing/revo
 
 Registry credentials are independent. Outside GitHub Actions, the GHCR adapter uses its supported operator-owned registry credential, not a GitHub App installation token assumed to support package publishing. Keep build push and runtime pull credentials separate; runtime cannot publish images. Treat token formats as opaque.
 
+### Gateway browser authentication cache (Issue #57)
+
+The opaque `__Host-praetorium_session` and UserAuthState DO remain the session authority. Ordinary portal reads can use `__Host-praetorium_session_cache`, a host-only `Secure; HttpOnly; SameSite=Lax; Path=/` cookie with no Domain attribute. The Gateway signs it with the existing active ES256 signing key and registry. Its versioned type, origin, session digest, user ID, session revision, issued-at, cache expiry and original session expiry are signed; raw session IDs, GitHub tokens and secrets are excluded. Its lifetime is at most 300 seconds and never exceeds the authoritative session expiry observed at issuance.
+
+| Route / operation | Session resolution |
+| --- | --- |
+| `GET /`, `GET /repositories/:numericRepositoryId` (including bounded presentation/poll query parameters) | Verify cache signature, active key, origin, timestamps and binding to the unique opaque session cookie; valid hits perform zero DO `/sessions/get` calls |
+| Missing, invalid, expired or substituted cache on those reads | Resolve through the existing DO path once, then issue a replacement after successful authentication |
+| `GET /api/session` | Authoritative resolution and existing debounced 300-second activity touch/sliding expiry; cache reads do not replace or extend this behavior |
+| Every POST, credential listing/creation/revocation, admin identity/entry, OAuth, direct entry/wake, handoff/refresh, GitHub writes and mutation authorization | Existing authoritative authentication and authorization paths; cache cannot supply a resolved session |
+| Mixed Authorization/Cookie inputs | Cache disabled; existing Bearer/Cookie policies still apply |
+
+The real call graph for eligible reads is Portal handler → `listRepositories` or `getRepository` → current GitHub access and Control Plane reads. Repository-detail authorization, installation matching and dashboard binding checks remain in place. Cached identity is never a repository permission or a Runtime Grant. The `/repositories/:id/actions` GET only redirects and does not authenticate; its POST uses the DO. New routes are ineligible unless explicitly classified.
+
+Hits never renew the cache. Concurrent requests retain separate authentication results and response cookies. A cache or key-metadata verification failure falls back to the DO; cache issuance failure leaves a successful authoritative read available without a cache. DO failures keep the original unauthenticated/unavailable behavior on authoritative paths. Key rotation uses the existing bounded registry, without a new key store: only active keys verify browser caches; next, unknown, retired and compromised keys trigger authoritative resolution and replacement under the current active key. Existing KV registry location-cache/eventual-consistency limits still apply; sensitive operations do not depend on cache-key revocation.
+
+Logout and logout-all use the authoritative session plus the existing Origin/CSRF checks, revoke the session(s), and clear the session, CSRF and cache cookies. A copied cache alone grants no access without its bound opaque session cookie. Theft of both cookies permits replay of eligible read identity until cache expiry (at most 300 seconds); revocation, session rotation or concurrency eviction cannot be observed by a valid cache sooner. Sensitive operations recognize authoritative revocation immediately. The signed session revision records the authoritative revision at issuance; it does not claim to revalidate that revision without the DO. GitHub permission revalidation, refresh synchronization, session concurrency, MCP Bearer and Runtime authentication contracts remain unchanged.
+
+Local measurement uses the real Gateway DO client with disposable in-memory RPC backing, not production traffic: the representative sequence `/`, repository detail, detail poll, `/`, mobile detail performs **5** `/sessions/get` calls through the original authoritative resolver, **1** with a cold cache (the first read), and **0** with a warm cache. Ten concurrent warm reads also perform **0** calls. These counts concern session reads only; GitHub authorization/token-vault and Control Plane access remain. Reproduce with `corepack pnpm@11.18.0 --filter @praetorium/gateway exec vitest run test/session-cache.test.ts`. Hosted DO, real browser/OAuth, producer and registry acceptance are **NOT_CHECKED** by this fixture.
+
 ## 4. Topology and routing
 
 ```text

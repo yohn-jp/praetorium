@@ -1,6 +1,6 @@
 import { generateToken } from "@praetorium/auth";
 import { canaryWaitSkipForm } from "./canary-wait-action.js";
-import { activeSourceFailures, activeReleaseFailures } from "./incident-status.js";
+import { activeSourceFailures, activeReleaseFailures, currentSourceBuildAttempt } from "./incident-status.js";
 import type {
   SourceBuildAttempt, SourceBuildDetail, SourceBuildSummary,
 } from "@praetorium/contracts";
@@ -442,18 +442,25 @@ function buildDetail(model: ConsoleViewModel): string {
   const job = detail.job;
   if (model.selectedBuildId && model.selectedBuildId !== job.id)
     return `<p class="desktop-unavailable" role="status">Build detail is unavailable because the returned job identity did not match the requested job.</p>`;
-  const recent = [...detail.attempts].sort((a,b)=>b.leaseEpoch-a.leaseEpoch)[0];
-  const recordedStage = recent?.stage && recent.stage !== "unknown"
-    ? recent.stage
-    : recent?.diagnostic?.stage && recent.diagnostic.stage !== "unknown" ? recent.diagnostic.stage : null;
+  const currentAttempt = currentSourceBuildAttempt(detail);
+  const recordedStage = currentAttempt?.stage && currentAttempt.stage !== "unknown"
+    ? currentAttempt.stage
+    : currentAttempt?.diagnostic?.stage && currentAttempt.diagnostic.stage !== "unknown" ? currentAttempt.diagnostic.stage : null;
   const stage = recordedStage ? humanize(recordedStage) : "Not recorded";
+  const currentPageNote = !currentAttempt && model.pageCursor
+    ? `<p class="desktop-evidence-state" role="status">The current attempt is not included on this history page. <a href="${escapeHtml(buildHref(job.id, model.mode))}">Open the latest Source build detail</a> to inspect its stage and diagnostic evidence.</p>`
+    : "";
+  const currentEvidence = currentAttempt
+    ? diagnosticEvidence(currentAttempt.evidence, currentAttempt.diagnostic, currentAttempt.expiresAt)
+    : model.pageCursor ? ""
+      : diagnosticEvidence(detail.evidence, null);
   const failure = job.state === "failed" ?
     `<section class="desktop-section desktop-failure-detail" aria-labelledby="desktop-build-incident"><p class="desktop-eyebrow">FAILURE DETAIL</p>` +
     `<h2 id="desktop-build-incident">Recorded stage and reason</h2>` +
     `<dl class="desktop-failure-facts"><div><dt>Failure stage</dt><dd>${escapeHtml(stage)}</dd></div>` +
-    `<div><dt>Recorded reason</dt><dd>${escapeHtml(recent?.diagnostic ? humanize(recent.diagnostic.reason) : "No attempt-specific reason was recorded.")}</dd></div></dl>` +
+    `<div><dt>Recorded reason</dt><dd>${escapeHtml(currentAttempt?.diagnostic ? humanize(currentAttempt.diagnostic.reason) : "No current attempt-specific reason was recorded.")}</dd></div></dl>` +
     `<p class="desktop-section-intro">The failure summary describes the recorded category. It does not establish a root cause.</p>` +
-    diagnosticEvidence(recent?.evidence ?? detail.evidence, recent?.diagnostic ?? null, recent?.expiresAt ?? null) +
+    currentPageNote + currentEvidence +
     `</section>` : "";
   const retry = job.state === "failed" ?
     `<section class="desktop-section desktop-recovery" aria-label="Source build recovery"><p class="desktop-eyebrow">SAFE NEXT ACTION</p>` +

@@ -1,6 +1,6 @@
 import { generateToken } from "@praetorium/auth";
 import { canaryWaitSkipForm } from "./canary-wait-action.js";
-import { activeReleaseFailures, prioritySourceBuild } from "./incident-status.js";
+import { activeReleaseFailures, currentSourceBuildAttempt, prioritySourceBuild } from "./incident-status.js";
 import type {
   SourceBuildAttempt,
   SourceBuildDetail,
@@ -824,23 +824,32 @@ function buildDetail(model: ConsoleViewModel): string {
       "Open release and Composition Build " + value(job.admittedReleaseId) +
       "</a>"
     : "Not admitted";
-  const latest = attempts[0];
+  const currentAttempt = currentSourceBuildAttempt(detail);
+  const currentPageNote = !currentAttempt && model.pageCursor
+    ? '<p class="admin-mobile-evidence-unavailable" role="status">The current attempt is not included on this history page. <a href="' +
+      value(buildHref(job.id, "mobile")) + '">Open the latest Source build detail</a> to inspect its stage and diagnostic evidence.</p>'
+    : "";
+  const currentEvidence = currentAttempt
+    ? evidence(currentAttempt)
+    : model.pageCursor
+      ? ""
+      : '<p class="admin-mobile-evidence-unavailable" role="status">' +
+        value(detail.evidence === "expired" ? "Diagnostic evidence expired." :
+          detail.evidence === "available" ? "Diagnostic evidence is marked available, but current attempt details are unavailable in this response." :
+            "Diagnostic evidence was not recorded for the current attempt.") + '</p>';
   const failureDetail = job.state === "failed"
     ? '<section class="admin-mobile-section admin-mobile-failure-detail" aria-labelledby="admin-mobile-failure-title">' +
       '<span class="admin-kicker">RECORDED FAILURE</span><h2 id="admin-mobile-failure-title">Stage and reason</h2>' +
       '<dl class="admin-mobile-failure-facts"><div><dt>Failure stage</dt><dd>' +
-      value(latest?.stage && latest.stage !== "unknown"
-        ? latest.stage.replaceAll("_", " ")
-        : latest?.diagnostic?.stage && latest.diagnostic.stage !== "unknown"
-          ? latest.diagnostic.stage.replaceAll("_", " ") : "Not recorded") +
+      value(currentAttempt?.stage && currentAttempt.stage !== "unknown"
+        ? currentAttempt.stage.replaceAll("_", " ")
+        : currentAttempt?.diagnostic?.stage && currentAttempt.diagnostic.stage !== "unknown"
+          ? currentAttempt.diagnostic.stage.replaceAll("_", " ") : "Not recorded") +
       '</dd></div><div><dt>Recorded reason</dt><dd>' +
-      value(latest?.diagnostic?.reason.replaceAll("_", " ") ?? "No attempt-specific reason was recorded.") +
+      value(currentAttempt?.diagnostic?.reason.replaceAll("_", " ") ?? "No current attempt-specific reason was recorded.") +
       '</dd></div></dl>' +
       '<p class="admin-mobile-diagnostic-caveat">The failure summary describes the recorded category. It does not establish a root cause.</p>' +
-      (latest ? evidence(latest) : '<p class="admin-mobile-evidence-unavailable" role="status">' +
-        value(detail.evidence === "expired" ? "Diagnostic evidence expired." :
-          detail.evidence === "available" ? "Diagnostic details are unavailable in this response." :
-            "Diagnostic evidence was not recorded for this job.") + '</p>') +
+      currentPageNote + currentEvidence +
       '</section>'
     : "";
   return (

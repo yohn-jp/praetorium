@@ -1,5 +1,12 @@
-import type { SourceBuildSummary } from "@praetorium/contracts";
+import type { SourceBuildAttempt, SourceBuildDetail, SourceBuildSummary } from "@praetorium/contracts";
 import type { ConsoleRelease } from "./view-model.js";
+
+/** Attempt evidence is current only when both canonical job counters match. */
+export function currentSourceBuildAttempt(detail: SourceBuildDetail): SourceBuildAttempt | null {
+  return detail.attempts
+    .filter(attempt => attempt.revision === detail.job.revision && attempt.attempt === detail.job.attempt)
+    .sort((left, right) => right.leaseEpoch - left.leaseEpoch)[0] ?? null;
+}
 
 /** Only a successful later revision of the same immutable Source target supersedes failure. */
 export function activeSourceFailures(jobs: readonly SourceBuildSummary[]): readonly SourceBuildSummary[] {

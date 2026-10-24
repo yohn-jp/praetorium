@@ -142,6 +142,33 @@ describe("desktop operator composition", () => {
     expect(render("available", null)).toContain("Diagnostic evidence is marked available, but its details are unavailable in this response.");
   });
 
+  it("does not present an older revision's attempt as current on a history page", () => {
+    const olderRevision = {
+      id: "attempt-old-revision", attempt: job.attempt, revision: job.revision - 1, leaseEpoch: 9,
+      state: "failed" as const, stage: "buildkit" as const, startedAt: 1_797_000_000_000,
+      finishedAt: 1_797_000_120_000, failureCode: job.error, evidence: "available" as const,
+      expiresAt: null, diagnostic: {
+        stage: "buildkit" as const, reason: "build_failed" as const,
+        summary: "Old revision failure must stay in its own attempt history.", excerpt: "old revision excerpt", truncated: false,
+      },
+    };
+    const html = renderDesktopConsole(view({
+      selectedBuildId: job.id,
+      pageCursor: "history-older",
+      detail: dependency("GET /v1/operator/source-builds/:id", {
+        job, attempts: [olderRevision], nextCursor: null, evidence: "available",
+      }),
+    }));
+    const start = html.indexOf('<section class="desktop-section desktop-failure-detail"');
+    const failure = html.slice(start, html.indexOf("</section>", start));
+    expect(failure).toContain("The current attempt is not included on this history page.");
+    expect(failure).toContain(`href="/builds/${job.id}?ui=desktop"`);
+    expect(failure).toContain("Not recorded");
+    expect(failure).not.toContain("Old revision failure");
+    expect(failure).not.toContain("old revision excerpt");
+    expect(html).toContain("old revision excerpt");
+  });
+
   it("keeps queue outages separate from build failures and hides retry when policy denies it", () => {
     const unavailable = renderDesktopConsole(view({
       builds: { ...dependency("GET /v1/operator/source-builds", null, null), reason: "schema_missing" },

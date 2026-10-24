@@ -221,6 +221,34 @@ describe("mobile operator console", () => {
     expect(render("available", null)).toContain("Diagnostic evidence is marked available, but its details are unavailable in this response.");
   });
 
+  it("does not label an older revision's attempt as current on a history page", () => {
+    const olderRevision: SourceBuildAttempt = {
+      ...attempt,
+      id: "attempt-old-revision",
+      revision: sourceJob.revision - 1,
+      diagnostic: {
+        stage: "buildkit", reason: "build_failed",
+        summary: "Old revision failure must stay in its own attempt history.",
+        excerpt: "old revision excerpt", truncated: false,
+      },
+    };
+    const html = renderMobileConsole(model({
+      selectedBuildId: sourceJob.id,
+      pageCursor: "history-older",
+      detail: dependency({
+        job: sourceJob, attempts: [olderRevision], nextCursor: null, evidence: "available",
+      }, "GET /v1/operator/source-builds/:id"),
+    }));
+    const start = html.indexOf('<section class="admin-mobile-section admin-mobile-failure-detail"');
+    const failure = html.slice(start, html.indexOf("</section>", start));
+    expect(failure).toContain("The current attempt is not included on this history page.");
+    expect(failure).toContain(`href="/builds/${sourceJob.id}?ui=mobile"`);
+    expect(failure).toContain("Not recorded");
+    expect(failure).not.toContain("Old revision failure");
+    expect(failure).not.toContain("old revision excerpt");
+    expect(html).toContain("old revision excerpt");
+  });
+
   it("renders missing evidence and refuses to offer a retry when queue policy disallows it", () => {
     const unavailableAttempt: SourceBuildAttempt = {
       ...attempt,

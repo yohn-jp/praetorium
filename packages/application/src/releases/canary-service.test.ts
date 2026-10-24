@@ -406,4 +406,48 @@ describe("service-backed disposable release canary", () => {
       /idempotency receipt/u,
     );
   });
+
+  it("exposes a blocked stop operation without fabricating writer absence proof", async () => {
+    const blocked = {
+      id: "operation-stop-blocked", kind: "stop" as const, status: "blocked" as const,
+      generation: 8, runtimeEpoch: 4, deploymentRevisionId: "revision-canary",
+      result: null,
+    };
+    const canary = new ServiceBackedDisposableCanary({
+      binding: {
+        repositoryId: 900, instanceId: "canary-instance", bindingEpoch: 3,
+        authorizationRevision: 4, requestedModules: [], resourceProfileId: "small",
+      },
+      instances: {
+        async getByRepositoryId() {
+          return {
+            binding: { repositoryId: 900, instanceId: "canary-instance",
+              bindingEpoch: 3, authorizationRevision: 4, suspended: false },
+            instance: { ...planReceipt().instance, desiredState:"stopped" as const,
+              observedState:"ready" as const },
+          };
+        },
+        async requestDesiredState() {
+          return { instance: { ...planReceipt().instance, generation:8, runtimeEpoch:4,
+            desiredState:"stopped" as const, observedState:"ready" as const }, operation: blocked };
+        },
+      },
+      configurations: {
+        async plan() { throw new Error("unexpected plan"); },
+        async findByIdempotency() { return null; },
+      },
+      operations: { async getById() { return blocked; } },
+      observations: {
+        async latestHealth() { throw new Error("unexpected health"); },
+        async writerAbsence() { throw new Error("no writer-absence claim for a blocked stop"); },
+      },
+      now: () => NOW,
+    });
+    const result = await canary.stop({
+      runtimeId:"canary-instance", startedOperationId:"canary-start",
+      idempotencyKey:"stable-canary-stop:release-1",
+    });
+    expect(result).toEqual({kind:"blocked"});
+  });
+
 });

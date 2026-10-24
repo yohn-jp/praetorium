@@ -188,8 +188,10 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
       const text=await page.locator("main").innerText();
       assert.ok(text.includes("owned-failed-attempt"),"prior failure remains immutable history");
       assert.ok(text.toLowerCase().includes("expired"),"expired evidence is not a successful empty log");
-      if(state==="failed") assert.equal(await page.locator('input[name="expectedRevision"]').inputValue(),"0");
-      else assert.equal(await page.getByRole("button",{name:"Retry source build",exact:true}).count(),0);
+      if(state==="failed") {
+        assert.equal(await page.locator('input[name="expectedRevision"]').inputValue(),"0");
+        assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),1);
+      } else assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),0);
       if(process.env.PRAETORIUM_UI_EVIDENCE_DIR)
         await page.screenshot({path:process.env.PRAETORIUM_UI_EVIDENCE_DIR+"/admin-"+mode+"-source-"+state+".png",fullPage:true});
     }

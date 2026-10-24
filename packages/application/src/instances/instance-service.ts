@@ -29,6 +29,9 @@ export class InstanceService {
   }
 
   async requestDesiredState(input: DesiredStateMutationInput): Promise<DesiredStateMutationResult> {
+    if (input.verifyStopped && (input.desiredState !== "stopped" || input.expectedGeneration === undefined)) {
+      throw new TypeError("stop verification requires stopped intent and an expected generation");
+    }
     if (input.desiredState === "stopped" && input.forceNewRuntime === true) {
       throw new TypeError("forceNewRuntime is only valid for a running desired state");
     }
@@ -40,6 +43,7 @@ export class InstanceService {
       desiredState: input.desiredState,
       expectedGeneration: input.expectedGeneration ?? null,
       forceNewRuntime: input.forceNewRuntime === true,
+      ...(input.verifyStopped ? { verifyStopped: true } : {}),
     });
     const replay = await readReplay(this.store, input, scope, requestHash);
     if (replay) {
@@ -62,7 +66,12 @@ export class InstanceService {
     }
 
     const forceNewRuntime = input.forceNewRuntime === true;
-    if (current.desiredState === input.desiredState && !forceNewRuntime) {
+    if (input.verifyStopped && (current.desiredState !== "stopped" ||
+        !isDesiredStateObserved(current, "stopped") || current.observedRuntimeEpoch !== current.runtimeEpoch ||
+        current.runtimeEpoch < 1 || await this.store.findActiveOperation(current.instanceId, current.generation))) {
+      throw new RepositoryStateConflict("stop verification requires a stopped current epoch without active work");
+    }
+    if (current.desiredState === input.desiredState && !forceNewRuntime && !input.verifyStopped) {
       const active = await this.store.findActiveOperation(current.instanceId, current.generation);
       if (active || isDesiredStateObserved(current, input.desiredState)) {
         return { binding: snapshot.binding, instance: current, operation: active, replayed: false };

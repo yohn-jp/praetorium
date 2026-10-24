@@ -1407,7 +1407,7 @@ export class LifecycleService {
     return {
       instanceId: operation.instanceId,
       repositoryId: operation.repositoryId,
-      retiredRuntimeEpoch: retired?.runtimeEpoch ?? null,
+      retiredRuntimeEpoch: retired?.runtimeEpoch ?? (operation.kind === "stop" ? operation.runtimeEpoch : null),
       providerObservationId: census.providerObservationId,
       censusObservedAt: census.observedAt,
       remainingWriters: 0,

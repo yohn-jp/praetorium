@@ -179,7 +179,7 @@ describe("Control Plane operation admin routes against migrated SQLite D1", () =
     });
   });
 
-  it("uses an ordinary stop retry without advancing runtime epoch", async () => {
+  it.each([false, true])("uses a stop retry without advancing runtime epoch (explicit stopped verification: %s)", async (reverifyStopped) => {
     const { database, registry, instances, routes } = createHarness();
     const resolved = await registry.resolveOrCreate(registryInput(71, "instance-stop"));
     const started = await instances.requestDesiredState({
@@ -212,11 +212,20 @@ describe("Control Plane operation admin routes against migrated SQLite D1", () =
     });
     if (!stopped.operation) throw new Error("expected initial stop operation");
     database
-      .prepare("UPDATE operations SET status = 'failed', phase = 'failed' WHERE operation_id = ?")
-      .run(stopped.operation.id);
+      .prepare("UPDATE operations SET status = ?, phase = ? WHERE operation_id = ?")
+      .run(reverifyStopped ? "succeeded" : "failed", reverifyStopped ? "complete" : "failed", stopped.operation.id);
     database
-      .prepare("UPDATE logical_instances SET observed_state = 'unknown' WHERE instance_id = ?")
-      .run(resolved.instance.instanceId);
+      .prepare("UPDATE logical_instances SET observed_state = ?, observed_runtime_epoch = ? WHERE instance_id = ?")
+      .run(reverifyStopped ? "stopped" : "unknown", stopped.operation.runtimeEpoch, resolved.instance.instanceId);
+
+    if (reverifyStopped) {
+      const ordinaryRetry = await routes.fetch(retryRequest(stopped.operation.id, {
+        actorId:"trusted-gateway-user-71",bindingEpoch:resolved.binding.bindingEpoch,
+        authorizationRevision:resolved.binding.authorizationRevision,
+        expectedGeneration:stopped.operation.generation,idempotencyKey:"ordinary-successful-stop",
+      }));
+      expect(ordinaryRetry.status).toBe(409);
+    }
 
     const response = await routes.fetch(
       retryRequest(stopped.operation.id, {
@@ -225,6 +234,7 @@ describe("Control Plane operation admin routes against migrated SQLite D1", () =
         authorizationRevision: resolved.binding.authorizationRevision,
         expectedGeneration: stopped.operation.generation,
         idempotencyKey: "retry-stopped-1",
+        ...(reverifyStopped ? { reverifyStopped:true } : {}),
       }),
     );
     expect(response.status).toBe(200);
@@ -236,6 +246,16 @@ describe("Control Plane operation admin routes against migrated SQLite D1", () =
     expect(database.prepare("SELECT runtime_epoch FROM logical_instances").get()).toMatchObject({
       runtime_epoch: stopped.operation.runtimeEpoch,
     });
+    if (reverifyStopped) {
+      const replay = await routes.fetch(retryRequest(stopped.operation.id, {
+        actorId:"trusted-gateway-user-71",bindingEpoch:resolved.binding.bindingEpoch,
+        authorizationRevision:resolved.binding.authorizationRevision,
+        expectedGeneration:stopped.operation.generation,idempotencyKey:"retry-stopped-1",reverifyStopped:true,
+      }));
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({kind:"stop",generation:stopped.operation.generation+1,runtimeEpoch:stopped.operation.runtimeEpoch});
+      expect(database.prepare("SELECT count(*) AS count FROM operations").get()).toMatchObject({count:3});
+    }
   });
 
   it("rejects stale generations, active work, stale authorization on replay, and extra body fields", async () => {

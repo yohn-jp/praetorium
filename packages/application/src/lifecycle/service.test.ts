@@ -482,6 +482,14 @@ describe("LifecycleService", () => {
     expect(h.counters.authProbeCalls).toBe(0);
   });
 
+  it("binds a fresh all-epoch absence census to a stop epoch even when no writer assignment remains", async () => {
+    const h = harness({operation:operation({kind:"stop",current:null,runtimeEpoch:4,target:null,targetEpoch:null}),initialWriters:[]});
+    const result = await h.service.execute("op-01", h.context);
+    expect(result).toEqual({status:"complete",observed:null});
+    expect(h.journal.value.writerAbsenceProof).toMatchObject({retiredRuntimeEpoch:4,remainingWriters:0,source:"runtime-provider-census"});
+    expect(h.counters.quiesceRequests).toEqual([]);
+  });
+
   it("re-censuses a completed stop before publishing stopped observation", async () => {
     const h = harness({
       operation: operation({

@@ -20,7 +20,10 @@ function task(name) {
 
 test("Observer rollout YAML parses", () => {
   const prettier = path.join(root, "node_modules/.bin/prettier");
-  const result = spawnSync(prettier, ["--parser", "yaml", tasksPath], { cwd: root, encoding: "utf8" });
+  const result = spawnSync(prettier, ["--parser", "yaml", tasksPath], {
+    cwd: root,
+    encoding: "utf8",
+  });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
@@ -77,6 +80,77 @@ test("Observer preloads the exact rootless image before installing or starting P
   );
 });
 
+test("private registry auth is controller-validated, rootless-only, and deferred in check mode", () => {
+  const source = task("Inspect operator-owned Observer registry auth source on the controller");
+  assert.match(source, /path: "{{ observer_registry_auth_src }}"[\s\S]*follow: false/);
+  assert.match(
+    source,
+    /delegate_to: localhost[\s\S]*become: false[\s\S]*when: observer_registry_auth_src \| length > 0/,
+  );
+
+  const validate = task(
+    "Require a private regular Observer registry auth source owned by the controller user",
+  );
+  assert.match(
+    validate,
+    /stat\.isreg[\s\S]*not observer_registry_auth_src_stat\.stat\.islnk[\s\S]*mode == '0600'[\s\S]*pw_name == lookup\('env', 'USER'\)/,
+  );
+
+  const copy = task("Install protected Observer registry auth without revealing it");
+  assert.match(
+    copy,
+    /src: "{{ observer_registry_auth_src }}"[\s\S]*dest: "{{ observer_registry_auth_path }}"[\s\S]*remote_src: false/,
+  );
+  assert.match(
+    copy,
+    /owner: "{{ observer_service_user }}"[\s\S]*mode: "0400"[\s\S]*backup: true[\s\S]*no_log: true[\s\S]*not ansible_check_mode/,
+  );
+  const deferred = task(
+    "Explain deferred Observer registry authentication verification in check mode",
+  );
+  assert.match(deferred, /not ansible_check_mode|ansible_check_mode/);
+
+  const manifest = task(
+    "Verify exact Observer manifest access using the Observer service identity",
+  );
+  const pull = task("Pull the exact Observer image digest into rootless storage");
+  for (const authenticatedTask of [manifest, pull])
+    assert.match(authenticatedTask, /REGISTRY_AUTH_FILE[\s\S]*observer_registry_auth_path/);
+  assert.match(
+    manifest,
+    /when: not \(ansible_check_mode and observer_registry_auth_src \| length > 0\)/,
+  );
+
+  const taskOrder = [
+    "Inspect operator-owned Observer registry auth source on the controller",
+    "Require a private regular Observer registry auth source owned by the controller user",
+    "Install protected Observer registry auth without revealing it",
+    "Verify exact Observer manifest access using the Observer service identity",
+    "Pull the exact Observer image digest into rootless storage",
+  ].map((name) => taskNames.indexOf(name));
+  assert.deepEqual(
+    taskOrder,
+    [...taskOrder].sort((a, b) => a - b),
+  );
+  const roleDefaults = readFileSync(
+    path.join(root, "infrastructure/ansible/roles/observer/defaults/main.yml"),
+    "utf8",
+  );
+  assert.match(roleDefaults, /observer_registry_auth_src: ""/);
+  assert.match(
+    roleDefaults,
+    /observer_registry_auth_path: "{{ observer_service_home }}\/\.config\/containers\/auth\.json"/,
+  );
+  const quadlet = readFileSync(
+    path.join(
+      root,
+      "infrastructure/ansible/roles/observer/templates/praetorium-observer.container.j2",
+    ),
+    "utf8",
+  );
+  assert.doesNotMatch(quadlet, /observer_registry_auth|auth\.json/);
+});
+
 test("Observer apply waits for private readiness and requires its rootless Podman healthcheck", () => {
   const ready = task("Wait for Observer readiness on the private loopback listener");
   assert.match(ready, /url: http:\/\/127\.0\.0\.1:8791\/readyz/);
@@ -105,5 +179,8 @@ test("Observer apply waits for private readiness and requires its rootless Podma
     "Require the Podman healthcheck to report Observer healthy",
   ].map((name) => taskNames.indexOf(name));
   assert.ok(order.every((index) => index >= 0));
-  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.deepEqual(
+    order,
+    [...order].sort((a, b) => a - b),
+  );
 });

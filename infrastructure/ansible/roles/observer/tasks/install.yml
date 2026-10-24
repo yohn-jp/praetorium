@@ -143,6 +143,58 @@
     mode: "0400"
   register: observer_inventory_changed
 
+- name: Inspect operator-owned Observer registry auth source on the controller
+  ansible.builtin.stat:
+    path: "{{ observer_registry_auth_src }}"
+    follow: false
+  register: observer_registry_auth_src_stat
+  delegate_to: localhost
+  become: false
+  when: observer_registry_auth_src | length > 0
+
+- name: Require a private regular Observer registry auth source owned by the controller user
+  ansible.builtin.assert:
+    that:
+      - observer_registry_auth_src_stat.stat.exists
+      - observer_registry_auth_src_stat.stat.isreg
+      - not observer_registry_auth_src_stat.stat.islnk
+      - observer_registry_auth_src_stat.stat.mode == '0600'
+      - observer_registry_auth_src_stat.stat.pw_name == lookup('env', 'USER')
+    fail_msg: "Observer registry auth source must be a controller-owned regular mode-0600 file."
+  when: observer_registry_auth_src | length > 0
+
+- name: Create private rootless Observer registry auth directory
+  ansible.builtin.file:
+    path: "{{ observer_service_home }}/.config/containers"
+    state: directory
+    owner: "{{ observer_service_user }}"
+    group: "{{ observer_service_group }}"
+    mode: "0700"
+  when:
+    - observer_registry_auth_src | length > 0
+    - not ansible_check_mode
+
+- name: Install protected Observer registry auth without revealing it
+  ansible.builtin.copy:
+    src: "{{ observer_registry_auth_src }}"
+    dest: "{{ observer_registry_auth_path }}"
+    remote_src: false
+    owner: "{{ observer_service_user }}"
+    group: "{{ observer_service_group }}"
+    mode: "0400"
+    backup: true
+  no_log: true
+  when:
+    - observer_registry_auth_src | length > 0
+    - not ansible_check_mode
+
+- name: Explain deferred Observer registry authentication verification in check mode
+  ansible.builtin.debug:
+    msg: "Observer registry manifest verification is deferred in check mode because the protected auth file is not copied."
+  when:
+    - observer_registry_auth_src | length > 0
+    - ansible_check_mode
+
 - name: Verify exact Observer manifest access using the Observer service identity
   ansible.builtin.command:
     chdir: "{{ observer_service_home }}"
@@ -159,6 +211,8 @@
   check_mode: false
   timeout: 60
   no_log: true
+  environment: "{{ {'REGISTRY_AUTH_FILE': observer_registry_auth_path} if observer_registry_auth_src | length > 0 else {} }}"
+  when: not (ansible_check_mode and observer_registry_auth_src | length > 0)
 
 - name: Check whether the exact Observer image digest is already in rootless storage
   ansible.builtin.command:
@@ -191,6 +245,7 @@
   register: observer_image_pull
   changed_when: observer_image_pull.rc == 0
   no_log: true
+  environment: "{{ {'REGISTRY_AUTH_FILE': observer_registry_auth_path} if observer_registry_auth_src | length > 0 else {} }}"
   when:
     - observer_image_exists.rc != 0
     - not ansible_check_mode

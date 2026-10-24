@@ -4,7 +4,7 @@ import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDeta
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
 import { readInfrastructure, type InfraDependencies, type InfraHosts, type InfraServices, type HostObservation } from "../infrastructure.js";
-import { buildHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
+import { buildHref, viewHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
 import { page } from "../page.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
@@ -219,14 +219,14 @@ function adminPage(title: string, content: string, csrf: string, mode: ConsoleMo
 
 export async function handleAdminHost(request: Request, context: AdminContext): Promise<Response> {
   const presentation = resolvePresentation(request);
-  const result = await handleAdminRequest(request, context, presentation.mode);
+  const result = await handleAdminRequest(request, context, presentation.mode, presentation.offerModeChoice);
   if (!presentation.cookie) return result;
   const headers = new Headers(result.headers);
   headers.append("Set-Cookie", presentation.cookie);
   return new Response(result.body, { status: result.status, headers });
 }
 
-async function handleAdminRequest(request: Request, context: AdminContext, mode: ConsoleMode): Promise<Response> {
+async function handleAdminRequest(request: Request, context: AdminContext, mode: ConsoleMode, offerModeChoice: boolean): Promise<Response> {
   const origin = context.config.adminOrigin;
   if (!origin || new URL(request.url).origin !== origin) return response(404, "Not found");
   const url = new URL(request.url);
@@ -509,7 +509,8 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   };
   return page("Praetorium Admin — " + (selectedBuildId ? "Source build detail" : selectedOperationId ? "Operation evidence" : selectedReleaseId ? "Release status" : section),
     mode === "mobile" ? renderMobileConsole(model) : renderDesktopConsole(model),
-    { layout: "handoff", presentation: { mode } });
+    { layout: "handoff", presentation: { mode, offerModeChoice,
+      mobileHref: viewHref(model, "mobile"), desktopHref: viewHref(model, "desktop") } });
 }
 
 function renderError(context: AdminContext, csrf: string, message: string, status: number,

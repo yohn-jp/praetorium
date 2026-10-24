@@ -766,7 +766,7 @@ async function runSourceToStable(root, kit) {
         assert.ok(error instanceof BuildKitAttemptError);
         assert.match(error.diagnostic?.text ?? "", /fixture compiler error/u);
         throw new SourceBuildFailureError("SOURCE_BUILD_FAILED", sanitizeSourceDiagnostic({
-          stage: "metadata", reason: "build_failed", summary: "",
+          stage: "buildkit", reason: "build_failed", summary: "",
           excerpt: error.diagnostic.text, truncated: error.diagnostic.truncated,
         }));
       }
@@ -786,7 +786,7 @@ async function runSourceToStable(root, kit) {
   const failedDetail = await detailResponse.json();
   assert.equal(failedDetail.job.state, "failed");
   assert.equal(failedDetail.job.retryable, true);
-  assert.equal(failedDetail.attempts[0].stage, "metadata");
+  assert.equal(failedDetail.attempts[0].stage, "buildkit");
   assert.equal(failedDetail.attempts[0].evidence, "available");
   assert.match(failedDetail.attempts[0].diagnostic.excerpt, /fixture compiler error/u);
   assert.doesNotMatch(JSON.stringify(failedDetail), /fixture-secret-do-not-retain/u);
@@ -975,7 +975,7 @@ async function runSourceToStable(root, kit) {
       resolverProvenanceDigest: sourceResult.resolver.provenanceDigest,
     },
     failureRecovery: {
-      diagnosticOrigin: "REAL_BUILDKIT_FAILED_RUN",
+      diagnosticOrigin: "REAL_BUILDKIT_SYNTHETIC_FAILED_RUN",
       persistence: "WORKER_HTTP_CONTROL_PLANE_SQLITE_D1_OPERATOR_READBACK",
       sanitized: true, failedLeaseEpoch: 1, recoveredLeaseEpoch: 2,
       retry: "CANONICAL_AUTHORIZED_ROUTE", historyPreserved: true,

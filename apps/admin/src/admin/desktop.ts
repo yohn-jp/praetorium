@@ -455,11 +455,14 @@ function audit(model: ConsoleViewModel): string {
     notice(model.notice) + dependencyUnavailable("Operator audit", model.audit);
   const events = model.audit.value.events; // Authenticated Control Plane already filtered this page.
   const rows = events.length ? events.map((event) => {
-    const target = event.jobId ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>`
-      : event.releaseId ? `<a href="/releases/${encodeURIComponent(event.releaseId)}?ui=${model.mode}">${escapeHtml(event.releaseId)}</a>`
-      : event.operationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(event.operationId)
+    const targets = [
+      event.jobId ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>` : null,
+      event.releaseId ? `<a href="/releases/${encodeURIComponent(event.releaseId)}?ui=${model.mode}">${escapeHtml(event.releaseId)}</a>` : null,
+      event.operationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(event.operationId)
         ? `<a href="${escapeHtml(operationHref(event.operationId, model.mode))}">${escapeHtml(event.operationId)}</a>`
-        : event.operationId ? `<code>${escapeHtml(event.operationId)}</code>` : "No linked target";
+        : event.operationId ? `<code>${escapeHtml(event.operationId)}</code>` : null,
+    ].filter((value): value is string => value !== null);
+    const target = targets.length ? targets.join(" · ") : "No linked target";
     const evidence = [event.failureCode, event.revision == null ? null : "revision " + event.revision,
       event.leaseEpoch == null ? null : "epoch " + event.leaseEpoch].filter(Boolean).join(" · ");
     return `<tr><td>${escapeHtml(dateTime(event.occurredAt))}</td>` +

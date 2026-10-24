@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AdminIdentityRpc } from "../src/context.js";
 import { createAdminContext } from "../src/context.js";
-import { authenticateAdmin, adminFormCsrf, completeAdminHandoff, logoutAdmin } from "../src/session.js";
+import { authenticateAdmin, adminFormCsrf, completeAdminHandoff, logoutAdmin, adminReturnPath } from "../src/session.js";
 import { handleAdminHost } from "../src/admin/console.js";
 
 const GATEWAY = "https://praetorium.test";
@@ -118,4 +118,40 @@ describe("independent Admin session boundary", () => {
       ADMIN_CONTROL_PLANE_AUTH: "short",
     })).toThrow(/credential/u);
   });
+});
+
+
+it("retains bounded read-only query context after an expired Admin session", async () => {
+  const {context,cp}=fixture();
+  const url=ADMIN+"/builds?ui=mobile&state=failed&sort=attempt&cursor=queue_older";
+  const response=await handleAdminHost(new Request(url),context);
+  expect(response.status).toBe(303);
+  const location=new URL(response.headers.get("Location")!);
+  expect(location.origin).toBe(GATEWAY);
+  expect(location.searchParams.get("return_to")).toBe(
+    "/builds?ui=mobile&state=failed&sort=attempt&cursor=queue_older");
+  expect(cp.fetch).not.toHaveBeenCalled();
+});
+
+it("accepts only bounded same-origin GET destination search parameters", () => {
+  expect(adminReturnPath("/audit?ui=mobile&q=lease+epoch&cursor=12:evt_1")).toBe(
+    "/audit?ui=mobile&q=lease+epoch&cursor=12%3Aevt_1");
+  expect(adminReturnPath("/builds?ui=desktop&state=failed&sort=attempt")).toBe(
+    "/builds?ui=desktop&state=failed&sort=attempt");
+  for(const invalid of [
+    "//evil.example/", "/builds?ui=mobile&ui=desktop",
+    "/audit?q=a&q=b", "/releases?state=failed",
+    "/builds?state=not_real", "/audit?q=%0A", "/logout?ui=mobile",
+    "/audit?next=https://evil.example", "/audit#fragment",
+  ]) expect(adminReturnPath(invalid)).toBe("/");
+});
+
+it("fetches only an operation's current evidence on its detail page", async () => {
+  const {context,identity,cp}=fixture();
+  const response=await handleAdminHost(sessionRequest(ADMIN+"/operations/op_123?ui=mobile"),context);
+  expect(response.status).toBe(200);
+  expect(identity.listApprovedSourceReleases).not.toHaveBeenCalled();
+  expect(cp.fetch).toHaveBeenCalledTimes(1);
+  const request=vi.mocked(cp.fetch).mock.calls[0]?.[0] as Request;
+  expect(new URL(request.url).pathname).toBe("/v1/operations/op_123/evidence");
 });

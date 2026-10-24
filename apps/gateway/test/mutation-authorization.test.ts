@@ -152,6 +152,7 @@ async function setup(options: {
     }
     : { ...snapshot, operation: null, replayed: false };
   let accessChecks = 0;
+  let accessUnavailable = false;
   let repositoryReads = 0;
   let instanceReads = 0;
   let desiredRequests = 0;
@@ -177,6 +178,7 @@ async function setup(options: {
     },
     async checkBoundAccess(_userId: string, repositoryId: number, instanceId: string, runtimeEpoch: number, now: string) {
       accessChecks += 1;
+      if (accessUnavailable) return { status: "unavailable" as const };
       checkedRuntimeEpochs.push(runtimeEpoch);
       if (!writeAllowed) return { status: "denied" as const };
       return {
@@ -305,6 +307,7 @@ async function setup(options: {
         tokenId: "access-grant-test",
       }),
     handoffStore,
+    accessRefreshCredentialStore,
     gatewaySessionDigest: created.value.digest,
     instanceAccessSecret: "i".repeat(40),
     publicKey: pair.publicKey,
@@ -318,6 +321,7 @@ async function setup(options: {
     get mutationRateLimitKeys() { return mutationRateLimitKeys; },
     get checkedRuntimeEpochs() { return checkedRuntimeEpochs; },
     set writeAllowed(value: boolean) { writeAllowed = value; },
+    set accessUnavailable(value: boolean) { accessUnavailable = value; },
     set authorizationRevision(value: number) { authorizationRevision = value; },
     setObservedRuntimeState(value: "ready" | "stopping", epoch: number | null) {
       const instance = snapshot.instance as { observedState: "ready" | "stopping"; observedRuntimeEpoch: number | null };
@@ -695,13 +699,45 @@ describe("Gateway mutation authorization endpoint", () => {
       headers: serviceHeaders,
       body: JSON.stringify({ ...base, refreshCredential }),
     });
+    const credentialStoreRead = vi.spyOn(test.accessRefreshCredentialStore, "get")
+      .mockRejectedValue(new Error("private refresh store error detail"));
+    const refreshWarning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const storageUnavailable = await test.router.fetch(refresh(initial.refreshCredential));
+      expect(storageUnavailable.status).toBe(503);
+      expect(storageUnavailable.headers.get("Retry-After")).toBe("5");
+      const storageUnavailableBody = await storageUnavailable.text();
+      expect(JSON.parse(storageUnavailableBody)).toMatchObject({
+        error: { code: "UPSTREAM_UNAVAILABLE", message: "repository authority is temporarily unavailable" },
+      });
+      expect(storageUnavailableBody).not.toContain(initial.refreshCredential);
+      expect(storageUnavailableBody).not.toContain("private refresh store error detail");
+
+      credentialStoreRead.mockRestore();
+      test.accessUnavailable = true;
+      const authorityUnavailable = await test.router.fetch(refresh(initial.refreshCredential));
+      expect(authorityUnavailable.status).toBe(503);
+      expect(authorityUnavailable.headers.get("Retry-After")).toBe("5");
+      expect(await authorityUnavailable.json()).toMatchObject({ error: { code: "UPSTREAM_UNAVAILABLE" } });
+      test.accessUnavailable = false;
+      expect(refreshWarning.mock.calls).toEqual([
+        [JSON.stringify({ event: "instance_access_refresh_rejected", reason: "STORAGE_UNAVAILABLE" })],
+        [JSON.stringify({ event: "instance_access_refresh_rejected", reason: "AUTHORITY_UNAVAILABLE" })],
+      ]);
+    } finally {
+      credentialStoreRead.mockRestore();
+      refreshWarning.mockRestore();
+    }
+
     const rotatedResponse = await test.router.fetch(refresh(initial.refreshCredential));
     expect(rotatedResponse.status).toBe(200);
     const rotated = await rotatedResponse.json() as typeof initial;
     expect(rotated.refreshCredential).not.toBe(initial.refreshCredential);
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      expect((await test.router.fetch(refresh(initial.refreshCredential))).status).toBe(401);
+      const invalid = await test.router.fetch(refresh(initial.refreshCredential));
+      expect(invalid.status).toBe(401);
+      expect((await invalid.text())).not.toContain(initial.refreshCredential);
       expect(warning.mock.calls).toEqual([[JSON.stringify({
         event: "instance_access_refresh_rejected",
         reason: "INVALID_CREDENTIAL",
@@ -710,6 +746,12 @@ describe("Gateway mutation authorization endpoint", () => {
       warning.mockRestore();
     }
 
+    test.writeAllowed = false;
+    const blockedRefresh = await test.router.fetch(refresh(rotated.refreshCredential));
+    expect(blockedRefresh.status).toBe(403);
+    expect(await blockedRefresh.json()).toMatchObject({ error: { code: "FORBIDDEN" } });
+    test.writeAllowed = true;
+
     const revoked = await test.router.fetch(new Request(`${ORIGIN}/internal/instance-access/revoke`, {
       method: "POST",
       headers: serviceHeaders,
@@ -717,7 +759,9 @@ describe("Gateway mutation authorization endpoint", () => {
     }));
     expect(revoked.status).toBe(200);
     expect(await revoked.json()).toEqual({ contractVersion: "instance-access/v2", revoked: true });
-    expect((await test.router.fetch(refresh(rotated.refreshCredential))).status).toBe(401);
+    const revokedRefresh = await test.router.fetch(refresh(rotated.refreshCredential));
+    expect(revokedRefresh.status).toBe(401);
+    expect((await revokedRefresh.text())).not.toContain(rotated.refreshCredential);
   });
 
   it("stops refreshing the old runtime grant once observation leaves the current ready runtime", async () => {

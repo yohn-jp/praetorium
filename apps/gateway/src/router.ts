@@ -897,7 +897,13 @@ async function handleInstanceAccessRefresh(request: Request, context: GatewayCon
       event: "instance_access_refresh_rejected",
       reason: refreshed.error.code,
     }));
-    return errorResponse(request, "UNAUTHENTICATED", "refresh credential is invalid or access has changed", context.requestId);
+    if (refreshed.error.code === "INVALID_CREDENTIAL" || refreshed.error.code === "SESSION_INVALID") {
+      return errorResponse(request, "UNAUTHENTICATED", "refresh credential is invalid or expired", context.requestId);
+    }
+    if (refreshed.error.code === "INSTANCE_BLOCKED") {
+      return errorResponse(request, "FORBIDDEN", "current repository access is required", context.requestId);
+    }
+    return unavailable(request, context);
   }
   return json({ contractVersion: "instance-access/v2", ...refreshed.value });
 }

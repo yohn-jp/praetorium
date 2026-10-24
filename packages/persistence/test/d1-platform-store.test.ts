@@ -139,6 +139,130 @@ describe("D1PlatformStore with SQLite transactions", () => {
     ).resolves.toBeNull();
   });
 
+  it("rejects a concurrent desired-state mutation while a claimed operation is still active", async () => {
+    const { database, registry, instances, operations } = createPlatform();
+    const resolved = await registry.resolveOrCreate(registryInput("instance-active-fence", "request-active-fence"));
+    seedDeployment(database, resolved.binding.instanceId);
+    const startInput = {
+      repositoryId: resolved.binding.repositoryId,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "running" as const,
+      actorId: "user-1",
+      idempotencyKey: "active-start",
+      requestId: "active-start-request",
+      now: 100,
+    };
+    const started = await instances.requestDesiredState(startInput);
+    if (!started.operation) throw new Error("expected start operation");
+    const claimed = await operations.claimNext({
+      workerId: "provisioner-active-fence",
+      clusterId: "cluster-a",
+      now: 101,
+    });
+    if (!claimed) throw new Error("expected claimed start operation");
+
+    const secondController = new InstanceService(
+      new D1PlatformStore(new SqliteD1Database(database)),
+      () => "competing-stop-operation",
+    );
+    await expect(secondController.requestDesiredState({
+      repositoryId: resolved.binding.repositoryId,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "stopped",
+      expectedGeneration: started.instance.generation,
+      actorId: "user-2",
+      idempotencyKey: "active-stop",
+      requestId: "active-stop-request",
+      now: 102,
+    })).rejects.toBeInstanceOf(RepositoryStateConflict);
+
+    // A replay of the original request remains idempotent while its operation is active.
+    await expect(instances.requestDesiredState(startInput)).resolves.toMatchObject({
+      replayed: true,
+      operation: { id: started.operation.id, status: "claimed" },
+    });
+    expect(await instances.getByInstanceId(resolved.binding.instanceId)).toMatchObject({
+      instance: { desiredState: "running", generation: started.instance.generation },
+    });
+    expect(database.prepare("SELECT count(*) AS n FROM operations WHERE instance_id = ?")
+      .get(resolved.binding.instanceId)).toMatchObject({ n: 1 });
+    expect(await operations.getById(started.operation.id)).toMatchObject({ status: "claimed" });
+  });
+
+  it("fences stale worker heartbeat and checkpoint after legacy supersession and treats expired work as active", async () => {
+    const { database, registry, instances, operations } = createPlatform();
+    const resolved = await registry.resolveOrCreate(registryInput("instance-superseded-fence", "request-superseded-fence"));
+    seedDeployment(database, resolved.binding.instanceId);
+    const started = await instances.requestDesiredState({
+      repositoryId: resolved.binding.repositoryId,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "running",
+      actorId: "user-1",
+      idempotencyKey: "superseded-start",
+      requestId: "superseded-start-request",
+      now: 100,
+    });
+    if (!started.operation) throw new Error("expected start operation");
+    const claimed = await operations.claimNext({
+      workerId: "provisioner-superseded-fence",
+      clusterId: "cluster-a",
+      now: 101,
+    });
+    if (!claimed) throw new Error("expected claimed start operation");
+    const lease = {
+      operationId: claimed.operation.id,
+      workerId: claimed.operation.workerId!,
+      leaseToken: claimed.operation.leaseToken!,
+      leaseEpoch: claimed.operation.leaseEpoch,
+    };
+
+    // Recreate the persisted state left by a previously superseded worker.
+    database.prepare(
+      `UPDATE logical_instances SET generation = generation + 1, runtime_epoch = runtime_epoch + 1,
+         desired_state = 'stopped' WHERE instance_id = ?`,
+    ).run(resolved.binding.instanceId);
+    await expect(operations.heartbeat({ ...lease, sequence: 1, now: 102 })).rejects
+      .toBeInstanceOf(OperationFenceConflict);
+    await expect(operations.heartbeat({ ...lease, sequence: 0, now: 102 })).rejects
+      .toBeInstanceOf(OperationFenceConflict);
+    await expect(operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 0,
+      phase: "starting-target",
+      checkpoint: {},
+      now: 102,
+    })).rejects.toBeInstanceOf(OperationFenceConflict);
+
+    // Expired claimed/running rows still block new mutation; expiry is not proof that
+    // the old provider side effect stopped.
+    database.prepare("UPDATE operations SET lease_expires_at = 101 WHERE operation_id = ?")
+      .run(claimed.operation.id);
+    const snapshot = await instances.getByInstanceId(resolved.binding.instanceId);
+    if (!snapshot) throw new Error("expected current instance");
+    const secondController = new InstanceService(
+      new D1PlatformStore(new SqliteD1Database(database)),
+      () => "after-expired-stale-start",
+    );
+    await expect(secondController.requestDesiredState({
+      repositoryId: resolved.binding.repositoryId,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "running",
+      expectedGeneration: snapshot.instance.generation,
+      actorId: "user-2",
+      idempotencyKey: "after-expired-stale-start",
+      requestId: "after-expired-stale-start-request",
+      now: 200,
+    })).rejects.toBeInstanceOf(RepositoryStateConflict);
+    expect(await instances.getByInstanceId(resolved.binding.instanceId)).toMatchObject({
+      instance: { desiredState: "stopped", generation: snapshot.instance.generation },
+    });
+    expect(await operations.getById(claimed.operation.id)).toMatchObject({ status: "claimed" });
+  });
+
   it("rejects forceNewRuntime for an empty stopped instance", async () => {
     const { database, registry, instances } = createPlatform();
     const resolved = await registry.resolveOrCreate(registryInput("instance-a", "request-a"));

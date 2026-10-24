@@ -139,7 +139,9 @@ export class InstanceService {
     if (!result) {
       const concurrentReplay = await readReplay(this.store, input, scope, requestHash);
       if (concurrentReplay) return concurrentReplay;
-      throw new RepositoryStateConflict("desired state changed concurrently");
+      throw new RepositoryStateConflict(
+        "desired state changed or an operation is still active; wait for completion or reconciliation, then retry",
+      );
     }
     return result;
   }

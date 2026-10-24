@@ -498,6 +498,11 @@ export class D1PlatformStore implements OperationStore {
            WHERE instance_id = ? AND repository_id = ? AND generation = ?
              AND runtime_epoch = ? AND desired_state = ? AND policy = ?
              AND desired_revision_id IS ? AND reservation_id IS ? AND observed_runtime_epoch IS ?
+             AND NOT EXISTS (
+               SELECT 1 FROM operations prior
+               WHERE prior.instance_id = logical_instances.instance_id
+                 AND prior.status IN ('pending', 'claimed', 'running')
+             )
              AND (? IS NULL OR EXISTS (
                SELECT 1 FROM runtime_reservations current_reservation
                WHERE current_reservation.instance_id = logical_instances.instance_id
@@ -1203,7 +1208,11 @@ export class D1PlatformStore implements OperationStore {
     readonly leaseSeconds: number;
   }): Promise<{ readonly operation: OperationRecord; readonly leaseExpiresAt: number } | null> {
     const current = await this.db
-      .prepare("SELECT * FROM operations WHERE operation_id = ?")
+      .prepare(
+        `SELECT o.* FROM operations o JOIN logical_instances i ON i.instance_id = o.instance_id
+         WHERE o.operation_id = ? AND i.generation = o.generation AND i.runtime_epoch = o.runtime_epoch
+           AND o.status IN ('claimed', 'running')`,
+      )
       .bind(input.operationId)
       .first<OperationRow>();
     if (
@@ -1229,6 +1238,8 @@ export class D1PlatformStore implements OperationStore {
         `UPDATE operations SET status = 'running', report_sequence = ?, lease_expires_at = ?, updated_at = ?
          WHERE operation_id = ? AND worker_id = ? AND lease_token = ? AND lease_epoch = ?
            AND status IN ('claimed', 'running') AND lease_expires_at > ? AND report_sequence = ?
+           AND EXISTS (SELECT 1 FROM logical_instances i WHERE i.instance_id = operations.instance_id
+                       AND i.generation = operations.generation AND i.runtime_epoch = operations.runtime_epoch)
          RETURNING *`,
       )
       .bind(
@@ -1257,6 +1268,8 @@ export class D1PlatformStore implements OperationStore {
           `UPDATE operations SET phase = ?, checkpoint_sequence = ?, checkpoint_json = ?, updated_at = ?
            WHERE operation_id = ? AND worker_id = ? AND lease_token = ? AND lease_epoch = ?
              AND status IN ('claimed', 'running') AND lease_expires_at > ? AND checkpoint_sequence = ?
+             AND EXISTS (SELECT 1 FROM logical_instances i WHERE i.instance_id = operations.instance_id
+                         AND i.generation = operations.generation AND i.runtime_epoch = operations.runtime_epoch)
              AND (NOT EXISTS (
                SELECT 1 FROM logical_instances i WHERE i.runtime_authority_operation_id = operations.operation_id
              ) OR ? NOT IN ('starting-target', 'target-ready', 'route-activated', 'complete') OR (

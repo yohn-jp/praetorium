@@ -39,6 +39,7 @@ jobs:
           node --check scripts/deploy-cloudflare.mjs scripts/deploy-platform.mjs scripts/deploy-k3s.mjs
           node --check scripts/service-image-publication.mjs
           node --check scripts/ci/source-stable-fixture.mjs
+          node --test --test-name-pattern="owner admission guard|stable public origin" tests/e2e/browser-entry.test.mjs
           node scripts/ci/verify-workerd-runtime-identity.mjs
 
       - name: Install disposable Chromium for operator console verification

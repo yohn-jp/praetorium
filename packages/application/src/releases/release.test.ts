@@ -664,4 +664,38 @@ describe("stable release candidate application", () => {
     expect(store.workflows.get(item.id)?.cleanupEvidence).toBeNull();
     expect(store.channel.currentReleaseId).toBeNull();
   });
+
+  it("records a guarded canary stop blocker without fabricating cleanup or Stable", async () => {
+    const store = new MemoryReleaseStore();
+    const clock = new MutableClock();
+    const item = candidate("0.3.4");
+    store.candidates.set(item.id,item);
+    await store.commitDiscoveryPage({
+      expectedRevision:0,expectedCursor:null,page:{items:[item],nextCursor:null},at:clock.now(),
+    });
+    store.workflows.set(item.id, {
+      ...store.workflows.get(item.id)!,
+      state:"canary_cleanup",canaryRuntimeId:"canary-1",
+      canaryOperationId:"op-start-1",cleanupDisposition:"promote",
+    });
+    let stopCalls=0;
+    const deps=promotionDeps(store,clock,{
+      canaryRuntime:{
+        ensureRunning:async()=>({runtimeId:"canary-1",operationId:"op-start-1"}),
+        observe:async()=>({kind:"unknown"}),
+        stop:async()=>{stopCalls++;return {kind:"blocked"} as const;},
+      },
+    });
+    await advanceOnce(store,deps);
+    const current=store.workflows.get(item.id)!;
+    expect(current.state).toBe("canary_cleanup");
+    expect(current.failureCode).toBe("canary_stop_blocked");
+    expect(current.canaryCleanupComplete).toBe(false);
+    expect(current.cleanupEvidence).toBeNull();
+    expect(current.nextAttemptAt).toBe(clock.nowMs()+5*60*1000);
+    expect(store.channel.currentReleaseId).toBeNull();
+    await advanceOnce(store,deps);
+    expect(stopCalls).toBe(1);
+  });
+
 });

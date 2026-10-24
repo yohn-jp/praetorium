@@ -54,6 +54,7 @@ function historyLabels(spec: RuntimeInstanceSpec): Readonly<Record<string, strin
     [REPOSITORY_LABEL_KEY]: String(spec.repositoryId),
     [CLUSTER_LABEL_KEY]: spec.clusterId,
     [OWNERSHIP_LABEL_KEY]: OWNERSHIP_VERSION,
+    [APPLICATION_LABEL_KEY]: APPLICATION_LABEL_VALUE,
   };
 }
 

@@ -109,8 +109,6 @@ export interface KubernetesRuntimeProviderOptions {
   readonly now?: () => number;
   readonly maxCapacityAgeMs: number;
   readonly maxActivationEvidenceAgeMs?: number;
-  /** Remains false until the producer contract proves safe-history quiescence. */
-  readonly privateHistoryWriteFreezeProven?: boolean;
   /** Operator-owned Docker config; never part of a RuntimeInstanceSpec. */
   readonly imagePullConfigJson?: string;
 }
@@ -298,7 +296,10 @@ function namespaceOwnershipLabels(identity: InstanceIdentity): Readonly<Record<s
 }
 
 function historyLabels(identity: InstanceIdentity): Readonly<Record<string, string>> {
-  return namespaceOwnershipLabels(identity);
+  return {
+    ...namespaceOwnershipLabels(identity),
+    "app.kubernetes.io/name": "scriptorium",
+  };
 }
 
 function historyClaimName(identity: InstanceIdentity): string {
@@ -730,7 +731,6 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
   private readonly namespacePrefix: string;
   private readonly now: () => number;
   private readonly maxActivationEvidenceAgeMs: number;
-  private readonly privateHistoryWriteFreezeProven: boolean;
 
   constructor(private readonly options: KubernetesRuntimeProviderOptions) {
     this.namespacePrefix = validateNamespace(options.namespacePrefix);
@@ -745,7 +745,6 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       );
     }
     this.maxActivationEvidenceAgeMs = options.maxActivationEvidenceAgeMs ?? 30_000;
-    this.privateHistoryWriteFreezeProven = options.privateHistoryWriteFreezeProven === true;
     if (
       !Number.isSafeInteger(this.maxActivationEvidenceAgeMs) ||
       this.maxActivationEvidenceAgeMs < 1
@@ -905,8 +904,13 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
     spec: StoppedInstanceSpec,
     signal: AbortSignal,
     beforeEffect: RuntimeEffectGuard,
+    drainLegacyHistory?: (input: {
+      readonly podName: string;
+      readonly podUid: string;
+    }) => Promise<void>,
   ): Promise<void> {
     validateIdentity(spec, this.options.clusterId);
+    if (spec.scriptoriumAssignment === undefined) return;
     const initial = await this.inspect(spec, signal);
     if (initial.writerCensus.queriedPodCount === 0) return;
     const firstWriter = initial.writerCensus.pods[0];
@@ -1005,16 +1009,18 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
         "legacy history Pod conflicts with an existing stable PVC",
         "terminal",
       );
-    if (!this.privateHistoryWriteFreezeProven)
+    if (drainLegacyHistory === undefined)
       throw new RuntimeProviderError(
         "unavailable",
-        "producer contract does not yet prove private-history writes freeze during safe quiesce",
+        "a fenced old-epoch empty-job drain is required before legacy history migration",
         "retryable",
       );
 
     const readSnapshot = this.options.api.readHistorySnapshot;
     if (readSnapshot === undefined)
       throw new RuntimeProviderError("misconfigured", "private-history snapshot reader is unavailable", "terminal");
+    await beforeEffect();
+    await drainLegacyHistory({ podName: firstWriter.name, podUid: firstWriter.uid });
     await beforeEffect();
     const firstSnapshot = parseHistorySnapshot(
       await readSnapshot.call(this.options.api, {

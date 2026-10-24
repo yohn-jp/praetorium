@@ -4,6 +4,8 @@ export const HISTORY_CONTRACT_VERSION = "v1";
 export const MAX_HISTORY_BYTES = 512 * 1024;
 export const MAX_HISTORY_MANIFEST_BYTES = 768 * 1024;
 export const MAX_HISTORY_EXEC_STDOUT_BYTES = 1024 * 1024;
+export const MAX_HISTORY_ENTRIES = 4096;
+export const MAX_HISTORY_DEPTH = 16;
 export const HISTORY_MARKER_NAME = ".praetorium-initialized";
 export const HISTORY_SEED_KEY = "snapshot.json";
 
@@ -137,6 +139,8 @@ const crypto = require('node:crypto');
 const root = process.argv[1];
 const podUid = process.argv[2];
 const maxBytes = 512 * 1024;
+const maxEntries = 4096;
+const maxDepth = 16;
 const segment = /^[A-Za-z0-9._-]{1,128}$/;
 if (root !== '/data/history') throw new Error('invalid source path');
 if (typeof podUid !== 'string' || !/^[A-Za-z0-9-]{1,128}$/.test(podUid)) throw new Error('invalid source pod identity');
@@ -144,16 +148,30 @@ const rootStat = fs.lstatSync(root);
 if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('history root is not a real directory');
 let total = 0;
 let count = 0;
+let entryCount = 0;
 const files = [];
-function walk(directory, relative) {
-  for (const name of fs.readdirSync(directory).sort()) {
+function names(directory) {
+  const handle = fs.opendirSync(directory);
+  const result = [];
+  try {
+    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+      entryCount += 1;
+      if (entryCount > maxEntries) throw new Error('history contains too many entries');
+      result.push(entry.name);
+    }
+  } finally { handle.closeSync(); }
+  return result.sort();
+}
+function walk(directory, relative, depth) {
+  if (depth > maxDepth) throw new Error('history directory nesting is too deep');
+  for (const name of names(directory)) {
     if (!segment.test(name) || name === '.' || name === '..') throw new Error('unsafe history path');
     const rel = relative ? relative + '/' + name : name;
     if (rel.length > 512) throw new Error('history path is too long');
     const file = path.join(directory, name);
     const before = fs.lstatSync(file);
     if (before.isSymbolicLink()) throw new Error('history links are not allowed');
-    if (before.isDirectory()) { walk(file, rel); continue; }
+    if (before.isDirectory()) { walk(file, rel, depth + 1); continue; }
     if (!before.isFile() || before.nlink !== 1) throw new Error('history entry is not a regular file');
     if (before.size > maxBytes - total) throw new Error('history exceeds the 512 KiB bound');
     count += 1;
@@ -171,7 +189,7 @@ function walk(directory, relative) {
     } finally { fs.closeSync(fd); }
   }
 }
-walk(root, '');
+walk(root, '', 0);
 files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 const manifest = { schemaVersion: 1, sourcePodUid: podUid, files };
 const canonical = JSON.stringify(manifest);
@@ -198,6 +216,8 @@ const expected = {
   claimName: process.env.PRAETORIUM_HISTORY_CLAIM_NAME,
 };
 const segment = /^[A-Za-z0-9._-]{1,128}$/;
+const maxEntries = 4096;
+const maxDepth = 16;
 const safePath = value => typeof value === 'string' && value.length <= 512 && !value.startsWith('/') && !value.includes('\\') && !value.includes('\0') && value.split('/').every(part => part.length > 0 && part !== '.' && part !== '..' && segment.test(part));
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const stat = fs.lstatSync(root);
@@ -210,19 +230,60 @@ try {
   fs.mkdirSync(privateRoot, { mode: 0o700 });
 }
 fs.chmodSync(privateRoot, 0o700);
-function enforcePrivateModes(directory) {
-  for (const name of fs.readdirSync(directory)) {
-    const target = path.join(directory, name);
-    const item = fs.lstatSync(target);
-    if (item.isSymbolicLink()) throw new Error('private history links are not allowed');
-    if (item.isDirectory()) {
-      enforcePrivateModes(target);
-      fs.chmodSync(target, 0o700);
-    } else if (item.isFile() && item.nlink === 1) {
-      fs.chmodSync(target, 0o600);
-    } else {
-      throw new Error('private history entry is not a regular file or directory');
+function fsyncDirectory(directory) {
+  const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+function fsyncFile(file) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+function fsyncPrivateDirectories(directory, depth = 0) {
+  if (depth > maxDepth) throw new Error('private history directory nesting is too deep');
+  const handle = fs.opendirSync(directory);
+  const subdirectories = [];
+  let entries = 0;
+  try {
+    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+      entries += 1;
+      if (entries > maxEntries) throw new Error('private history contains too many entries');
+      const target = path.join(directory, entry.name);
+      const item = fs.lstatSync(target);
+      if (item.isDirectory() && !item.isSymbolicLink()) subdirectories.push(target);
     }
+  } finally { handle.closeSync(); }
+  for (const child of subdirectories) fsyncPrivateDirectories(child, depth + 1);
+  fsyncDirectory(directory);
+}
+fsyncDirectory(privateRoot);
+fsyncDirectory(root);
+function enforcePrivateModes(directory) {
+  const stack = [{ directory, depth: 0 }];
+  let entries = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    fs.chmodSync(current.directory, 0o700);
+    const handle = fs.opendirSync(current.directory);
+    try {
+      for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+        entries += 1;
+        if (entries > maxEntries) throw new Error('private history contains too many entries');
+        const target = path.join(current.directory, entry.name);
+        if (path.relative(privateRoot, target).length > 512) throw new Error('private history path is too long');
+        const item = fs.lstatSync(target);
+        if (item.isSymbolicLink()) throw new Error('private history links are not allowed');
+        if (item.isDirectory()) {
+          if (current.depth >= maxDepth) throw new Error('private history directory nesting is too deep');
+          stack.push({ directory: target, depth: current.depth + 1 });
+          fs.chmodSync(target, 0o700);
+        } else if (item.isFile() && item.nlink === 1) {
+          fs.chmodSync(target, 0o600);
+          fsyncFile(target);
+        } else {
+          throw new Error('private history entry is not a regular file or directory');
+        }
+      }
+    } finally { handle.closeSync(); }
   }
 }
 if (fs.existsSync(marker)) {
@@ -231,14 +292,18 @@ if (fs.existsSync(marker)) {
   const state = JSON.parse(fs.readFileSync(marker, 'utf8'));
   if (state.schemaVersion !== 1 || state.instanceId !== expected.instanceId || state.repositoryId !== expected.repositoryId || state.clusterId !== expected.clusterId || state.claimName !== expected.claimName || typeof state.seedManifestSha256 !== 'string') throw new Error('history volume belongs to another assignment');
   fs.chmodSync(marker, 0o600);
+  fsyncFile(marker);
   if (fs.existsSync(progressMarker)) {
     const progressStat = fs.lstatSync(progressMarker);
     if (!progressStat.isFile() || progressStat.isSymbolicLink()) throw new Error('history restore progress marker is unsafe');
     const progress = JSON.parse(fs.readFileSync(progressMarker, 'utf8'));
     if (progress.schemaVersion !== 1 || progress.instanceId !== expected.instanceId || progress.repositoryId !== expected.repositoryId || progress.clusterId !== expected.clusterId || progress.claimName !== expected.claimName || progress.seedManifestSha256 !== state.seedManifestSha256) throw new Error('history restore progress does not match its completion marker');
     fs.unlinkSync(progressMarker);
+    fsyncDirectory(root);
   }
   enforcePrivateModes(privateRoot);
+  fsyncPrivateDirectories(privateRoot);
+  fsyncDirectory(root);
   process.exit(0);
 }
 const seedStat = fs.lstatSync(seedPath);
@@ -254,14 +319,18 @@ if (fs.existsSync(progressMarker)) {
   const existing = JSON.parse(fs.readFileSync(progressMarker, 'utf8'));
   if (JSON.stringify(existing) !== JSON.stringify(progressState)) throw new Error('history restore progress belongs to another seed');
 } else {
-  if (fs.readdirSync(privateRoot).length !== 0) throw new Error('uninitialized history volume is not empty');
+  const handle = fs.opendirSync(privateRoot);
+  try { if (handle.readSync() !== null) throw new Error('uninitialized history volume is not empty'); }
+  finally { handle.closeSync(); }
   const progressFd = fs.openSync(progressMarker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
   try { fs.writeFileSync(progressFd, JSON.stringify(progressState)); fs.fsyncSync(progressFd); } finally { fs.closeSync(progressFd); }
+  fsyncDirectory(root);
 }
 let total = 0;
 let previous = '';
 const expectedFiles = new Set();
 const expectedDirectories = new Set();
+let verifiedEntryCount = 0;
 for (const file of seed.files) {
   if (!file || Object.keys(file).sort().join(',') !== 'contentBase64,path,sha256' || !safePath(file.path) || file.path === '.praetorium-initialized' || file.path === '.praetorium-restore-in-progress' || file.path <= previous || typeof file.contentBase64 !== 'string' || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)) throw new Error('history seed file entry is invalid');
   const bytes = Buffer.from(file.contentBase64, 'base64');
@@ -284,7 +353,7 @@ for (const file of seed.files) {
   expectedFiles.add(file.path);
   try {
     const existingStat = fs.lstatSync(target);
-    if (!existingStat.isFile() || existingStat.isSymbolicLink() || existingStat.nlink !== 1 || digest(fs.readFileSync(target)) !== file.sha256) throw new Error('existing history file differs from its seed');
+    if (!existingStat.isFile() || existingStat.isSymbolicLink() || existingStat.nlink !== 1 || existingStat.size !== bytes.length || digest(fs.readFileSync(target)) !== file.sha256) throw new Error('existing history file differs from its seed');
   } catch (error) {
     if (error && error.code !== 'ENOENT') throw error;
     const fd = fs.openSync(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
@@ -293,7 +362,17 @@ for (const file of seed.files) {
   previous = file.path;
 }
 function verifyTree(directory, relative = '') {
-  for (const name of fs.readdirSync(directory)) {
+  if (relative.split('/').filter(Boolean).length > maxDepth) throw new Error('private history directory nesting is too deep');
+  const handle = fs.opendirSync(directory);
+  const names = [];
+  try {
+    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+      verifiedEntryCount += 1;
+      if (verifiedEntryCount > maxEntries) throw new Error('private history contains too many entries');
+      names.push(entry.name);
+    }
+  } finally { handle.closeSync(); }
+  for (const name of names) {
     const rel = relative ? relative + '/' + name : name;
     if (relative === '' && (name === '.praetorium-initialized' || name === '.praetorium-restore-in-progress')) continue;
     const itemPath = path.join(directory, name);
@@ -301,16 +380,21 @@ function verifyTree(directory, relative = '') {
     if (item.isSymbolicLink()) throw new Error('unrecognized history link');
     if (item.isDirectory()) {
       if (!expectedDirectories.has(rel)) throw new Error('unrecognized history directory');
+      if (rel.split('/').length > maxDepth) throw new Error('private history directory nesting is too deep');
       verifyTree(itemPath, rel);
     } else if (!item.isFile() || !expectedFiles.has(rel)) throw new Error('unrecognized history file');
   }
 }
 verifyTree(privateRoot);
+enforcePrivateModes(privateRoot);
+fsyncPrivateDirectories(privateRoot);
+fsyncDirectory(root);
 const state = { schemaVersion: 1, ...expected, seedManifestSha256: seed.manifestSha256, sourcePodUid: seed.sourcePodUid };
 const markerFd = fs.openSync(marker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
 try { fs.writeFileSync(markerFd, JSON.stringify(state)); fs.fsyncSync(markerFd); } finally { fs.closeSync(markerFd); }
+fsyncDirectory(root);
 fs.unlinkSync(progressMarker);
-enforcePrivateModes(privateRoot);
+fsyncDirectory(root);
 `;
 
 /** Fixed read-only reader for the marker under the owned /history PVC. */
@@ -320,17 +404,6 @@ const privateRoot = '/history/private';
 const rootStat = fs.lstatSync(privateRoot);
 if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || (rootStat.mode & 0o777) !== 0o700) throw new Error('private history root mode is invalid');
 const path = require('node:path');
-function verifyModes(directory) {
-  for (const name of fs.readdirSync(directory)) {
-    const target = path.join(directory, name);
-    const item = fs.lstatSync(target);
-    if (item.isSymbolicLink() || (!item.isDirectory() && (!item.isFile() || item.nlink !== 1))) throw new Error('private history entry is unsafe');
-    if (item.isDirectory()) verifyModes(target);
-    const expectedMode = item.isDirectory() ? 0o700 : 0o600;
-    if ((item.mode & 0o777) !== expectedMode) throw new Error('private history entry mode is invalid');
-  }
-}
-verifyModes(privateRoot);
 const file = path.join('/history', '.praetorium-initialized');
 const stat = fs.lstatSync(file);
 if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4096 || (stat.mode & 0o777) !== 0o600) throw new Error('history ownership marker is invalid');

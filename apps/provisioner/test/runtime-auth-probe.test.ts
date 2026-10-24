@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AccessGrantId, issueAccessGrant, type SigningKey } from "../../../packages/auth/src/index.js";
 import { newAccessGrantId } from "../../../packages/domain/src/ids.js";
-import type { RuntimeAssignment } from "@praetorium/application/lifecycle";
+import type { RuntimeAssignment, WriterCensus } from "@praetorium/application/lifecycle";
 import { HttpRuntimeAuthAcceptanceProbe } from "../src/runtime-auth-probe.js";
 
 const NOW = Date.parse("2026-10-17T00:00:10.000Z");
@@ -63,7 +63,7 @@ function assignment(): RuntimeAssignment {
   };
 }
 
-async function makeGrantSet(issuedAt = NOW) {
+async function makeGrantSet(issuedAt = NOW, ttlSeconds = 60) {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const signingKey: SigningKey = { kid: "probe-test-key", privateKey: pair.privateKey };
   const common = {
@@ -76,7 +76,7 @@ async function makeGrantSet(issuedAt = NOW) {
     sessionRevision: 0,
     authorizationRevision: 4,
     now: new Date(issuedAt).toISOString(),
-    ttlSeconds: 60,
+    ttlSeconds,
   } as const;
   const make = (repositoryId: number, runtimeEpoch: number) => issueAccessGrant(signingKey, {
     ...common,
@@ -110,7 +110,145 @@ async function makeGrantSet(issuedAt = NOW) {
   };
 }
 
+function writerCensus(observedAt = NOW): WriterCensus {
+  return {
+    complete: true,
+    providerObservationId: "sha256:provider-observation",
+    observedAt: new Date(observedAt).toISOString(),
+    matchedWriterCount: 1,
+    writers: [{ runtimeEpoch: RUNTIME_EPOCH, phase: "running", identities: ["pod-uid-1"] }],
+  };
+}
+
 describe("HttpRuntimeAuthAcceptanceProbe internal Service transport", () => {
+  it("uses one short read cookie grant to prove the old-epoch jobs list is empty", async () => {
+    const grants = await makeGrantSet(NOW, 30);
+    let clock = NOW;
+    const requests: Array<{ readonly url: URL; readonly init: RequestInit }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = input instanceof URL ? input : new URL(input.toString());
+      requests.push({ url, init: init ?? {} });
+      if (url.origin === CONTROL_PLANE_ORIGIN) {
+        expect(url.pathname).toBe("/internal/provisioner/operations/op-history-drain/history-drain-grant");
+        expect(init?.method).toBe("POST");
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        expect(Object.keys(body).sort()).toEqual([
+          "census",
+          "expectedCheckpointSequence",
+          "leaseEpoch",
+          "leaseToken",
+          "workerId",
+        ]);
+        expect(body).toMatchObject({
+          workerId: "worker-1",
+          leaseToken: "lease-token-history-drain",
+          leaseEpoch: 5,
+          expectedCheckpointSequence: 17,
+          census: writerCensus(),
+        });
+        clock = NOW + 1_000;
+        return Response.json({
+          issuer: grants.response.issuer,
+          jwksUrl: grants.response.jwksUrl,
+          origin: PUBLIC_ORIGIN,
+          audience: grants.response.audience,
+          authorizationRevision: grants.response.authorizationRevision,
+          grant: grants.response.validGrant,
+          permissions: ["read"],
+        }, { headers: { "Cache-Control": "no-store" } });
+      }
+      expect(url.origin).toBe(SERVICE_ORIGIN);
+      expect(url.pathname).toBe("/api/jobs");
+      expect(init?.method ?? "GET").toBe("GET");
+      expect(init?.redirect).toBe("error");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Origin")).toBe(PUBLIC_ORIGIN);
+      expect(headers.get("X-Forwarded-Proto")).toBe("https");
+      expect(headers.get("Authorization")).toBeNull();
+      expect(headers.get("Cookie")).toBe(
+        `__Host-praetorium_access=${encodeURIComponent(grants.response.validGrant)}`,
+      );
+      return new Response("[]", { status: 200, headers: { "Content-Type": "application/json; charset=utf-8" } });
+    };
+    const probe = new HttpRuntimeAuthAcceptanceProbe({
+      controlPlaneUrl: CONTROL_PLANE_ORIGIN,
+      provisionerCredential: CONTROL_CREDENTIAL,
+      workerId: "worker-1",
+      clusterId: "cluster-1",
+      fetch: fetcher,
+      now: () => clock,
+      timeoutMs: 1_000,
+      scope: () => ({
+        mode: "lease",
+        operationId: "op-history-drain",
+        workerId: "worker-1",
+        leaseToken: "lease-token-history-drain",
+        leaseEpoch: 5,
+      }),
+    }).withEndpointResolver(async () => SERVICE_ORIGIN);
+    let effects = 0;
+
+    await probe.drainLegacyHistory(assignment(), writerCensus(), 17, async () => { effects += 1; });
+
+    expect(requests).toHaveLength(2);
+    expect(effects).toBe(3);
+  });
+
+  it("fails closed on stale census, nonempty jobs, and rejected grants", async () => {
+    let calls = 0;
+    const staleCensusProbe = new HttpRuntimeAuthAcceptanceProbe({
+      controlPlaneUrl: CONTROL_PLANE_ORIGIN,
+      provisionerCredential: CONTROL_CREDENTIAL,
+      workerId: "worker-1",
+      clusterId: "cluster-1",
+      fetch: async () => { calls += 1; return Response.json({}); },
+      now: () => NOW,
+      scope: () => ({ mode: "lease", operationId: "op-history-drain", workerId: "worker-1", leaseToken: "lease-token-history-drain", leaseEpoch: 5 }),
+    }).withEndpointResolver(async () => SERVICE_ORIGIN);
+    await expect(staleCensusProbe.drainLegacyHistory(
+      assignment(), writerCensus(NOW - 31_000), 17, async () => undefined,
+    )).rejects.toThrow("runtime_history_drain_fence_invalid");
+    expect(calls).toBe(0);
+
+    const grants = await makeGrantSet(NOW, 30);
+    const leaseOptions = {
+      controlPlaneUrl: CONTROL_PLANE_ORIGIN,
+      provisionerCredential: CONTROL_CREDENTIAL,
+      workerId: "worker-1",
+      clusterId: "cluster-1",
+      now: () => NOW + 1_000,
+      scope: () => ({ mode: "lease" as const, operationId: "op-history-drain", workerId: "worker-1", leaseToken: "lease-token-history-drain", leaseEpoch: 5 }),
+    };
+    const rejectedGrant = new HttpRuntimeAuthAcceptanceProbe({
+      ...leaseOptions,
+      fetch: async () => Response.json({ error: "denied" }, { status: 409 }),
+    }).withEndpointResolver(async () => SERVICE_ORIGIN);
+    await expect(rejectedGrant.drainLegacyHistory(
+      assignment(), writerCensus(), 17, async () => undefined,
+    )).rejects.toMatchObject({ code: "runtime_history_drain_authority_rejected", status: 409 });
+
+    const nonemptyJobs = new HttpRuntimeAuthAcceptanceProbe({
+      ...leaseOptions,
+      fetch: async (input) => {
+        const url = input instanceof URL ? input : new URL(input.toString());
+        return url.origin === CONTROL_PLANE_ORIGIN
+          ? Response.json({
+              issuer: grants.response.issuer,
+              jwksUrl: grants.response.jwksUrl,
+              origin: PUBLIC_ORIGIN,
+              audience: grants.response.audience,
+              authorizationRevision: grants.response.authorizationRevision,
+              grant: grants.response.validGrant,
+              permissions: ["read"],
+            }, { headers: { "Cache-Control": "no-store" } })
+          : Response.json([{ id: "running-job" }]);
+      },
+    }).withEndpointResolver(async () => SERVICE_ORIGIN);
+    await expect(nonemptyJobs.drainLegacyHistory(
+      assignment(), writerCensus(), 17, async () => undefined,
+    )).rejects.toThrow("runtime_history_drain_jobs_not_empty");
+  });
+
   it("accepts grants minted during the authority request and probes routes before public activation", async () => {
     const grantIssueTime = NOW + 1_500;
     const grants = await makeGrantSet(grantIssueTime);

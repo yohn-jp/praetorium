@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { RuntimeAssignment } from "@praetorium/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   KubernetesRuntimeProvider,
   createKubernetesResourceRenderer,
@@ -176,6 +177,7 @@ class FakeKubernetesApi implements KubernetesApi {
   readonly gets: KubernetesResourceReference[] = [];
   readonly deletes: KubernetesResourceReference[] = [];
   readonly historySnapshotCalls: Array<{ readonly podName: string; readonly sourcePodUid: string }> = [];
+  readonly historyEvents: string[] = [];
   readonly deletePreconditions: Array<{
     readonly reference: KubernetesResourceReference;
     readonly preconditions: KubernetesObjectPreconditions;
@@ -272,7 +274,10 @@ class FakeKubernetesApi implements KubernetesApi {
     readonly sourcePodUid: string;
   }): Promise<string> {
     this.historySnapshotCalls.push(input);
-    return "{}";
+    this.historyEvents.push("snapshot");
+    const manifest = { schemaVersion: 1, sourcePodUid: input.sourcePodUid, files: [] };
+    const manifestSha256 = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+    return JSON.stringify({ ...manifest, manifestSha256 });
   }
 
   async create(resource: KubernetesResource): Promise<unknown> {
@@ -587,7 +592,7 @@ describe("Kubernetes runtime provider", () => {
     expect(api.objects.has(key("PersistentVolumeClaim", NAMESPACE, `${DEPLOYMENT}-history`))).toBe(false);
   });
 
-  it("fails closed before stopping a legacy history writer while quiesce freeze is unproven", async () => {
+  it("fails closed before stopping a legacy history writer without an epoch-scoped drain", async () => {
     const api = new FakeKubernetesApi();
     addLegacyWriter(api);
     await expect(
@@ -596,10 +601,28 @@ describe("Kubernetes runtime provider", () => {
         new AbortController().signal,
         async () => undefined,
       ),
-    ).rejects.toThrow("producer contract does not yet prove private-history writes freeze");
+    ).rejects.toThrow("a fenced old-epoch empty-job drain is required");
     expect(api.historySnapshotCalls).toHaveLength(0);
     expect(api.writes).toHaveLength(0);
     expect(api.deletes).toHaveLength(0);
+  });
+
+  it("drains the exact legacy writer before taking and retaining the stable snapshot", async () => {
+    const api = new FakeKubernetesApi();
+    addLegacyWriter(api);
+    const drained = vi.fn(async () => { api.historyEvents.push("drain"); });
+    await provider(api).preserveHistoryBeforeStop(
+      hostedSpec(),
+      new AbortController().signal,
+      async () => undefined,
+      drained,
+    );
+    expect(drained).toHaveBeenCalledOnce();
+    expect(drained).toHaveBeenCalledWith({ podName: "legacy-writer", podUid: "legacy-pod-uid" });
+    expect(api.historyEvents).toEqual(["drain", "snapshot", "snapshot"]);
+    const seed = record(api.objects.get(key("Secret", NAMESPACE, `${DEPLOYMENT}-history-seed`)));
+    expect(seed.immutable).toBe(true);
+    expect(seed.metadata.labels).toMatchObject({ "app.kubernetes.io/name": "scriptorium" });
   });
 
   it("transfers fields only for an owned exact-epoch stop using resourceVersion and a live effect guard", async () => {
@@ -919,6 +942,7 @@ describe("Kubernetes runtime provider", () => {
           "praetorium.io/repository-id": String(REPOSITORY_ID),
           "arcadia.io/runtime-cluster-id": CLUSTER_ID,
           "arcadia.io/ownership-version": "v1",
+          "app.kubernetes.io/name": "scriptorium",
         },
         annotations: { "praetorium.io/history-contract": "v1" },
       },
@@ -1549,6 +1573,10 @@ describe("Kubernetes runtime provider", () => {
     const runtime = provider(api, targetReservations(), () => 500_000);
     const hosted = hostedSpec();
     await runtime.ensureRunning(hosted, new AbortController().signal, () => undefined);
+    expect(record(api.objects.get(key("PersistentVolumeClaim", NAMESPACE, `${DEPLOYMENT}-history`))).metadata.labels)
+      .toMatchObject({ "app.kubernetes.io/name": "scriptorium" });
+    expect(record(api.objects.get(key("Secret", NAMESPACE, `${DEPLOYMENT}-history-seed`))).metadata.labels)
+      .toMatchObject({ "app.kubernetes.io/name": "scriptorium" });
     api.addWriterPod(hosted);
     const reference = key("Secret", NAMESPACE, `${DEPLOYMENT}-runtime`);
     const before = record(api.objects.get(reference));

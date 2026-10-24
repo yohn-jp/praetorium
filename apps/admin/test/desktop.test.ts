@@ -137,7 +137,7 @@ describe("desktop operator composition", () => {
         items: [release], stableChannel: { currentReleaseId: "rel_stable", revision: 4 },
       }),
     }));
-    expect(overview.indexOf("CURRENT STABLE")).toBeLessThan(overview.indexOf("Active incidents"));
+    expect(overview.indexOf("Active incidents")).toBeLessThan(overview.indexOf("CURRENT STABLE"));
     expect(overview).toContain("sha256:" + "b".repeat(64));
 
     const source: SourceReleaseView = {
@@ -289,7 +289,7 @@ it("keeps both Release and Operation evidence destinations when one audit event 
 });
 
 
-it("does not list superseded Source failures as Active incidents while Stable is still empty", () => {
+it("keeps an independent Source failure active when a different version is admitted", () => {
   const older={...job,id:"sr_00000000-0000-4000-a000-000000000002",version:"0.3.3",tag:"v0.3.3"};
   const newer={...job,id:"sr_00000000-0000-4000-a000-000000000003",
     version:"0.3.4",tag:"v0.3.4",state:"admitted" as const,error:null,retryable:false,
@@ -297,8 +297,8 @@ it("does not list superseded Source failures as Active incidents while Stable is
   const html=renderDesktopConsole(view({section:"overview",
     builds:dependency("GET /v1/operator/source-builds",{items:[older,newer],nextCursor:null})}));
   expect(html).toContain("No release promoted yet");
-  expect(html).not.toContain("SOURCE_BUILD_FAILED");
-  expect(html).toContain("No unresolved failed builds");
+  expect(html).toContain("SOURCE_BUILD_FAILED");
+  expect(html).not.toContain("No unresolved failed builds");
 });
 
 

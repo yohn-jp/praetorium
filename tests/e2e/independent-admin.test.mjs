@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
+import { readFile, mkdir } from "node:fs/promises";
 import { chromium } from "@playwright/test";
+import { SourceBuildDetailSchema } from "../../packages/contracts/dist/index.js";
 import worker from "../../apps/admin/dist/worker.js";
 
 const ADMIN = "https://admin.praetorium.test";
@@ -22,6 +24,21 @@ const HOSTS = [
     disk:{usedBytes:null,totalBytes:null}, reasons:["metrics_unavailable"], schemaVersion:1 },
 ];
 function fixture() {
+  let buildState = "empty";
+  const jobId = "sr_00000000-0000-4000-a000-000000000001";
+  const sourceDetail = () => SourceBuildDetailSchema.parse({
+    job:{id:jobId,sourceId:"scriptorium",releaseId:101,tag:"v1.2.0",version:"1.2.0",commit:"b".repeat(40),
+      state:buildState,attempt:buildState==="queued"?0:1,revision:buildState==="failed"?0:1,
+      error:buildState==="failed"?"SOURCE_BUILD_FAILED":null,admittedReleaseId:buildState==="admitted"?"rel_owned":null,
+      retryable:buildState==="failed"},
+    attempts:[{id:"owned-failed-attempt",attempt:1,revision:0,leaseEpoch:1,state:"failed",stage:"buildkit",
+      startedAt:1792820000000,finishedAt:1792820001000,failureCode:"SOURCE_BUILD_FAILED",evidence:"expired",expiresAt:null,diagnostic:null},
+      ...(buildState==="building"||buildState==="admitted"?[{id:"owned-later-attempt",attempt:1,revision:1,leaseEpoch:2,
+        state:buildState==="building"?"building":"produced",stage:buildState==="building"?"buildkit":"admission",
+        startedAt:1792820010000,finishedAt:buildState==="building"?null:1792820020000,
+        failureCode:null,evidence:"not_recorded",expiresAt:null,diagnostic:null}]:[])],
+    nextCursor:null,evidence:"expired",
+  });
   const calls = { identity:0, control:0, observer:0 };
   const env = {
     ADMIN_ORIGIN: ADMIN, GATEWAY_ORIGIN: GATEWAY,
@@ -39,7 +56,11 @@ function fixture() {
     },
     CONTROL_PLANE: {fetch: async request => {
       calls.control++;
-      const pathname = new URL(request.url).pathname;
+      const pathname = new URL(typeof request === "string" ? request : request.url).pathname;
+      if (buildState !== "empty" && pathname === "/v1/operator/source-builds/"+jobId)
+        return Response.json(sourceDetail());
+      if (buildState !== "empty" && pathname === "/v1/operator/source-builds")
+        return Response.json({items:[sourceDetail().job],nextCursor:null});
       return Response.json(pathname === "/v1/operator/releases"
         ? {items:[],stableChannel:{currentReleaseId:null,revision:0}}
         : {items:[]});
@@ -61,7 +82,7 @@ function fixture() {
         Response.json({error:"not_found"},{status:404});
     }},
   };
-  return {env,calls};
+  return {env,calls,setBuildState:value=>{buildState=value;},jobId};
 }
 async function listen(env) {
   const server = createServer(async (req,res) => {
@@ -88,7 +109,7 @@ async function listen(env) {
   return {server,origin:"http://127.0.0.1:"+address.port};
 }
 test("dedicated Admin Worker protects host telemetry and renders distinct responsive UI", async t=>{
-  const {env,calls}=fixture();
+  const {env,calls,setBuildState,jobId}=fixture();
   const noAuth=await worker.fetch(new Request(ADMIN+"/api/admin/v1/infrastructure/hosts"),env);
   assert.equal(noAuth.status,403);
   assert.equal(calls.observer,0);
@@ -107,13 +128,17 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
 
   const {server,origin}=await listen(env);
   t.after(()=>new Promise(resolve=>server.close(resolve)));
-  const browser=await chromium.launch({headless:true,args:["--no-sandbox","--disable-background-networking"]});
+  const browserEnv = process.env.PRAETORIUM_UI_CHROMIUM_ENV
+    ? JSON.parse(await readFile(process.env.PRAETORIUM_UI_CHROMIUM_ENV, "utf8")) : null;
+  const browser=await chromium.launch({headless:true,
+    ...(browserEnv ? { executablePath: browserEnv.executablePath, env: { ...process.env, LD_LIBRARY_PATH: browserEnv.LD_LIBRARY_PATH } } : {}),
+    args:["--no-sandbox","--disable-background-networking"]});
   t.after(()=>browser.close());
   const context=await browser.newContext();
   const page=await context.newPage();
   const errors=[];
   page.on("pageerror",error=>errors.push(String(error)));
-  for (const [mode,width] of [["mobile",320],["mobile",375],["mobile",390],["mobile",430],["desktop",1440]]) {
+  for (const [mode,width] of [["mobile",320],["mobile",375],["mobile",390],["mobile",430],["desktop",1440],["desktop",1920],["desktop",640]]) {
     await page.setViewportSize({width,height:950});
     const response=await page.goto(origin+"/infrastructure?ui="+mode,{waitUntil:"networkidle"});
     assert.equal(response.status(),200);
@@ -130,6 +155,18 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.ok(dimensions.body<=width+1,mode+" body overflow: "+JSON.stringify(dimensions));
     assert.equal(dimensions.nav,true);
     assert.equal(dimensions.sidebar,mode==="desktop");
+    assert.ok((await page.locator("main").innerText()).includes("Existing runtimes may remain available"));
+    if (process.env.PRAETORIUM_UI_EVIDENCE_DIR) {
+      await mkdir(process.env.PRAETORIUM_UI_EVIDENCE_DIR, {recursive:true});
+      await page.screenshot({path:process.env.PRAETORIUM_UI_EVIDENCE_DIR+"/admin-"+mode+"-"+width+".png", fullPage:true});
+    }
+  }
+  for (const mode of ["desktop", "mobile"]) {
+    await page.goto(origin+"/?ui="+mode);
+    const content = await page.locator("main").innerText();
+    assert.ok(content.includes("No release promoted yet"));
+    assert.ok(!content.includes("OPERATOR_UNAVAILABLE"), "canonical catalog and build fixture must validate");
+    await page.getByRole("link",{name:mode==="desktop"?"Releases":"Releases",exact:true}).first().click();
   }
   // The refresh affordance must retain the selected host and must not claim
   // an unavailable metric is currently being collected.
@@ -143,6 +180,23 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.equal(new URL(page.url()).pathname,"/infrastructure/hosts/builder");
   }
 
+  for (const mode of ["desktop","mobile"]) {
+    await page.setViewportSize({width:mode==="desktop"?1440:390,height:900});
+    for (const state of ["failed","queued","building","admitted"]) {
+      setBuildState(state);
+      await page.goto(origin+"/builds/"+jobId+"?ui="+mode);
+      const text=await page.locator("main").innerText();
+      assert.ok(text.includes("owned-failed-attempt"),"prior failure remains immutable history");
+      assert.ok(text.toLowerCase().includes("expired"),"expired evidence is not a successful empty log");
+      if(state==="failed") {
+        assert.equal(await page.locator('input[name="expectedRevision"]').inputValue(),"0");
+        assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),1);
+      } else assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),0);
+      if(process.env.PRAETORIUM_UI_EVIDENCE_DIR)
+        await page.screenshot({path:process.env.PRAETORIUM_UI_EVIDENCE_DIR+"/admin-"+mode+"-source-"+state+".png",fullPage:true});
+    }
+  }
+  setBuildState("empty");
   // The first touch visit starts as Desktop by policy, then offers a
   // non-forcing Mobile preference backed by the normal cookie.
   const touch = await browser.newContext({

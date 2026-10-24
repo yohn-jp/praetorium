@@ -60,7 +60,7 @@ async function setup(ttlSeconds = 3600) {
     authorize: vi.fn(async () => ({ allowed: true, permissions: ["read", "maintain"], installationId: 52, repositoryId: 41 })),
   };
   const context = {
-    config: { environment: "test", origin: ORIGIN, sessionPepper, sessionTtlSeconds: 3600 },
+    config: { environment: "test", origin: ORIGIN, sessionPepper, sessionTtlSeconds: 3600, adminOrigin: null, adminGithubUserIds: [] },
     env: {}, requestId: "cache-test", requestNow: NOW, sessionStore, githubAccess,
     controlPlane: { getByRepositoryId: vi.fn(async () => null), listReleases: vi.fn(async () => []) },
     getSigningKey: vi.fn(async () => ({ kid: "cache-key-1", privateKey: pair.privateKey })),

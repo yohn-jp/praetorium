@@ -168,7 +168,7 @@ const repository: AccessibleRepository = {
   role: "maintain",
 };
 
-function serviceContext(value: InstanceDashboard = management, repositoryValue: RepositorySnapshot = snapshot) {
+function serviceContext(value: InstanceDashboard = management, repositoryValue: RepositorySnapshot = snapshot, operator = false) {
   const controlPlane = {
     getByRepositoryId: vi.fn(async () => repositoryValue),
     getDashboard: vi.fn(async () => value),
@@ -185,6 +185,7 @@ function serviceContext(value: InstanceDashboard = management, repositoryValue: 
     listRepositories: vi.fn(async () => ({ ok: true as const, value: [repository] })),
   };
   const context = {
+    config: { adminOrigin: operator ? "https://admin.praetorium.test" : null, adminGithubUserIds: operator ? ["12345"] : [] },
     requestNow: "2027-01-15T00:00:00.000Z",
     githubAccess,
     controlPlane,
@@ -279,6 +280,7 @@ function actionService(allowMaintain = true) {
     }),
   };
   const context = {
+    config: { adminOrigin: null, adminGithubUserIds: [] },
     requestId: "config-request",
     requestNow: "2027-01-15T00:00:00.000Z",
     githubAccess,
@@ -683,4 +685,21 @@ describe("PortalService Control Plane projection", () => {
       origin: result.value.handoff.origin,
     });
   });
+});
+
+
+it("projects the separate Admin release link only for a platform operator", async () => {
+  const ordinary = await serviceContext().service.getRepository({userId:"12345"},"41");
+  const operator = await serviceContext(management, snapshot, true).service.getRepository({userId:"12345"},"41");
+  expect(ordinary).toMatchObject({ok:true});
+  if (!ordinary.ok || !operator.ok) throw new Error("expected authorized dashboards");
+  expect(ordinary.value.operatorReleaseUrl).toBeUndefined();
+  expect(operator.value.operatorReleaseUrl).toBe("https://admin.praetorium.test/releases");
+});
+
+it("does not infer an active installation from an empty accessible repository result", async () => {
+  const {service,githubAccess}=serviceContext();
+  githubAccess.listRepositories.mockResolvedValueOnce({ok:true,value:[]});
+  const result=await service.listRepositories({userId:"12345"});
+  expect(result).toMatchObject({ok:true,value:{repositories:[],githubApp:{installationState:"unknown"}}});
 });

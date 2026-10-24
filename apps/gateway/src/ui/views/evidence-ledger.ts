@@ -79,7 +79,7 @@ body:has(.evidence-ledger) .page-shell{max-width:1500px;padding-inline:clamp(16p
 .evidence-runtime:before{content:"";position:absolute;inset:0;background-image:linear-gradient(#a9c2ad12 1px,transparent 1px),linear-gradient(90deg,#a9c2ad12 1px,transparent 1px);background-size:40px 40px;pointer-events:none}
 .evidence-runtime>*{position:relative}
 .evidence-runtime-label{font-family:ui-monospace,monospace;color:#b4d7c3;letter-spacing:.12em;font-size:11px;font-weight:600}
-.evidence-runtime .entry-panel{display:flex;flex:1;flex-direction:column;align-items:flex-start;justify-content:center;min-width:0;margin:0;padding:16px 0 20px;background:transparent;border:0;box-shadow:none;color:#e8f5ed}
+.evidence-runtime .entry-panel{display:flex;flex:1;flex-direction:column;align-items:flex-start;justify-content:flex-start;min-width:0;margin:0;padding:26px 0 20px;background:transparent;border:0;box-shadow:none;color:#e8f5ed}
 .evidence-runtime .entry-panel>h2{font-size:11px;letter-spacing:.09em;color:#abcbbc;text-transform:uppercase;font-weight:600;margin:0 0 22px}
 .evidence-runtime .entry-panel>.status-badge{font-size:clamp(47px,5.4vw,79px);line-height:1.06;letter-spacing:-.08em;padding:0;background:transparent;color:#f5fff8;text-transform:uppercase;border-radius:0;font-weight:750}
 .evidence-runtime .entry-panel>.status-badge:after{content:".";color:#8fcfa7}

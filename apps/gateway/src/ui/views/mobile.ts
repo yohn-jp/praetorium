@@ -93,7 +93,7 @@ body:has(.mobile-repository) .page-shell{padding-bottom:112px}
 .mobile-repository .evidence-runtime .entry-panel>h2{margin:0 0 10px;font-size:11px}
 .mobile-repository .evidence-runtime .entry-panel>.status-badge{font-size:clamp(30px,8vw,42px);letter-spacing:-.06em;line-height:1.12}
 .mobile-repository .evidence-runtime .entry-panel>.muted{font-size:13px;line-height:1.55;max-width:100%}
-.mobile-repository .evidence-runtime .entry-actions{margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));width:100%}
+.mobile-repository .evidence-runtime .entry-actions{margin-top:14px;display:grid;grid-template-columns:minmax(0,1fr);width:100%}
 .mobile-repository .evidence-runtime .entry-actions form,
 .mobile-repository .evidence-runtime .entry-actions .button,
 .mobile-repository .evidence-runtime .entry-actions button{width:100%;min-width:0}

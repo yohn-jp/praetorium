@@ -224,29 +224,45 @@ function operation(overrides: Partial<OperationRecord> = {}): OperationRecord {
   };
 }
 
-function stopOperation(): OperationRecord {
+function stopOperation(options: {
+  readonly oldGeneration?: number;
+  readonly oldEpoch?: number;
+  readonly desiredGeneration?: number;
+  readonly desiredEpoch?: number;
+  readonly desiredRevisionId?: string;
+} = {}): OperationRecord {
+  const oldGeneration = options.oldGeneration ?? 7;
+  const oldEpoch = options.oldEpoch ?? 4;
+  const desiredGeneration = options.desiredGeneration ?? 8;
+  const desiredEpoch = options.desiredEpoch ?? 4;
+  const desiredRevisionId = options.desiredRevisionId ?? "revision-old-7";
   const base = operation();
   const checkpoint = base.checkpoint as Record<string, unknown>;
   const lifecycle = checkpoint["lifecycle"] as Record<string, unknown>;
+  const current = lifecycle["current"] as Record<string, unknown>;
   const request = lifecycle["quiesceRequest"] as Record<string, unknown>;
+  const receipt = lifecycle["quiesceReceipt"] as Record<string, unknown>;
   return operation({
-    generation: 8,
-    runtimeEpoch: 4,
+    generation: desiredGeneration,
+    runtimeEpoch: desiredEpoch,
     kind: "stop",
-    deploymentRevisionId: "revision-old-7",
+    deploymentRevisionId: desiredRevisionId,
     reservationId: null,
     checkpoint: {
       schemaVersion: 1,
       writerAbsenceProof: null,
       lifecycle: {
         ...lifecycle,
-        runtimeEpoch: 4,
+        generation: desiredGeneration,
+        runtimeEpoch: desiredEpoch,
         kind: "stop",
         reason: "user",
+        current: { ...current, generation: oldGeneration, runtimeEpoch: oldEpoch },
         target: null,
         targetEpoch: null,
         targetReservationId: null,
-        quiesceRequest: { ...request, runtimeEpoch: 4, reason: "stop" },
+        quiesceRequest: { ...request, runtimeEpoch: oldEpoch, reason: "stop" },
+        quiesceReceipt: { ...receipt, runtimeEpoch: oldEpoch },
       },
     },
   });
@@ -426,6 +442,38 @@ describe("provisioner history drain grant", () => {
       oldRuntimeEpoch: 4,
       currentGeneration: 8,
       currentRuntimeEpoch: 4,
+    });
+  });
+
+  it("drains a retained old writer when desired generation and epoch already advanced", async () => {
+    const h = await harness({
+      op: stopOperation({
+        oldGeneration: 1,
+        oldEpoch: 1,
+        desiredGeneration: 5,
+        desiredEpoch: 2,
+        desiredRevisionId: "revision-failed-target-4",
+      }),
+      snap: snapshot({
+        desiredState: "stopped",
+        generation: 5,
+        runtimeEpoch: 2,
+        desiredRevisionId: "revision-failed-target-4",
+        observedGeneration: 1,
+        observedEpoch: 1,
+      }),
+    });
+    const body = {
+      ...BASE_BODY,
+      census: census({ writers: [{ runtimeEpoch: 1, phase: "running", identities: ["pod-retained-old"] }] }),
+    };
+    const response = await h.app.request(`/operations/${OPERATION_ID}/history-drain-grant`, request(body));
+    expect(response.status).toBe(200);
+    expect(h.gatewayInput).toMatchObject({
+      oldGeneration: 1,
+      oldRuntimeEpoch: 1,
+      currentGeneration: 5,
+      currentRuntimeEpoch: 2,
     });
   });
 

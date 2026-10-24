@@ -296,7 +296,7 @@ function persistedOldAssignment(
     !Number.isSafeInteger(generation) || typeof generation !== "number" || generation < 1 ||
     !Number.isSafeInteger(runtimeEpoch) || typeof runtimeEpoch !== "number" || runtimeEpoch < 1 ||
     (isStop
-      ? runtimeEpoch !== operation.runtimeEpoch || generation + 1 !== operation.generation
+      ? runtimeEpoch > operation.runtimeEpoch || generation >= operation.generation
       : runtimeEpoch >= operation.runtimeEpoch) ||
     typeof reservationId !== "string" || reservationId.length === 0 || reservationId.length > 128 ||
     typeof platformManifestDigest !== "string" || !DIGEST.test(platformManifestDigest) ||
@@ -401,7 +401,7 @@ function matchesSnapshot(
     snapshot.instance.desiredState === desiredState &&
     snapshot.instance.generation === operation.generation &&
     snapshot.instance.runtimeEpoch === operation.runtimeEpoch &&
-    snapshot.instance.desiredRevisionId === operation.deploymentRevisionId &&
+    (operation.kind === "stop" || snapshot.instance.desiredRevisionId === operation.deploymentRevisionId) &&
     snapshot.instance.observedState === "ready" &&
     snapshot.instance.clusterId === dependencies.clusterId &&
     operation.clusterId === dependencies.clusterId;

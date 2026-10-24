@@ -250,6 +250,7 @@ test("verified-main gate rejects stale main, failed/missing CI and unexpected jo
     "source-stable-fixture",
     "kubernetes-admission",
     ...serviceImages.map(({ service }) => `candidate-images (${service}, package, dockerfile)`),
+    "candidate-images (observer, package, dockerfile)",
   ].map((name) => ({ name, conclusion: "success" }));
   const execute = (fault) => (_command, args) => {
     if (args[0] === "rev-parse") return revision;
@@ -276,6 +277,12 @@ test("verified-main gate rejects stale main, failed/missing CI and unexpected jo
       jobs:
         fault === "failed-job"
           ? jobs.map((j, n) => ({ ...j, conclusion: n === 0 ? "failure" : j.conclusion }))
+          : fault === "failed-observer"
+            ? jobs.map(j => j.name.startsWith("candidate-images (observer,") ? {...j,conclusion:"failure"} : j)
+          : fault === "unexpected-job"
+            ? [...jobs,{name:"unexpected",conclusion:"success"}]
+          : fault === "missing-observer"
+            ? jobs.filter(j => !j.name.startsWith("candidate-images (observer,"))
           : fault === "missing-job"
             ? jobs.slice(1)
             : jobs,
@@ -285,7 +292,7 @@ test("verified-main gate rejects stale main, failed/missing CI and unexpected jo
   // The live API returned empty conditional listings despite successful runs.
   // Fetch the workflow list and enforce every source/success guard locally.
   assert.equal(verifiedMain(root, execute("unreliable-api-filters")).ciRunId, 42);
-  for (const fault of ["dirty", "stale", "missing-ci", "failed-run", "wrong-sha", "wrong-branch", "wrong-event", "failed-job", "missing-job"])
+  for (const fault of ["dirty", "stale", "missing-ci", "failed-run", "wrong-sha", "wrong-branch", "wrong-event", "failed-job", "missing-job", "failed-observer", "unexpected-job", "missing-observer"])
     assert.throws(() => verifiedMain(root, execute(fault)));
 });
 

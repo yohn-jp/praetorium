@@ -81,7 +81,7 @@ function run(root, command, args, options = {}) {
   return result.stdout;
 }
 
-/** Deployment source must be the clean current main with all seven verification jobs passing. */
+/** Deployment source must be the clean current main with every required verification job passing. */
 export function verifiedMain(root, execute = (command, args) => run(root, command, args)) {
   const revision = execute("git", ["rev-parse", "HEAD"]).trim();
   if (!/^[a-f0-9]{40}$/u.test(revision) || execute("git", ["status", "--porcelain"]).trim()) {
@@ -120,18 +120,19 @@ export function verifiedMain(root, execute = (command, args) => run(root, comman
   const jobs = JSON.parse(
     execute("gh", ["api", `repos/${REPOSITORY}/actions/runs/${ci.id}/jobs?per_page=100`]),
   ).jobs;
+  const verifiedServices = [...serviceImages.map(({ service }) => service), "observer"];
   if (
     !Array.isArray(jobs) ||
-    jobs.length !== 7 ||
+    jobs.length !== verifiedServices.length + 3 ||
     jobs.some((job) => job.conclusion !== "success") ||
     !["verify", "source-stable-fixture", "kubernetes-admission"].every((name) =>
       jobs.some((job) => job.name === name),
     ) ||
-    !serviceImages.every(({ service }) =>
+    !verifiedServices.every((service) =>
       jobs.some((job) => job.name.startsWith(`candidate-images (${service},`)),
     )
   ) {
-    throw new Error("Current main requires all seven expected verification jobs to pass");
+    throw new Error("Current main requires every expected verification job to pass");
   }
   return { revision, ciRunId: ci.id, ciUrl: ci.html_url };
 }

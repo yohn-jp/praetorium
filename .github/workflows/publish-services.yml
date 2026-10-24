@@ -184,6 +184,9 @@ jobs:
           - service: observer
             package: "@praetorium/observer"
             dockerfile: infrastructure/docker/service-runtime.Dockerfile
+            # The existing observer package rejects this repository's GITHUB_TOKEN.
+            # Create a repository-linked package through Actions instead.
+            image: management-observer
     steps:
       - uses: actions/checkout@v4
         with:
@@ -209,7 +212,7 @@ jobs:
           push: true
           provenance: mode=max
           outputs: type=image,oci-mediatypes=true
-          tags: ghcr.io/yohn-jp/praetorium/${{ matrix.service }}:source-${{ github.sha }}
+          tags: ghcr.io/yohn-jp/praetorium/${{ matrix.image || matrix.service }}:source-${{ github.sha }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/yohn-jp/praetorium
@@ -225,21 +228,23 @@ jobs:
       - name: Record the immutable image for deployment
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_REPOSITORY: yohn-jp/praetorium/${{ matrix.image || matrix.service }}
           SERVICE: ${{ matrix.service }}
           REVISION: ${{ github.sha }}
         run: |
           node --input-type=module <<'JS'
           import { mkdirSync, writeFileSync } from 'node:fs';
           import path from 'node:path';
-          const { IMAGE_DIGEST: digest, SERVICE: service, REVISION: revision } = process.env;
-          if (!/^sha256:[a-f0-9]{64}$/.test(digest) || !/^[a-f0-9]{40}$/.test(revision))
+          const { IMAGE_DIGEST: digest, IMAGE_REPOSITORY: repository, SERVICE: service, REVISION: revision } = process.env;
+          const expectedRepository = 'yohn-jp/praetorium/' + (service === 'observer' ? 'management-observer' : service);
+          if (repository !== expectedRepository || !/^sha256:[a-f0-9]{64}$/.test(digest) || !/^[a-f0-9]{40}$/.test(revision))
             throw new Error('Immutable CI image identity is missing');
           const directory = path.join(process.env.RUNNER_TEMP, 'service-image');
           mkdirSync(directory, { recursive: true });
           writeFileSync(path.join(directory, 'receipt.json'), JSON.stringify({
             schema: 'praetorium.ci-service-image/v1', revision,
             ciRunId: Number(process.env.GITHUB_RUN_ID), service,
-            repository: 'yohn-jp/praetorium/' + service, digest,
+            repository, digest,
           }));
           JS
       - name: Upload the deployment image receipt

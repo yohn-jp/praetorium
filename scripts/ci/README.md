@@ -9,6 +9,16 @@ the five platform service images to GHCR with `source-<commit>` tags and maximum
 BuildKit provenance. Only this main-only job receives `packages: write` and the
 ephemeral `GITHUB_TOKEN`; no runtime operator credential is available to CI.
 
+Observer publishes to `ghcr.io/yohn-jp/praetorium/management-observer`; the
+other four services retain `ghcr.io/yohn-jp/praetorium/<service>`. The existing
+`praetorium/observer` package rejected this repository's workflow token. The
+dedicated package is created by Actions with the canonical source label so
+GitHub can associate it with this repository. Receipts record the actual image
+repository and reject mismatches. Existing deployed Observer digests remain
+valid; changing its Management deployment is a separate Ansible rollout using
+the new immutable digest. All five publications remain required by the deploy
+CI gate.
+
 Each image job uploads a `service-image-<service>` receipt binding the workflow
 run, commit, repository and immutable OCI digest. `deploy-platform.mjs` consumes
 these receipts from the successful workflow for current main, rereads the exact

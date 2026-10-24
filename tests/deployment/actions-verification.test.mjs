@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -98,6 +100,36 @@ test("Actions keep PR builds read-only and publish platform services only from m
   );
   assert.match(sourceStableFixture, /BUILDKIT_VERSION = "v0\.34\.0"/u);
   assert.doesNotMatch(sourceStableFixture, /from "@praetorium\//u);
+});
+
+test("Observer publication records its dedicated package and rejects mismatched receipt repositories", (t) => {
+  const publisher = verificationWorkflow.split("  publish-images:\n")[1].split("  kubernetes-admission:\n")[0];
+  assert.match(publisher, /service: observer\n[\s\S]*?image: management-observer/u);
+  assert.match(publisher, /tags: ghcr\.io\/yohn-jp\/praetorium\/\$\{\{ matrix\.image \|\| matrix\.service \}\}:source-\$\{\{ github\.sha \}\}/u);
+  assert.match(publisher, /IMAGE_REPOSITORY: yohn-jp\/praetorium\/\$\{\{ matrix\.image \|\| matrix\.service \}\}/u);
+  const script = /node --input-type=module <<'JS'\n([\s\S]*?)\n {10}JS/u.exec(publisher)?.[1];
+  assert.ok(script, "execute the actual workflow receipt writer");
+  const directory = mkdtempSync(path.join(os.tmpdir(), "praetorium-ci-receipt-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const service of ["provisioner", "instance-access", "build-worker", "coordination", "observer"]) {
+    const repository = `yohn-jp/praetorium/${service === "observer" ? "management-observer" : service}`;
+    const env = { ...process.env, RUNNER_TEMP: path.join(directory, service),
+      GITHUB_RUN_ID: "42", IMAGE_DIGEST: `sha256:${"b".repeat(64)}`,
+      IMAGE_REPOSITORY: repository, SERVICE: service, REVISION: "a".repeat(40) };
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], { env, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const filename = path.join(env.RUNNER_TEMP, "service-image/receipt.json");
+    const receipt = readFileSync(filename, "utf8");
+    assert.deepEqual(JSON.parse(receipt), { schema: "praetorium.ci-service-image/v1",
+      revision: env.REVISION, ciRunId: 42, service, repository, digest: env.IMAGE_DIGEST });
+    for (const invalidRepository of ["other/repository", `${repository}-unexpected`]) {
+      const invalid = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+        env: { ...env, IMAGE_REPOSITORY: invalidRepository }, encoding: "utf8",
+      });
+      assert.notEqual(invalid.status, 0);
+      assert.equal(readFileSync(filename, "utf8"), receipt);
+    }
+  }
 });
 
 test("legacy Actions producer publication and Admission workflows are absent", () => {

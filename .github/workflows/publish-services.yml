@@ -51,6 +51,11 @@ jobs:
         env:
           PRAETORIUM_UI_EVIDENCE_DIR: ${{ runner.temp }}/operator-console-diagnostics/independent-admin
         run: node --test tests/e2e/independent-admin.test.mjs
+      - name: Verify Gateway module discovery and MCP guidance in Chromium
+        env:
+          PRAETORIUM_UI_BROWSERS: chromium
+          PRAETORIUM_UI_EVIDENCE_DIR: ${{ runner.temp }}/operator-console-diagnostics/gateway
+        run: node tests/e2e/commercial-ui.test.mjs
       - name: Upload synthetic operator console browser evidence
         if: always()
         uses: actions/upload-artifact@v4

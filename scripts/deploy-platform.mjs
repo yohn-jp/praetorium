@@ -84,10 +84,17 @@ function managementService(candidate, role, check) {
   if (inventory.errors.length || inventory.blockers.length || !inventory.inventory.images[role]) {
     throw new Error(role + " requires the verified candidate inventory");
   }
+  const variables = { [`${role}_enabled`]: true, [`${role}_image`]: inventory.inventory.images[role] };
+  if (role === "observer") {
+    const secrets = JSON.parse(readFileSync(privateFile(options["--secret-files"], "secret manifest"), "utf8"));
+    variables.observer_registry_auth_src = privateFile(
+      secrets.values?.applicationImagePull, "Observer read-only registry credential",
+    );
+  }
   const args = ["-i", options["--management-inventory"],
     path.join(root, "infrastructure/ansible/playbooks/host-bootstrap.yml"),
     "--limit", "management", "--tags", role,
-    "--extra-vars", JSON.stringify({ [`${role}_enabled`]: true, [`${role}_image`]: inventory.inventory.images[role] }),
+    "--extra-vars", JSON.stringify(variables),
     ...(check ? ["--check"] : [])];
   const result = spawnSync("ansible-playbook", args, {
     cwd: path.join(root, "infrastructure/ansible"), env: process.env, encoding: "utf8",

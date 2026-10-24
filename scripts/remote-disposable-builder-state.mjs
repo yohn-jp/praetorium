@@ -1,4 +1,6 @@
 import { chmod, link, lstat, open, readFile, rename, rm, unlink } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 
 export const BUILDER_OWNER = Object.freeze({
@@ -36,6 +38,60 @@ export const BUILDER_CGROUP_RECEIPT = Object.freeze({
 const JOURNAL_STAGES = ["reserved", "account", "image", "units", "mounted", "ready"];
 
 const hashPattern = /^[a-f0-9]{64}$/u;
+const T14_CHILD_ENV_KEYS = Object.freeze([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "PATH",
+  "LANG",
+  "TMPDIR",
+  "PRAETORIUM_TEST_TMPDIR",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "KUBECONFIG",
+  "CONTAINERS_STORAGE_CONF",
+  "DOCKER_CONFIG",
+  "REGISTRY_AUTH_FILE",
+  "PRAETORIUM_T14_INVENTORY_PATH",
+  "PRAETORIUM_T14_GITHUB_ACCESS_CONFIG",
+  "PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR",
+  "KIND_EXPERIMENTAL_PROVIDER",
+]);
+
+export function createT14ChildEnvironment(source = process.env) {
+  if (!source || typeof source !== "object" || Array.isArray(source))
+    throw new Error("T14 runner environment is invalid");
+  if (typeof source.HOME !== "string" || !path.isAbsolute(source.HOME))
+    throw new Error("systemd did not provide an absolute account HOME");
+  const environment = {};
+  for (const key of T14_CHILD_ENV_KEYS) {
+    if (typeof source[key] === "string") environment[key] = source[key];
+  }
+  return environment;
+}
+
+async function launchT14Child(args) {
+  if (args[0] !== "--" || typeof args[1] !== "string" || args[1].length === 0)
+    throw new Error("T14 child launcher requires -- followed by an executable");
+  if (typeof process.getuid === "function" && process.getuid() === 0)
+    throw new Error("T14 child launcher must run as the disposable account");
+  const account = os.userInfo();
+  if (account.username !== BUILDER_OWNER.owner)
+    throw new Error("T14 child launcher account does not match its owner contract");
+  if (process.env.HOME !== account.homedir)
+    throw new Error("systemd HOME differs from the disposable account home directory");
+  const environment = createT14ChildEnvironment(process.env);
+  const child = spawn(args[1], args.slice(2), { env: environment, stdio: "inherit" });
+  child.once("error", (error) => {
+    process.stderr.write(`BLOCKED: T14 command could not start (${error.code ?? "spawn error"})\n`);
+    process.exitCode = 127;
+  });
+  child.once("exit", (code, signal) => {
+    process.exitCode = code ?? (signal ? 1 : 0);
+  });
+}
 
 export function createOwnerMarker({
   filesystemUuid,
@@ -108,6 +164,38 @@ export function renderMountUnit() {
 
 export function renderSliceUnit() {
   return `[Unit]\nDescription=Praetorium T14 disposable resource ceiling\n\n[Slice]\nCPUAccounting=yes\nCPUQuota=200%\nMemoryAccounting=yes\nMemoryMax=4G\nTasksAccounting=yes\nTasksMax=2048\n`;
+}
+
+export function kubectlClientGitVersion(output) {
+  let parsed;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error("kubectl client version output is not valid JSON");
+  }
+  const version = parsed?.clientVersion?.gitVersion ?? parsed?.gitVersion;
+  if (typeof version !== "string" || !/^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version))
+    throw new Error("kubectl client gitVersion is missing or malformed");
+  return version;
+}
+
+export function ownerSubidMappingStatus(contents, username, start, count) {
+  if (
+    typeof contents !== "string" ||
+    typeof username !== "string" ||
+    !/^[a-z_][a-z0-9_-]*[$]?$/iu.test(username) ||
+    !Number.isSafeInteger(start) ||
+    start < 0 ||
+    !Number.isSafeInteger(count) ||
+    count < 1
+  )
+    throw new Error("subordinate ID mapping input is invalid");
+  const ownedLines = contents.split(/\r?\n/u).filter((line) => line.split(":", 1)[0] === username);
+  if (ownedLines.length === 0) return "missing";
+  const expected = `${username}:${start}:${count}`;
+  if (ownedLines.length !== 1 || ownedLines[0] !== expected)
+    throw new Error(`subordinate ID mappings for ${username} are not the single expected range`);
+  return "exact";
 }
 
 export function createCgroupReceipt({ ownerUid, sliceUnitSha256, now = new Date() }) {
@@ -320,6 +408,27 @@ async function main(argv) {
   }
   if (action === "render-slice" && argv.length === 1) {
     process.stdout.write(renderSliceUnit());
+    return;
+  }
+  if (action === "kubectl-version" && argv.length === 1) {
+    let input = "";
+    for await (const chunk of process.stdin) input += chunk.toString("utf8");
+    process.stdout.write(`${kubectlClientGitVersion(input)}\n`);
+    return;
+  }
+  if (action === "subid-status" && argv.length === 5) {
+    const [, filePath, username, start, count] = argv;
+    const contents = await readFile(filePath, "utf8").catch((error) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+    process.stdout.write(
+      `${ownerSubidMappingStatus(contents, username, Number(start), Number(count))}\n`,
+    );
+    return;
+  }
+  if (action === "exec" && argv.length >= 3) {
+    await launchT14Child(argv.slice(1));
     return;
   }
   if (action === "cgroup-write" && markerPath && filesystemUuid && mountHash) {

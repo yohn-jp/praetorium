@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import os from "node:os";
@@ -10,6 +10,9 @@ import {
   createCgroupReceipt,
   createBuilderJournal,
   createOwnerMarker,
+  createT14ChildEnvironment,
+  kubectlClientGitVersion,
+  ownerSubidMappingStatus,
   renderMountUnit,
   renderSliceUnit,
   validateBuilderJournal,
@@ -20,6 +23,10 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const script = path.join(root, "scripts/remote-disposable-builder.sh");
+const stateSource = readFileSync(
+  path.join(root, "scripts/remote-disposable-builder-state.mjs"),
+  "utf8",
+);
 const source = readFileSync(script, "utf8");
 
 test("remote Builder helper is syntax-valid and offers only explicit bounded actions", () => {
@@ -48,9 +55,207 @@ test("remote Builder helper isolates state and leaves production BuildKit protec
   assert.match(source, /KIND_EXPERIMENTAL_PROVIDER=podman kind delete cluster --name "\$CLUSTER"/u);
   assert.match(source, /journal-init[\s\S]*journal-stage[\s\S]*journal-remove/u);
   assert.match(source, /useradd --system --user-group/u);
-  assert.match(source, /runuser --login --user/u);
+  assert.match(source, /runuser --user "\$OWNER" -- "\$ENV_BIN" -i/u);
+  assert.doesNotMatch(source, /runuser --login/u);
   assert.doesNotMatch(source, /\bHOME=/u);
-  assert.doesNotMatch(source, /Delegate=yes[\s\S]*\[Slice\]/u);
+  assert.match(source, /cgroup_manager = "cgroupfs"/u);
+  assert.doesNotMatch(source, /systemd-run --scope/u);
+  assert.match(source, /TemporaryFileSystem=\/tmp:size=512M/u);
+  assert.match(source, /TemporaryFileSystem=\/var\/tmp:size=128M/u);
+  assert.match(source, /ProtectSystem=strict/u);
+  assert.match(source, /ReadWritePaths=\$MOUNT \/run\/user\/\$test_uid/u);
+  assert.match(source, /SetLoginEnvironment=yes/u);
+  assert.match(source, /UnsetEnvironment=GITHUB_TOKEN GH_TOKEN CLOUDFLARE_API_TOKEN/u);
+  assert.match(source, /--wait --pipe --collect[\s\S]*--property=Type=exec/u);
+  assert.match(source, /Environment=KUBECONFIG=\$MOUNT\/kube\/config/u);
+  assert.match(source, /WorkingDirectory=\$MOUNT\/home/u);
+  assert.match(source, /"\$STATE_MODULE" exec -- \/bin\/bash/u);
+  assert.match(stateSource, /process\.env\.HOME !== account\.homedir/u);
+  assert.match(source, /systemctl show "\$probe" -p ControlGroup/u);
+});
+
+test("pretty kubectl version JSON is parsed structurally", () => {
+  const prettyOutput = `{
+    "clientVersion": {
+      "gitVersion": "v1.35.0",
+      "major": "1",
+      "minor": "35"
+    }
+  }\n`;
+  assert.equal(kubectlClientGitVersion(prettyOutput), "v1.35.0");
+  const parsedByCli = spawnSync(
+    process.execPath,
+    [path.join(root, "scripts/remote-disposable-builder-state.mjs"), "kubectl-version"],
+    { encoding: "utf8", input: prettyOutput },
+  );
+  assert.equal(parsedByCli.status, 0, parsedByCli.stderr);
+  assert.equal(parsedByCli.stdout.trim(), "v1.35.0");
+  assert.equal(kubectlClientGitVersion('{"clientVersion":{"gitVersion":"v1.34.0"}}'), "v1.34.0");
+  assert.throws(() => kubectlClientGitVersion('{"clientVersion": {}}'), /missing or malformed/u);
+  assert.throws(() => kubectlClientGitVersion("not json"), /not valid JSON/u);
+});
+
+test("runuser accepts the harmless disposable invocation and env -i removes ambient credentials", (t) => {
+  if (typeof process.getuid === "function" && process.getuid() !== 0)
+    return t.skip("runuser command execution requires root on this platform");
+  const base = ["--user", "nobody", "--"];
+  const result = spawnSync("runuser", [...base, process.execPath, "-e", ""], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  if (result.error?.code === "ENOENT") return t.skip("runuser unavailable");
+  assert.equal(result.status, 0, result.stderr);
+  const envBinary = ["/usr/bin/env", "/bin/env", "/run/current-system/sw/bin/env"].find(existsSync);
+  if (!envBinary) return t.skip("env unavailable");
+  const withEnv = spawnSync(
+    "runuser",
+    [
+      ...base,
+      envBinary,
+      "-i",
+      "PATH=/usr/bin:/bin",
+      "XDG_CONFIG_HOME=/tmp/praetorium-t14-test-config",
+      "XDG_DATA_HOME=/tmp/praetorium-t14-test-data",
+      "XDG_RUNTIME_DIR=/tmp/praetorium-t14-test-runtime",
+      "CONTAINERS_STORAGE_CONF=/tmp/praetorium-t14-storage.conf",
+      "KIND_EXPERIMENTAL_PROVIDER=podman",
+      process.execPath,
+      "-e",
+      "if (process.env.GITHUB_TOKEN || process.env.CLOUDFLARE_API_TOKEN || process.env.HTTP_PROXY) process.exit(42)",
+    ],
+    {
+      encoding: "utf8",
+      timeout: 5_000,
+      env: {
+        ...process.env,
+        GITHUB_TOKEN: "test-canary-no-output",
+        CLOUDFLARE_API_TOKEN: "test-canary-no-output",
+        HTTP_PROXY: "http://127.0.0.1:9",
+      },
+    },
+  );
+  assert.equal(withEnv.status, 0, withEnv.stderr);
+});
+
+test("the cleanup allowlist strips ambient credential and proxy canaries without printing them", (t) => {
+  const envBinary = ["/usr/bin/env", "/bin/env", "/run/current-system/sw/bin/env"].find(existsSync);
+  if (!envBinary) return t.skip("env unavailable");
+  const result = spawnSync(
+    envBinary,
+    [
+      "-i",
+      "PATH=/usr/bin:/bin",
+      process.execPath,
+      "-e",
+      "if (process.env.GITHUB_TOKEN || process.env.CLOUDFLARE_API_TOKEN || process.env.HTTP_PROXY) process.exit(42)",
+    ],
+    {
+      encoding: "utf8",
+      timeout: 5_000,
+      env: {
+        ...process.env,
+        GITHUB_TOKEN: "canary-value-never-print",
+        CLOUDFLARE_API_TOKEN: "canary-value-never-print",
+        HTTP_PROXY: "http://127.0.0.1:9",
+      },
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /canary-value-never-print/u);
+});
+
+test("the T14 child environment preserves the systemd account HOME and drops unknown secrets", () => {
+  const sourceEnvironment = {
+    HOME: "/var/lib/praetorium-t14/state/home",
+    USER: "praetorium-t14",
+    LOGNAME: "praetorium-t14",
+    SHELL: "/bin/bash",
+    PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    XDG_CONFIG_HOME: "/var/lib/praetorium-t14/state/home/.config",
+    REGISTRY_AUTH_FILE: "/var/lib/praetorium-t14/state/credentials/registry-auth.json",
+    GITHUB_TOKEN: "canary-never-print",
+    CLOUDFLARE_API_TOKEN: "canary-never-print",
+    HTTP_PROXY: "http://127.0.0.1:9",
+    SECRET_NOT_STANDARD: "canary-never-print",
+  };
+  const childEnvironment = createT14ChildEnvironment(sourceEnvironment);
+  assert.equal(childEnvironment.HOME, sourceEnvironment.HOME);
+  assert.equal(childEnvironment.USER, sourceEnvironment.USER);
+  assert.equal(childEnvironment.REGISTRY_AUTH_FILE, sourceEnvironment.REGISTRY_AUTH_FILE);
+  assert.equal(Object.hasOwn(childEnvironment, "GITHUB_TOKEN"), false);
+  assert.equal(Object.hasOwn(childEnvironment, "CLOUDFLARE_API_TOKEN"), false);
+  assert.equal(Object.hasOwn(childEnvironment, "HTTP_PROXY"), false);
+  assert.equal(Object.hasOwn(childEnvironment, "SECRET_NOT_STANDARD"), false);
+  assert.doesNotMatch(JSON.stringify(childEnvironment), /canary-never-print/u);
+  assert.throws(
+    () => createT14ChildEnvironment({ ...sourceEnvironment, HOME: undefined }),
+    /HOME/u,
+  );
+});
+
+test("systemd-run parses bounded transient-service options without applying a unit", (t) => {
+  const result = spawnSync(
+    "systemd-run",
+    [
+      "--wait",
+      "--pipe",
+      "--collect",
+      "--slice=praetorium-t14.slice",
+      "--unit=praetorium-t14-cli-parse.service",
+      "--uid=nobody",
+      "--property=Delegate=yes",
+      "--property=Type=exec",
+      "--property=SetLoginEnvironment=yes",
+      "--property=ProtectSystem=strict",
+      "--property=TemporaryFileSystem=/tmp:size=512M",
+      "--property=TemporaryFileSystem=/var/tmp:size=128M",
+      "--property=ReadWritePaths=/var/lib/praetorium-t14/state /run/user/65534",
+      "--property=WorkingDirectory=/var/lib/praetorium-t14/state/home",
+      "--property=UnsetEnvironment=GITHUB_TOKEN GH_TOKEN CLOUDFLARE_API_TOKEN HTTP_PROXY",
+      "--property=Environment=PATH=/usr/local/bin:/usr/bin:/bin",
+      "--help",
+    ],
+    { encoding: "utf8", timeout: 5_000 },
+  );
+  if (result.error?.code === "ENOENT") return t.skip("systemd-run unavailable");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /systemd-run \[OPTIONS\.\.\.\] COMMAND/u);
+});
+
+test("T14 subordinate ID ownership requires exactly the one expected mapping", () => {
+  assert.equal(
+    ownerSubidMappingStatus(
+      "other:3000000:65536\npraetorium-t14:3000000:65536\n",
+      "praetorium-t14",
+      3000000,
+      65536,
+    ),
+    "exact",
+  );
+  assert.equal(
+    ownerSubidMappingStatus("other:100000:65536\n", "praetorium-t14", 3000000, 65536),
+    "missing",
+  );
+  assert.throws(
+    () =>
+      ownerSubidMappingStatus(
+        "praetorium-t14:3000000:65536\npraetorium-t14:4000000:65536\n",
+        "praetorium-t14",
+        3000000,
+        65536,
+      ),
+    /single expected range/u,
+  );
+  assert.throws(
+    () =>
+      ownerSubidMappingStatus("praetorium-t14:3000000:32768\n", "praetorium-t14", 3000000, 65536),
+    /single expected range/u,
+  );
+  assert.throws(
+    () =>
+      ownerSubidMappingStatus("praetorium-t14:3000000:65535\n", "praetorium-t14", 3000000, 65536),
+    /single expected range/u,
+  );
 });
 
 test("T14 marker serializes and parses the escaped mount unit as valid JSON", () => {

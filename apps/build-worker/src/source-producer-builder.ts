@@ -11,6 +11,7 @@ import {
   type SourceBuildDiagnostic, type SourceBuildStage, type SourceProducerResult,
 } from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "./config.js";
+import { assertSourceIdentityOutput, sourceIdentityVerifier, type VerifiedSourceIdentity } from "./source-identity.js";
 
 const REPO="https://github.com/yohn-jp/scriptorium.git";
 const GHCR_REPOSITORY=/^ghcr\.io\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u;
@@ -126,6 +127,9 @@ async function runSourceStage<T>(
       code=error.code;reason="verification_failed";
     }else if(error instanceof BuildKitAttemptError){
       reason=error.code==="BUILD_TIMEOUT"?"timeout":error.code==="BUILD_CANCELED"?"canceled":"build_failed";
+      if(stage==="metadata" && error.diagnostic?.text.includes("Source identity verification failed")){
+        code="SOURCE_VERIFICATION_FAILED";reason="verification_failed";
+      }
       excerpt=error.diagnostic?.text;
       truncated=error.diagnostic?.truncated??false;
       if(error.exitCode!==undefined&&error.exitCode!==null)
@@ -338,7 +342,7 @@ async function runBuild(
     signal,onProgress:()=>undefined,
   });
 }
-const wrapper = `
+export const sourceMetadataStagesDockerfile = `
 FROM source AS praetorium-producer-metadata
 ARG SCRIPTORIUM_PRODUCER_REVISION
 ARG RUNTIME_BASE_DIGEST
@@ -348,7 +352,9 @@ ${DEBIAN_HTTPS_SOURCES}
 RUN apt-get update \\
  && apt-get install -y --no-install-recommends ca-certificates git \\
  && rm -rf /var/lib/apt/lists/*
-RUN pnpm run build:workspace \\
+COPY --from=praetorium-source-identity / /tmp/praetorium-source-input/
+RUN node /tmp/praetorium-source-input/verify.mjs \\
+ && pnpm run build:workspace \\
  && mkdir -p /tmp/praetorium-source-proof \\
  && node scripts/build-catalog-bundle.mjs --out-dir /tmp/praetorium-source-proof/resolver \\
  && node scripts/hosted-build.mjs catalog \\
@@ -356,7 +362,8 @@ RUN pnpm run build:workspace \\
     --runtime-base-digest "$RUNTIME_BASE_DIGEST" \\
     --build-kit-digest "$BUILD_KIT_DIGEST" \\
     --out /tmp/praetorium-source-proof/build-catalog.json \\
- && node --input-type=module -e 'import {writeFileSync} from "node:fs"; import {metadataForRuntime} from "./packages/api/dist/platform-runtime.js"; writeFileSync("/tmp/praetorium-source-proof/runtime-metadata.json", JSON.stringify(metadataForRuntime({producerRevision:process.env.SCRIPTORIUM_PRODUCER_REVISION,port:3000,shutdownTimeoutSeconds:25})));'
+ && node --input-type=module -e 'import {writeFileSync} from "node:fs"; import {metadataForRuntime} from "./packages/api/dist/platform-runtime.js"; writeFileSync("/tmp/praetorium-source-proof/runtime-metadata.json", JSON.stringify(metadataForRuntime({producerRevision:process.env.SCRIPTORIUM_PRODUCER_REVISION,port:3000,shutdownTimeoutSeconds:25})));' \\
+ && node /tmp/praetorium-source-input/verify.mjs export
 FROM scratch AS praetorium-source-output
 COPY --from=praetorium-producer-metadata /tmp/praetorium-source-proof/ /
 `;
@@ -408,6 +415,18 @@ export async function buildSourceRelease(
     });
     await runSourceStage("release_check",onStage,()=>validatePublishedRelease(job,signal));
     await runSourceStage("source_checkout",onStage,()=>checkout(job,source,privateGitHome,signal));
+    const identityDirectory=path.join(root,"source-identity");
+    const sourceIdentity:VerifiedSourceIdentity=await runSourceStage("source_checkout",onStage,async()=>{
+      const sourceTree=await git(["rev-parse","HEAD^{tree}"],source,privateGitHome,signal);
+      if(!SHA.test(sourceTree))throw new SourceBuildChangedError();
+      const identity:VerifiedSourceIdentity={schemaVersion:1,githubReleaseId:job.github_release_id,
+        sourceRepository:job.source_repository,sourceTag:job.source_tag,
+        sourceRevision:job.source_revision,sourceTree};
+      await mkdir(identityDirectory,{mode:0o700});
+      await writeFile(path.join(identityDirectory,"identity.json"),JSON.stringify(identity),{mode:0o600});
+      await writeFile(path.join(identityDirectory,"verify.mjs"),sourceIdentityVerifier,{mode:0o600});
+      return identity;
+    });
     const {dockerfile,nodeImage,dockerfileDigest}=await runSourceStage("verification",onStage,async()=>{
       const dockerfile=await readSourceProducerFile(path.join(source,"Dockerfile"),128*1024,"Source Dockerfile");
       return {dockerfile,nodeImage:sourceNodeImage(dockerfile),dockerfileDigest:createHash("sha256").update(dockerfile).digest("hex")};
@@ -465,13 +484,15 @@ export async function buildSourceRelease(
     const buildKitDigest=await runSourceStage("verification",onStage,()=>metadataDigest(kitMetadata));
     await runSourceStage("metadata",onStage,async()=>{
     await writeFile(path.join(metadataDockerfiles,"Dockerfile"),
-      Buffer.concat([buildDockerfile,Buffer.from("\n"+wrapper,"utf8")]),{mode:0o600});
+      Buffer.concat([buildDockerfile,Buffer.from("\n"+sourceMetadataStagesDockerfile,"utf8")]),{mode:0o600});
     await writeFile(path.join(metadataDockerfiles,"Dockerfile.dockerignore"),
       sourceMetadataDockerfileIgnore(),{mode:0o600});
     });
     await runSourceStage("metadata",onStage,()=>runBuild(config,[
       ...environmentArgs,
       "--local","context="+source,"--local","dockerfile="+metadataDockerfiles,
+      "--local","praetorium-source-identity="+identityDirectory,
+      "--opt","context:praetorium-source-identity=local:praetorium-source-identity",
       "--opt","platform=linux/amd64","--opt","target=praetorium-source-output",
       "--opt","build-arg:SCRIPTORIUM_PRODUCER_REVISION="+job.source_revision,
       "--opt","build-arg:RUNTIME_BASE_DIGEST="+runtimeDigest,
@@ -494,6 +515,12 @@ export async function buildSourceRelease(
       runtime=RuntimeMetadataSchema.parse(JSON.parse(runtimeBytes.toString("utf8")));
     }catch{throw new SourceBuildVerificationError();}
     const {resolver}=await runSourceStage("verification",onStage,async()=>{
+      const identityBytes=await readSourceProducerFile(path.join(metadata,"source-identity.json"),16*1024,"Source identity");
+      assertSourceIdentityOutput(sourceIdentity,JSON.parse(identityBytes.toString("utf8")));
+      if(await git(["rev-parse","HEAD"],source,privateGitHome,signal)!==job.source_revision ||
+         await git(["rev-parse","HEAD^{tree}"],source,privateGitHome,signal)!==sourceIdentity.sourceTree ||
+         await git(["status","--porcelain","--untracked-files=all"],source,privateGitHome,signal)!=="")
+        throw new SourceBuildChangedError();
       const resolver=await resolverArtifact(path.join(metadata,"resolver"));
       if(catalog.producerRevision!==job.source_revision ||
         runtime.producerRevision!==job.source_revision ||

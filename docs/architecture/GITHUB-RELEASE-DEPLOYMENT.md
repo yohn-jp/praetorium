@@ -18,6 +18,16 @@ The Gateway re-fetches the selected Release by numeric ID with its existing encr
 
 ## Security / source boundaries
 
+- The Worker binds a platform-owned source identity (Release ID, repository, tag,
+  commit and Git tree) to the metadata solve through a separate named BuildKit
+  context. The compatibility adapter checks the exact revision/tree and clean
+  checkout before and after generation; exported identity must match the input
+  exactly before signing. The Worker also rechecks its checkout before signing.
+  Published Scriptorium releases still require Git for their native clean-source
+  checks. This adapter preserves those checks; a Git-free Producer input requires
+  a coordinated Scriptorium contract and a new published release. An arbitrary
+  environment-supplied revision is never sufficient source evidence.
+
 - The browser never calls GitHub Actions `workflow_dispatch` and requires **no GitHub App Actions:write permission**. GitHub Actions' producer verification scripts remain historical/disposable CI verification, not the runtime deployment authority.
 - Tenant-specific repository GitHub credentials, Build Worker service token, Builder signing key and OCI registry credentials remain separate. Source image pushes use the existing BuildKit registry identity, not GitHub OAuth tokens.
 - The new source Producer currently supports only `yohn-jp/scriptorium` as a trusted source adapter. Generic admin source registration is a presentation and orchestration contract, not proof that other sources can be built without a supported adapter.
@@ -27,3 +37,11 @@ The Gateway re-fetches the selected Release by numeric ID with its existing encr
 ## Validation gates
 
 CI must establish type/build/lint/test and reproducible container build. Full deployment acceptance additionally requires a migration readback, a real published Scriptorium tag build on the owned remote BuildKit daemon, GHCR digest readback, Builder proof verification, D1 source lifecycle, Operator Admission, Canary health evidence and successful Stable promotion. An OCI image build in CI alone does not certify these production gates. Preserve separate VERIFIED and NOT_CHECKED states.
+
+The required `source-stable-fixture` verification job exercises the actual
+published release pinned by immutable ID/tag/SHA in its runner, including the
+metadata adapter and source proof, using an owned disposable BuildKit/registry
+and lifecycle environment. Keep that pin current when certifying a new Producer
+release. Its synthetic lifecycle evidence does not certify production Canary or
+Stable. Canonical platform publication requires this job to pass for the exact
+main revision.

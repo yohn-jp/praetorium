@@ -263,7 +263,10 @@ const ACTIVE_ROLLOUT_STATES = [
   "dispatch_pending",
   "operation_pending",
 ] as const;
-const CANARY_HEALTH_SAMPLE_INTERVAL_MS = 5 * 60 * 1_000;
+// Runtime Provisioner observes this deadline locally, outside Cloudflare. A
+// minute between admitted real samples supports the bounded stable canary
+// window without adding a paid Worker polling schedule.
+const CANARY_HEALTH_SAMPLE_INTERVAL_MS = 60 * 1_000;
 
 function parseJson(value: string): unknown {
   return JSON.parse(value) as unknown;

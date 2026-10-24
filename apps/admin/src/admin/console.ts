@@ -251,7 +251,7 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
       const returnParams = new URLSearchParams(url.search);
       // An old query-string notice is not durable evidence after reauthentication.
       returnParams.delete("notice");
-      if (!returnParams.has("ui")) returnParams.set("ui", mode);
+      // Do not force a Desktop preference before the first OAuth handoff.
       const target = adminReturnPath(url.pathname + "?" + returnParams.toString());
       if (target !== "/" || url.pathname === "/") {
         return localRedirect(context.config.origin + "/_admin/entry" +

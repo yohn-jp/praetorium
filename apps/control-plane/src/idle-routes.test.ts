@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe("Control Plane provisioner idle routes", () => {
-  it("records fresh current-writer health and rejects replay, stale epoch and changed image", async () => {
+  it("records fresh health before waking immediate canary progress and rejects stale reports", async () => {
     const h = createHarness();
     await h.addReadyInstance("ins_health", 701);
     h.database.exec(
@@ -47,11 +47,18 @@ describe("Control Plane provisioner idle routes", () => {
       'revision-ins_health','health','health','health','user-1',3,?,?)`,
       )
       .run(NOW, NOW);
+    const onCanaryHealthRecorded = vi.fn(async (operationId: string) => {
+      expect(operationId).toBe("op-health");
+      expect(
+        h.database.prepare("SELECT COUNT(*) AS count FROM runtime_health_observations").get(),
+      ).toMatchObject({ count: 1 });
+    });
     const route = createRuntimeHealthRoutes({
       db: new SqliteD1Database(h.database),
       workerId: WORKER_ID,
       clusterId: CLUSTER_ID,
       now: () => NOW,
+      onCanaryHealthRecorded,
     });
     const body = {
       workerId: WORKER_ID,
@@ -94,6 +101,7 @@ describe("Control Plane provisioner idle routes", () => {
         body: JSON.stringify(input),
       });
     expect((await request(body)).status).toBe(200);
+    await vi.waitFor(() => expect(onCanaryHealthRecorded).toHaveBeenCalledExactlyOnceWith("op-health"));
     expect((await request(body)).status).toBe(409);
     body.readinessEvidence.providerObservationId = "provider-observation-2";
     body.readinessEvidence.assignment.runtimeEpoch = 2;

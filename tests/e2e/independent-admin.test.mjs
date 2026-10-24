@@ -62,6 +62,7 @@ function fixture() {
   let buildState = "empty";
   let evidenceMode = "detailed";
   let retryAccepted = false;
+  let catalogUnavailable = false;
   const jobId = "sr_00000000-0000-4000-a000-000000000001";
   const sourceDetail = () => SourceBuildDetailSchema.parse({
     job:{id:jobId,sourceId:"scriptorium",releaseId:101,tag:"v1.2.0",version:"1.2.0",commit:"b".repeat(40),
@@ -130,6 +131,8 @@ function fixture() {
         return Response.json({operation:{id:"op_owned",instanceId:"runtime-owned",generation:2,runtimeEpoch:5,
           kind:"deploy",status:"succeeded",phase:"stable",attempt:1,createdAt:1792820000000,updatedAt:1792820001000},
           readinessEvidence:{ready:true},rollbackCompatibilityEvidence:null,rollbackCompatible:true});
+      if (pathname === "/v1/operator/releases" && catalogUnavailable)
+        return Response.json({error:{code:"OPERATOR_UNAVAILABLE"}},{status:503});
       if (pathname === "/v1/operator/releases")
         return Response.json(buildState === "admitted"
           ? {items:[{release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),
@@ -154,7 +157,7 @@ function fixture() {
         Response.json({error:"not_found"},{status:404});
     }},
   };
-  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},jobId};
+  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},setCatalogUnavailable:value=>{catalogUnavailable=value;},jobId};
 }
 async function listen(env) {
   const server = createServer(async (req,res) => {
@@ -187,7 +190,7 @@ async function listen(env) {
   return {server,origin:"http://127.0.0.1:"+address.port};
 }
 test("dedicated Admin Worker protects host telemetry and renders distinct responsive UI", async t=>{
-  const {env,calls,setBuildState,jobId}=fixture();
+  const {env,calls,setBuildState,setCatalogUnavailable,jobId}=fixture();
   const noAuth=await worker.fetch(new Request(ADMIN+"/api/admin/v1/infrastructure/hosts"),env);
   assert.equal(noAuth.status,403);
   assert.equal(calls.observer,0);
@@ -380,6 +383,15 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.equal(new URL(page.url()).pathname,"/releases/rel_owned");
     assert.equal(new URL(page.url()).hash,"#composition-build");
     assert.ok((await page.locator("main").innerText()).includes("composition-owned"));
+    assert.equal(await page.getByRole("link",{name:"Open current Stable release rel_owned",exact:true}).count(),1,
+      "release detail must use the canonical current Stable pointer");
+    setCatalogUnavailable(true);
+    await page.reload({waitUntil:"networkidle"});
+    const unavailableStable=await page.locator("main").innerText();
+    assert.match(unavailableStable,/Current Stable status is unavailable/i);
+    assert.doesNotMatch(unavailableStable,/Stable release is not recorded/i);
+    setCatalogUnavailable(false);
+    await page.reload({waitUntil:"networkidle"});
     await page.getByRole("link",{name:"op_owned",exact:true}).click();
     journey=await page.locator("main").innerText();
     assert.match(journey,/succeeded/iu,journey);

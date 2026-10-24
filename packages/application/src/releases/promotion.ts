@@ -10,7 +10,7 @@ import type {
 import { compareReleaseVersions } from "./semver.js";
 import type { CompositionResult, StableRolloutPlanner } from "../rollouts/model.js";
 
-export const STABLE_CANARY_HEALTH_WINDOW_MS = 10 * 60 * 1_000;
+export const STABLE_CANARY_HEALTH_WINDOW_MS = 60 * 1_000;
 const DEFAULT_RETRY_MS = 5 * 60 * 1_000;
 const CANDIDATE_LEASE_MS = 60 * 1_000;
 const FOLLOWER_PAGE_SIZE = 50;
@@ -294,7 +294,7 @@ async function advanceCandidate(
       return (await save(deps, lease, { nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000) })) ? "retried" : "stale";
     }
 
-    const maxGap = deps.maxHealthGapMs ?? 2 * 5 * 60 * 1_000;
+    const maxGap = deps.maxHealthGapMs ?? 2 * 60 * 1_000;
     const parsedEvidence = CanaryHealthEvidenceSchema.safeParse(health.evidence);
     if (
       !parsedEvidence.success ||

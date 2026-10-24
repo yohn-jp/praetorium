@@ -139,7 +139,6 @@ function isRetainedWriterCandidate(
   return (
     candidate.desiredState === "stopped" &&
     !candidate.bindingSuspended &&
-    !candidate.hasActiveOperation &&
     matchesCurrentRuntimeAssignment(candidate, clusterId)
   );
 }

@@ -643,6 +643,35 @@ describe("ProvisionerIdleController", () => {
     expect(h.createIdleStop).not.toHaveBeenCalled();
   });
 
+  it("renews a retained writer during an active operation without running idle-stop checks", async () => {
+    const h = harness({
+      candidate: candidate({
+        desiredState: "stopped",
+        hasActiveOperation: true,
+        activeCanaryHealth: true,
+        healthNextCheckAt: now,
+      }),
+      identityExpiry: (currentNow) => currentNow + 200_000,
+    });
+
+    await h.controller.scanOnce();
+    expect(h.runtimeIdentityExpiresAt).toHaveBeenCalledOnce();
+    expect(h.inspectRuntime).not.toHaveBeenCalled();
+    expect(h.issueObservationCredential).not.toHaveBeenCalled();
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+
+    h.advance(120_000);
+    await h.controller.processDueOnce();
+
+    expect(h.refreshIdentity).toHaveBeenCalledOnce();
+    expect(h.runtimeIdentityExpiresAt).toHaveBeenCalledTimes(2);
+    expect(h.inspectRuntime).not.toHaveBeenCalled();
+    expect(h.issueObservationCredential).not.toHaveBeenCalled();
+    expect(h.runtimeCanaryHealthDue).not.toHaveBeenCalled();
+    expect(h.createIdleStop).not.toHaveBeenCalled();
+  });
+
   it("clears cached idle and canary timers when the same writer becomes a retained stopped candidate", async () => {
     const h = harness({
       candidate: candidate({

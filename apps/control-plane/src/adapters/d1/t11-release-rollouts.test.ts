@@ -974,7 +974,7 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     const release = candidate();
     const releases = store(db);
     await releases.createCandidate(release);
-    const sampleAt = NOW + 5 * 60_000;
+    const sampleAt = NOW + 60_000;
     seedCanaryHealthFixture(db, release.id, sampleAt);
     const activeCheckAt = sampleAt + 10 * 60_000;
     db.database
@@ -990,7 +990,7 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
         now: activeCheckAt,
       }),
     ).resolves.toMatchObject({
-      nextCheckAt: activeCheckAt + 5 * 60_000,
+      nextCheckAt: activeCheckAt + 60_000,
       sampleDueAt: null,
     });
     db.database
@@ -1007,7 +1007,7 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     });
     expect(schedule).toEqual({
       healthOperationId: "canary-operation",
-      nextCheckAt: sampleAt + 5 * 60_000,
+      nextCheckAt: sampleAt + 60_000,
       sampleDueAt: sampleAt,
     });
 

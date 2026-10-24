@@ -434,7 +434,7 @@ describe("stable release candidate application", () => {
     expect(store.checkpoint.cursor).toBe(next.id);
   });
 
-  it("persists discovery, runs ten minutes of matching canary evidence, then promotes", async () => {
+  it("persists discovery, observes a full minute, cleans up and automatically promotes", async () => {
     const store = new MemoryReleaseStore();
     const clock = new MutableClock();
     const item = candidate();
@@ -458,10 +458,45 @@ describe("stable release candidate application", () => {
     expect(final.state).toBe("complete");
     expect(final.canaryCleanupComplete).toBe(true);
     expect(final.lastHealthyAt! - final.healthySince!).toBeGreaterThanOrEqual(
-      STABLE_CANARY_HEALTH_WINDOW_MS,
+      60_000,
     );
     expect(final.lastHealthEvidence?.artifactDigest).toBe(OTHER_DIGEST);
     expect(final.followerPlanningComplete).toBe(true);
+  });
+
+  it("waits until the full default minute and restarts health after a missing observation window", async () => {
+    const store = new MemoryReleaseStore();
+    const clock = new MutableClock();
+    const item = candidate();
+    store.candidates.set(item.id, item);
+    await discoverStableCandidates(store, { at: clock.now() });
+    const deps = promotionDeps(store, clock);
+    for (let tick = 0; tick < 3; tick += 1) await advanceOnce(store, deps);
+    clock.value = store.workflows.get(item.id)!.nextAttemptAt!;
+    await advanceOnce(store, deps);
+    const first = store.workflows.get(item.id)!;
+    expect(first.nextAttemptAt).toBe(first.healthySince! + 60_000);
+    clock.value = first.healthySince! + 59_999;
+    await advanceOnce(store, deps);
+    expect(store.workflows.get(item.id)!.state).toBe("canary_observing");
+    expect(store.channel.currentReleaseId).toBeNull();
+
+    // An outage cannot count as healthy time even when the next sample is fresh.
+    clock.value = first.lastHealthyAt! + 120_001;
+    await advanceOnce(store, deps);
+    const restarted = store.workflows.get(item.id)!;
+    expect(restarted.state).toBe("canary_observing");
+    expect(restarted.healthySince).toBe(clock.value);
+    expect(restarted.nextAttemptAt).toBe(clock.value + 60_000);
+    clock.value = restarted.nextAttemptAt!;
+    await advanceOnce(store, deps);
+    expect(store.workflows.get(item.id)!.state).toBe("canary_cleanup");
+    expect(store.channel.currentReleaseId).toBeNull();
+    for (let tick = 0; tick < 5; tick += 1) await advanceOnce(store, deps);
+    expect(store.workflows.get(item.id)!.state).toBe("complete");
+    expect(store.workflows.get(item.id)!.canaryCleanupComplete).toBe(true);
+    expect(store.channel.currentReleaseId).toBe(item.id);
+    expect(STABLE_CANARY_HEALTH_WINDOW_MS).toBe(60_000);
   });
 
   it("announces the canary schedule after its checkpoint and preserves missing-sample retries", async () => {

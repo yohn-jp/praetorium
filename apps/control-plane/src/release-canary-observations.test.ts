@@ -212,6 +212,7 @@ describe("T11 persisted canary observations", () => {
       { row: null, operation },
       { row: healthRow(sampleEvidence(), { runtime_epoch: runtimeEpoch + 1 }), operation },
       { row: healthRow(sampleEvidence(), { operation_id: "op-other" }), operation },
+      { row: healthRow(sampleEvidence(), { observed_at: now - 2 * 60_000 - 1 }), operation },
       { row: healthRow(missingProbe), operation },
       { row: healthRow(staleEvidence), operation },
       { row: healthRow(sampleEvidence(), { provider_observation_id: "other-provider-observation" }), operation },

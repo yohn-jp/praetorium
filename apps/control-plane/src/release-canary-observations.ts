@@ -5,7 +5,7 @@ import type { D1Database } from "@praetorium/persistence/d1";
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const COMMIT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const MAX_WRITER_CENSUS_AGE_MS = 2 * 5 * 60 * 1_000;
-const MAX_HEALTH_SAMPLE_AGE_MS = 2 * 5 * 60 * 1_000;
+const MAX_HEALTH_SAMPLE_AGE_MS = 2 * 60 * 1_000;
 const MAX_COMPONENT_EVIDENCE_AGE_MS = 30 * 1_000;
 
 export interface CanaryOperationReader {

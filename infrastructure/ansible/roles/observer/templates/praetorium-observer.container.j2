@@ -5,7 +5,7 @@ Description=Praetorium read-only Management infrastructure observer
 ContainerName=praetorium-observer
 Image={{ observer_image }}
 Pull=never
-Network=bridge
+Network=slirp4netns:allow_host_loopback=true
 User=1000:1000
 UserNS=keep-id:uid=1000,gid=1000
 PublishPort=127.0.0.1:8791:8791/tcp

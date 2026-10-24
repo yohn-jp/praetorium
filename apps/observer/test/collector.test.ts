@@ -91,4 +91,40 @@ describe("read-only Management Observer", () => {
       headers, method:"POST",
     }))).status).toBe(405);
   });
+
+  it("requires the selected systemd unit and a successful collector, not just HTTP 200", async () => {
+    const config = parseObserverConfig(JSON.stringify([{
+      id:"builder", role:"builder", metricsUrl:"http://10.7.0.32:9100/metrics",
+      services:[{id:"buildkit", url:"http://10.7.0.32:9100/metrics",
+        systemdUnit:"praetorium-buildkit.service"}],
+    }]), token);
+    const unit = (name: string, active: number) =>
+      `node_systemd_unit_state{name="${name}",state="active",type="simple"} ${active}\n`;
+    const success = 'node_scrape_collector_success{collector="systemd"} 1\n';
+    for (const [body, expected] of [
+      [success + unit("praetorium-buildkit.service", 1), "healthy"],
+      [success + unit("praetorium-buildkit.service", 0), "unavailable"],
+      [success + unit("unrelated.service", 1), "unavailable"],
+      [unit("praetorium-buildkit.service", 1), "unavailable"],
+      [success.replace(" 1", " 0") + unit("praetorium-buildkit.service", 1), "unavailable"],
+      [success + unit("praetorium-buildkit.service", 1).repeat(2), "unavailable"],
+      ["ok", "unavailable"],
+      ["x".repeat(256_001), "unavailable"],
+    ]) {
+      const observer = new Observer(config, vi.fn(async () => new Response(body)));
+      expect((await observer.services(config.targets[0]!))[0]?.state).toBe(expected);
+    }
+    const observer = new Observer(config, vi.fn(async () => new Response(
+      success + unit("praetorium-buildkit.service", 1), {status:503},
+    )));
+    expect((await observer.services(config.targets[0]!))[0]?.state).toBe("unavailable");
+  });
+
+  it("rejects malformed systemd selectors in the fixed inventory", () => {
+    for (const systemdUnit of ["k3s.service --all", "../k3s.service", "*", 1])
+      expect(() => parseObserverConfig(JSON.stringify([{
+        id:"management", role:"management", metricsUrl:"http://10.7.0.33:9100/metrics",
+        services:[{id:"k3s",url:"http://10.7.0.33:9100/metrics",systemdUnit}],
+      }]), token)).toThrow(/service probe/u);
+  });
 });

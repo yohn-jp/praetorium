@@ -6,6 +6,7 @@ export type HostStatus = "healthy" | "degraded" | "unavailable" | "unknown";
 export interface Probe {
   readonly id: string;
   readonly url: string;
+  readonly systemdUnit?: string;
 }
 export interface HostTarget {
   readonly id: string;
@@ -75,9 +76,13 @@ export function parseObserverConfig(input: string, token: string): ObserverConfi
       if (!p || typeof p !== "object") throw new TypeError("Invalid service");
       const probe = p as Record<string, unknown>;
       if (typeof probe.id !== "string" || !HOST_ID.test(probe.id) ||
-          typeof probe.url !== "string" || !privateUrl(probe.url))
+          typeof probe.url !== "string" || !privateUrl(probe.url) ||
+          (probe.systemdUnit !== undefined &&
+            (typeof probe.systemdUnit !== "string" ||
+              !/^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.service$/u.test(probe.systemdUnit))))
         throw new TypeError("Invalid private service probe");
-      return { id: probe.id, url: probe.url };
+      return { id: probe.id, url: probe.url,
+        ...(probe.systemdUnit === undefined ? {} : { systemdUnit: probe.systemdUnit as string }) };
     });
     if (new Set(probes.map(p => p.id)).size !== probes.length)
       throw new TypeError("Duplicate service identity");
@@ -119,6 +124,25 @@ async function boundedText(response: Response): Promise<string> {
   return new TextDecoder("utf-8", { fatal: true }).decode(joined);
 }
 type CpuTotals = { total: number; idle: number };
+/** A successful exporter response alone does not establish that a service is active. */
+function activeSystemdUnit(text: string, unit: string): boolean {
+  let collected = false;
+  const active: number[] = [];
+  for (const line of text.split("\n")) {
+    const metric = /^(node_systemd_unit_state|node_scrape_collector_success)\{([^}]+)\}\s+(\S+)\s*$/u.exec(line);
+    if (!metric) continue;
+    const labels = metric[2]!;
+    if (metric[1] === "node_scrape_collector_success" &&
+        /(?:^|,)collector="systemd"(?:,|$)/u.test(labels))
+      collected = metric[3] === "1";
+    if (metric[1] === "node_systemd_unit_state" &&
+        /(?:^|,)state="active"(?:,|$)/u.test(labels) &&
+        /(?:^|,)name="([^"]+)"(?:,|$)/u.exec(labels)?.[1] === unit)
+      active.push(Number(metric[3]));
+  }
+  return collected && active.length === 1 && active[0] === 1;
+}
+
 function metrics(text: string): {
   memory: { usedBytes: number | null; totalBytes: number | null };
   disk: { usedBytes: number | null; totalBytes: number | null };
@@ -199,7 +223,13 @@ export class Observer {
   async services(target: HostTarget): Promise<readonly ServiceObservation[]> {
     return Promise.all(target.services.map(async service => {
       let state: ServiceObservation["state"] = "unavailable";
-      try { state = (await this.probe(service.url)).ok ? "healthy" : "unavailable"; }
+      try {
+        const response = await this.probe(service.url);
+        const healthy = service.systemdUnit
+          ? activeSystemdUnit(await boundedText(response), service.systemdUnit)
+          : response.ok;
+        state = healthy ? "healthy" : "unavailable";
+      }
       catch { /* A missing service must never be shown as healthy. */ }
       return { id: service.id, state, observedAt: new Date().toISOString() };
     }));

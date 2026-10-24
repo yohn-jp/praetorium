@@ -1,5 +1,6 @@
 import { generateToken } from "@praetorium/auth";
 import { canaryWaitSkipForm } from "./canary-wait-action.js";
+import { activeReleaseFailures, prioritySourceBuild } from "./incident-status.js";
 import type {
   SourceBuildAttempt,
   SourceBuildDetail,
@@ -180,15 +181,6 @@ function jobCard(job: SourceBuildSummary, compact = false): string {
   );
 }
 
-function priorityBuild(jobs: readonly SourceBuildSummary[]): SourceBuildSummary | null {
-  const priority = ["failed", "building", "queued", "produced", "admitted"] as const;
-  for (const state of priority) {
-    const match = jobs.find((job) => job.state === state);
-    if (match) return match;
-  }
-  return jobs[0] ?? null;
-}
-
 function nextSafeAction(job: SourceBuildSummary): string {
   if (job.state === "failed")
     return job.retryable
@@ -205,7 +197,7 @@ function nextSafeAction(job: SourceBuildSummary): string {
 
 function overview(model: ConsoleViewModel): string {
   const jobs = model.builds.value?.items ?? [];
-  const focusJob = priorityBuild(jobs);
+  const focusJob = prioritySourceBuild(jobs);
   const active = focusJob && ["failed", "building", "queued"].includes(focusJob.state);
   const incident = !model.builds.value
     ? sectionUnavailable("Source build queue", model.builds)
@@ -244,7 +236,7 @@ function overview(model: ConsoleViewModel): string {
   const channel = model.catalog.value?.stableChannel;
   const stable = channel ? channel.currentReleaseId ?? "No release promoted yet" : "Status unavailable";
   const blockedReleases =
-    model.catalog.value?.items.filter((item) => item.release.status !== "available").slice(0, 3) ??
+    activeReleaseFailures(model.catalog.value?.items ?? []).slice(0, 3) ??
     [];
   const releases =
     model.catalog.value === null
@@ -312,19 +304,26 @@ function sourceReleaseCard(
       (build.error ? "<span>Failure code: <code>" + value(build.error) + "</code></span>" : "") +
       "</p>"
     : "";
-  const action = release.version
-    ? '<form method="post" action="/source-releases/deploy?ui=mobile">' +
-      '<input type="hidden" name="csrfToken" value="' +
-      value(csrf) +
-      '">' +
-      '<input type="hidden" name="sourceId" value="' +
-      value(sourceId) +
-      '">' +
-      '<input type="hidden" name="releaseId" value="' +
-      value(release.id) +
-      '">' +
-      '<button type="submit">Build &amp; deploy</button></form>'
-    : '<p class="admin-mobile-muted">Not deployable: release tag is not SemVer.</p>';
+  const selectedHref = build?.state === "admitted" && build.admittedReleaseId
+    ? "/releases/" + encodeURIComponent(build.admittedReleaseId) + "?ui=mobile"
+    : build ? buildHref(build.id, "mobile") : null;
+  const action = build && selectedHref
+    ? '<a class="button button-secondary" href="' + value(selectedHref) + '">' +
+      (build.state === "admitted" ? "Inspect Canary / Stable" :
+        build.state === "failed" ? "Review failure / retry" : "View current build") + '</a>'
+    : release.version
+      ? '<form method="post" action="/source-releases/deploy?ui=mobile">' +
+        '<input type="hidden" name="csrfToken" value="' +
+        value(csrf) +
+        '">' +
+        '<input type="hidden" name="sourceId" value="' +
+        value(sourceId) +
+        '">' +
+        '<input type="hidden" name="releaseId" value="' +
+        value(release.id) +
+        '">' +
+        '<button type="submit">Build &amp; deploy</button></form>'
+      : '<p class="admin-mobile-muted">Not deployable: release tag is not SemVer.</p>';
   return (
     '<article class="admin-mobile-release-card"><div class="admin-mobile-release-title">' +
     '<span class="admin-kicker">' +
@@ -696,6 +695,7 @@ function releaseDetail(model: ConsoleViewModel): string {
   }
   const build = status.build;
   const failureCode = status.workflow.failureCode ?? build?.failure?.code ?? null;
+  const stopBlocked = status.workflow.state === "canary_cleanup" && status.workflow.failureCode === "canary_stop_blocked";
   const refresh = "/releases/" + encodeURIComponent(status.release.id) + "?ui=mobile";
   return (
     '<a class="admin-mobile-back" href="' +
@@ -745,6 +745,7 @@ function releaseDetail(model: ConsoleViewModel): string {
         value(failureCode) +
         "</code></p>"
       : '<p class="admin-mobile-empty-inline">No workflow failure code is recorded.</p>') +
+    (stopBlocked ? '<p class="admin-mobile-error-code">Canary stop is blocked by producer durability. Preserve unpublished local work and confirm writer absence before Stable promotion; Source admission alone is not Stable.</p>' : "") +
     '</section><section class="admin-mobile-action-region" aria-label="Canary recovery action">' +
     releaseDetailRetry(status, model.csrf) + canaryWaitSkipForm(status, model.csrf, "mobile") +
     "</section>"

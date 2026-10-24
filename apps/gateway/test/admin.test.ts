@@ -429,7 +429,8 @@ describe("operator-only admin origin", () => {
     const html = await view.text();
     expect(html).toContain("Scriptorium v0.2.1");
     expect(html).toContain("Build &amp; deploy");
-    expect(html).toContain("Not deployable");
+    expect(html).not.toContain("Not deployable");
+    expect(html).not.toContain("perf-wave1");
     expect(html).not.toContain("Release manifest (JSON)");
     const invalid = await handleAdminHost(
       post("/source-releases/deploy", cookies, {

@@ -267,6 +267,14 @@ export class D1SourceReleaseBuildQueue {
             WHERE state IN ('building','queued','produced') OR job_id IN (
               SELECT job_id FROM source_release_builds WHERE state='failed'
                 ORDER BY updated_at DESC,job_id DESC LIMIT 5
+            ) OR job_id IN (
+              SELECT admitted.job_id FROM source_release_builds AS admitted
+              WHERE admitted.state='admitted' AND NOT EXISTS (
+                SELECT 1 FROM source_release_builds AS newer
+                WHERE newer.source_id=admitted.source_id AND newer.state='admitted'
+                  AND (newer.updated_at>admitted.updated_at OR
+                       (newer.updated_at=admitted.updated_at AND newer.job_id>admitted.job_id))
+              )
             )
             ORDER BY CASE state WHEN 'failed' THEN 0 WHEN 'building' THEN 1
               WHEN 'queued' THEN 2 WHEN 'produced' THEN 3 ELSE 4 END,

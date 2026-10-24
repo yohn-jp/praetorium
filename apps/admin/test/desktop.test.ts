@@ -171,7 +171,7 @@ describe("desktop operator composition", () => {
     expect(releasePage).toContain("Resolved immutable commit");
     expect(releasePage).toContain(job.commit);
     expect(releasePage).toContain("Immutable OCI digest");
-    expect(releasePage).toContain("Build &amp; deploy");
+    expect(releasePage).toContain("Inspect Canary / Stable");
     expect(releasePage).toContain('href="/builds/sr_00000000-0000-4000-a000-000000000001?ui=desktop"');
 
     const admittedJobPage = renderDesktopConsole(view({
@@ -286,4 +286,35 @@ it("keeps both Release and Operation evidence destinations when one audit event 
   })}));
   expect(html).toContain('href="/releases/rel_candidate?ui=desktop"');
   expect(html).toContain('href="/operations/op_123?ui=desktop"');
+});
+
+
+it("does not list superseded Source failures as Active incidents while Stable is still empty", () => {
+  const older={...job,id:"sr_00000000-0000-4000-a000-000000000002",version:"0.3.3",tag:"v0.3.3"};
+  const newer={...job,id:"sr_00000000-0000-4000-a000-000000000003",
+    version:"0.3.4",tag:"v0.3.4",state:"admitted" as const,error:null,retryable:false,
+    admittedReleaseId:"rel_current"};
+  const html=renderDesktopConsole(view({section:"overview",
+    builds:dependency("GET /v1/operator/source-builds",{items:[older,newer],nextCursor:null})}));
+  expect(html).toContain("No release promoted yet");
+  expect(html).not.toContain("SOURCE_BUILD_FAILED");
+  expect(html).toContain("No unresolved failed builds");
+});
+
+
+it("does not offer duplicate Source dispatch for an already admitted version", () => {
+  const admitted={...job,sourceId:"scriptorium",releaseId:416422590,
+    version:"0.3.4",tag:"v0.3.4",state:"admitted" as const,
+    admittedReleaseId:"rel_abcd",error:null,retryable:false};
+  const source: SourceReleaseView={
+    source:{id:"scriptorium",label:"Scriptorium",githubRepository:"yohn-jp/scriptorium",adapter:"scriptorium-v1"},
+    releases:[{id:416422590,tag:"v0.3.4",name:"0.3.4",version:"0.3.4",
+      prerelease:false,publishedAt:"2026-10-23T15:58:15Z",notes:""}],
+    error:null,endpoint:"github",status:200,code:null,
+  };
+  const html=renderDesktopConsole(view({section:"releases",
+    builds:dependency("builds",{items:[admitted],nextCursor:null}),
+    sourceViews:dependency("sources",[source])}));
+  expect(html).toContain('href="/releases/rel_abcd?ui=desktop"');
+  expect(html).not.toContain('action="/source-releases/deploy?ui=desktop"');
 });

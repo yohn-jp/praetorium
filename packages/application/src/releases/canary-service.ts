@@ -361,6 +361,7 @@ export class ServiceBackedDisposableCanary
     if (stopOperation) {
       if (stopOperation.kind !== "stop") return { kind: "pending" as const };
       const fresh = await this.options.operations.getById(stopOperation.id);
+      if (fresh?.status === "blocked") return { kind: "blocked" as const };
       if (!fresh || fresh.status !== "succeeded") return { kind: "pending" as const };
     } else if (
       result.instance.desiredState !== "stopped" ||

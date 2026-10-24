@@ -887,7 +887,7 @@ describe("source Release build queue against migrated SQLite D1", () => {
     expect((await app.request(`/${selected.id}?cursor=not-an-epoch`,{headers})).status).toBe(400);
   });
 
-  it("keeps old failed work visible in the bounded overview attention list", async () => {
+  it("includes latest admitted Source as well as failed history in bounded overview attention", async () => {
     const h = harness();
     const failed = await h.queue.enqueue(JOB,ACTOR);
     h.db.database.prepare(
@@ -906,8 +906,9 @@ describe("source Release build queue against migrated SQLite D1", () => {
     expect(history.items).toHaveLength(40);
     expect(history.items.some(job=>job.id===failed.job.id)).toBe(false);
     const attention=await h.queue.list(40,undefined,true);
-    expect(attention.items).toHaveLength(1);
+    expect(attention.items).toHaveLength(2);
     expect(attention.items[0]).toMatchObject({id:failed.job.id,state:"failed"});
+    expect(attention.items[1]).toMatchObject({sourceId:JOB.sourceId,state:"admitted"});
     expect(attention.nextCursor).toBeNull();
 
     const app=createSourceReleaseOperatorRoutes({queue:h.queue,operatorActorId:ACTOR});
@@ -915,7 +916,7 @@ describe("source Release build queue against migrated SQLite D1", () => {
       headers:{"X-Praetorium-Admin-Actor":ACTOR},
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({items:[{id:failed.job.id,state:"failed"}],nextCursor:null});
+    expect(await response.json()).toMatchObject({items:[{id:failed.job.id,state:"failed"},{state:"admitted"}],nextCursor:null});
 
     const failures = await Promise.all(Array.from({length:45},(_,index)=>h.queue.enqueue({
       ...JOB,githubReleaseId:JOB.githubReleaseId+100+index,

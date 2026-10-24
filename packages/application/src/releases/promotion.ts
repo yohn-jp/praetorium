@@ -44,7 +44,7 @@ export interface CanaryRuntimeProvider {
     readonly startedOperationId: string;
     readonly idempotencyKey: string;
   }): Promise<
-    { readonly kind: "pending" } | { readonly kind: "stopped"; readonly evidence: unknown }
+    { readonly kind: "pending" } | { readonly kind: "blocked" } | { readonly kind: "stopped"; readonly evidence: unknown }
   >;
 }
 
@@ -356,6 +356,12 @@ async function advanceCandidate(
       startedOperationId: workflow.canaryOperationId,
       idempotencyKey: `stable-canary-stop:${candidate.id}`,
     });
+    if (stopped.kind === "blocked") {
+      return (await save(deps, lease, {
+        nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000),
+        failureCode: "canary_stop_blocked",
+      })) ? "retried" : "stale";
+    }
     if (stopped.kind === "pending") {
       return (await save(deps, lease, { nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000) }))
         ? "retried"

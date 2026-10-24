@@ -295,7 +295,7 @@ describe("mobile operator console", () => {
     );
     expect(html).toContain("CURRENT STABLE CHANNEL");
     expect(html).toContain("v0.3.3");
-    expect(html).toContain('action="/source-releases/deploy?ui=mobile"');
+    expect(html).toContain("Review failure / retry");
     expect(html).toContain("sha256:" + "c".repeat(64));
     expect(html).toContain('action="/releases/release-canary/retry?ui=mobile"');
     expect(html).toContain("Retry Canary build");
@@ -444,4 +444,34 @@ it("links Canary operation evidence from the mobile audit trail", () => {
       operationId:"op_123",jobId:null,releaseId:null,failureCode:null}],nextCursor:null},"audit"),
   }));
   expect(html).toContain('href="/operations/op_123?ui=mobile"');
+});
+
+
+it("focuses an admitted newer Source instead of obsolete failed jobs on Overview", () => {
+  const newer={...sourceJob,id:"sr_00000000-0000-4000-a000-000000000003",
+    version:"0.3.4",tag:"v0.3.4",state:"admitted" as const,error:null,
+    retryable:false,admittedReleaseId:"rel_current"};
+  const html=renderMobileConsole(model({section:"overview",
+    builds:dependency({items:[sourceJob,newer],nextCursor:null},"builds")}));
+  const from=html.indexOf('class="admin-mobile-focus"');
+  const focus=html.slice(from,html.indexOf("</section>",from));
+  expect(focus).toContain("v0.3.4");
+  expect(focus).not.toContain("ACTIVE INCIDENT");
+  expect(focus).not.toContain("SOURCE_BUILD_FAILED");
+});
+
+
+it("never offers Build and deploy again for an already admitted Source version", () => {
+  const admitted={...sourceJob,releaseId:416422590,tag:"v0.3.4",version:"0.3.4",
+    state:"admitted" as const,error:null,retryable:false,admittedReleaseId:"rel_abcd"};
+  const html=renderMobileConsole(model({
+    section:"releases",
+    builds:dependency({items:[admitted],nextCursor:null},"source builds"),
+    sourceViews:dependency([{source:{id:"scriptorium",label:"Scriptorium",githubRepository:"yohn-jp/scriptorium",
+      adapter:"scriptorium-v1"},releases:[{id:416422590,tag:"v0.3.4",name:"v0.3.4",
+      version:"0.3.4",publishedAt:"2026-10-23T15:58:15Z",prerelease:false,notes:""}],
+      error:null,endpoint:"github",status:200,code:null}],"source views"),
+  }));
+  expect(html).toContain('href="/releases/rel_abcd?ui=mobile"');
+  expect(html).not.toContain('action="/source-releases/deploy?ui=mobile"');
 });

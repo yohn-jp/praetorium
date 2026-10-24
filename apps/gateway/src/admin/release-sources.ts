@@ -97,7 +97,8 @@ function parseRelease(item: unknown): PublishedSourceRelease | null {
 export function publishedReleases(payload: unknown): readonly PublishedSourceRelease[] {
   if (!Array.isArray(payload)) throw new TypeError("GitHub Releases response is invalid");
   if (payload.length > 100) throw new TypeError("GitHub Releases response exceeded limit");
-  return payload.map(parseRelease).filter((x): x is PublishedSourceRelease => x !== null)
+  return payload.map(parseRelease).filter((x): x is PublishedSourceRelease =>
+    x !== null && x.version !== null && x.tag.startsWith("v"))
     .sort((a,b) => Date.parse(b.publishedAt)-Date.parse(a.publishedAt))
     .slice(0, MAX_RELEASES);
 }
@@ -136,7 +137,7 @@ export async function fetchSelectedRelease(
   if (!Number.isSafeInteger(releaseId) || releaseId < 1) throw new TypeError("Invalid GitHub Release ID");
   const response = await client.request(`/repos/${source.githubRepository}/releases/${releaseId}`, token);
   const release = parseRelease(response.body);
-  if (!release || release.id !== releaseId || release.version === null)
+  if (!release || release.id !== releaseId || release.version === null || !release.tag.startsWith("v"))
     throw new TypeError("Selected GitHub Release is unpublished or is not a deployable SemVer");
   const commit = await resolveTagCommit(source,release.tag,client,token);
   return {release,commit};

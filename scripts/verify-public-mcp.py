@@ -1,6 +1,8 @@
 """Live, credential-free ingress checks for #66; does not certify an OAuth grant."""
 import json
 import socket
+import secrets
+import urllib.parse
 import urllib.error
 import urllib.request
 
@@ -56,4 +58,27 @@ metadata = json.loads(body)
 assert metadata['issuer'] == ISSUER
 assert metadata['registration_endpoint'] == ISSUER + '/oauth/register'
 assert 'S256' in metadata['code_challenge_methods_supported']
-print('PASS: public HTTPS, anonymous MCP challenge, OAuth discovery and advertised PKCE/DCR. OAuth grant and authenticated initialize: NOT_CHECKED.', flush=True)
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+# Exercise the CIMD path ChatGPT actually chooses, without a session or a grant.
+params = {
+    'response_type': 'code', 'client_id': 'https://chatgpt.com/oauth/client.json',
+    'redirect_uri': 'https://chatgpt.com/connector_platform_oauth_redirect',
+    'scope': 'read write', 'code_challenge': secrets.token_urlsafe(32),
+    'code_challenge_method': 'S256', 'resource': ORIGIN, 'state': secrets.token_urlsafe(24),
+}
+try:
+    response = urllib.request.build_opener(NoRedirect).open(
+        ISSUER + '/oauth/authorize?' + urllib.parse.urlencode(params), timeout=20)
+except urllib.error.HTTPError as error:
+    response = error
+with response:
+    location = urllib.parse.urlparse(response.headers.get('Location', ''))
+    print(json.dumps({'path': '/oauth/authorize', 'client': 'ChatGPT CIMD',
+                      'status': response.status, 'redirect_path': location.path}), flush=True)
+    assert response.status == 302 and location.scheme == 'https'
+    assert location.netloc == 'praetorium.yohn.jp' and location.path == '/auth/login'
+print('PASS: public HTTPS, anonymous MCP challenge, OAuth discovery, advertised PKCE/DCR and ChatGPT CIMD login redirect. OAuth grant and authenticated initialize: NOT_CHECKED.', flush=True)

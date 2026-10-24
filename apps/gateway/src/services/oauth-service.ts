@@ -296,7 +296,7 @@ export async function authorizeOAuth(
       const fields = Object.entries(hidden).map(([key, value]) =>
         '<input type="hidden" name="' + key + '" value="' + htmlEscape(value) + '">').join("");
       return new Response('<!doctype html><html lang="en"><meta charset="utf-8">' +
-        '<meta name="referrer" content="no-referrer"><title>MCP access approval</title>' +
+        '<meta name="referrer" content="same-origin"><title>MCP access approval</title>' +
         '<main><h1>Allow MCP access?</h1><p>' + htmlEscape(input.clientName) +
         ' requests ' + htmlEscape(input.permissions.join(", ")) + ' access to ' +
         htmlEscape(input.resource) + '.</p><form method="post" action="/oauth/authorize">' +
@@ -305,7 +305,7 @@ export async function authorizeOAuth(
         '<button type="submit" name="decision" value="approve">Allow</button>' +
         '<button type="submit" name="decision" value="deny">Deny</button></form></main></html>', {
           headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
-            "Referrer-Policy": "no-referrer", "Content-Security-Policy":
+            "Referrer-Policy": "same-origin", "Content-Security-Policy":
               "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; style-src 'none'" },
         });
     }

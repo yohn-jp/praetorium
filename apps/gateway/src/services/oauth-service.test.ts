@@ -139,7 +139,10 @@ describe("generic service MCP OAuth", () => {
       headers: { Cookie: f.cookie },
     }), f.context);
     expect(consent.status).toBe(200);
-    expect(await consent.text()).toContain("Test MCP client");
+    expect(consent.headers.get("Referrer-Policy")).toBe("same-origin");
+    const consentHtml = await consent.text();
+    expect(consentHtml).toContain("Test MCP client");
+    expect(consentHtml).toContain('<meta name="referrer" content="same-origin">');
     const submitted = new URLSearchParams(parameters);
     submitted.set("csrfToken", f.csrf);
     submitted.set("decision", "approve");

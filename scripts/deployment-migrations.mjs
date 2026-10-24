@@ -58,6 +58,28 @@ export function parseAppliedMigrationReadback(output) {
   return names;
 }
 
+/** Parse the SQLite catalog probe used to distinguish a fresh disposable D1 from unknown data. */
+export function parseD1TableReadback(output) {
+  let value;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    throw new Error("D1 schema readback returned invalid JSON");
+  }
+  if (!Array.isArray(value) || value.length !== 1 || value[0]?.success !== true ||
+      !Array.isArray(value[0]?.results)) {
+    throw new Error("D1 schema readback did not return one successful query result");
+  }
+  const names = value[0].results.map((row) => row?.name);
+  if (names.some((name) => typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(name))) {
+    throw new Error("D1 schema readback contains an invalid table name");
+  }
+  if (new Set(names).size !== names.length) {
+    throw new Error("D1 schema readback contains duplicate table names");
+  }
+  return names;
+}
+
 /**
  * Require complete migration-history parity without rewriting historical receipt order.
  * Older D1 databases can have duplicate-prefix migrations recorded in an order that

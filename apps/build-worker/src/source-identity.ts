@@ -1,4 +1,6 @@
 import { canonicalSourceProof } from "@praetorium/contracts";
+import { cp, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 /** Platform-owned input; never supplied by the browser or by Producer output. */
 export interface VerifiedSourceIdentity {
@@ -13,6 +15,19 @@ export interface VerifiedSourceIdentity {
 export function assertSourceIdentityOutput(expected: VerifiedSourceIdentity, output: unknown): void {
   if (canonicalSourceProof(expected) !== canonicalSourceProof(output))
     throw new Error("Source identity verification failed");
+}
+
+/** The named context has no root .dockerignore. Producer exclusions are nested
+ * under checkout/ and cannot filter its Git data or tracked source files. */
+export async function prepareSourceMetadataContext(
+  source: string, destination: string, identity: VerifiedSourceIdentity,
+): Promise<void> {
+  await mkdir(destination,{mode:0o700});
+  await cp(source,path.join(destination,"checkout"),{
+    recursive:true,preserveTimestamps:true,verbatimSymlinks:true,
+  });
+  await writeFile(path.join(destination,"identity.json"),JSON.stringify(identity),{mode:0o600});
+  await writeFile(path.join(destination,"verify.mjs"),sourceIdentityVerifier,{mode:0o600});
 }
 
 /** Compatibility adapter for published Producers whose clean-source contract

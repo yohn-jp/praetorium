@@ -11,7 +11,7 @@ import {
   type SourceBuildDiagnostic, type SourceBuildStage, type SourceProducerResult,
 } from "@praetorium/contracts";
 import type { BuildWorkerConfig } from "./config.js";
-import { assertSourceIdentityOutput, sourceIdentityVerifier, type VerifiedSourceIdentity } from "./source-identity.js";
+import { assertSourceIdentityOutput, prepareSourceMetadataContext, type VerifiedSourceIdentity } from "./source-identity.js";
 
 const REPO="https://github.com/yohn-jp/scriptorium.git";
 const GHCR_REPOSITORY=/^ghcr\.io\/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/u;
@@ -149,18 +149,6 @@ export function assertSourceProducerResultWithinBudget(value:unknown):void{
   try{byteLength=sourceProducerResultByteLength(value);}
   catch{throw new SourceBuildVerificationError();}
   if(byteLength>SOURCE_PRODUCER_RESULT_MAX_BYTES)throw new SourceBuildVerificationError();
-}
-
-/** The provenance build consumes only a fresh, verified Git checkout. Give
- * its separate metadata Dockerfile the complete checkout, including tracked
- * files ignored by Scriptorium's production image context rules. Keep this
- * override non-empty so Dockerfile frontends cannot mistake it for an absent
- * file and fall back to the producer's .dockerignore. */
-export function sourceMetadataDockerfileIgnore():Buffer{
-  return Buffer.from(
-    "# Praetorium metadata requires the complete verified checkout, including .git.\n",
-    "utf8",
-  );
 }
 
 function outputRepository(options:SourceBuildOptions,logicalRepository:string):string{
@@ -352,7 +340,8 @@ ${DEBIAN_HTTPS_SOURCES}
 RUN apt-get update \\
  && apt-get install -y --no-install-recommends ca-certificates git \\
  && rm -rf /var/lib/apt/lists/*
-COPY --from=praetorium-source-identity / /tmp/praetorium-source-input/
+COPY --from=praetorium-source-identity /identity.json /verify.mjs /tmp/praetorium-source-input/
+COPY --from=praetorium-source-identity /checkout/ ./
 RUN node /tmp/praetorium-source-input/verify.mjs \\
  && pnpm run build:workspace \\
  && mkdir -p /tmp/praetorium-source-proof \\
@@ -422,9 +411,12 @@ export async function buildSourceRelease(
       const identity:VerifiedSourceIdentity={schemaVersion:1,githubReleaseId:job.github_release_id,
         sourceRepository:job.source_repository,sourceTag:job.source_tag,
         sourceRevision:job.source_revision,sourceTree};
-      await mkdir(identityDirectory,{mode:0o700});
-      await writeFile(path.join(identityDirectory,"identity.json"),JSON.stringify(identity),{mode:0o600});
-      await writeFile(path.join(identityDirectory,"verify.mjs"),sourceIdentityVerifier,{mode:0o600});
+      await prepareSourceMetadataContext(source,identityDirectory,identity);
+      const snapshot=path.join(identityDirectory,"checkout");
+      if(await git(["rev-parse","HEAD"],snapshot,privateGitHome,signal)!==identity.sourceRevision ||
+         await git(["rev-parse","HEAD^{tree}"],snapshot,privateGitHome,signal)!==identity.sourceTree ||
+         await git(["status","--porcelain","--untracked-files=all"],snapshot,privateGitHome,signal)!=="")
+        throw new SourceBuildChangedError();
       return identity;
     });
     const {dockerfile,nodeImage,dockerfileDigest}=await runSourceStage("verification",onStage,async()=>{
@@ -485,8 +477,6 @@ export async function buildSourceRelease(
     await runSourceStage("metadata",onStage,async()=>{
     await writeFile(path.join(metadataDockerfiles,"Dockerfile"),
       Buffer.concat([buildDockerfile,Buffer.from("\n"+sourceMetadataStagesDockerfile,"utf8")]),{mode:0o600});
-    await writeFile(path.join(metadataDockerfiles,"Dockerfile.dockerignore"),
-      sourceMetadataDockerfileIgnore(),{mode:0o600});
     });
     await runSourceStage("metadata",onStage,()=>runBuild(config,[
       ...environmentArgs,

@@ -20,7 +20,10 @@ The Gateway re-fetches the selected Release by numeric ID with its existing encr
 
 - The Worker binds a platform-owned source identity (Release ID, repository, tag,
   commit and Git tree) to the metadata solve through a separate named BuildKit
-  context. The compatibility adapter checks the exact revision/tree and clean
+  context containing the complete verified checkout under `checkout/`. The
+  context root has no Docker ignore file; the image context's `.dockerignore`
+  and Dockerfile-specific exclusions cannot filter this snapshot. No ignore
+  override is used for metadata. The compatibility adapter checks the exact revision/tree and clean
   checkout before and after generation; exported identity must match the input
   exactly before signing. The Worker also rechecks its checkout before signing.
   Published Scriptorium releases still require Git for their native clean-source

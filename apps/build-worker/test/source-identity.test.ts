@@ -1,9 +1,33 @@
 import { expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { assertSourceIdentityOutput, sourceIdentityVerifier, type VerifiedSourceIdentity } from "../src/source-identity.js";
+import { assertSourceIdentityOutput, prepareSourceMetadataContext, sourceIdentityVerifier, type VerifiedSourceIdentity } from "../src/source-identity.js";
+
+it("transfers the complete snapshot independently of Producer Docker ignore files", async () => {
+  const root=await mkdtemp(path.join(tmpdir(),"praetorium-metadata-context-"));
+  try {
+    const source=path.join(root,"source");
+    const context=path.join(root,"context");
+    await mkdir(path.join(source,".git"),{recursive:true});
+    await mkdir(path.join(source,"docs"));
+    await writeFile(path.join(source,".git","HEAD"),"a".repeat(40)+"\n");
+    await writeFile(path.join(source,"docs","contract.md"),"tracked source\n");
+    await writeFile(path.join(source,".dockerignore"),"*\n");
+    await writeFile(path.join(source,"Dockerfile.dockerignore"),"*\n");
+    await symlink("docs/contract.md",path.join(source,"contract.md"));
+    const identity:VerifiedSourceIdentity={schemaVersion:1,githubReleaseId:123,
+      sourceRepository:"yohn-jp/scriptorium",sourceTag:"v0.3.7",
+      sourceRevision:"a".repeat(40),sourceTree:"b".repeat(40)};
+    await prepareSourceMetadataContext(source,context,identity);
+    await expect(readFile(path.join(context,".dockerignore"))).rejects.toThrow();
+    expect(await readFile(path.join(context,"checkout",".git","HEAD"),"utf8")).toBe(identity.sourceRevision+"\n");
+    expect(await readFile(path.join(context,"checkout","docs","contract.md"),"utf8")).toBe("tracked source\n");
+    expect(await readlink(path.join(context,"checkout","contract.md"))).toBe("docs/contract.md");
+    expect(JSON.parse(await readFile(path.join(context,"identity.json"),"utf8"))).toEqual(identity);
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
 
 it("binds generated metadata to the verified revision and tree, rejecting changed source", async () => {
   const root=await mkdtemp(path.join(tmpdir(),"praetorium-identity-"));

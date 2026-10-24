@@ -1,8 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import * as fsPromises from "node:fs/promises";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,7 +12,6 @@ import {
   buildSourceRelease,
   sourceNodeImage,
   readSourceProducerFile,
-  sourceMetadataDockerfileIgnore,
   SourceBuildVerificationError,
   sourceGitEnvironment,
 } from "../src/source-producer-builder.js";
@@ -85,21 +83,6 @@ it("keeps tracked .gitconfig out of Git's global configuration", async () => {
   // The fixed environment is the exact helper called by production checkout.
   expect(runGit(gitEnvironment,"status","--porcelain")).toBe("");
   await expect(access(marker)).rejects.toThrow();
-});
-
-it("keeps complete Git provenance outside the exact pinned image exclusions", async () => {
-  const ignore = await readFile(new URL("./fixtures/scriptorium-v0.2.1.dockerignore", import.meta.url));
-  expect(createHash("sha256").update(ignore).digest("hex"))
-    .toBe("74f8c3802e47bd2c62aef7170018255e11e26321e74657a7f8fdd107bdf958f3");
-  expect(ignore.toString("utf8").split("\n")).toEqual(expect.arrayContaining([
-    ".git", ".github", "docs", ".env.*", ".gitconfig",
-  ]));
-  // The metadata context is a private, verified Git checkout. The Dockerfile-
-  // specific override must parse to no exclusions while remaining non-empty,
-  // so the frontend cannot fall back to the producer's `.dockerignore`.
-  const metadataIgnore = sourceMetadataDockerfileIgnore().toString("utf8");
-  expect(metadataIgnore.trim()).toMatch(/^#.*\.git\.$/u);
-  expect(metadataIgnore.split("\n").filter((line) => line.trim() && !line.trim().startsWith("#"))).toEqual([]);
 });
 
 it("rejects a BuildKit metadata path that is a symbolic link", async () => {

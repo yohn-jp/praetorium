@@ -155,11 +155,13 @@ function walk(directory, relative) {
     if (before.isSymbolicLink()) throw new Error('history links are not allowed');
     if (before.isDirectory()) { walk(file, rel); continue; }
     if (!before.isFile() || before.nlink !== 1) throw new Error('history entry is not a regular file');
+    if (before.size > maxBytes - total) throw new Error('history exceeds the 512 KiB bound');
     count += 1;
     if (count > 4096) throw new Error('history contains too many files');
     const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     try {
       const opened = fs.fstatSync(fd);
+      if (!opened.isFile() || opened.nlink !== 1 || opened.size > maxBytes - total) throw new Error('history exceeds the 512 KiB bound');
       const bytes = fs.readFileSync(fd);
       const after = fs.fstatSync(fd);
       if (!opened.isFile() || opened.nlink !== 1 || opened.size !== after.size || opened.mtimeMs !== after.mtimeMs || bytes.length !== after.size) throw new Error('history file changed while reading');

@@ -142,6 +142,20 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     await refresh.click();
     assert.equal(new URL(page.url()).pathname,"/infrastructure/hosts/builder");
   }
+
+  // The first touch visit starts as Desktop by policy, then offers a
+  // non-forcing Mobile preference backed by the normal cookie.
+  const touch = await browser.newContext({
+    viewport:{width:390,height:844}, hasTouch:true, isMobile:true,
+  });
+  t.after(()=>touch.close());
+  const touchPage = await touch.newPage();
+  await touchPage.goto(origin+"/infrastructure",{waitUntil:"networkidle"});
+  assert.equal(await touchPage.locator("body").getAttribute("data-ui"),"desktop");
+  assert.equal(await touchPage.locator(".mode-choice").isVisible(),true);
+  await touchPage.getByRole("link",{name:"Use mobile layout"}).click();
+  assert.equal(new URL(touchPage.url()).searchParams.get("ui"),"mobile");
+  assert.equal(await touchPage.locator(".mode-choice").count(),0);
   await page.goto(origin+"/infrastructure/hosts/management?ui=desktop",{waitUntil:"domcontentloaded"});
   assert.ok(await page.getByText("k3s",{exact:true}).count()>=1);
   assert.deepEqual(errors,[]);

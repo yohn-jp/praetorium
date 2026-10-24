@@ -417,7 +417,7 @@ function releaseRetryForm(release: ConsoleRelease, csrf: string): string {
     '"><input type="hidden" name="expectedRevision" value="' +
     value(workflow.revision) +
     '"><input type="hidden" name="idempotencyKey" value="' +
-    value(generateToken(128)) +
+    value("action-" + generateToken(128)) +
     '"><button class="button button-secondary" type="submit">Retry Canary build</button></form>'
   );
 }
@@ -639,7 +639,7 @@ function retryAction(job: SourceBuildSummary, csrf: string): string {
       '"><input type="hidden" name="expectedRevision" value="' +
       value(job.revision) +
       '"><input type="hidden" name="idempotencyKey" value="' +
-      value(generateToken(128)) +
+      value("action-" + generateToken(128)) +
       '"><button type="submit">' + label + '</button></form>'
     );
   }
@@ -675,7 +675,7 @@ function releaseDetailRetry(status: ConsoleReleaseStatus, csrf: string): string 
     '"><input type="hidden" name="expectedRevision" value="' +
     value(workflow.revision) +
     '"><input type="hidden" name="idempotencyKey" value="' +
-    value(generateToken(128)) +
+    value("action-" + generateToken(128)) +
     '"><button type="submit">Retry Canary build</button></form>'
   );
 }

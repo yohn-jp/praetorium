@@ -8,7 +8,7 @@ export function canaryWaitSkipForm(status: ConsoleReleaseStatus, csrf: string, m
   return `<form method="post" action="/releases/${encodeURIComponent(status.release.id)}/skip-canary-wait?ui=${mode}" class="${prefix}-retry-form">` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(csrf)}">` +
     `<input type="hidden" name="expectedRevision" value="${status.workflow.revision}">` +
-    `<input type="hidden" name="idempotencyKey" value="${escapeHtml(generateToken(128))}">` +
+    `<input type="hidden" name="idempotencyKey" value="${escapeHtml("action-" + generateToken(128))}">` +
     `<label>Reason for skipping the wait <input name="reason" required maxlength="200" autocomplete="off"></label>` +
     `<p>Ends the observation wait using fresh successful checks. Safe stop and writer-absence verification still run. The operator and reason are recorded.</p>` +
     `<button type="submit" class="${mode === "desktop" ? "desktop-button" : "button"}">Skip Canary wait</button></form>`;

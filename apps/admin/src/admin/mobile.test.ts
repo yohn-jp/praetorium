@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as auth from "@praetorium/auth";
+import { renderDesktopConsole } from "./desktop.js";
 import type {
   SourceBuildAttempt,
   SourceBuildDetail,
@@ -134,6 +136,23 @@ function model(overrides: Partial<ConsoleViewModel> = {}): ConsoleViewModel {
 }
 
 describe("mobile operator console", () => {
+  it.each(["-", "_"])("renders valid Source retry keys when the random token starts with %s", prefix => {
+    const token = prefix + "a".repeat(21);
+    const random = vi.spyOn(auth, "generateToken").mockReturnValue(token);
+    try {
+      for (const mode of ["desktop", "mobile"] as const) {
+        const view = model({ mode, selectedBuildId: sourceJob.id });
+        const html = mode === "desktop" ? renderDesktopConsole(view) : renderMobileConsole(view);
+        const key = /name="idempotencyKey" value="([^"]+)"/u.exec(html)?.[1];
+        expect(key).toBeDefined();
+        expect(key).toMatch(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u);
+        expect(key).toContain(token);
+      }
+    } finally {
+      random.mockRestore();
+    }
+  });
+
   it("renders four task tabs and active build cards without a desktop table", () => {
     const html = renderMobileConsole(model());
     expect(html).toContain('class="admin-console admin-mobile-console"');

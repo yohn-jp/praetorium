@@ -157,7 +157,7 @@ function canaryRetryForm(item: ConsoleRelease, csrf: string, mode: ConsoleViewMo
   return `<form method="post" action="/releases/${encodeURIComponent(item.release.id)}/retry?ui=${mode}" class="desktop-inline-form">` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(csrf)}">` +
     `<input type="hidden" name="expectedRevision" value="${revision}">` +
-    `<input type="hidden" name="idempotencyKey" value="${escapeHtml(generateToken(128))}">` +
+    `<input type="hidden" name="idempotencyKey" value="${escapeHtml("action-" + generateToken(128))}">` +
     `<button class="desktop-button desktop-button-secondary" type="submit">Retry Canary build</button></form>`;
 }
 
@@ -262,7 +262,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     ? `<form method="post" action="/releases/${encodeURIComponent(value.release.id)}/retry?ui=${model.mode}" class="desktop-retry-form">` +
       `<input type="hidden" name="csrfToken" value="${escapeHtml(model.csrf)}">` +
       `<input type="hidden" name="expectedRevision" value="${workflow.revision}">` +
-      `<input type="hidden" name="idempotencyKey" value="${escapeHtml(generateToken(128))}">` +
+      `<input type="hidden" name="idempotencyKey" value="${escapeHtml("action-" + generateToken(128))}">` +
       `<button class="desktop-button" type="submit">Retry Canary build</button>` +
       `<p>The Control Plane rechecks the current workflow revision and retry policy.</p></form>`
     : workflow.state === "blocked" || workflow.state === "failed"
@@ -424,7 +424,7 @@ function retryForm(job: SourceBuildSummary, model: ConsoleViewModel): string {
   return `<form method="post" action="/source-builds/${encodeURIComponent(job.id)}/retry?ui=${model.mode}" class="desktop-retry-form">` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(model.csrf)}">` +
     `<input type="hidden" name="expectedRevision" value="${job.revision}">` +
-    `<input type="hidden" name="idempotencyKey" value="${escapeHtml(generateToken(128))}">` +
+    `<input type="hidden" name="idempotencyKey" value="${escapeHtml("action-" + generateToken(128))}">` +
     `<button class="desktop-button" type="submit">${label}</button>` +
     `<p>${copy}</p></form>`;
 }

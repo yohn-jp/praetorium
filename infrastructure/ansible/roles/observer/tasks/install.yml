@@ -143,6 +143,58 @@
     mode: "0400"
   register: observer_inventory_changed
 
+- name: Verify exact Observer manifest access using the Observer service identity
+  ansible.builtin.command:
+    chdir: "{{ observer_service_home }}"
+    argv:
+      - runuser
+      - --user
+      - "{{ observer_service_user }}"
+      - --
+      - podman
+      - manifest
+      - inspect
+      - "{{ observer_image }}"
+  changed_when: false
+  check_mode: false
+  timeout: 60
+  no_log: true
+
+- name: Check whether the exact Observer image digest is already in rootless storage
+  ansible.builtin.command:
+    chdir: "{{ observer_service_home }}"
+    argv:
+      - runuser
+      - --user
+      - "{{ observer_service_user }}"
+      - --
+      - podman
+      - image
+      - exists
+      - "{{ observer_image }}"
+  register: observer_image_exists
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Pull the exact Observer image digest into rootless storage
+  ansible.builtin.command:
+    chdir: "{{ observer_service_home }}"
+    argv:
+      - runuser
+      - --user
+      - "{{ observer_service_user }}"
+      - --
+      - podman
+      - pull
+      - "{{ observer_image }}"
+  register: observer_image_pull
+  changed_when: observer_image_pull.rc == 0
+  no_log: true
+  when:
+    - observer_image_exists.rc != 0
+    - not ansible_check_mode
+
 - name: Create rootless Observer Quadlet directory
   ansible.builtin.file:
     path: "{{ observer_quadlet_root }}/{{ observer_service_uid }}"
@@ -166,6 +218,48 @@
   become_user: "{{ observer_service_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ observer_service_uid }}"
+  when: not ansible_check_mode
+
+- name: Wait for Observer readiness on the private loopback listener
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8791/readyz
+    method: GET
+    status_code: 200
+    return_content: false
+    timeout: 5
+  register: observer_ready
+  retries: 20
+  delay: 3
+  until: observer_ready.status == 200
+  when: not ansible_check_mode
+
+- name: Run the configured Podman healthcheck for Observer
+  ansible.builtin.command:
+    chdir: "{{ observer_service_home }}"
+    argv:
+      - runuser
+      - --user
+      - "{{ observer_service_user }}"
+      - --
+      - podman
+      - healthcheck
+      - run
+      - praetorium-observer
+  register: observer_podman_healthcheck
+  changed_when: false
+  failed_when: false
+  no_log: true
+  timeout: 30
+  retries: 5
+  delay: 3
+  until: observer_podman_healthcheck.rc == 0
+  when: not ansible_check_mode
+
+- name: Require the Podman healthcheck to report Observer healthy
+  ansible.builtin.assert:
+    that:
+      - observer_podman_healthcheck.rc == 0
+    fail_msg: "The Observer endpoint answered, but its configured Podman healthcheck did not pass."
   when: not ansible_check_mode
 
 - name: Start or restart independent Observer only after configuration is valid

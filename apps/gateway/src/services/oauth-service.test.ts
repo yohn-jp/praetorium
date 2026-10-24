@@ -118,7 +118,7 @@ describe("generic service MCP OAuth", () => {
       client_id_metadata_document_supported: true,
       token_endpoint_auth_methods_supported: ["none"],
     });
-    expect(metadata.registration_endpoint).toBe(GATEWAY + "/oauth/register");
+    expect(metadata).toMatchObject({ registration_endpoint: GATEWAY + "/oauth/register" });
   });
 
   it.each(["legacy DCR", "CIMD"])("%s consents, exchanges one-use PKCE code and atomically rotates refresh", async (kind) => {

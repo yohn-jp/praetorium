@@ -582,7 +582,7 @@ describe("server-rendered management UI", () => {
       return { input, status };
     };
 
-    const copied = vi.fn(async (_value: string) => undefined);
+    const copied = vi.fn(async () => undefined);
     const success = await runCopy(copied);
     expect(copied).toHaveBeenCalledWith(endpoint);
     expect(success.status.textContent).toBe("MCP endpoint copied.");

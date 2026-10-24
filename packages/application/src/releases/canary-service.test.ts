@@ -554,6 +554,102 @@ describe("service-backed disposable release canary", () => {
     expect(stopRequests).toBe(1);
   });
 
+  it("uses the stop checkpoint's null retired epoch for an empty no-history cleanup", async () => {
+    const started = {
+      id: "operation-no-history-start",
+      instanceId: "canary-instance",
+      repositoryId: 900,
+      kind: "start" as const,
+      status: "failed" as const,
+      generation: 1,
+      runtimeEpoch: 1,
+      deploymentRevisionId: "revision-no-history",
+      result: null,
+    };
+    const stop = {
+      id: "operation-no-history-stop",
+      instanceId: "canary-instance",
+      repositoryId: 900,
+      kind: "stop" as const,
+      status: "succeeded" as const,
+      generation: 2,
+      runtimeEpoch: 1,
+      deploymentRevisionId: "revision-no-history",
+      checkpoint: {
+        writerAbsenceProof: {
+          instanceId: "canary-instance",
+          repositoryId: 900,
+          retiredRuntimeEpoch: null,
+          providerObservationId: "no-history-zero-writer-census",
+          censusObservedAt: new Date(NOW - 31_000).toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: [],
+          source: "runtime-provider-census",
+        },
+      },
+      result: null,
+    };
+    const binding = {
+      repositoryId: 900,
+      instanceId: "canary-instance",
+      bindingEpoch: 3,
+      authorizationRevision: 4,
+      suspended: false,
+    };
+    const instance = {
+      ...planReceipt().instance,
+      generation: 2,
+      runtimeEpoch: 1,
+      desiredState: "stopped" as const,
+      desiredRevisionId: "revision-no-history",
+      observedState: "stopped" as const,
+      observedRuntimeEpoch: 1,
+    };
+    const canary = new ServiceBackedDisposableCanary({
+      binding: { ...binding, requestedModules: ["forms"], resourceProfileId: "small" },
+      instances: {
+        async getByRepositoryId() { return { binding, instance }; },
+        async requestDesiredState(input) {
+          expect(input).toMatchObject({ desiredState: "stopped", expectedGeneration: 1 });
+          return { instance, operation: stop };
+        },
+      },
+      configurations: {
+        async plan() { throw new Error("unexpected plan"); },
+        async findByIdempotency() { throw new Error("unexpected lookup"); },
+      },
+      operations: {
+        async getById(id) { return id === started.id ? started : id === stop.id ? stop : null; },
+      },
+      observations: {
+        async latestHealth() { return null; },
+        async writerAbsence(input) {
+          expect(input).toMatchObject({ retiredEpoch: null, afterOperationId: stop.id });
+          return {
+            instanceId: "canary-instance",
+            repositoryId: 900,
+            retiredEpoch: null,
+            providerObservationId: "no-history-zero-writer-census",
+            censusObservedAt: NOW - 31_000,
+            remainingWriters: 0,
+            evidenceIdentities: [],
+            source: "runtime-provider-census",
+          };
+        },
+      },
+      now: () => NOW,
+    });
+
+    await expect(canary.stop({
+      runtimeId: "canary-instance",
+      startedOperationId: started.id,
+      idempotencyKey: "stable-canary-stop:no-history",
+    })).resolves.toMatchObject({
+      kind: "stopped",
+      evidence: { writerAbsence: { retiredEpoch: null, remainingWriters: 0 } },
+    });
+  });
+
   it("fences a delayed v0.3.8 cleanup from stopping v0.3.9 and retries only the selected revision", async () => {
     const oldRelease = { ...release(), id: "release-v038", version: "0.3.8" };
     const newRelease = { ...release(), id: "release-v039", version: "0.3.9" };
@@ -755,6 +851,7 @@ describe("service-backed disposable release canary", () => {
         generation: number;
         runtimeEpoch: number;
         deploymentRevisionId: string;
+        checkpoint?: Readonly<Record<string, unknown>>;
         result: null;
       } | null = null;
       let observationEpoch = 1;
@@ -888,7 +985,22 @@ describe("service-backed disposable release canary", () => {
         idempotencyKey: "stable-canary-stop:release-1",
       });
       expect(pendingStop.kind).toBe("pending");
-      stopOperation = { ...stopOperation!, status: "succeeded" };
+      stopOperation = {
+        ...stopOperation!,
+        status: "succeeded",
+        checkpoint: {
+          writerAbsenceProof: {
+            instanceId: "canary-instance",
+            repositoryId: 900,
+            retiredRuntimeEpoch: 1,
+            providerObservationId: "writer-census-1",
+            censusObservedAt: new Date(NOW).toISOString(),
+            remainingWriters: 0,
+            evidenceIdentities: [],
+            source: "runtime-provider-census",
+          },
+        },
+      };
       currentInstance = { ...currentInstance, observedState: "stopped" };
       const stopped = await canary.stop({
         ...started,
@@ -1043,6 +1155,7 @@ describe("service-backed disposable release canary", () => {
       observedState: "ready",
       observedRuntimeEpoch: 4,
     };
+    let recoveredStop: Awaited<ReturnType<NonNullable<CanaryOperationService["findSucceededStop"]>>> = null;
     const canary = new ServiceBackedDisposableCanary({
       binding: {
         repositoryId: 900, instanceId: "canary-instance", bindingEpoch: 3,
@@ -1069,15 +1182,32 @@ describe("service-backed disposable release canary", () => {
         async findByIdempotency() { return null; },
       },
       operations: {
-        async getById(operationId) { return operationId === "canary-start" ? started : blocked; },
+        async getById(operationId) {
+          if (operationId === "canary-start") return started;
+          if (operationId === "operation-stop-recovered") return recoveredStop;
+          return blocked;
+        },
         async findSucceededStop(input) {
           expect(input).toEqual({instanceId:"canary-instance",repositoryId:900,generation:9,runtimeEpoch:4});
-          return recovery === "missing" ? null : {
+          recoveredStop = recovery === "missing" ? null : {
             ...blocked, id:"operation-stop-recovered", status:"succeeded" as const,
             generation: recovery === "generation" ? 8 : 9,
             runtimeEpoch: recovery === "epoch" ? 5 : 4,
             deploymentRevisionId: recovery === "revision" ? "other-revision" : "revision-canary",
+            checkpoint: {
+              writerAbsenceProof: {
+                instanceId: "canary-instance",
+                repositoryId: 900,
+                retiredRuntimeEpoch: 4,
+                providerObservationId: "recovered-census",
+                censusObservedAt: new Date(NOW).toISOString(),
+                remainingWriters: 0,
+                evidenceIdentities: [],
+                source: "runtime-provider-census",
+              },
+            },
           };
+          return recoveredStop;
         },
       },
       observations: {

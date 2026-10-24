@@ -591,6 +591,21 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       duplicate: true,
     });
 
+    const noHistory = await makeFixture();
+    noHistory.db.database.prepare(
+      `UPDATE release_candidate_workflows
+          SET cleanup_evidence_json = json_set(cleanup_evidence_json,
+            '$.writerAbsence.retiredEpoch', NULL) WHERE release_id = ?`,
+    ).run(noHistory.command.releaseId);
+    noHistory.db.database.prepare(
+      `UPDATE operations SET checkpoint_json = json_set(checkpoint_json,
+        '$.writerAbsenceProof.retiredRuntimeEpoch', NULL) WHERE operation_id = 'operation-stop20'`,
+    ).run();
+    expect(await noHistory.releases.retryFailedCanaryRuntime(noHistory.command)).toMatchObject({
+      kind: "accepted",
+      duplicate: false,
+    });
+
     const invalidCases = ["stale-revision", "missing-cleanup", "healthy-evidence", "active-old-work", "wrong-new-binding", "missing-stop-proof", "wrong-retired-epoch"] as const;
     for (const invalidCase of invalidCases) {
       const fixture = await makeFixture();

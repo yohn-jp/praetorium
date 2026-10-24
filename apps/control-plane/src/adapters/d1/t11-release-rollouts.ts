@@ -953,19 +953,35 @@ export class D1T11ReleaseRolloutStore
                  AND json_extract(w.cleanup_evidence_json, '$.startedOperationId') = started.operation_id
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.instanceId') = old_i.instance_id
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.repositoryId') = old_i.repository_id
-                 AND json_type(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') = 'integer'
+                 AND json_type(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') IN ('integer', 'null')
                  AND COALESCE(json_type(stopped.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch'),
-                              json_type(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.retiredRuntimeEpoch')) = 'integer'
-                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') =
+                              json_type(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.retiredRuntimeEpoch'))
+                     IN ('integer', 'null')
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') IS
                      COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch'),
                               json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.retiredRuntimeEpoch'))
-                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') <= started.runtime_epoch
+                 AND (
+                   (json_type(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') = 'integer'
+                    AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') <= started.runtime_epoch)
+                   OR (json_type(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') = 'null'
+                    AND NOT EXISTS (
+                      SELECT 1 FROM runtime_reservations prior_writer
+                       WHERE prior_writer.instance_id = old_i.instance_id
+                         AND prior_writer.repository_id = old_i.repository_id
+                         AND prior_writer.status IN ('reserved', 'allocated')
+                    ))
+                 )
                  AND json_type(w.cleanup_evidence_json, '$.writerAbsence.remainingWriters') = 'integer'
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.remainingWriters') = 0
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.source') = 'runtime-provider-census'
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.providerObservationId') =
                      COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.providerObservationId'),
                               json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.providerObservationId'))
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.evidenceIdentities') IS
+                     COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.evidenceIdentities'))
+                 AND COALESCE(json_type(stopped.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities'),
+                              json_type(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.evidenceIdentities')) = 'array'
                  AND length(COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.providerObservationId'),
                                      json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.providerObservationId'))) > 0
                  AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.instanceId'),

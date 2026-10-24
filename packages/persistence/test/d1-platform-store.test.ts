@@ -804,6 +804,165 @@ describe("D1PlatformStore with SQLite transactions", () => {
     ).get(fixture.binding.instanceId)).toMatchObject({ reservation_id: null, reservation_state: "released" });
   });
 
+  it("reports a retained-writer stop against the exact prior observed epoch, not the stop target epoch", async () => {
+    const fixture = await prepareRetainedStopReservationRelease();
+    const proof = {
+      instanceId: fixture.binding.instanceId,
+      repositoryId: fixture.binding.repositoryId,
+      retiredRuntimeEpoch: 7,
+      providerObservationId: "retained-writer-absence-observation",
+      censusObservedAt: "2026-10-25T00:00:00.000Z",
+      remainingWriters: 0,
+      evidenceIdentities: ["retained-writer-pod-uid-17"],
+      source: "runtime-provider-census",
+    } as const;
+    await checkpointRetainedStopAbsence(fixture, 7);
+    await fixture.operations.releaseRuntime({
+      ...fixture.lease,
+      reservationId: fixture.reservationId,
+      expectedReservationRuntimeEpoch: 7,
+      now: 103,
+    });
+    await fixture.operations.checkpoint({
+      ...fixture.lease,
+      expectedCheckpointSequence: 1,
+      phase: "complete",
+      checkpoint: { writerAbsenceProof: proof },
+      now: 104,
+    });
+
+    await fixture.operations.report({
+      ...fixture.lease,
+      sequence: 1,
+      now: 105,
+      terminal: "succeeded",
+      observation: stoppedObservation(
+        fixture.binding.instanceId,
+        fixture.binding.repositoryId,
+        20,
+        9,
+        8,
+      ),
+    });
+    expect(await fixture.operations.getById(fixture.operation.id)).toMatchObject({
+      status: "succeeded",
+      runtimeEpoch: 9,
+      checkpoint: { writerAbsenceProof: { retiredRuntimeEpoch: 7 } },
+    });
+    expect(await fixture.instances.getByInstanceId(fixture.binding.instanceId)).toMatchObject({
+      instance: { generation: 20, runtimeEpoch: 9, observedGeneration: 20, observedRuntimeEpoch: 9, observedState: "stopped" },
+    });
+  });
+
+  it("reports an epoch-zero stop with a null retired epoch only when the instance has no observed writer", async () => {
+    const { database, registry, instances, operations } = createPlatform();
+    const { binding } = await registry.resolveOrCreate(registryInput("instance-no-history", "request-no-history"));
+    database.prepare("UPDATE logical_instances SET desired_state = 'running' WHERE instance_id = ?")
+      .run(binding.instanceId);
+    const requested = await instances.requestDesiredState({
+      repositoryId: binding.repositoryId,
+      bindingEpoch: binding.bindingEpoch,
+      authorizationRevision: binding.authorizationRevision,
+      desiredState: "stopped",
+      expectedGeneration: 0,
+      actorId: "user-1",
+      idempotencyKey: "stop-no-history",
+      requestId: "stop-no-history-request",
+      now: 100,
+    });
+    expect(requested.operation).toMatchObject({ kind: "stop", generation: 1, runtimeEpoch: 0 });
+    const claimed = await operations.claimNext({ workerId: "provisioner-no-history", clusterId: "cluster-a", now: 101 });
+    if (!claimed) throw new Error("expected epoch-zero stop claim");
+    const lease = {
+      operationId: claimed.operation.id,
+      workerId: claimed.operation.workerId!,
+      leaseToken: claimed.operation.leaseToken!,
+      leaseEpoch: claimed.operation.leaseEpoch,
+    };
+    const proof = {
+      instanceId: binding.instanceId,
+      repositoryId: binding.repositoryId,
+      retiredRuntimeEpoch: null,
+      providerObservationId: "complete-no-writer-census",
+      censusObservedAt: new Date(102).toISOString(),
+      remainingWriters: 0,
+      evidenceIdentities: [],
+      source: "runtime-provider-census",
+    } as const;
+    await operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 0,
+      phase: "old-writer-absent",
+      checkpoint: { writerAbsenceProof: proof },
+      now: 102,
+    });
+    await operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 1,
+      phase: "complete",
+      checkpoint: { writerAbsenceProof: proof },
+      now: 103,
+    });
+    await operations.report({
+      ...lease,
+      sequence: 1,
+      now: 104,
+      terminal: "succeeded",
+      observation: stoppedObservation(binding.instanceId, binding.repositoryId, 1, 0, 1),
+    });
+    expect(await operations.getById(claimed.operation.id)).toMatchObject({
+      status: "succeeded",
+      runtimeEpoch: 0,
+      checkpoint: { writerAbsenceProof: { retiredRuntimeEpoch: null, remainingWriters: 0 } },
+    });
+  });
+
+  it.each([
+    { cause: "wrong retired epoch", retiredEpoch: 8, override: {} },
+    { cause: "missing retired epoch", retiredEpoch: null, override: {} },
+    { cause: "invalid provider proof", retiredEpoch: 7, override: { source: "operator-assertion" } },
+    { cause: "newer desired generation", retiredEpoch: 7, override: {}, generation: 21 },
+    { cause: "expired worker lease", retiredEpoch: 7, override: {}, expireLease: true },
+  ])("rejects a retained-writer stop report with $cause", async ({ cause: _cause, retiredEpoch, override, generation, expireLease }) => {
+    const fixture = await prepareRetainedStopReservationRelease();
+    await checkpointRetainedStopAbsence(fixture, retiredEpoch, override);
+    const current = await fixture.operations.getById(fixture.operation.id);
+    if (!current) throw new Error("expected stop operation");
+    await fixture.operations.checkpoint({
+      ...fixture.lease,
+      expectedCheckpointSequence: 1,
+      phase: "complete",
+      checkpoint: current.checkpoint,
+      now: 104,
+    });
+    fixture.database.prepare(
+      "UPDATE runtime_reservations SET status = 'released' WHERE reservation_id = ?",
+    ).run(fixture.reservationId);
+    fixture.database.prepare(
+      `UPDATE logical_instances SET reservation_id = NULL, reservation_state = 'released',
+         runtime_authority_reservation_id = NULL, runtime_authority_operation_id = NULL,
+         generation = COALESCE(?, generation) WHERE instance_id = ?`,
+    ).run(generation ?? null, fixture.binding.instanceId);
+
+    await expect(fixture.operations.report({
+      ...fixture.lease,
+      sequence: 1,
+      now: expireLease ? fixture.leaseExpiresAt : 105,
+      terminal: "succeeded",
+      observation: stoppedObservation(
+        fixture.binding.instanceId,
+        fixture.binding.repositoryId,
+        20,
+        9,
+        8,
+      ),
+    })).rejects.toBeInstanceOf(OperationFenceConflict);
+    expect(await fixture.operations.getById(fixture.operation.id)).toMatchObject({
+      status: "claimed",
+      reportSequence: 0,
+    });
+  });
+
   it.each([
     { cause: "missing absence proof", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => checkpointRetainedStopAbsence(f, null) },
     { cause: "wrong retired epoch", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => checkpointRetainedStopAbsence(f, 6) },
@@ -1142,6 +1301,11 @@ describe("D1PlatformStore with SQLite transactions", () => {
           instanceId: binding.instanceId,
           repositoryId: 71,
           retiredRuntimeEpoch: reservation!.runtimeEpoch,
+          providerObservationId: "complete-stop-census",
+          censusObservedAt: "2026-10-25T00:00:00.000Z",
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid"],
+          source: "runtime-provider-census",
         },
       },
       now: 107,
@@ -1164,6 +1328,11 @@ describe("D1PlatformStore with SQLite transactions", () => {
           instanceId: binding.instanceId,
           repositoryId: 71,
           retiredRuntimeEpoch: reservation!.runtimeEpoch,
+          providerObservationId: "complete-stop-census",
+          censusObservedAt: "2026-10-25T00:00:00.000Z",
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid"],
+          source: "runtime-provider-census",
         },
       },
       now: 108,
@@ -1399,6 +1568,7 @@ async function prepareRetainedStopReservationRelease() {
 async function checkpointRetainedStopAbsence(
   fixture: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>,
   retiredEpoch: number | null,
+  proofOverride: Readonly<Record<string, unknown>> = {},
 ) {
   await fixture.operations.checkpoint({
     ...fixture.lease,
@@ -1412,8 +1582,9 @@ async function checkpointRetainedStopAbsence(
         providerObservationId: "retained-writer-absence-observation",
         censusObservedAt: "2026-10-25T00:00:00.000Z",
         remainingWriters: 0,
-        evidenceIdentities: [],
+        evidenceIdentities: ["retained-writer-pod-uid-17"],
         source: "runtime-provider-census",
+        ...proofOverride,
       },
     },
     now: 102,

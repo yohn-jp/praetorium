@@ -171,7 +171,7 @@ export interface CanaryProvisionerObservationReader {
   writerAbsence(input: {
     readonly instanceId: string;
     readonly repositoryId: number;
-    readonly retiredEpoch: number;
+    readonly retiredEpoch: number | null;
     readonly afterOperationId: string;
   }): Promise<unknown | null>;
 }
@@ -499,8 +499,9 @@ export class ServiceBackedDisposableCanary
         const stopProof = persistedStopWriterAbsence(readOnlyStop);
         const retiredEpoch = stopProof?.retiredRuntimeEpoch;
         if (
-          typeof retiredEpoch !== "number" || !Number.isSafeInteger(retiredEpoch) ||
-          retiredEpoch <= 0 || retiredEpoch > readOnlyStop.runtimeEpoch
+          !(retiredEpoch === null ||
+            (typeof retiredEpoch === "number" && Number.isSafeInteger(retiredEpoch) &&
+              retiredEpoch >= 0 && retiredEpoch <= readOnlyStop.runtimeEpoch))
         ) {
           return { kind: "blocked" as const };
         }
@@ -628,16 +629,24 @@ export class ServiceBackedDisposableCanary
     ) {
       return { kind: "pending" as const };
     }
-    const retiredEpoch = result.instance.observedRuntimeEpoch;
-    if (retiredEpoch === null || retiredEpoch <= 0) return { kind: "pending" as const };
+    if (!stopOperation) return { kind: "pending" as const };
+    const terminalStop = await this.options.operations.getById(stopOperation.id);
+    if (!terminalStop || terminalStop.status !== "succeeded") return { kind: "pending" as const };
+    stopOperation = terminalStop;
+    const retiredEpoch = persistedStopWriterAbsence(stopOperation)?.retiredRuntimeEpoch;
+    if (
+      !(retiredEpoch === null ||
+        (typeof retiredEpoch === "number" && Number.isSafeInteger(retiredEpoch) &&
+          retiredEpoch >= 0 && retiredEpoch <= stopOperation.runtimeEpoch))
+    ) return { kind: "pending" as const };
     const proof = await this.options.observations.writerAbsence({
       instanceId: this.options.binding.instanceId,
       repositoryId: this.options.binding.repositoryId,
       retiredEpoch,
-      afterOperationId: stopOperation?.id ?? input.startedOperationId,
+      afterOperationId: stopOperation.id,
     });
     const stopped = CanaryCleanupEvidenceSchema.safeParse({
-      operationId: stopOperation?.id ?? input.startedOperationId,
+      operationId: stopOperation.id,
       startedOperationId: input.startedOperationId,
       observedAt: this.options.now(),
       writerAbsence: proof,
@@ -650,7 +659,6 @@ export class ServiceBackedDisposableCanary
     ) {
       return { kind: "pending" as const };
     }
-    if (!stopOperation) return { kind: "pending" as const };
     const latest = await this.currentBinding();
     if (
       latest.instance.generation !== stopOperation.generation ||

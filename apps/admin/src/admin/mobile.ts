@@ -304,19 +304,26 @@ function sourceReleaseCard(
       (build.error ? "<span>Failure code: <code>" + value(build.error) + "</code></span>" : "") +
       "</p>"
     : "";
-  const action = release.version
-    ? '<form method="post" action="/source-releases/deploy?ui=mobile">' +
-      '<input type="hidden" name="csrfToken" value="' +
-      value(csrf) +
-      '">' +
-      '<input type="hidden" name="sourceId" value="' +
-      value(sourceId) +
-      '">' +
-      '<input type="hidden" name="releaseId" value="' +
-      value(release.id) +
-      '">' +
-      '<button type="submit">Build &amp; deploy</button></form>'
-    : '<p class="admin-mobile-muted">Not deployable: release tag is not SemVer.</p>';
+  const selectedHref = build?.state === "admitted" && build.admittedReleaseId
+    ? "/releases/" + encodeURIComponent(build.admittedReleaseId) + "?ui=mobile"
+    : build ? buildHref(build.id, "mobile") : null;
+  const action = build && selectedHref
+    ? '<a class="button button-secondary" href="' + value(selectedHref) + '">' +
+      (build.state === "admitted" ? "Inspect Canary / Stable" :
+        build.state === "failed" ? "Review failure / retry" : "View current build") + '</a>'
+    : release.version
+      ? '<form method="post" action="/source-releases/deploy?ui=mobile">' +
+        '<input type="hidden" name="csrfToken" value="' +
+        value(csrf) +
+        '">' +
+        '<input type="hidden" name="sourceId" value="' +
+        value(sourceId) +
+        '">' +
+        '<input type="hidden" name="releaseId" value="' +
+        value(release.id) +
+        '">' +
+        '<button type="submit">Build &amp; deploy</button></form>'
+      : '<p class="admin-mobile-muted">Not deployable: release tag is not SemVer.</p>';
   return (
     '<article class="admin-mobile-release-card"><div class="admin-mobile-release-title">' +
     '<span class="admin-kicker">' +

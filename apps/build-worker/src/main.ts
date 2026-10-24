@@ -190,7 +190,7 @@ export async function main(): Promise<void> {
     while(!shutdown.signal.aborted){
       let didWork=false;
       try {didWork=await sourceWorker.runOnce(shutdown.signal);}
-      catch { /* Source-build errors do not stop existing composition jobs. */ }
+      catch { process.stderr.write("Source build loop failed; queued work will be rechecked.\n"); }
       if(shutdown.signal.aborted)break;
       try {didWork=(await worker.runOnce(shutdown.signal))||didWork;}
       catch { /* The durable Build queue is retried after a bounded wait. */ }

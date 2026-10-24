@@ -194,13 +194,18 @@ function sourceReleaseOption(source: SourceReleaseView, release: PublishedSource
     ? `<div class="desktop-source-identity"><span>Resolved immutable commit</span><code>${escapeHtml(job.commit)}</code>` +
       `<span>Praetorium job</span><a href="${escapeHtml(buildHref(job.id, model.mode))}">${escapeHtml(job.id)}</a> ${badge(humanize(job.state), job.state)}</div>`
     : `<p class="desktop-muted">Praetorium resolves and pins the exact commit when this release is submitted.</p>`;
-  const deployAction = release.version
-    ? `<form method="post" action="/source-releases/deploy?ui=${model.mode}" class="desktop-inline-form">` +
-      `<input type="hidden" name="csrfToken" value="${escapeHtml(model.csrf)}">` +
-      `<input type="hidden" name="sourceId" value="${escapeHtml(source.source.id)}">` +
-      `<input type="hidden" name="releaseId" value="${escapeHtml(String(release.id))}">` +
-      `<button class="desktop-button" type="submit">Build &amp; deploy</button></form>`
-    : `<span class="desktop-muted">Not deployable: release tag is not SemVer.</span>`;
+  const selectedHref = job?.state === "admitted" && job.admittedReleaseId
+    ? "/releases/" + encodeURIComponent(job.admittedReleaseId) + "?ui=" + model.mode
+    : job ? buildHref(job.id, model.mode) : null;
+  const deployAction = job && selectedHref
+    ? `<a class="desktop-button desktop-button-secondary" href="${escapeHtml(selectedHref)}">${job.state === "admitted" ? "Inspect Canary / Stable" : job.state === "failed" ? "Review failure / retry" : "View current build"}</a>`
+    : release.version
+      ? `<form method="post" action="/source-releases/deploy?ui=${model.mode}" class="desktop-inline-form">` +
+        `<input type="hidden" name="csrfToken" value="${escapeHtml(model.csrf)}">` +
+        `<input type="hidden" name="sourceId" value="${escapeHtml(source.source.id)}">` +
+        `<input type="hidden" name="releaseId" value="${escapeHtml(String(release.id))}">` +
+        `<button class="desktop-button" type="submit">Build &amp; deploy</button></form>`
+      : `<span class="desktop-muted">Not deployable: release tag is not SemVer.</span>`;
   return `<div class="desktop-source-release"><div class="desktop-source-release-heading"><div>` +
     `<p class="desktop-eyebrow">${release.prerelease ? "PRERELEASE" : "PUBLISHED RELEASE"}</p>` +
     `<h4>${escapeHtml(release.name)}</h4><p><code>${escapeHtml(release.tag)}</code> · Published ${escapeHtml(dateTime(release.publishedAt))}</p>` +

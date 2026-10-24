@@ -135,7 +135,7 @@ body[data-ui="mobile"] .form-grid { grid-template-columns:1fr; }
 
 export const PORTAL_STYLE_HASHES = {
   desktop: "cRR5Ml9FVMQ0dmuZYzvd2R/NZxJRp5t5s4uv0CBW7VA=",
-  mobile: "dSBckzZhVyaixKyjA83O2HkvTq7S/WK98HD7fwMkHuc=",
+  mobile: "f8OS9Q7awm0sXSKhLBC8iSAMVGwmqB10sEEj8b71GAc=",
 } as const;
 export function portalStyles(mode: PortalUiMode): string {
   return PORTAL_STYLES + (mode === "mobile" ? MOBILE_STYLES : DESKTOP_STYLES) + EVIDENCE_LEDGER_STYLES + EVIDENCE_LEDGER_LIST_STYLES + ADMIN_STYLES +

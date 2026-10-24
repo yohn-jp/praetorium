@@ -369,7 +369,7 @@ export function renderRepositoryDashboard(
     repositoryView(
       {
         heading: `<div class="page-heading"><div><p class="breadcrumb"><a href="${localUrl("/", presentation.mode)}">Repositories</a> / ${escapeHtml(dashboard.repository.fullName)}</p><h1>${escapeHtml(dashboard.repository.fullName)}</h1></div>${logoutForm(options.csrfToken)}</div>${options.errorMessage && !options.selection ? `<p class="alert" role="alert">${escapeHtml(options.errorMessage)}</p>` : ""}`,
-        runtime: `<section class="entry-panel" aria-labelledby="entry" data-runtime-state="${instanceState}"><h2 id="entry">Application status</h2>${statusBadge(instanceStateLabel(instanceState), instanceState)}${reason}${instanceState === "ready" ? `<p class="muted">Runtime reports Ready. Opening the application checks current access; browser connectivity has not been verified.</p>` : ""}<div class="entry-actions">${enter}${stop}${refresh}</div></section>`,
+        runtime: `<section class="entry-panel" aria-labelledby="entry" data-runtime-state="${instanceState}"><h2 id="entry">Application status</h2>${statusBadge(instanceStateLabel(instanceState), instanceState)}${reason}${instanceState === "ready" ? `<p class="muted">Runtime reports Ready. Opening the application checks current access; browser connectivity has not been verified.</p>` : ""}<div class="entry-actions">${enter}${refresh}${stop}</div></section>`,
         access,
         current,
         desired,

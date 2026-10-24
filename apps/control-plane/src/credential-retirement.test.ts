@@ -153,6 +153,7 @@ describe("known credential retirement barrier", () => {
     let persisted: OperationRecord | null = null;
     let checkpointCalls = 0;
     let barrierCalls = 0;
+    let authorityPublications = 0;
     const app = createProvisionerRoutes({
       operations: {
         async getById() {
@@ -181,6 +182,11 @@ describe("known credential retirement barrier", () => {
       clusterId: "cluster-test",
       now: () => 100,
       resolveRuntimeContext: async () => ({}),
+      publishRuntimeAuthority: async () => {
+        authorityPublications += 1;
+        expect(barrierCalls).toBeGreaterThan(2);
+        return authorityPublications > 1;
+      },
       retireCredentials: async (saved) => {
         expect(persisted).not.toBeNull();
         expect(saved).toBe(persisted);
@@ -207,18 +213,22 @@ describe("known credential retirement barrier", () => {
     });
     const stillPending = await request();
     expect(stillPending.status).toBe(202);
+    const authorityPending = await request();
+    expect(authorityPending.status).toBe(202);
+    expect(await authorityPending.json()).toMatchObject({ credentialRetirementPending: true });
     const response = await request();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ operation: persisted });
     expect(checkpointCalls).toBe(1);
-    expect(barrierCalls).toBe(3);
+    expect(barrierCalls).toBe(4);
+    expect(authorityPublications).toBe(2);
     const changedPayload = await request({
       checkpoint: { unsafe: true } as unknown as typeof input.checkpoint,
     });
     expect(changedPayload.status).toBe(409);
     expect(await changedPayload.json()).toEqual({ error: { code: "OPERATION_FENCE_CONFLICT" } });
     expect(checkpointCalls).toBe(2);
-    expect(barrierCalls).toBe(3);
+    expect(barrierCalls).toBe(4);
     expect((persisted as OperationRecord | null)?.checkpoint).toEqual(input.checkpoint);
   });
 

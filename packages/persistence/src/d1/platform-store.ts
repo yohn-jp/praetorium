@@ -955,7 +955,8 @@ export class D1PlatformStore implements OperationStore {
         this.assertOneChange(),
         this.db
           .prepare(
-            `UPDATE logical_instances SET reservation_state = 'released', reservation_id = NULL, updated_at = ?
+            `UPDATE logical_instances SET reservation_state = 'released', reservation_id = NULL,
+               runtime_authority_reservation_id = NULL, runtime_authority_operation_id = NULL, updated_at = ?
              WHERE reservation_id = ? AND observed_runtime_epoch = ?
                AND EXISTS (SELECT 1 FROM operations WHERE operation_id = ? AND kind = 'stop')`,
           )
@@ -1252,7 +1253,18 @@ export class D1PlatformStore implements OperationStore {
         .prepare(
           `UPDATE operations SET phase = ?, checkpoint_sequence = ?, checkpoint_json = ?, updated_at = ?
            WHERE operation_id = ? AND worker_id = ? AND lease_token = ? AND lease_epoch = ?
-             AND status IN ('claimed', 'running') AND lease_expires_at > ? AND checkpoint_sequence = ?`,
+             AND status IN ('claimed', 'running') AND lease_expires_at > ? AND checkpoint_sequence = ?
+             AND (NOT EXISTS (
+               SELECT 1 FROM logical_instances i WHERE i.runtime_authority_operation_id = operations.operation_id
+             ) OR ? NOT IN ('starting-target', 'target-ready', 'route-activated', 'complete') OR (
+               json_extract(?, '$.schemaVersion') = 1
+               AND (SELECT COUNT(*) FROM json_each(?, '$.writerAbsenceProof') supplied
+                    WHERE supplied.key IN ('instanceId', 'repositoryId', 'retiredRuntimeEpoch',
+                      'providerObservationId', 'censusObservedAt', 'remainingWriters', 'evidenceIdentities', 'source')
+                      AND supplied.value IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.' || supplied.key)
+                      AND supplied.type IS json_type(operations.checkpoint_json, '$.writerAbsenceProof.' || supplied.key)
+                   ) = 8
+             ))`,
         )
         .bind(
           input.phase,
@@ -1265,6 +1277,9 @@ export class D1PlatformStore implements OperationStore {
           input.leaseEpoch,
           input.now,
           input.expectedCheckpointSequence,
+          input.phase,
+          checkpointJson,
+          checkpointJson,
         ),
       this.db
         .prepare(
@@ -1273,6 +1288,15 @@ export class D1PlatformStore implements OperationStore {
            WHERE operation_id = ? AND checkpoint_sequence = ? AND changes() = 1`,
         )
         .bind(sequence, checkpointJson, input.workerId, input.now, input.operationId, sequence),
+      ...(["quiescing-old", "old-quiesced", "stopping-old", "old-writer-absent"].includes(input.phase)
+        ? [this.db.prepare(
+            `UPDATE logical_instances
+             SET runtime_authority_reservation_id = NULL, runtime_authority_operation_id = NULL
+             WHERE changes() = 1 AND instance_id = (
+               SELECT instance_id FROM operations WHERE operation_id = ? AND checkpoint_sequence = ?
+             )`,
+          ).bind(input.operationId, sequence)]
+        : []),
       ...(input.phase === "quiescing-old" || input.phase === "old-writer-absent"
         ? [
             this.db
@@ -1326,6 +1350,7 @@ export class D1PlatformStore implements OperationStore {
         this.db
           .prepare(
             `UPDATE logical_instances SET runtime_epoch = runtime_epoch + 1,
+               runtime_authority_reservation_id = NULL, runtime_authority_operation_id = NULL,
                observed_state = 'unknown', observed_generation = NULL,
                observed_runtime_epoch = NULL, observed_sequence = 0,
                current_artifact_digest = NULL, updated_at = ?
@@ -1629,6 +1654,10 @@ export class D1PlatformStore implements OperationStore {
           .prepare(
             `UPDATE logical_instances
            SET observed_generation = ?, observed_runtime_epoch = ?, observed_sequence = ?, observed_state = ?,
+               runtime_authority_reservation_id = CASE WHEN ? = 'ready' THEN (
+                 SELECT reservation_id FROM operations WHERE operation_id = ?
+               ) ELSE NULL END,
+               runtime_authority_operation_id = NULL,
                observed_revision_id = ?,
                current_artifact_digest = CASE
                  WHEN ? = 'ready' THEN ?
@@ -1637,6 +1666,10 @@ export class D1PlatformStore implements OperationStore {
                reservation_state = CASE WHEN ? = 'ready' THEN 'reserved' ELSE reservation_state END,
                updated_at = ?
            WHERE instance_id = ? AND repository_id = ? AND generation = ? AND runtime_epoch = ?
+             AND (? <> 'ready' OR (
+               runtime_authority_reservation_id = (SELECT reservation_id FROM operations WHERE operation_id = ?)
+               AND (runtime_authority_operation_id IS NULL OR runtime_authority_operation_id = ?)
+             ))
              AND (? > COALESCE(observed_runtime_epoch, -1)
                   OR (? = COALESCE(observed_runtime_epoch, -1) AND ? > observed_sequence))
              `,
@@ -1646,6 +1679,8 @@ export class D1PlatformStore implements OperationStore {
             observation.runtimeEpoch,
             observation.sequence,
             observation.observedState,
+            observation.observedState,
+            input.operationId,
             observation.observedRevisionId,
             observation.observedState,
             observation.observedArtifactDigest,
@@ -1656,6 +1691,9 @@ export class D1PlatformStore implements OperationStore {
             observation.repositoryId,
             observation.generation,
             observation.runtimeEpoch,
+            observation.observedState,
+            input.operationId,
+            input.operationId,
             observation.runtimeEpoch,
             observation.runtimeEpoch,
             observation.sequence,

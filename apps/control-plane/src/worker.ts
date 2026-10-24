@@ -11,6 +11,7 @@ import { createScheduledHandler } from "./scheduled.js";
 import type { ExecutionContext } from "hono";
 import { notifyWorkAvailable, type WorkNotificationEnv } from "./work-notifications.js";
 import { createRuntimeIdentityRoutes } from "./runtime-identity-routes.js";
+import { publishRuntimeAuthority } from "./runtime-authority-transition.js";
 import { createRuntimeBindingMetadataReader } from "./runtime-binding.js";
 import { createRuntimeGitCredentialRoutes } from "./runtime-git-credential-routes.js";
 import { D1RuntimeGitCredentialStore } from "@praetorium/persistence/d1";
@@ -161,7 +162,6 @@ function composeServices(env: ControlPlaneEnv) {
           runtimeIdentity: createRuntimeIdentityRoutes({
             db: env.CONTROL_PLANE_DB,
             runtimeBindings: createRuntimeBindingMetadataReader({ db: env.CONTROL_PLANE_DB }),
-            operations,
             signingKey: JSON.parse(env.RUNTIME_IDENTITY_SIGNING_KEY),
             issuerOrigin: required(env.CONTROL_PLANE_ORIGIN),
             workerId: required(env.PROVISIONER_WORKER_ID),
@@ -249,6 +249,7 @@ function composeServices(env: ControlPlaneEnv) {
       ? {
           provisioner: {
             operations,
+            publishRuntimeAuthority: (operation, now) => publishRuntimeAuthority(env.CONTROL_PLANE_DB, operation, now),
             retireCredentials: createCredentialRetirementBarrier({
               db: env.CONTROL_PLANE_DB,
               ...(env.GATEWAY_SERVICE ? { gateway: env.GATEWAY_SERVICE } : {}),

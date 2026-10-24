@@ -602,6 +602,7 @@ describe("D1PlatformStore with SQLite transactions", () => {
       now: 200,
     });
 
+    seedAdmittedGrant(database, claimed.operation.id);
     const accepted = await operations.report({
       ...lease,
       sequence: 1,
@@ -785,6 +786,18 @@ describe("D1PlatformStore with SQLite transactions", () => {
     ).rejects.toBeInstanceOf(OperationFenceConflict);
   });
 
+  it("cannot create writer authority by reporting ready before credential retirement admission", async () => {
+    const { database, operations, binding, operation, lease } = await prepareTargetRedeploy();
+    database.prepare(`UPDATE logical_instances SET runtime_authority_reservation_id = NULL,
+      runtime_authority_operation_id = NULL WHERE instance_id = ?`).run(binding.instanceId);
+    await expect(operations.report({ ...lease, sequence: 1, now: 103,
+      observation: readyTargetObservation(operation, binding.instanceId, 1),
+    })).rejects.toBeInstanceOf(OperationFenceConflict);
+    expect(await operations.getById(operation.id)).toMatchObject({ reportSequence: 0 });
+    expect(database.prepare("SELECT runtime_authority_reservation_id FROM logical_instances WHERE instance_id = ?")
+      .get(binding.instanceId)).toMatchObject({ runtime_authority_reservation_id: null });
+  });
+
   it("accepts a stopped-to-running target with a fresh census and no retired epoch", async () => {
     const { database, registry, instances, operations } = createPlatform();
     const resolved = await registry.resolveOrCreate(registryInput("instance-a", "request-a"));
@@ -834,6 +847,7 @@ describe("D1PlatformStore with SQLite transactions", () => {
       now: 102,
     });
 
+    seedAdmittedGrant(database, operation.id);
     await expect(
       operations.report({
         ...lease,
@@ -996,6 +1010,7 @@ describe("D1PlatformStore with SQLite transactions", () => {
       checkpoint: {},
       now: 103,
     });
+    seedAdmittedGrant(database, start.operation.id);
     await operations.report({
       operationId: start.operation.id,
       workerId: start.operation.workerId!,
@@ -1140,6 +1155,7 @@ function createPlatform(options: { readonly maxCapacitySnapshotAgeMs?: number } 
   liveDatabases.push(database);
   database.exec("PRAGMA foreign_keys = ON");
   database.exec(readFileSync(fileURLToPath(schemaUrl), "utf8"));
+  database.exec(readFileSync(new URL("../../../apps/control-plane/migrations/0006_application_origins.sql", import.meta.url), "utf8"));
   database.exec(
     readFileSync(
       fileURLToPath(
@@ -1151,6 +1167,7 @@ function createPlatform(options: { readonly maxCapacitySnapshotAgeMs?: number } 
       "utf8",
     ),
   );
+  database.exec(readFileSync(new URL("../../../apps/control-plane/migrations/0009_runtime_authority.sql", import.meta.url), "utf8"));
   const store = new D1PlatformStore(new SqliteD1Database(database), options);
   let instanceCounter = 0;
   const registry = new RepositoryRegistryService(
@@ -1326,7 +1343,27 @@ async function prepareTargetRedeploy(options: TargetCheckpointOptions = {}) {
     checkpoint: lifecycleCheckpoint(operation, { ...options, phase: checkpointPhase }),
     now: 102,
   });
+  seedAdmittedGrant(database, operation.id);
   return { ...platform, binding, operation, lease };
+}
+
+// These report-store fixtures begin after the separately tested retirement
+// barrier has published the target grant. Reports may only promote that grant.
+function seedAdmittedGrant(database: DatabaseSync, operationId: string): void {
+  database.prepare(`INSERT INTO runtime_reservations (reservation_id, instance_id, repository_id,
+    runtime_epoch, generation, cluster_id, status, capacity_snapshot_epoch, cpu_milli, memory_mib,
+    ephemeral_storage_mib, created_at, updated_at)
+    SELECT 'test-authority:' || operation_id, instance_id, repository_id, runtime_epoch, generation,
+      cluster_id, 'reserved', 1, 1, 1, 1, 1, 1 FROM operations WHERE operation_id = ?
+    ON CONFLICT(instance_id, runtime_epoch) DO UPDATE SET status = 'reserved'`).run(operationId);
+  database.prepare(`UPDATE operations SET reservation_id = (
+    SELECT reservation_id FROM runtime_reservations r WHERE r.instance_id = operations.instance_id
+      AND r.runtime_epoch = operations.runtime_epoch) WHERE operation_id = ?`).run(operationId);
+  database.prepare(`UPDATE logical_instances SET
+    runtime_authority_reservation_id = (SELECT reservation_id FROM operations WHERE operation_id = ?),
+    runtime_authority_operation_id = ?
+    WHERE instance_id = (SELECT instance_id FROM operations WHERE operation_id = ?)`)
+    .run(operationId, operationId, operationId);
 }
 
 function lifecycleCheckpoint(

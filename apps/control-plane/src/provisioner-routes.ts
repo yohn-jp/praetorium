@@ -108,6 +108,10 @@ export interface ProvisionerRoutesDependencies {
   retireCredentials?: (
     operation: Awaited<ReturnType<OperationService["checkpoint"]>>,
   ) => Promise<boolean | void>;
+  publishRuntimeAuthority?: (
+    operation: Awaited<ReturnType<OperationService["checkpoint"]>>,
+    now: number,
+  ) => Promise<boolean | void>;
   issueControlCredential?: (input: unknown) => Promise<unknown>;
   resolveRuntimeContext: (claim: ClaimedOperation) => Promise<unknown>;
 }
@@ -208,6 +212,11 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
         return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
       const complete = await deps.retireCredentials(operation);
       if (complete === false)
+        return c.json({ operation, credentialRetirementPending: true }, 202);
+    }
+    if (input.phase === "old-writer-absent" || input.phase === "accepted") {
+      const published = await deps.publishRuntimeAuthority?.(operation, deps.now());
+      if (published === false)
         return c.json({ operation, credentialRetirementPending: true }, 202);
     }
     return c.json({ operation });

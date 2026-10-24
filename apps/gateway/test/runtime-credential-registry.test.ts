@@ -135,6 +135,54 @@ describe("runtime Git credential registry", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["reuse", "registration"] as const)(
+    "a delayed %s response cannot leave an old bearer usable after retirement completes",
+    async (requestKind) => {
+      let record = await encryptedRecord();
+      const usableTokens = new Set([CREDENTIAL.token]);
+      let releaseResponse!: () => void;
+      let signalSnapshot!: () => void;
+      const snapshotTaken = new Promise<void>((resolve) => { signalSnapshot = resolve; });
+      const responseGate = new Promise<void>((resolve) => { releaseResponse = resolve; });
+      const fetch = async (input: RequestInfo | URL) => {
+        const path = new URL(String(input)).pathname;
+        if (path === "/internal/runtime-credentials/reuse" || path === "/internal/runtime-credentials") {
+          // The D1 read committed before quiesce, but its response reaches Gateway later.
+          const snapshot = path.endsWith("/reuse")
+            ? json({ credential: record }) : json({ status: record.status });
+          signalSnapshot();
+          await responseGate;
+          return snapshot;
+        }
+        if (path.endsWith("/pending")) {
+          const pending = record.status === "revocation_pending" ? [record] : [];
+          return json({ credentials: pending, remaining: pending.length });
+        }
+        if (path.endsWith("/revoked")) {
+          record = { ...record, status: "revoked" };
+          return json({ revoked: true });
+        }
+        throw new Error("unexpected endpoint");
+      };
+      const registry = await makeRegistry(binding(fetch), { revoke: async (credential) => {
+        usableTokens.delete(credential.token);
+      } });
+      const inFlight = requestKind === "reuse"
+        ? registry.findReusable(IDENTITY, "read", NOW.toISOString())
+        : registry.recordIssued(IDENTITY, CREDENTIAL);
+      await snapshotTaken;
+      // The checkpoint atomically withdraws the grant and marks the existing row pending.
+      record = { ...record, status: "revocation_pending" };
+      await expect(registry.retire({ repositoryId: IDENTITY.repositoryId,
+        runtimeEpoch: IDENTITY.runtimeEpoch })).resolves.toEqual({ complete: true });
+      expect(usableTokens.has(CREDENTIAL.token)).toBe(false);
+      releaseResponse();
+      await inFlight;
+      // Even an earlier successful registry snapshot can now return only a revoked bearer.
+      expect(usableTokens.has(CREDENTIAL.token)).toBe(false);
+    },
+  );
+
   it("fails closed on pending or misbound rows and declines a row within the expiry margin", async () => {
     const records = [
       await encryptedRecord({ status: "revocation_pending" }),

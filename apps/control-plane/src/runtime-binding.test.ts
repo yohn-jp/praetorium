@@ -1,3 +1,4 @@
+import { OperationFenceConflict } from "@praetorium/application/operations";
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -295,7 +296,12 @@ async function createDatabase(options?: Parameters<typeof seedInstance>[1]): Pro
   const db = new SQLiteD1();
   installSchema(db);
   seedInstance(db, options);
-  if (options?.targetReservationId !== "") await publishAuthority(db, "op-target-5");
+  if (options?.targetReservationId !== "") {
+    const publication = publishAuthority(db, "op-target-5");
+    if (options?.operationLeaseExpiresAt !== undefined && options.operationLeaseExpiresAt <= NOW)
+      await expect(publication).rejects.toBeInstanceOf(OperationFenceConflict);
+    else await publication;
+  }
   return db;
 }
 

@@ -21,6 +21,7 @@ type CanaryOperation = {
   readonly generation: number;
   readonly runtimeEpoch: number;
   readonly deploymentRevisionId: string | null;
+  readonly idempotencyKey?: string;
   readonly result: Readonly<Record<string, unknown>> | null;
 };
 
@@ -39,6 +40,7 @@ type CanaryInstance = {
     | "failed"
     | "unknown";
   readonly desiredRevisionId: string | null;
+  readonly desiredArtifactDigest?: string | null;
   readonly observedRevisionId: string | null;
   readonly observedRuntimeEpoch: number | null;
 };
@@ -140,6 +142,16 @@ export interface CanaryConfigurationService {
 
 export interface CanaryOperationService {
   getById(operationId: string): Promise<CanaryOperation | null>;
+  findByIdempotency?(input: {
+    readonly repositoryId: number;
+    readonly idempotencyKey: string;
+  }): Promise<CanaryOperation | null>;
+  /** Read-only canonical stop lookup; returns only the current stopped tuple without active work. */
+  findCurrentSucceededStop?(input: {
+    readonly instanceId: string;
+    readonly repositoryId: number;
+    readonly startedOperationId: string;
+  }): Promise<CanaryOperation | null>;
   findSucceededStop?(input: {
     readonly instanceId: string;
     readonly repositoryId: number;
@@ -330,6 +342,33 @@ export class ServiceBackedDisposableCanary
     if (current.instance.desiredRevisionId !== receipt.revision.revisionId) {
       throw new Error("canary revision no longer owns the current runtime assignment");
     }
+    const recoveryGeneration = current.instance.desiredState === "running"
+      ? current.instance.generation - 1
+      : current.instance.generation;
+    const recoveryIdempotencyKey = `${input.idempotencyKey}:recovery:${recoveryGeneration}`;
+    if (current.instance.desiredState === "running") {
+      const accepted = await this.options.operations.findByIdempotency?.({
+        repositoryId: this.options.binding.repositoryId,
+        idempotencyKey: recoveryIdempotencyKey,
+      });
+      if (
+        accepted &&
+        accepted.idempotencyKey === recoveryIdempotencyKey &&
+        accepted.deploymentRevisionId === receipt.revision.revisionId &&
+        accepted.instanceId === this.options.binding.instanceId &&
+        accepted.repositoryId === this.options.binding.repositoryId &&
+        ownsCurrentCanaryTarget(
+          accepted,
+          current.instance,
+          this.options.binding,
+          receipt.revision.revisionId,
+        ) &&
+        current.instance.desiredArtifactDigest === input.artifactDigest
+      ) {
+        return { runtimeId: this.options.binding.instanceId, operationId: accepted.id };
+      }
+      throw new Error("canary assignment is running without this recovery request's operation");
+    }
     if (current.instance.desiredState !== "stopped" ||
         (current.instance.observedState !== "stopped" && current.instance.observedState !== "absent")) {
       // A stale operation cannot be reused just because it was once linked to
@@ -349,7 +388,7 @@ export class ServiceBackedDisposableCanary
         authorizationRevision: this.options.binding.authorizationRevision,
         desiredState: "running",
         actorId: this.actorId,
-        idempotencyKey: `${input.idempotencyKey}:recovery:${current.instance.generation}`,
+        idempotencyKey: recoveryIdempotencyKey,
         requestId: `t11-canary-start:${input.release.id}`,
         now: this.options.now(),
         expectedGeneration: current.instance.generation,
@@ -370,9 +409,41 @@ export class ServiceBackedDisposableCanary
   }
 
   async observe(input: { readonly runtimeId: string; readonly operationId: string }) {
-    if (input.runtimeId !== this.options.binding.instanceId) return { kind: "unknown" as const };
     const operation = await this.options.operations.getById(input.operationId);
     if (!operation) return { kind: "unknown" as const };
+    if (
+      operation.instanceId !== input.runtimeId ||
+      operation.repositoryId !== this.options.binding.repositoryId ||
+      operation.kind === "stop" ||
+      input.runtimeId !== this.options.binding.instanceId
+    ) {
+      return { kind: "unhealthy" as const, code: "canary_assignment_superseded" };
+    }
+    let current: Awaited<ReturnType<CanaryInstanceService["getByRepositoryId"]>>;
+    try {
+      current = await this.options.instances.getByRepositoryId(this.options.binding.repositoryId);
+    } catch {
+      return { kind: "unknown" as const };
+    }
+    if (
+      !current ||
+      current.binding.suspended ||
+      current.binding.instanceId !== this.options.binding.instanceId ||
+      current.binding.bindingEpoch !== this.options.binding.bindingEpoch ||
+      current.binding.authorizationRevision !== this.options.binding.authorizationRevision ||
+      current.instance.instanceId !== this.options.binding.instanceId ||
+      current.instance.repositoryId !== this.options.binding.repositoryId ||
+      !ownsCurrentCanaryTarget(
+        operation,
+        current.instance,
+        this.options.binding,
+        operation.deploymentRevisionId ?? "",
+      )
+    ) {
+      // A stale operation cannot supply health for the currently selected
+      // desired assignment. Reject it and let canonical cleanup verify stop.
+      return { kind: "unhealthy" as const, code: "canary_assignment_superseded" };
+    }
     if (operation.status === "failed" || operation.status === "blocked") {
       return { kind: "unhealthy" as const, code: "canary_operation_failed" };
     }
@@ -399,15 +470,76 @@ export class ServiceBackedDisposableCanary
     readonly runtimeId: string;
     readonly startedOperationId: string;
     readonly idempotencyKey: string;
+    readonly allowExistingStopRecovery?: boolean;
   }) {
-    if (input.runtimeId !== this.options.binding.instanceId) return { kind: "pending" as const };
     const startedOperation = await this.options.operations.getById(input.startedOperationId);
     if (!startedOperation || !startedOperation.deploymentRevisionId ||
         startedOperation.kind === "stop" ||
-        startedOperation.instanceId !== this.options.binding.instanceId ||
-        startedOperation.repositoryId !== this.options.binding.repositoryId) {
+        startedOperation.instanceId !== input.runtimeId ||
+        !Number.isSafeInteger(startedOperation.repositoryId) ||
+        startedOperation.repositoryId <= 0) {
       return { kind: "blocked" as const };
     }
+    if (input.allowExistingStopRecovery === true) {
+      const readOnlyStop = await this.options.operations.findCurrentSucceededStop?.({
+        instanceId: startedOperation.instanceId,
+        repositoryId: startedOperation.repositoryId,
+        startedOperationId: startedOperation.id,
+      });
+      if (
+        readOnlyStop &&
+        readOnlyStop.kind === "stop" &&
+        readOnlyStop.status === "succeeded" &&
+        readOnlyStop.instanceId === startedOperation.instanceId &&
+        readOnlyStop.repositoryId === startedOperation.repositoryId &&
+        readOnlyStop.generation > startedOperation.generation &&
+        readOnlyStop.runtimeEpoch >= startedOperation.runtimeEpoch
+      ) {
+        const proof = await this.options.observations.writerAbsence({
+          instanceId: startedOperation.instanceId,
+          repositoryId: startedOperation.repositoryId,
+          retiredEpoch: readOnlyStop.runtimeEpoch,
+          afterOperationId: readOnlyStop.id,
+        });
+        const observedAt = this.options.now();
+        const stopped = CanaryCleanupEvidenceSchema.safeParse({
+          operationId: readOnlyStop.id,
+          startedOperationId: startedOperation.id,
+          observedAt,
+          writerAbsence: proof,
+        });
+        const confirmed = await this.options.operations.findCurrentSucceededStop?.({
+          instanceId: startedOperation.instanceId,
+          repositoryId: startedOperation.repositoryId,
+          startedOperationId: startedOperation.id,
+        });
+        const confirmedAt = this.options.now();
+        if (
+          stopped.success &&
+          stopped.data.writerAbsence.instanceId === startedOperation.instanceId &&
+          stopped.data.writerAbsence.repositoryId === startedOperation.repositoryId &&
+          stopped.data.writerAbsence.retiredEpoch === readOnlyStop.runtimeEpoch &&
+          stopped.data.writerAbsence.censusObservedAt <= observedAt &&
+          observedAt - stopped.data.writerAbsence.censusObservedAt <= 30_000 &&
+          confirmed?.id === readOnlyStop.id &&
+          confirmed.generation === readOnlyStop.generation &&
+          confirmed.runtimeEpoch === readOnlyStop.runtimeEpoch &&
+          confirmed.status === "succeeded" &&
+          confirmedAt >= stopped.data.writerAbsence.censusObservedAt &&
+          confirmedAt - stopped.data.writerAbsence.censusObservedAt <= 30_000
+        ) {
+          return { kind: "stopped" as const, evidence: stopped.data };
+        }
+      }
+      // Missing or changed proof is not permission to stop a replacement
+      // assignment, even when this operation still belongs to the binding.
+      return { kind: "blocked" as const };
+    }
+    if (
+      input.runtimeId !== this.options.binding.instanceId ||
+      startedOperation.instanceId !== this.options.binding.instanceId ||
+      startedOperation.repositoryId !== this.options.binding.repositoryId
+    ) return { kind: "blocked" as const };
     const current = await this.currentBinding();
     const alreadyStoppedGeneration = startedOperation.generation + 1;
     if (

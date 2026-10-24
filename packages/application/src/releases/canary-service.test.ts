@@ -117,6 +117,338 @@ function health(runtimeId: string, operationId: string) {
 }
 
 describe("service-backed disposable release canary", () => {
+  it("replays a durably accepted same-revision start after its response or workflow checkpoint is lost", async () => {
+    const target = release();
+    const receipt: CanaryPlanReceipt = {
+      ...planReceipt(),
+      instance: {
+        ...planReceipt().instance,
+        generation: 7,
+        runtimeEpoch: 1,
+        desiredState: "stopped",
+        desiredRevisionId: "revision-canary",
+        desiredArtifactDigest: planReceipt().revision.artifactDigest,
+      },
+    };
+    const binding = {
+      repositoryId: 900,
+      instanceId: "canary-instance",
+      bindingEpoch: 3,
+      authorizationRevision: 4,
+      suspended: false,
+    };
+    let instance = receipt.instance;
+    let currentReads = 0;
+    let failedPostRead = false;
+    let desiredStateRequests = 0;
+    const key = "stable-canary-runtime:release-1:recovery:7";
+    const accepted = {
+      id: "operation-recovery",
+      instanceId: "canary-instance",
+      repositoryId: 900,
+      kind: "redeploy" as const,
+      status: "pending" as const,
+      generation: 8,
+      runtimeEpoch: 2,
+      deploymentRevisionId: "revision-canary",
+      idempotencyKey: key,
+      result: null,
+    };
+    const canary = new ServiceBackedDisposableCanary({
+      binding: { ...binding, requestedModules: ["forms"], resourceProfileId: "small" },
+      instances: {
+        async getByRepositoryId() {
+          currentReads += 1;
+          if (currentReads === 3 && !failedPostRead) {
+            failedPostRead = true;
+            throw new Error("simulated post-acceptance read interruption");
+          }
+          return { binding, instance };
+        },
+        async requestDesiredState(input) {
+          desiredStateRequests += 1;
+          expect(input.expectedGeneration).toBe(7);
+          expect(input.idempotencyKey).toBe(key);
+          instance = {
+            ...instance,
+            generation: accepted.generation,
+            runtimeEpoch: accepted.runtimeEpoch,
+            desiredState: "running",
+          };
+          return { instance, operation: accepted };
+        },
+      },
+      configurations: {
+        async plan() { throw new Error("plan receipt must be replayed"); },
+        async findByIdempotency(repositoryId, idempotencyKey) {
+          expect(repositoryId).toBe(900);
+          expect(idempotencyKey).toBe("stable-canary-plan:release-1");
+          return receipt;
+        },
+      },
+      operations: {
+        async getById(id) { return id === accepted.id ? accepted : null; },
+        async findByIdempotency(input) {
+          expect(input.repositoryId).toBe(900);
+          return input.idempotencyKey === key ? accepted : null;
+        },
+      },
+      observations: {
+        async latestHealth() { return null; },
+        async writerAbsence() { return null; },
+      },
+      now: () => NOW,
+      newRequestId: () => "request-recovery",
+    });
+    const startInput = {
+      release: target,
+      artifactDigest: receipt.revision.artifactDigest!,
+      idempotencyKey: "stable-canary-runtime:release-1",
+    };
+
+    await expect(canary.ensureRunning(startInput)).rejects.toThrow(
+      "simulated post-acceptance read interruption",
+    );
+    await expect(canary.ensureRunning(startInput)).resolves.toEqual({
+      runtimeId: "canary-instance",
+      operationId: accepted.id,
+    });
+    expect(desiredStateRequests).toBe(1);
+    instance = { ...instance, generation: 9, runtimeEpoch: 3 };
+    await expect(canary.ensureRunning(startInput)).rejects.toThrow(
+      "canary assignment is running without this recovery request's operation",
+    );
+    expect(desiredStateRequests).toBe(1);
+  });
+
+  it("acknowledges an already completed whole-instance stop without issuing another stop", async () => {
+    const started = {
+      id: "operation-v038",
+      instanceId: "canary-instance",
+      repositoryId: 900,
+      kind: "update" as const,
+      status: "running" as const,
+      generation: 18,
+      runtimeEpoch: 8,
+      deploymentRevisionId: "revision-v038",
+      result: null,
+    };
+    const stopped = {
+      id: "operation-stop-20",
+      instanceId: "canary-instance",
+      repositoryId: 900,
+      kind: "stop" as const,
+      status: "succeeded" as const,
+      generation: 20,
+      runtimeEpoch: 9,
+      deploymentRevisionId: "revision-v039",
+      result: null,
+    };
+    const instance = {
+      ...planReceipt().instance,
+      generation: 20,
+      runtimeEpoch: 9,
+      desiredState: "stopped" as const,
+      observedState: "stopped" as const,
+      desiredRevisionId: "revision-v039",
+      observedRevisionId: "revision-v039",
+      observedRuntimeEpoch: 9,
+    };
+    let latestHealthReads = 0;
+    const canary = new ServiceBackedDisposableCanary({
+      binding: {
+        repositoryId: 900,
+        // A policy re-point has selected a different canary; this path may
+        // only acknowledge old-resource proof and must not call the new one.
+        instanceId: "new-canary-instance",
+        bindingEpoch: 3,
+        authorizationRevision: 4,
+        requestedModules: ["forms"],
+        resourceProfileId: "small",
+      },
+      instances: {
+        async getByRepositoryId() {
+          return {
+            binding: {
+              repositoryId: 900,
+              instanceId: "canary-instance",
+              bindingEpoch: 3,
+              authorizationRevision: 4,
+              suspended: false,
+            },
+            instance,
+          };
+        },
+        async requestDesiredState() {
+          throw new Error("read-only recovery must not request desired state");
+        },
+      },
+      configurations: {
+        async plan() { throw new Error("unexpected plan"); },
+        async findByIdempotency() { throw new Error("unexpected lookup"); },
+      },
+      operations: {
+        async getById(id) { return id === started.id ? started : null; },
+        async findCurrentSucceededStop(input) {
+          expect(input).toEqual({
+            instanceId: "canary-instance",
+            repositoryId: 900,
+            startedOperationId: started.id,
+          });
+          return stopped;
+        },
+      },
+      observations: {
+        async latestHealth() {
+          latestHealthReads += 1;
+          return null;
+        },
+        async writerAbsence(input) {
+          expect(input).toEqual({
+            instanceId: "canary-instance",
+            repositoryId: 900,
+            retiredEpoch: 9,
+            afterOperationId: stopped.id,
+          });
+          return {
+            instanceId: "canary-instance",
+            repositoryId: 900,
+            retiredEpoch: 9,
+            providerObservationId: "whole-instance-stop-census",
+            censusObservedAt: NOW - 1_000,
+            remainingWriters: 0,
+            evidenceIdentities: ["pod-uid-retired"],
+            source: "runtime-provider-census",
+          };
+        },
+      },
+      now: () => NOW,
+      newRequestId: () => "request-stop-recovery",
+    });
+
+    await expect(canary.observe({
+      runtimeId: "canary-instance",
+      operationId: started.id,
+    })).resolves.toEqual({ kind: "unhealthy", code: "canary_assignment_superseded" });
+
+    const result = await canary.stop({
+      runtimeId: "canary-instance",
+      startedOperationId: started.id,
+      idempotencyKey: "stable-canary-stop:release-v038",
+      allowExistingStopRecovery: true,
+    });
+
+    expect(result.kind).toBe("stopped");
+    expect(result).toMatchObject({
+      evidence: { operationId: stopped.id, startedOperationId: started.id },
+    });
+    expect(latestHealthReads).toBe(0);
+  });
+
+  it("blocks read-only cleanup recovery when the completed stop, census, or current-work proof is incomplete", async () => {
+    const started = {
+      id: "operation-v039",
+      instanceId: "canary-instance",
+      repositoryId: 900,
+      kind: "update" as const,
+      status: "running" as const,
+      generation: 19,
+      runtimeEpoch: 9,
+      deploymentRevisionId: "revision-v039",
+      result: null,
+    };
+    const validStop = {
+      id: "operation-stop-20",
+      instanceId: "canary-instance",
+      repositoryId: 900,
+      kind: "stop" as const,
+      status: "succeeded" as const,
+      generation: 20,
+      runtimeEpoch: 9,
+      deploymentRevisionId: "revision-v039",
+      result: null,
+    };
+    const instance = {
+      ...planReceipt().instance,
+      generation: 20,
+      runtimeEpoch: 9,
+      desiredState: "stopped" as const,
+      observedState: "stopped" as const,
+      desiredRevisionId: "revision-v039",
+      observedRevisionId: "revision-v039",
+      observedRuntimeEpoch: 9,
+    };
+    const cases = ["missing-stop", "wrong-generation", "missing-census", "active-work"] as const;
+    for (const testCase of cases) {
+      const canary = new ServiceBackedDisposableCanary({
+        binding: {
+          repositoryId: 900,
+          instanceId: "canary-instance",
+          bindingEpoch: 3,
+          authorizationRevision: 4,
+          requestedModules: ["forms"],
+          resourceProfileId: "small",
+        },
+        instances: {
+          async getByRepositoryId() {
+            return {
+              binding: {
+                repositoryId: 900,
+                instanceId: "canary-instance",
+                bindingEpoch: 3,
+                authorizationRevision: 4,
+                suspended: false,
+              },
+              instance,
+            };
+          },
+          async requestDesiredState() {
+            throw new Error("read-only recovery must not request desired state");
+          },
+        },
+        configurations: {
+          async plan() { throw new Error("unexpected plan"); },
+          async findByIdempotency() { throw new Error("unexpected lookup"); },
+        },
+        operations: {
+          async getById(id) { return id === started.id ? started : null; },
+          async findCurrentSucceededStop() {
+            if (testCase === "missing-stop") return null;
+            if (testCase === "active-work") return null;
+            return testCase === "wrong-generation"
+              ? { ...validStop, generation: 19 }
+              : validStop;
+          },
+        },
+        observations: {
+          async latestHealth() { return null; },
+          async writerAbsence() {
+            if (testCase === "missing-census") return null;
+            return {
+              instanceId: "canary-instance",
+              repositoryId: 900,
+              retiredEpoch: 9,
+              providerObservationId: "whole-instance-stop-census",
+              censusObservedAt: NOW - 1_000,
+              remainingWriters: 0 as const,
+              evidenceIdentities: ["pod-uid-retired"],
+              source: "runtime-provider-census" as const,
+            };
+          },
+        },
+        now: () => NOW,
+      });
+
+      const result = await canary.stop({
+        runtimeId: "canary-instance",
+        startedOperationId: started.id,
+        idempotencyKey: "stable-canary-stop:release-v039",
+        allowExistingStopRecovery: true,
+      });
+      expect(result.kind, testCase).toBe("blocked");
+    }
+  });
+
   it("fences a delayed v0.3.8 cleanup from stopping v0.3.9 and retries only the selected revision", async () => {
     const oldRelease = { ...release(), id: "release-v038", version: "0.3.8" };
     const newRelease = { ...release(), id: "release-v039", version: "0.3.9" };
@@ -212,9 +544,14 @@ describe("service-backed disposable release canary", () => {
       runtimeId: "canary-instance",
       startedOperationId: "operation-v038",
       idempotencyKey: "stable-canary-stop:release-v038",
+      allowExistingStopRecovery: true,
     });
     expect(staleCleanup).toEqual({ kind: "blocked" });
     expect(desiredStateCalls).toHaveLength(0);
+    await expect(makeCanary().observe({
+      runtimeId: "canary-instance",
+      operationId: "operation-v038",
+    })).resolves.toEqual({ kind: "unhealthy", code: "canary_assignment_superseded" });
     const failedCandidateCleanup = await makeCanary().stop({
       runtimeId: "canary-instance",
       startedOperationId: "operation-v039",

@@ -75,7 +75,7 @@ function fixture() {
         failureCode:"SOURCE_BUILD_FAILED",evidence:evidenceMode === "detailed" || evidenceMode === "summary" || evidenceMode === "unavailable" ? "available" : evidenceMode,expiresAt:evidenceMode === "expired" ? 1790000000000 : 1795412020000,
         diagnostic:evidenceMode === "not_recorded" || evidenceMode === "expired" || evidenceMode === "unavailable" ? null : {stage:"metadata",reason:"build_failed",
           summary:"BuildKit reported a build failure. Inspect the sanitized excerpt when available.",
-          excerpt:evidenceMode === "summary" ? "" : "git rev-parse HEAD failed",truncated:false}}]:[]),
+          excerpt:evidenceMode === "summary" ? "" : "git rev-parse HEAD failed\n" + "long-source-path/".repeat(40) + "診断.ts:42 compiler error",truncated:false}}]:[]),
       ...(buildState==="building"||buildState==="admitted"&&!retryAccepted?[{id:"owned-later-attempt",attempt:1,revision:1,leaseEpoch:2,
         state:buildState==="building"?"building":"produced",stage:buildState==="building"?"buildkit":"admission",
         startedAt:1792820010000,finishedAt:buildState==="building"?null:1792820020000,
@@ -312,6 +312,10 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
               : false;
           });
           assert.equal(identifier,true,"long immutable identifiers must fit or wrap within the detail field");
+          await page.locator(".desktop-failure-detail details summary,.admin-mobile-failure-detail details summary").click();
+          assert.ok(await page.locator(".desktop-failure-detail pre,.admin-mobile-failure-detail pre").isVisible(),
+            "the long diagnostic excerpt must actually be expanded for the overflow check");
+          assert.ok((await page.locator(".desktop-failure-detail pre,.admin-mobile-failure-detail pre").innerText()).length > 600);
           const dimensions=await page.evaluate(()=>({
             document:document.documentElement.scrollWidth,
             viewport:innerWidth,

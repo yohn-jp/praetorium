@@ -19,6 +19,9 @@ const namespaceDocuments = parseYamlDocuments(
 const ingressRoutePolicyDocuments = parseYamlDocuments(
   "infrastructure/kubernetes/policies/provisioner-ingressroute.yaml",
 );
+const historyPvcPolicyDocuments = parseYamlDocuments(
+  "infrastructure/kubernetes/policies/provisioner-history-pvc.yaml",
+);
 const traefikHelmDocuments = parseYamlDocuments(
   "infrastructure/kubernetes/controllers/helm-releases.yaml",
 );
@@ -60,6 +63,51 @@ const ingressRoutePolicy = ingressRoutePolicyDocuments.find(
     document.kind === "ValidatingAdmissionPolicy" &&
     document.metadata.name === "praetorium-provisioner-tenant-ingressroute",
 );
+const historyPvcPolicy = historyPvcPolicyDocuments.find(
+  (document) =>
+    document.kind === "ValidatingAdmissionPolicy" &&
+    document.metadata.name === "praetorium-provisioner-history-pvc",
+);
+const historyPvcBinding = historyPvcPolicyDocuments.find(
+  (document) =>
+    document.kind === "ValidatingAdmissionPolicyBinding" &&
+    document.metadata.name === "praetorium-provisioner-history-pvc",
+);
+
+test("history PVC admission is bound to one stable, owned local-path claim", () => {
+  assert.ok(historyPvcPolicy);
+  assert.ok(historyPvcBinding);
+  assert.equal(historyPvcPolicy.spec.failurePolicy, "Fail");
+  assert.deepEqual(historyPvcBinding.spec.validationActions, ["Deny"]);
+  assert.equal(historyPvcBinding.spec.policyName, historyPvcPolicy.metadata.name);
+  assert.deepEqual(historyPvcPolicy.spec.matchConstraints.resourceRules, [
+    {
+      apiGroups: [""],
+      apiVersions: ["v1"],
+      operations: ["CREATE", "UPDATE"],
+      resources: ["persistentvolumeclaims"],
+    },
+  ]);
+  assert.match(
+    historyPvcPolicy.spec.matchConditions[0].expression,
+    /system:serviceaccount:praetorium-system:praetorium-provisioner/u,
+  );
+  const expressions = historyPvcPolicy.spec.validations.map(({ expression }) => expression);
+  assert.match(
+    expressions[0],
+    /namespaceObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\] == "@@CLUSTER_ID@@"/u,
+  );
+  assert.match(expressions[1], /-history"/u);
+  assert.match(expressions[1], /praetorium\.io\/history-contract/u);
+  assert.match(expressions[1], /!\("praetorium\.io\/runtime-epoch" in object\.metadata\.labels\)/u);
+  assert.match(expressions[1], /!\("arcadia\.io\/generation" in object\.metadata\.labels\)/u);
+  assert.match(expressions[1], /!\("arcadia\.io\/release-id" in object\.metadata\.labels\)/u);
+  assert.match(expressions[2], /storageClassName == "local-path"/u);
+  assert.match(expressions[2], /accessModes == \["ReadWriteOnce"\]/u);
+  assert.match(expressions[2], /dataSourceRef/u);
+  assert.match(expressions[3], /request\.operation != "UPDATE"/u);
+  assert.match(expressions[3], /requests\["storage"\]/u);
+});
 
 test("tenant IngressRoute deny-list covers the pinned Traefik CRD object fields", () => {
   const traefikRelease = traefikHelmDocuments.find(
@@ -485,4 +533,33 @@ test("the boundary excludes legacy data operations and unrelated runtime resourc
     );
   }
   assert.equal(policySources.includes("${CLUSTER_ID}"), false);
+});
+
+test("the history seed Secret has a bounded create-once shape with stable ownership", () => {
+  const identity = runtimeResourcePolicy.spec.validations[1].expression;
+  const secretShape = runtimeResourcePolicy.spec.validations[3].expression;
+  const update = runtimeResourcePolicy.spec.validations[4].expression;
+  const deleteSecretShape = runtimeResourceDeletePolicy.spec.validations[1].expression;
+  const normalizedIdentity = identity.replace(/\s+/gu, " ");
+  assert.match(normalizedIdentity, /-history-seed/u);
+  assert.match(
+    normalizedIdentity,
+    /!\("praetorium\.io\/runtime-epoch" in object\.metadata\.labels\)/u,
+  );
+  assert.match(normalizedIdentity, /!\("arcadia\.io\/generation" in object\.metadata\.labels\)/u);
+  assert.match(normalizedIdentity, /!\("arcadia\.io\/release-id" in object\.metadata\.labels\)/u);
+  assert.match(secretShape, /-history-seed/u);
+  assert.match(secretShape, /history-contract"\] == "v1"/u);
+  assert.match(secretShape, /dyn\(object\)\.immutable == true/u);
+  assert.match(secretShape, /"snapshot\.json" in dyn\(object\)\.data/u);
+  assert.match(secretShape, /snapshot\.json"\]\.size\(\) <= 1000000/u);
+  assert.match(update, /oldObject\.metadata\.labels\["arcadia\.io\/ownership-version"\]/u);
+  assert.match(update, /oldObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\]/u);
+  assert.doesNotMatch(deleteSecretShape, /-history-seed/u);
+  assert.equal(
+    runtimeResourceDeletePolicy.spec.matchConstraints.resourceRules.some((rule) =>
+      rule.resources.includes("persistentvolumeclaims"),
+    ),
+    false,
+  );
 });

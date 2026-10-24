@@ -23,6 +23,41 @@ const HOSTS = [
     freshness:"absent", cpu:{usedPercent:null}, memory:{usedBytes:null,totalBytes:null},
     disk:{usedBytes:null,totalBytes:null}, reasons:["metrics_unavailable"], schemaVersion:1 },
 ];
+async function renderedTextContrast(page, selectors) {
+  return page.evaluate(items => {
+    const rgba = color => {
+      const channels = color.match(/[\d.]+/gu)?.map(Number);
+      if (!channels || channels.length < 3) return null;
+      return [channels[0],channels[1],channels[2],channels.length > 3 ? channels[3] : 1];
+    };
+    const background = element => {
+      const layers=[];
+      for (let node=element;node;node=node.parentElement) {
+        const layer=rgba(getComputedStyle(node).backgroundColor);
+        if (layer && layer[3]>0) layers.push(layer);
+      }
+      let result=[255,255,255];
+      for (let index=layers.length-1;index>=0;index--) {
+        const [red,green,blue,alpha]=layers[index];
+        result=[red*alpha+result[0]*(1-alpha),green*alpha+result[1]*(1-alpha),blue*alpha+result[2]*(1-alpha)];
+      }
+      return result;
+    };
+    const luminance=channels=>channels.map(channel=>channel/255).map(channel=>
+      channel<=.04045?channel/12.92:((channel+.055)/1.055)**2.4)
+      .reduce((sum,channel,index)=>sum+channel*[.2126,.7152,.0722][index],0);
+    const results=[];
+    for (const selector of items) for (const element of document.querySelectorAll(selector)) {
+      if (!element.getClientRects().length || !element.textContent.trim()) continue;
+      const foreground=rgba(getComputedStyle(element).color);
+      const canvas=background(element);
+      if (!foreground) continue;
+      const front=luminance(foreground.slice(0,3)),back=luminance(canvas);
+      results.push({selector,text:element.textContent.trim().slice(0,80),ratio:Number(((Math.max(front,back)+.05)/(Math.min(front,back)+.05)).toFixed(2))});
+    }
+    return results;
+  },selectors);
+}
 function fixture() {
   let buildState = "empty";
   let evidenceMode = "detailed";
@@ -254,6 +289,12 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
           assert.match(text,/metadata/iu,"the recorded stage is shown");
           assert.match(text,/build failed/iu,"the recorded reason is shown");
           assert.ok(text.includes("may not identify the root cause"),"a failure summary must not be presented as a diagnosis");
+          const contrastSelectors=mode==="desktop"
+            ? [".desktop-context-label",".desktop-eyebrow",".desktop-muted",".desktop-section-intro",".desktop-facts dt",".desktop-job-heading>div>code"]
+            : [".admin-kicker",".admin-mobile-detail-heading p:not(.admin-mobile-source-name)",".admin-mobile-detail-facts dt",".admin-mobile-evidence-state",".admin-mobile-tabs a:not([aria-current])",".admin-mobile-footer"];
+          const contrast=await renderedTextContrast(page,contrastSelectors);
+          assert.ok(contrast.length>0,mode+" contrast audit must inspect rendered operator labels");
+          assert.deepEqual(contrast.filter(item=>item.ratio<4.5),[],mode+" rendered text contrast must meet 4.5:1: "+JSON.stringify(contrast));
           if(mode==="mobile") {
             const recoveryFlow=await page.evaluate(()=>({
               position:getComputedStyle(document.querySelector(".admin-mobile-action-region")).position,
@@ -340,6 +381,9 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.match(journey,/succeeded/iu,journey);
     await page.getByRole("link",{name:"Back to related release rel_owned",exact:true}).click();
     await page.getByRole("link",{name:"Back to Releases",exact:true}).click();
+    const stableLabelContrast=await renderedTextContrast(page,mode==="desktop"?[".desktop-stable-digest span"]:[".admin-mobile-stable-panel strong"]);
+    assert.ok(stableLabelContrast.length>0,mode+" Stable status label must be audited");
+    assert.deepEqual(stableLabelContrast.filter(item=>item.ratio<4.5),[],mode+" Stable status label contrast must meet 4.5:1");
     await page.getByRole("link",{name:/Open .*Stable release details/}).click();
     journey=await page.locator("main").innerText();
     assert.match(journey,/stable/iu);

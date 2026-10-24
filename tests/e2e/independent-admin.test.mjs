@@ -113,7 +113,7 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
   const page=await context.newPage();
   const errors=[];
   page.on("pageerror",error=>errors.push(String(error)));
-  for (const [mode,width] of [["mobile",320],["mobile",390],["desktop",1440]]) {
+  for (const [mode,width] of [["mobile",320],["mobile",375],["mobile",390],["mobile",430],["desktop",1440]]) {
     await page.setViewportSize({width,height:950});
     const response=await page.goto(origin+"/infrastructure?ui="+mode,{waitUntil:"networkidle"});
     assert.equal(response.status(),200);
@@ -130,6 +130,17 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.ok(dimensions.body<=width+1,mode+" body overflow: "+JSON.stringify(dimensions));
     assert.equal(dimensions.nav,true);
     assert.equal(dimensions.sidebar,mode==="desktop");
+  }
+  // The refresh affordance must retain the selected host and must not claim
+  // an unavailable metric is currently being collected.
+  for (const [mode,width] of [["mobile",320],["desktop",1440]]) {
+    await page.setViewportSize({width,height:950});
+    await page.goto(origin+"/infrastructure/hosts/builder?ui="+mode,{waitUntil:"domcontentloaded"});
+    const refresh=page.getByRole("link",{name:"Refresh status"});
+    assert.equal(await refresh.getAttribute("href"),"/infrastructure/hosts/builder?ui="+mode);
+    assert.equal(await page.getByText("Collecting baseline").count(),0);
+    await refresh.click();
+    assert.equal(new URL(page.url()).pathname,"/infrastructure/hosts/builder");
   }
   await page.goto(origin+"/infrastructure/hosts/management?ui=desktop",{waitUntil:"domcontentloaded"});
   assert.ok(await page.getByText("k3s",{exact:true}).count()>=1);

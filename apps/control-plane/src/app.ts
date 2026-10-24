@@ -70,6 +70,7 @@ export type ControlPlaneDependencies = {
   runtimeIdentity?: Hono;
   runtimeHealth?: Hono;
   runtimeAuthProbe?: Hono;
+  runtimeHistoryDrainGrant?: Hono;
   runtimeCredentials?: Hono;
   credentialRetirementSecret?: string;
   notifyWorkAvailable?: WorkNotificationDispatcher;
@@ -235,6 +236,7 @@ export function createControlPlaneApp(deps: ControlPlaneDependencies) {
   if (deps.runtimeIdentity) app.route("/", deps.runtimeIdentity);
   if (deps.runtimeHealth) app.route("/", deps.runtimeHealth);
   if (deps.runtimeAuthProbe) app.route("/internal/provisioner", deps.runtimeAuthProbe);
+  if (deps.runtimeHistoryDrainGrant) app.route("/internal/provisioner", deps.runtimeHistoryDrainGrant);
   if (deps.runtimeCredentials) app.route("/", deps.runtimeCredentials);
   if (deps.operatorAdmission) app.route("/v1/operator/releases", deps.operatorAdmission);
   if (deps.sourceReleaseOperator) app.route("/v1/operator/source-builds", deps.sourceReleaseOperator);

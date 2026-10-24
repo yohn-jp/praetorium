@@ -2,6 +2,7 @@ import { createScriptoriumCatalogResolverRegistry } from "@praetorium/scriptoriu
 import { BuildInputSchema } from "@praetorium/contracts";
 import { createRuntimeHealthRoutes } from "./runtime-health-routes.js";
 import { createProvisionerRuntimeAuthProbeRoutes } from "./runtime-auth-probe.js";
+import { createProvisionerHistoryDrainGrantRoutes } from "./runtime-history-drain-grant.js";
 import { composeBuildServices } from "./build-composition.js";
 import { composeReleaseServices } from "./release-composition.js";
 import { D1SourceReleaseBuildQueue, createSourceReleaseOperatorRoutes, createSourceReleaseWorkerRoutes } from "./source-release-builds.js";
@@ -136,6 +137,17 @@ function composeServices(env: ControlPlaneEnv) {
             instanceHostSuffix: required(env.INSTANCE_HOST_SUFFIX),
             workerId: required(env.PROVISIONER_WORKER_ID),
             clusterId: required(env.PROVISIONER_CLUSTER_ID),
+          }),
+          runtimeHistoryDrainGrant: createProvisionerHistoryDrainGrantRoutes({
+            db: env.CONTROL_PLANE_DB,
+            operations,
+            instances,
+            gateway: env.GATEWAY_SERVICE,
+            gatewaySecret: env.CONTROL_PLANE_GATEWAY_AUTH,
+            gatewayOrigin: required(env.GATEWAY_ORIGIN),
+            workerId: required(env.PROVISIONER_WORKER_ID),
+            clusterId: required(env.PROVISIONER_CLUSTER_ID),
+            legacyDrainArtifacts: [],
           }),
         }
       : {}),

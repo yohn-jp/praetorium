@@ -63,7 +63,8 @@ if (supplied.apiVersion !== "praetorium.io/secret-files/v1" || !supplied.values 
   throw new Error("invalid private secret-files manifest");
 }
 const refNames = Object.keys(inventory.secretRefs).sort();
-const suppliedRoles = Object.keys(supplied.values).filter((name) => name !== "releaseOperatorToken").sort();
+const workerOnlyRoles = new Set(["releaseOperatorToken", "adminControlPlaneAuth", "adminObserverToken"]);
+const suppliedRoles = Object.keys(supplied.values).filter((name) => !workerOnlyRoles.has(name)).sort();
 if (suppliedRoles.join(",") !== refNames.join(",")) {
   throw new Error("secret-files manifest must name exactly: " + refNames.join(", "));
 }

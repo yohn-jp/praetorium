@@ -29,7 +29,7 @@ export function page(
     '<main id="main-content" class="page-shell">' + body + '</main>' + choice + '</body></html>';
   return new Response(html, { headers: {
     "Content-Type": "text/html; charset=utf-8",
-    "Cache-Control": "no-store",
+    "Cache-Control": "no-store, no-transform",
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; style-src 'self'; script-src 'none'",
     "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",

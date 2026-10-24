@@ -20,7 +20,7 @@ const browserEnvironmentPath =
 const SESSION_COOKIE = "__Host-praetorium_session";
 const CSRF_COOKIE = "__Host-praetorium_csrf";
 const LOGIN_NONCE_COOKIE = "__Host-praetorium_login_nonce";
-const INSTANCE_ID = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const REPOSITORY_ID = "899998001";
 const REDACT_CANARY = "T14_QUERY_REDACTION_CANARY";
 
 function git(...arguments_) {
@@ -83,6 +83,16 @@ test("actual Gateway Worker partial browser security proof on owned local Minifl
     target: "es2022",
     tsconfig: path.join(sourceRoot, "apps/gateway/tsconfig.json"),
     external: ["node:*"],
+    plugins: [
+      {
+        name: "gateway-worker-entrypoint-test-stub",
+        setup(build) {
+          build.onResolve({ filter: /^cloudflare:workers$/ }, () => ({
+            path: path.join(sourceRoot, "apps/gateway/test/testing/cloudflare-workers-stub.ts"),
+          }));
+        },
+      },
+    ],
     write: false,
     logLevel: "silent",
   });
@@ -144,6 +154,19 @@ test("actual Gateway Worker partial browser security proof on owned local Minifl
       compatibilityDate: dateMatch[1],
       compatibilityFlags,
       bindings: testBindings,
+      ratelimits: Object.fromEntries(
+        [
+          ["LOGIN_RATE_LIMIT", 10],
+          ["MCP_SOURCE_RATE_LIMIT", 60],
+          ["MCP_CREDENTIAL_RATE_LIMIT", 20],
+          ["RUNTIME_GIT_RATE_LIMIT", 120],
+          ["WAKE_RATE_LIMIT", 10],
+          ["MUTATION_RECEIPT_RATE_LIMIT", 10],
+        ].map(([binding, limit], index) => [
+          binding,
+          { namespace_id: `t14-local-${index}`, simple: { limit, period: 60 } },
+        ]),
+      ),
       kvNamespaces: ["GATEWAY_KV"],
       kvPersist: path.join(temporaryRoot, "kv"),
       durableObjects: {
@@ -295,12 +318,12 @@ test("actual Gateway Worker partial browser security proof on owned local Minifl
     }
     const actualRoutes = [
       {
-        path: `/repositories/899998001?access_token=${REDACT_CANARY}&nested=must-not-survive`,
-        redirectPath: "/repositories/899998001",
+        path: `/repositories/${REPOSITORY_ID}?access_token=${REDACT_CANARY}&nested=must-not-survive`,
+        redirectPath: `/repositories/${REPOSITORY_ID}`,
       },
       {
-        path: `/entry/${INSTANCE_ID}?access_token=${REDACT_CANARY}&nested=must-not-survive`,
-        redirectPath: `/entry/${INSTANCE_ID}`,
+        path: `/entry/scriptorium/${REPOSITORY_ID}?access_token=${REDACT_CANARY}&nested=must-not-survive`,
+        redirectPath: `/entry/scriptorium/${REPOSITORY_ID}`,
       },
     ];
     const loginStates = [];
@@ -321,12 +344,30 @@ test("actual Gateway Worker partial browser security proof on owned local Minifl
         trustedOrigin,
         "untrusted Host must not control the authentication origin",
       );
-      assert.equal(trustedStart.pathname, "/auth/github/start");
+      assert.equal(trustedStart.pathname, "/auth/login");
       assert.equal(trustedStart.searchParams.get("redirect_to"), route.redirectPath);
       assert.ok(
         !trustedStart.href.includes(REDACT_CANARY),
         "sensitive incoming query must not be copied to the redirect",
       );
+
+      const loginPage = findResponse(result.responses, "/auth/login", "gateway.test");
+      assert.ok(loginPage, "browser reached the trusted Gateway login page");
+      assert.equal(loginPage.status, 200);
+      const continueLink = page.getByRole("link", { name: "Continue with GitHub", exact: true });
+      const continueHref = await continueLink.getAttribute("href");
+      assert.ok(continueHref);
+      const continueUrl = new URL(continueHref, trustedOrigin);
+      assert.equal(continueUrl.pathname, "/auth/github/start");
+      assert.equal(continueUrl.searchParams.get("redirect_to"), route.redirectPath);
+      const loginStartIndex = browserResponses.length;
+      const loginStartResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.origin === trustedOrigin && url.pathname === "/auth/github/start";
+      });
+      await continueLink.click().catch(() => undefined);
+      await loginStartResponse;
+      await flushResponses();
 
       const routePath = route.path.split("?", 1)[0];
       const browserEntryRequest = browserRequests.findLast(
@@ -341,7 +382,11 @@ test("actual Gateway Worker partial browser security proof on owned local Minifl
         assert.equal(browserEntryRequest?.accept.includes("text/html"), true);
       }
 
-      const startResponse = findResponse(result.responses, "/auth/github/start", "gateway.test");
+      const startResponse = findResponse(
+        browserResponses.slice(loginStartIndex),
+        "/auth/github/start",
+        "gateway.test",
+      );
       assert.ok(
         startResponse,
         "browser followed the redirect to the actual trusted Gateway origin",

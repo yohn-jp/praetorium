@@ -563,3 +563,32 @@ test("the history seed Secret has a bounded create-once shape with stable owners
     false,
   );
 });
+
+test("the canonical Kind job runs real server-side history admission scenarios", () => {
+  const workflow = readFileSync(
+    resolve(repositoryRoot, ".github/workflows/publish-services.yml"),
+    "utf8",
+  );
+  const runner = readFileSync(
+    resolve(repositoryRoot, "scripts/ci/verify-history-admission.mjs"),
+    "utf8",
+  );
+  assert.match(
+    workflow,
+    /node scripts\/ci\/verify-history-admission\.mjs \/tmp\/praetorium-runtime\.json/u,
+  );
+  assert.match(runner, /kind-praetorium-ci/u);
+  assert.match(runner, /--dry-run=server/u);
+  for (const expectedPolicy of [
+    "praetorium-provisioner-history-pvc",
+    "praetorium-provisioner-runtime-resources",
+    "praetorium-tenant-pods-restricted",
+  ]) {
+    assert.ok(runner.includes(expectedPolicy), `Kind scenarios omit ${expectedPolicy}`);
+  }
+  assert.match(runner, /wrongOwnerPvc/u);
+  assert.match(runner, /oversizedPvc/u);
+  assert.match(runner, /badSizePatch/u);
+  assert.match(runner, /wrongPodClaim/u);
+  assert.match(runner, /wrongPodPath/u);
+});

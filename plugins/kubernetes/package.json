@@ -14,7 +14,7 @@
   ],
   "dependencies": {
     "@praetorium/contracts": "workspace:*",
-    "ws": "8.21.0"
+    "ws": "8.21.1"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

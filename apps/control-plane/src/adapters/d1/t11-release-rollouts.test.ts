@@ -483,11 +483,11 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
         writerAbsence: {
           instanceId: "old-canary-instance",
           repositoryId: 101,
-          retiredEpoch: 9,
+          retiredEpoch: 7,
           providerObservationId: "whole-instance-stop-census",
           censusObservedAt: NOW - 1_000,
           remainingWriters: 0,
-          evidenceIdentities: ["pod-uid-retired"],
+          evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
           source: "runtime-provider-census",
         },
       };
@@ -542,6 +542,20 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
            'complete', NULL, 'repository:101', 'old-stop', 'stop-hash',
            'operator-user', 3, NULL, ${NOW - 30_000}, ${NOW});
       `);
+      db.database.prepare("UPDATE operations SET checkpoint_json = ? WHERE operation_id = 'operation-stop20'")
+        .run(JSON.stringify({
+          schemaVersion: 1,
+          writerAbsenceProof: {
+            instanceId: "old-canary-instance",
+            repositoryId: 101,
+            retiredRuntimeEpoch: 7,
+            providerObservationId: "whole-instance-stop-census",
+            censusObservedAt: new Date(NOW - 1_000).toISOString(),
+            remainingWriters: 0,
+            evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
+            source: "runtime-provider-census",
+          },
+        }));
       return {
         db,
         releases,
@@ -577,7 +591,7 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       duplicate: true,
     });
 
-    const invalidCases = ["stale-revision", "missing-cleanup", "healthy-evidence", "active-old-work", "wrong-new-binding"] as const;
+    const invalidCases = ["stale-revision", "missing-cleanup", "healthy-evidence", "active-old-work", "wrong-new-binding", "missing-stop-proof", "wrong-retired-epoch"] as const;
     for (const invalidCase of invalidCases) {
       const fixture = await makeFixture();
       if (invalidCase === "missing-cleanup") fixture.db.database.prepare(
@@ -597,6 +611,12 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       if (invalidCase === "wrong-new-binding") fixture.db.database.prepare(
         "UPDATE repository_bindings SET authorization_revision = 8 WHERE repository_id = ?",
       ).run(retryBinding.repositoryId);
+      if (invalidCase === "missing-stop-proof") fixture.db.database.prepare(
+        "UPDATE operations SET checkpoint_json = NULL WHERE operation_id = 'operation-stop20'",
+      ).run();
+      if (invalidCase === "wrong-retired-epoch") fixture.db.database.prepare(
+        "UPDATE operations SET checkpoint_json = json_set(checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch', 9) WHERE operation_id = 'operation-stop20'",
+      ).run();
       const command = invalidCase === "stale-revision"
         ? { ...fixture.command, expectedRevision: fixture.command.expectedRevision - 1 }
         : fixture.command;
@@ -644,6 +664,20 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
         ('operation-stop20', 'old-canary-instance', 101, 20, 9, 'stop', 'succeeded',
          'complete', 'repo:101', 'user-stop20', 'hash-stop', 'operator-user', 3, ${NOW}, ${NOW});
     `);
+    db.database.prepare("UPDATE operations SET checkpoint_json = ? WHERE operation_id = 'operation-stop20'")
+      .run(JSON.stringify({
+        schemaVersion: 1,
+        writerAbsenceProof: {
+          instanceId: "old-canary-instance",
+          repositoryId: 101,
+          retiredRuntimeEpoch: 7,
+          providerObservationId: "stop20-complete-census",
+          censusObservedAt: new Date(NOW - 1_000).toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
+          source: "runtime-provider-census",
+        },
+      }));
 
     const startedOperation = {
       id: "operation-v038",
@@ -665,6 +699,18 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       kind: "stop" as const,
       status: "succeeded" as const,
       deploymentRevisionId: "revision-v039",
+      checkpoint: {
+        writerAbsenceProof: {
+          instanceId: "old-canary-instance",
+          repositoryId: 101,
+          retiredRuntimeEpoch: 7,
+          providerObservationId: "stop20-complete-census",
+          censusObservedAt: new Date(NOW - 1_000).toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
+          source: "runtime-provider-census",
+        },
+      },
       result: null,
     };
     let desiredStateWrites = 0;
@@ -689,7 +735,14 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       operations: {
         async getById(operationId: string) {
           if (operationId === startedOperation.id) return startedOperation;
-          if (operationId === stopOperation.id) return stopOperation;
+          if (operationId === stopOperation.id) {
+            const row = db.database.prepare("SELECT checkpoint_json FROM operations WHERE operation_id = ?")
+              .get(operationId) as { readonly checkpoint_json: string | null };
+            return {
+              ...stopOperation,
+              checkpoint: row.checkpoint_json ? JSON.parse(row.checkpoint_json) as Record<string, unknown> : null,
+            };
+          }
           return null;
         },
       } as unknown as OperationService,
@@ -710,7 +763,7 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
           providerObservationId: "stop20-complete-census",
           censusObservedAt: NOW - 1_000,
           remainingWriters: 0 as const,
-          evidenceIdentities: ["pod-uid-retired"],
+          evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
           source: "runtime-provider-census" as const,
         }),
       },

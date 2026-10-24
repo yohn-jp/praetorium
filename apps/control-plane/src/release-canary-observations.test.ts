@@ -239,7 +239,7 @@ describe("T11 persisted canary observations", () => {
       repositoryId,
       kind: "stop",
       status: "succeeded",
-      runtimeEpoch,
+      runtimeEpoch: runtimeEpoch + 2,
       createdAt: now - 4_000,
       checkpoint: {
         schemaVersion: 1,
@@ -279,6 +279,15 @@ describe("T11 persisted canary observations", () => {
       evidenceIdentities: ["pod-uid-12"],
       source: "runtime-provider-census",
     });
+
+    await expect(
+      reader.writerAbsence({
+        instanceId,
+        repositoryId,
+        retiredEpoch: runtimeEpoch + 2,
+        afterOperationId: stopOperation.id,
+      }),
+    ).resolves.toBeNull();
 
     const noCensus = createReleaseCanaryObservationReader(
       { getById: async () => ({ ...stopOperation, checkpoint: { schemaVersion: 1 } }) },

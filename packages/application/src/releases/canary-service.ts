@@ -22,6 +22,7 @@ type CanaryOperation = {
   readonly runtimeEpoch: number;
   readonly deploymentRevisionId: string | null;
   readonly idempotencyKey?: string;
+  readonly checkpoint?: Readonly<Record<string, unknown>> | null;
   readonly result: Readonly<Record<string, unknown>> | null;
 };
 
@@ -495,10 +496,18 @@ export class ServiceBackedDisposableCanary
         readOnlyStop.generation > startedOperation.generation &&
         readOnlyStop.runtimeEpoch >= startedOperation.runtimeEpoch
       ) {
+        const stopProof = persistedStopWriterAbsence(readOnlyStop);
+        const retiredEpoch = stopProof?.retiredRuntimeEpoch;
+        if (
+          typeof retiredEpoch !== "number" || !Number.isSafeInteger(retiredEpoch) ||
+          retiredEpoch <= 0 || retiredEpoch > readOnlyStop.runtimeEpoch
+        ) {
+          return { kind: "blocked" as const };
+        }
         const proof = await this.options.observations.writerAbsence({
           instanceId: startedOperation.instanceId,
           repositoryId: startedOperation.repositoryId,
-          retiredEpoch: readOnlyStop.runtimeEpoch,
+          retiredEpoch,
           afterOperationId: readOnlyStop.id,
         });
         const observedAt = this.options.now();
@@ -518,22 +527,28 @@ export class ServiceBackedDisposableCanary
           stopped.success &&
           stopped.data.writerAbsence.instanceId === startedOperation.instanceId &&
           stopped.data.writerAbsence.repositoryId === startedOperation.repositoryId &&
-          stopped.data.writerAbsence.retiredEpoch === readOnlyStop.runtimeEpoch &&
+          stopped.data.writerAbsence.retiredEpoch === retiredEpoch &&
+          stopped.data.writerAbsence.remainingWriters === 0 &&
           stopped.data.writerAbsence.censusObservedAt <= observedAt &&
-          observedAt - stopped.data.writerAbsence.censusObservedAt <= 30_000 &&
+          observedAt - stopped.data.writerAbsence.censusObservedAt <= 10 * 60_000 &&
           confirmed?.id === readOnlyStop.id &&
           confirmed.generation === readOnlyStop.generation &&
           confirmed.runtimeEpoch === readOnlyStop.runtimeEpoch &&
           confirmed.status === "succeeded" &&
+          persistedStopWriterAbsence(confirmed)?.retiredRuntimeEpoch === retiredEpoch &&
           confirmedAt >= stopped.data.writerAbsence.censusObservedAt &&
-          confirmedAt - stopped.data.writerAbsence.censusObservedAt <= 30_000
+          confirmedAt - stopped.data.writerAbsence.censusObservedAt <= 10 * 60_000
         ) {
           return { kind: "stopped" as const, evidence: stopped.data };
         }
       }
-      // Missing or changed proof is not permission to stop a replacement
-      // assignment, even when this operation still belongs to the binding.
-      return { kind: "blocked" as const };
+      if (readOnlyStop) {
+        // A succeeded stop with missing or changed proof is not permission to
+        // stop a replacement assignment, even when this operation is stale.
+        return { kind: "blocked" as const };
+      }
+      // Without an existing stop, continue through normal exact-current-tuple
+      // ownership checks below so a failed current canary can be cleaned up.
     }
     if (
       input.runtimeId !== this.options.binding.instanceId ||
@@ -647,4 +662,22 @@ export class ServiceBackedDisposableCanary
     }
     return { kind: "stopped" as const, evidence: stopped.data };
   }
+}
+
+function persistedStopWriterAbsence(
+  operation: CanaryOperation,
+): Readonly<Record<string, unknown>> | null {
+  const checkpoint = operation.checkpoint;
+  if (!checkpoint) return null;
+  const direct = checkpoint.writerAbsenceProof;
+  if (isRecord(direct)) return direct;
+  const lifecycle = checkpoint.lifecycle;
+  if (isRecord(lifecycle) && isRecord(lifecycle.writerAbsenceProof)) {
+    return lifecycle.writerAbsenceProof;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

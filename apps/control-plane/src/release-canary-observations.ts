@@ -199,8 +199,7 @@ export function createReleaseCanaryObservationReader(
         operation.kind !== "stop" ||
         operation.id !== input.afterOperationId ||
         operation.instanceId !== input.instanceId ||
-        operation.repositoryId !== input.repositoryId ||
-        operation.runtimeEpoch !== input.retiredEpoch
+        operation.repositoryId !== input.repositoryId
       ) {
         return null;
       }
@@ -230,6 +229,9 @@ export function createReleaseCanaryObservationReader(
         parsed.data.instanceId !== input.instanceId ||
         parsed.data.repositoryId !== input.repositoryId ||
         parsed.data.retiredEpoch !== input.retiredEpoch ||
+        parsed.data.remainingWriters !== 0 ||
+        parsed.data.providerObservationId.length === 0 ||
+        parsed.data.source !== "runtime-provider-census" ||
         typeof operation.createdAt !== "number" ||
         !Number.isSafeInteger(operation.createdAt) ||
         censusObservedAt < operation.createdAt ||

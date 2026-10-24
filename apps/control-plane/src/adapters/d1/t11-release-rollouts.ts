@@ -954,10 +954,33 @@ export class D1T11ReleaseRolloutStore
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.instanceId') = old_i.instance_id
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.repositoryId') = old_i.repository_id
                  AND json_type(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') = 'integer'
-                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') = stopped.runtime_epoch
+                 AND COALESCE(json_type(stopped.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch'),
+                              json_type(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.retiredRuntimeEpoch')) = 'integer'
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') =
+                     COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.retiredRuntimeEpoch'))
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') <= started.runtime_epoch
                  AND json_type(w.cleanup_evidence_json, '$.writerAbsence.remainingWriters') = 'integer'
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.remainingWriters') = 0
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.source') = 'runtime-provider-census'
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.providerObservationId') =
+                     COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.providerObservationId'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.providerObservationId'))
+                 AND length(COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.providerObservationId'),
+                                     json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.providerObservationId'))) > 0
+                 AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.instanceId'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.instanceId')) = old_i.instance_id
+                 AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.repositoryId'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.repositoryId')) = old_i.repository_id
+                 AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.remainingWriters'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.remainingWriters')) = 0
+                 AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.source'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.source')) = 'runtime-provider-census'
+                 AND round((julianday(COALESCE(
+                       json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.censusObservedAt'),
+                       json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.censusObservedAt')
+                     )) - 2440587.5) * 86400000) =
+                     json_extract(w.cleanup_evidence_json, '$.writerAbsence.censusObservedAt')
                  AND json_type(w.cleanup_evidence_json, '$.writerAbsence.censusObservedAt') = 'integer'
                  AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.censusObservedAt') <=
                      json_extract(w.cleanup_evidence_json, '$.observedAt')

@@ -10,6 +10,7 @@ import {
   createGitHubRestClient,
   createRuntimeIdentityAuthenticator,
   GITHUB_PUBLISH_RECEIPT_AUDIENCE,
+  type CurrentRuntimeBinding,
   type RepositoryBindingReader,
   type RuntimeGitCredentialLifecycle,
   type RuntimeBindingReader,
@@ -362,12 +363,14 @@ export function createRuntimeGitCredentialBroker(config: RuntimeGitCredentialBro
     },
   };
   const brokerRepositoryBindings: RepositoryBindingReader = {
-    async getByRepositoryId(repositoryId) {
+    async getByRepositoryId(repositoryId, currentRuntime?: CurrentRuntimeBinding | null) {
+      // The broker already resolved and validated this binding for the same request.
+      // Do not make a second Control Plane current-authority read in this adapter.
+      if (!currentRuntime) return null;
       const repository = await config.repositoryBindings.getByRepositoryId(repositoryId);
       if (!repository) return null;
       // User authorization intentionally keeps the observed-current epoch. Broker identity,
       // however, may belong to a target runtime admitted after the old writer was fenced.
-      const currentRuntime = await runtimeBindings.getCurrent(repositoryId);
       if (
         !currentRuntime ||
         currentRuntime.repositoryId !== repositoryId ||

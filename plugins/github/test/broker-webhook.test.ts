@@ -92,9 +92,11 @@ async function broker(input?: {
   readonly actorAllowed?: boolean;
   readonly bindingRevision?: number;
   readonly accessRevision?: number;
+  readonly reuse?: boolean;
 }) {
   const minted: Array<{ repositoryId: number; permission: string }> = [];
   const authorizedUsers: string[] = [];
+  const lookedUpPermissions: ("read" | "write")[] = [];
   const currentIdentity = { ...identity, runtimeEpoch: input?.epoch ?? 4 };
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
     "sign",
@@ -157,14 +159,31 @@ async function broker(input?: {
         };
       },
     },
+    credentialLifecycle: {
+      async findReusable(_identity, permission) {
+        lookedUpPermissions.push(permission);
+        return input?.reuse
+          ? {
+              token: "opaque-install-token",
+              expiresAt: "2026-10-17T01:00:00.000Z",
+              installationId: 71,
+              repositoryId: 1001,
+              permission,
+            }
+          : null;
+      },
+      async recordIssued() {
+        return true;
+      },
+    },
     now: () => new Date(NOW),
   });
-  return { service, minted, authorizedUsers, receipt };
+  return { service, minted, authorizedUsers, lookedUpPermissions, receipt };
 }
 
 describe("runtime-scoped Git credentials", () => {
   it("issues only one-repository read credentials for a current runtime binding", async () => {
-    const { service, minted } = await broker();
+    const { service, minted, lookedUpPermissions } = await broker();
     const issued = await service.issue({ proof: proof(), operation: "fetch" });
     expect(issued).toMatchObject({
       status: "issued",
@@ -176,10 +195,11 @@ describe("runtime-scoped Git credentials", () => {
       },
     });
     expect(minted).toEqual([{ repositoryId: 1001, permission: "read" }]);
+    expect(lookedUpPermissions).toEqual(["read"]);
   });
 
   it("requires a fresh current actor write authorization before publishing", async () => {
-    const denied = await broker({ actorAllowed: false });
+    const denied = await broker({ actorAllowed: false, reuse: true });
     expect(
       await denied.service.issue({
         proof: proof(),
@@ -191,8 +211,9 @@ describe("runtime-scoped Git credentials", () => {
     ).toMatchObject({ status: "denied" });
     expect(denied.minted).toHaveLength(0);
     expect(denied.authorizedUsers).toEqual(["github:maintainer-42"]);
+    expect(denied.lookedUpPermissions).toEqual([]);
 
-    const allowed = await broker();
+    const allowed = await broker({ reuse: true });
     expect(
       await allowed.service.issue({
         proof: proof(),
@@ -202,7 +223,8 @@ describe("runtime-scoped Git credentials", () => {
         payloadDigest: PAYLOAD_DIGEST,
       }),
     ).toMatchObject({ status: "issued", credential: { permission: "write" } });
-    expect(allowed.minted).toEqual([{ repositoryId: 1001, permission: "write" }]);
+    expect(allowed.minted).toHaveLength(0);
+    expect(allowed.lookedUpPermissions).toEqual(["write"]);
     expect(allowed.authorizedUsers).toEqual(["github:maintainer-42"]);
   });
 

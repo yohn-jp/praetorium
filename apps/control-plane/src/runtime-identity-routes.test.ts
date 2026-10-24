@@ -8,6 +8,7 @@ import {
   type D1PreparedStatement,
   type D1Result,
 } from "@praetorium/persistence/d1";
+import { publishRuntimeAuthority } from "./runtime-authority-transition.js";
 import { createRuntimeBindingMetadataReader } from "./runtime-binding.js";
 import { createRuntimeIdentityRoutes } from "./runtime-identity-routes.js";
 
@@ -101,6 +102,7 @@ function installSchema(db: SQLiteD1): void {
     "../migrations/0003_staged_configurations.sql",
     "../migrations/0004_runtime_git_credentials.sql",
     "../migrations/0006_application_origins.sql",
+    "../migrations/0009_runtime_authority.sql",
   ])
     db.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
 }
@@ -146,6 +148,12 @@ function insertInstance(
          100, 256, 128, ?, ?)`,
     )
     .run(INSTANCE_ID, REPOSITORY_ID, CLUSTER_ID, NOW - 1000, NOW - 1000);
+  db.database
+    .prepare(
+      `UPDATE logical_instances SET runtime_authority_reservation_id = 'res_current-4'
+       WHERE instance_id = ?`,
+    )
+    .run(INSTANCE_ID);
 
   if (!withTargetOperation) return;
   const proof = {
@@ -221,6 +229,13 @@ function insertInstance(
        ) VALUES (?, 2, ?, 5, ?, ?, ?)`,
     )
     .run(OPERATION_ID, targetPhase, currentCheckpoint, WORKER_ID, NOW - 400);
+  db.database
+    .prepare(
+      `UPDATE logical_instances
+       SET runtime_authority_reservation_id = NULL, runtime_authority_operation_id = NULL
+       WHERE instance_id = ?`,
+    )
+    .run(INSTANCE_ID);
 }
 
 async function harness(
@@ -231,16 +246,27 @@ async function harness(
   const db = new SQLiteD1();
   installSchema(db);
   insertInstance(db, withTargetOperation, targetPhase, proofRetiredRuntimeEpoch);
+  if (withTargetOperation && proofRetiredRuntimeEpoch === null) {
+    db.database
+      .prepare(
+        "UPDATE logical_instances SET observed_state = 'absent', observed_runtime_epoch = NULL WHERE instance_id = ?",
+      )
+      .run(INSTANCE_ID);
+  }
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
     "sign",
     "verify",
   ]);
   const signingJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
   const operations = new OperationService(new D1PlatformStore(db), () => "unused-new-lease-token");
+  if (withTargetOperation) {
+    const operation = await operations.getById(OPERATION_ID);
+    if (!operation) throw new TypeError("target operation fixture is missing");
+    await publishRuntimeAuthority(db, operation, NOW);
+  }
   const dependencies = {
     db,
     runtimeBindings: createRuntimeBindingMetadataReader({ db, now: () => NOW }),
-    operations,
     signingKey: { kid: "runtime-identity-2026-01", privateKeyJwk: signingJwk },
     issuerOrigin: "https://control.example.test",
     workerId: WORKER_ID,
@@ -531,7 +557,7 @@ describe("runtime identity routes", () => {
     expect(expiredLease.status).toBe(409);
   });
 
-  it("retains post-absence identity authority through complete only for the live running lease and exact proof", async () => {
+  it("publishes post-absence identity authority only after proof validation and for the live lease", async () => {
     const targetRequest = baseRequest({
       runtimeId: TARGET_RESERVATION_ID,
       runtimeEpoch: 5,
@@ -573,26 +599,43 @@ describe("runtime identity routes", () => {
     });
     expect(expiredResponse.status).toBe(409);
 
-    const mismatchedProof = await harness(true, "complete", null);
-    markTargetInstanceAbsent(mismatchedProof.db);
+    const malformedProof = await harness(true, "complete", null);
+    markTargetInstanceAbsent(malformedProof.db);
     const latest = JSON.parse(
-      mismatchedProof.db.database
-        .prepare("SELECT checkpoint_json FROM operation_checkpoints WHERE operation_id = ? AND sequence = 2")
+      malformedProof.db.database
+        .prepare("SELECT checkpoint_json FROM operations WHERE operation_id = ?")
         .get(OPERATION_ID)?.checkpoint_json as string,
-    ) as { writerAbsenceProof: { providerObservationId: string } };
-    latest.writerAbsenceProof.providerObservationId = "different-provider-observation";
+    ) as { writerAbsenceProof: { remainingWriters: number } };
+    latest.writerAbsenceProof.remainingWriters = 1;
     const checkpointJson = JSON.stringify(latest);
-    mismatchedProof.db.database
-      .prepare("UPDATE operation_checkpoints SET checkpoint_json = ? WHERE operation_id = ? AND sequence = 2")
+    malformedProof.db.database
+      .prepare(
+        `UPDATE logical_instances
+         SET runtime_authority_reservation_id = NULL, runtime_authority_operation_id = NULL
+         WHERE instance_id = ?`,
+      )
+      .run(INSTANCE_ID);
+    malformedProof.db.database
+      .prepare(
+        "UPDATE operation_checkpoints SET checkpoint_json = ? WHERE operation_id = ? AND sequence = 2",
+      )
       .run(checkpointJson, OPERATION_ID);
-    mismatchedProof.db.database
+    malformedProof.db.database
       .prepare("UPDATE operations SET checkpoint_json = ? WHERE operation_id = ?")
       .run(checkpointJson, OPERATION_ID);
-    const proofResponse = await mismatchedProof.app.request("/internal/provisioner/runtime-identity", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(targetRequest),
-    });
+    const malformedOperation = await new D1PlatformStore(malformedProof.db).getOperationById(
+      OPERATION_ID,
+    );
+    if (!malformedOperation) throw new TypeError("target operation fixture is missing");
+    await publishRuntimeAuthority(malformedProof.db, malformedOperation, NOW);
+    const proofResponse = await malformedProof.app.request(
+      "/internal/provisioner/runtime-identity",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(targetRequest),
+      },
+    );
     expect(proofResponse.status).toBe(409);
   });
 

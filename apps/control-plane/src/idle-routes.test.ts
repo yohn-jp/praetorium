@@ -670,6 +670,9 @@ function createHarness(routeNow = NOW) {
   activeDatabases.push(database);
   database.exec("PRAGMA foreign_keys = ON");
   database.exec(readFileSync(fileURLToPath(schemaUrl), "utf8"));
+  database.exec(readFileSync(new URL("../migrations/0004_runtime_git_credentials.sql", import.meta.url), "utf8"));
+  database.exec(readFileSync(new URL("../migrations/0006_application_origins.sql", import.meta.url), "utf8"));
+  database.exec(readFileSync(new URL("../migrations/0009_runtime_authority.sql", import.meta.url), "utf8"));
   database.exec(
     readFileSync(
       new URL("../migrations/0002_stable_release_rollouts.sql", import.meta.url),

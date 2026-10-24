@@ -6,7 +6,6 @@ import {
   type RuntimeGitCredentialRegistration,
 } from "@praetorium/contracts";
 import type { D1Database } from "@praetorium/persistence/d1";
-import type { RuntimeBindingMetadata, RuntimeBindingMetadataReader } from "./runtime-binding.js";
 
 const MAX_BODY_BYTES = 65_536;
 const POSITIVE_ID = z.number().int().positive().safe();
@@ -14,15 +13,27 @@ const RuntimeCredentialPendingRequestSchema = z.strictObject({
   repositoryId: POSITIVE_ID,
   runtimeEpoch: POSITIVE_ID,
 });
+const RuntimeCredentialLookupRequestSchema = z.strictObject({
+  repositoryId: POSITIVE_ID,
+  installationId: POSITIVE_ID,
+  instanceId: z.string().min(1).max(128),
+  runtimeId: z.string().min(1).max(128),
+  runtimeEpoch: POSITIVE_ID,
+  leaseId: z.string().min(1).max(128),
+  permission: z.enum(["read", "write"]),
+});
 const TokenIdSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const EmptyBodySchema = z.strictObject({});
 
 export interface RuntimeGitCredentialStore {
-  purgeExpired(now: number, limit: number): Promise<number>;
   register(
     registration: RuntimeGitCredentialRegistration,
     now: number,
   ): Promise<RuntimeGitCredentialRecord>;
+  findReusable(
+    input: z.infer<typeof RuntimeCredentialLookupRequestSchema>,
+    now: number,
+  ): Promise<RuntimeGitCredentialRecord | null>;
   markPending(tokenId: string, now: number): Promise<RuntimeGitCredentialRecord | null>;
   listPending(
     repositoryId: number,
@@ -36,7 +47,6 @@ export interface RuntimeGitCredentialStore {
 
 export interface RuntimeGitCredentialRoutesDependencies {
   readonly db: D1Database;
-  readonly runtimeBindings: RuntimeBindingMetadataReader;
   readonly credentials: RuntimeGitCredentialStore;
   readonly now?: () => number;
 }
@@ -70,42 +80,37 @@ export function createRuntimeGitCredentialRoutes(deps: RuntimeGitCredentialRoute
 
     let record: RuntimeGitCredentialRecord;
     try {
-      await deps.credentials.purgeExpired(nowMs, 64);
       record = await deps.credentials.register(input, nowMs);
     } catch (error) {
       if (errorCode(error) === "RUNTIME_GIT_CREDENTIAL_CONFLICT")
         return context.json({ error: { code: "RUNTIME_GIT_CREDENTIAL_CONFLICT" } }, 409);
-      throw error;
-    }
-
-    let binding: RuntimeBindingMetadata | null;
-    try {
-      binding = await deps.runtimeBindings.getCurrent(input.repositoryId);
-    } catch {
-      const pending = await deps.credentials.markPending(input.tokenId, nowMs);
-      if (!pending || pending.status === "active")
-        return context.json(
-          { error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" } },
-          503,
-        );
       return context.json(
-        {
-          error: { code: "RUNTIME_BINDING_UNAVAILABLE" },
-          status: pending.status,
-        },
+        { error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" } },
         503,
       );
     }
-    if (!matchesCurrentBinding(input, binding)) {
-      const pending = await deps.credentials.markPending(input.tokenId, nowMs);
-      if (!pending || pending.status === "active")
-        return context.json(
-          { error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" } },
-          503,
-        );
-      return context.json({ status: pending.status });
-    }
     return context.json({ status: record.status });
+  });
+
+  app.post("/internal/runtime-credentials/reuse", async (context) => {
+    const parsed = await parseBody(context.req.raw, RuntimeCredentialLookupRequestSchema);
+    if (!parsed.ok) return context.json({ error: { code: parsed.code } }, parsed.status);
+    const nowMs = readNow(now);
+    const credential = await deps.credentials.findReusable(parsed.value, nowMs);
+    if (
+      credential &&
+      (credential.status !== "active" ||
+        credential.repositoryId !== parsed.value.repositoryId ||
+        credential.installationId !== parsed.value.installationId ||
+        credential.instanceId !== parsed.value.instanceId ||
+        credential.runtimeId !== parsed.value.runtimeId ||
+        credential.runtimeEpoch !== parsed.value.runtimeEpoch ||
+        credential.leaseId !== parsed.value.leaseId ||
+        credential.permission !== parsed.value.permission ||
+        Date.parse(credential.expiresAt) <= nowMs + 30_000)
+    )
+      return context.json({ error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" } }, 503);
+    return context.json({ credential });
   });
 
   app.post("/internal/runtime-credentials/pending", async (context) => {
@@ -143,22 +148,6 @@ export function createRuntimeGitCredentialRoutes(deps: RuntimeGitCredentialRoute
   });
 
   return app;
-}
-
-function matchesCurrentBinding(
-  registration: RuntimeGitCredentialRegistration,
-  binding: Awaited<ReturnType<RuntimeBindingMetadataReader["getCurrent"]>>,
-): boolean {
-  return (
-    binding !== null &&
-    binding.active === true &&
-    binding.repositoryId === registration.repositoryId &&
-    binding.installationId === registration.installationId &&
-    (binding.physicalInstanceId ?? binding.instanceId) === registration.instanceId &&
-    binding.runtimeId === registration.runtimeId &&
-    binding.runtimeEpoch === registration.runtimeEpoch &&
-    binding.leaseId === registration.leaseId
-  );
 }
 
 function readNow(now: () => number): number {

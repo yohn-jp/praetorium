@@ -20,6 +20,12 @@ export const GITHUB_PUBLISH_RECEIPT_AUDIENCE = "praetorium-git-publisher";
 
 /** Durable lifecycle tracking required before a runtime bearer token can be returned. */
 export interface RuntimeGitCredentialLifecycle {
+  /** Reuses a currently active exact-scope credential after current auth checks pass. */
+  findReusable?(
+    identity: RuntimeIdentity,
+    permission: "read" | "write",
+    now: string,
+  ): Promise<InstallationToken | null>;
   recordIssued(identity: RuntimeIdentity, credential: InstallationToken): Promise<boolean>;
 }
 
@@ -53,6 +59,26 @@ function sameRuntime(
 function upstreamFailure(error: unknown): boolean {
   if (!(error instanceof GitHubApiError)) return true;
   return error.status === 0 || error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
+function validReusableCredential(
+  identity: RuntimeIdentity,
+  credential: InstallationToken,
+  permission: "read" | "write",
+  now: Date,
+): boolean {
+  const expiresAt = new Date(credential.expiresAt);
+  return (
+    typeof credential.token === "string" &&
+    credential.token.length > 0 &&
+    credential.repositoryId === identity.repositoryId &&
+    credential.installationId === identity.installationId &&
+    credential.permission === permission &&
+    Number.isFinite(expiresAt.getTime()) &&
+    expiresAt.toISOString() === credential.expiresAt &&
+    expiresAt.getTime() > now.getTime() + 30_000 &&
+    expiresAt.getTime() <= now.getTime() + 3_605_000
+  );
 }
 
 /** Runtime/repository/epoch scoped credential issuance. There is no static-token fallback. */
@@ -92,6 +118,7 @@ export function createGitCredentialBroker(config: GitCredentialBrokerConfig): Gi
       try {
         repositoryBinding = await config.repositoryBindings.getByRepositoryId(
           identity.repositoryId,
+          binding,
         );
       } catch {
         return { status: "unavailable", reason: "repository_binding_unavailable" };
@@ -155,6 +182,34 @@ export function createGitCredentialBroker(config: GitCredentialBrokerConfig): Gi
           decision.expiresAt <= instant.getTime()
         )
           return { status: "denied", reason: "publish_actor_not_authorized" };
+      }
+
+      if (config.credentialLifecycle?.findReusable) {
+        let reusable: InstallationToken | null;
+        try {
+          reusable = await config.credentialLifecycle.findReusable(
+            identity,
+            permission,
+            instant.toISOString(),
+          );
+        } catch {
+          return { status: "unavailable", reason: "runtime_credential_registry_unavailable" };
+        }
+        if (reusable) {
+          if (!validReusableCredential(identity, reusable, permission, instant))
+            return { status: "unavailable", reason: "runtime_credential_registry_unavailable" };
+          return {
+            status: "issued",
+            credential: {
+              username: "x-access-token",
+              token: reusable.token,
+              repositoryId: identity.repositoryId,
+              permission,
+              runtimeEpoch: identity.runtimeEpoch,
+              expiresAt: reusable.expiresAt,
+            },
+          };
+        }
       }
 
       try {

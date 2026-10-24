@@ -228,22 +228,31 @@ async function verifyFencedRuntimeIdentityOnRealD1(worker, gatewaySecret, provis
        idempotency_scope, idempotency_key, request_hash, actor_id,
        authorization_revision, created_at, updated_at
      ) VALUES (?, ?, ?, ?, ?, 'redeploy',
-       'running', 'starting-target', 1, 4, 'test-worker', ?, ?,
-       1, 2, ?, 'test-cluster', ?,
+       'running', 'old-writer-absent', 1, 4, 'test-worker', ?, ?,
+       1, 1, ?, 'test-cluster', ?,
        ?, 'ci-target-lease', 'ci-target-request', '12345', 7, ?, ?)`,
   ).bind(operationId, instanceId, testRepository.repositoryId, generation, epoch,
-    leaseToken, now + 60_000, current, reservationId,
+    leaseToken, now + 60_000, absence, reservationId,
     `repo:${testRepository.repositoryId}`, now - 1_000, now).run();
   await db.prepare(
     `INSERT INTO operation_checkpoints (
        operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at
      ) VALUES (?, 1, 'old-writer-absent', ?, ?, 'test-worker', ?)`,
   ).bind(operationId, epoch, absence, now - 500).run();
-  await db.prepare(
-    `INSERT INTO operation_checkpoints (
-       operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at
-     ) VALUES (?, 2, 'starting-target', ?, ?, 'test-worker', ?)`,
-  ).bind(operationId, epoch, current, now - 400).run();
+  // Publish authority through the production fenced retirement checkpoint path.
+  // A fixture's historical evidence alone must not grant a runtime credentials.
+  const checkpointFence = {
+    operationId, workerId: "test-worker", leaseToken, leaseEpoch: 4,
+  };
+  const admitted = await postJson(worker, "/internal/provisioner/checkpoint",
+    provisionerSecret, { ...checkpointFence, expectedCheckpointSequence: 0,
+      phase: "old-writer-absent", checkpoint: JSON.parse(absence) }, "Authorization");
+  assert.equal(admitted.response.status, 200,
+    `retirement checkpoint must publish target authority: ${JSON.stringify(admitted.body)}`);
+  const starting = await postJson(worker, "/internal/provisioner/checkpoint",
+    provisionerSecret, { ...checkpointFence, expectedCheckpointSequence: 1,
+      phase: "starting-target", checkpoint: JSON.parse(current) }, "Authorization");
+  assert.equal(starting.response.status, 200);
 
   const bindingUrl = `https://control-plane.test/internal/runtime-bindings/${testRepository.repositoryId}`;
   const bindingResponse = await worker.dispatchFetch(bindingUrl, {
@@ -272,8 +281,33 @@ async function verifyFencedRuntimeIdentityOnRealD1(worker, gatewaySecret, provis
   const stale = await postJson(worker, "/internal/provisioner/runtime-identity",
     provisionerSecret, { ...payload, leaseEpoch: 3 }, "Authorization");
   assert.equal(stale.response.status, 409, "wrong lease epoch must be fenced by real D1");
+  const credential = {
+    tokenId: "a".repeat(64), repositoryId: testRepository.repositoryId,
+    installationId: testRepository.installationId,
+    instanceId: `run_${instanceId.slice(4)}_${epoch}`, runtimeId: reservationId,
+    runtimeEpoch: epoch, leaseId: reservationId, permission: "read",
+    expiresAt: new Date(now + 120_000).toISOString(),
+    encryptedSecret: { version: 1, keyId: "owned-test-key", iv: "AAAAAAAAAAAAAAAA",
+      ciphertext: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" },
+  };
+  const registered = await postJson(worker, "/internal/runtime-credentials", gatewaySecret, credential);
+  assert.equal(registered.response.status, 200);
+  assert.equal(registered.body.status, "active", "real D1 atomically admits the current physical identity");
+  const { tokenId: _tokenId, expiresAt: _expiresAt, encryptedSecret: _secret, ...lookup } = credential;
+  const reused = await postJson(worker, "/internal/runtime-credentials/reuse", gatewaySecret, lookup);
+  assert.equal(reused.response.status, 200);
+  assert.equal(reused.body.credential.tokenId, credential.tokenId, "real D1 reuses the existing ciphertext row");
+  const wrongScope = await postJson(worker, "/internal/runtime-credentials/reuse", gatewaySecret,
+    { ...lookup, leaseId: "stale-lease" });
+  assert.equal(wrongScope.body.credential, null);
   await db.prepare("UPDATE operations SET lease_expires_at=? WHERE operation_id=?")
     .bind(now - 1, operationId).run();
+  const fencedReuse = await postJson(worker, "/internal/runtime-credentials/reuse", gatewaySecret, lookup);
+  assert.equal(fencedReuse.body.credential, null, "an expired authority lease cannot reuse a bearer");
+  const lateRegistration = await postJson(worker, "/internal/runtime-credentials", gatewaySecret,
+    { ...credential, tokenId: "b".repeat(64) });
+  assert.equal(lateRegistration.body.status, "revocation_pending",
+    "a late credential registration after fencing is durably pending, never active");
   const expired = await postJson(worker, "/internal/provisioner/runtime-identity",
     provisionerSecret, payload, "Authorization");
   assert.equal(expired.response.status, 409, "expired operation lease must be rejected");

@@ -28,6 +28,7 @@ test("deployment migration order includes all source migrations and preserves du
     "0006_application_origins.sql",
     "0007_source_release_recovery.sql",
     "0008_source_build_diagnostics.sql",
+    "0009_runtime_authority.sql",
   ]);
   assert.ok(compareMigrationNames("0004_runtime_git_credentials.sql", "0004_source_release_builds.sql") < 0);
 });
@@ -44,6 +45,7 @@ test("Wrangler JSON readback accepts complete historical receipts with duplicate
     "0004_source_release_builds.sql",
     "0007_source_release_recovery.sql",
     "0008_source_build_diagnostics.sql",
+    "0009_runtime_authority.sql",
   ];
   const output = JSON.stringify([{ success: true, results: historicReceipts.map((name) => ({ name })) }]);
   const applied = parseAppliedMigrationReadback(output);
@@ -168,3 +170,110 @@ test("diagnostic migration preserves old failed jobs without inventing historica
     assert.throws(() => assertCompatibleMigrationHistory(expected, misplaced), /precedes prerequisite/u);
   } finally { db.close(); }
 });
+
+test("runtime authority migration grants only proven writers and preserves evidence", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec(readFileSync(path.join(migrationDirectory, "0001_repository_platform.sql"), "utf8"));
+    db.exec(readFileSync(path.join(migrationDirectory, "0004_runtime_git_credentials.sql"), "utf8"));
+    db.exec(readFileSync(path.join(migrationDirectory, "0006_application_origins.sql"), "utf8"));
+    const seedInstance = db.prepare(`INSERT INTO logical_instances (
+      instance_id, repository_id, runtime_epoch, desired_state, observed_state,
+      observed_runtime_epoch, observed_revision_id, current_artifact_digest, created_at, updated_at
+    ) VALUES (?, ?, 4, 'running', 'ready', 4, 'revision-4', 'sha256:observed', 1, 1)`);
+    const seedReservation = db.prepare(`INSERT INTO runtime_reservations (
+      reservation_id, instance_id, repository_id, runtime_epoch, generation,
+      cluster_id, status, capacity_snapshot_epoch, cpu_milli, memory_mib,
+      ephemeral_storage_mib, created_at, updated_at
+    ) VALUES (?, ?, ?, 4, 1, 'owned-test', 'allocated', 1, 1, 1, 1, 1, 1)`);
+    for (let id = 1; id <= 4; id += 1) {
+      seedInstance.run(`ins_${id}`, id);
+      db.prepare(`INSERT INTO repository_bindings (repository_id, instance_id, installation_id, owner, name, created_at, updated_at)
+        VALUES (?, ?, 1, 'owned', 'fixture', 1, 1)`).run(id, `ins_${id}`);
+      seedReservation.run(`res_${id}`, `ins_${id}`, id);
+    }
+    for (const [id, phase, checkpoint] of [
+      [2, "quiescing-old", { lifecycle: { quiesceRequest: { instanceId: "ins_2", runtimeEpoch: 4 } } }],
+      [3, "old-writer-absent", { writerAbsenceProof: { instanceId: "ins_3", retiredRuntimeEpoch: 4 } }],
+      [4, "accepted", { lifecycle: { quiesceRequest: null, quiesceReceipt: null } }],
+    ]) {
+      db.prepare(`INSERT INTO operations (operation_id, instance_id, repository_id, generation,
+        runtime_epoch, kind, status, phase, idempotency_scope, idempotency_key, request_hash,
+        actor_id, authorization_revision, created_at, updated_at)
+        VALUES (?, ?, ?, 1, 5, 'redeploy', 'running', ?, ?, 'test', 'test', '1', 1, 1, 1)`)
+        .run(`op_${id}`, `ins_${id}`, id, phase, `repo:${id}`);
+      db.prepare(`INSERT INTO operation_checkpoints (operation_id, sequence, phase, runtime_epoch,
+        checkpoint_json, actor_id, occurred_at) VALUES (?, 1, ?, 5, ?, 'test', 1)`)
+        .run(`op_${id}`, phase, JSON.stringify(checkpoint));
+    }
+    db.exec("UPDATE operation_checkpoints SET sequence = 2 WHERE operation_id = 'op_4'");
+    db.prepare(`INSERT INTO operation_checkpoints (operation_id, sequence, phase, runtime_epoch,
+      checkpoint_json, actor_id, occurred_at) VALUES ('op_4', 1, 'quiescing-old', 5, ?, 'test', 1)`)
+      .run(JSON.stringify({ lifecycle: { quiesceRequest: { instanceId: 'ins_4', runtimeEpoch: 4 } } }));
+    const evidence = db.prepare("SELECT * FROM operation_checkpoints ORDER BY operation_id").all();
+    db.exec(readFileSync(path.join(migrationDirectory, "0009_runtime_authority.sql"), "utf8"));
+    assert.deepEqual(db.prepare(`SELECT runtime_authority_reservation_id AS grant_id,
+      runtime_authority_operation_id AS operation_id FROM logical_instances ORDER BY repository_id`).all()
+      .map((row) => ({ ...row })), [
+      { grant_id: "res_1", operation_id: null },
+      { grant_id: null, operation_id: null },
+      { grant_id: null, operation_id: null },
+      { grant_id: "res_4", operation_id: null },
+    ]);
+    assert.deepEqual(db.prepare("SELECT * FROM operation_checkpoints ORDER BY operation_id").all(), evidence);
+  } finally {
+    db.close();
+  }
+});
+
+for (const scenario of ["live", "pending-token", "expired-lease", "changed-proof"]) {
+  test(`runtime authority migration admits an existing target only with complete evidence (${scenario})`, () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      for (const name of ["0001_repository_platform.sql", "0004_runtime_git_credentials.sql", "0006_application_origins.sql"])
+        db.exec(readFileSync(path.join(migrationDirectory, name), "utf8"));
+      const now = Date.now();
+      const proof = { instanceId: "ins_1", repositoryId: 1, retiredRuntimeEpoch: 4,
+        providerObservationId: "owned-census", censusObservedAt: new Date(now - 1000).toISOString(),
+        remainingWriters: 0, evidenceIdentities: [], source: "runtime-provider-census" };
+      const absence = JSON.stringify({ schemaVersion: 1, writerAbsenceProof: proof });
+      const latest = JSON.stringify({ schemaVersion: 1, writerAbsenceProof: {
+        ...proof, providerObservationId: scenario === "changed-proof" ? "different-census" : proof.providerObservationId,
+      } });
+      db.exec(`INSERT INTO logical_instances (instance_id, repository_id, generation, runtime_epoch,
+        desired_state, observed_state, observed_runtime_epoch, observed_revision_id,
+        current_artifact_digest, reservation_id, created_at, updated_at)
+        VALUES ('ins_1', 1, 8, 5, 'running', 'ready', 4, 'old-revision', 'sha256:old', 'res_5', 1, 1);
+        INSERT INTO repository_bindings (repository_id, instance_id, installation_id, owner, name, created_at, updated_at)
+        VALUES (1, 'ins_1', 1, 'owned', 'fixture', 1, 1);`);
+      for (const epoch of [4, 5])
+        db.prepare(`INSERT INTO runtime_reservations (reservation_id, instance_id, repository_id,
+          runtime_epoch, generation, cluster_id, status, capacity_snapshot_epoch, cpu_milli,
+          memory_mib, ephemeral_storage_mib, created_at, updated_at)
+          VALUES (?, 'ins_1', 1, ?, ?, 'owned-test', 'allocated', 1, 1, 1, 1, 1, 1)`)
+          .run(`res_${epoch}`, epoch, epoch === 5 ? 8 : 7);
+      db.prepare(`INSERT INTO operations (operation_id, instance_id, repository_id, generation,
+        runtime_epoch, kind, status, phase, lease_expires_at, checkpoint_sequence, checkpoint_json,
+        cluster_id, reservation_id, idempotency_scope, idempotency_key, request_hash,
+        actor_id, authorization_revision, created_at, updated_at)
+        VALUES ('op_5', 'ins_1', 1, 8, 5, 'redeploy', 'running', 'starting-target', ?, 2, ?,
+          'owned-test', 'res_5', 'repo:1', 'test', 'test', '1', 1, 1, 1)`)
+        .run(scenario === "expired-lease" ? now - 2000 : now + 60000, latest);
+      const checkpoint = db.prepare(`INSERT INTO operation_checkpoints (operation_id, sequence, phase,
+        runtime_epoch, checkpoint_json, actor_id, occurred_at) VALUES ('op_5', ?, ?, 5, ?, 'owned', 1)`);
+      checkpoint.run(1, 'old-writer-absent', absence);
+      checkpoint.run(2, 'starting-target', latest);
+      if (scenario === 'pending-token')
+        db.prepare(`INSERT INTO runtime_git_credentials (token_id, repository_id, installation_id,
+          instance_id, runtime_id, runtime_epoch, lease_id, permission, expires_at,
+          encrypted_secret_json, status, created_at, updated_at)
+          VALUES (?, 1, 1, 'run_1_4', 'res_4', 4, 'res_4', 'read', ?, '{}', 'revocation_pending', 1, 1)`)
+          .run('a'.repeat(64), now + 60000);
+      db.exec(readFileSync(path.join(migrationDirectory, '0009_runtime_authority.sql'), 'utf8'));
+      assert.deepEqual({ ...db.prepare(`SELECT runtime_authority_reservation_id AS grant_id,
+        runtime_authority_operation_id AS operation_id FROM logical_instances`).get() },
+        scenario === 'live' ? { grant_id: 'res_5', operation_id: 'op_5' }
+          : { grant_id: null, operation_id: null });
+    } finally { db.close(); }
+  });
+}

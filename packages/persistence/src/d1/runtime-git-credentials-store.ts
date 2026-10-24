@@ -5,8 +5,19 @@ import {
   type RuntimeGitCredentialRegistration,
 } from "@praetorium/contracts";
 import type { D1Database } from "./types.js";
+import { CURRENT_RUNTIME_AUTHORITY_SQL } from "./runtime-authority.js";
 
 type RuntimeGitCredentialStatus = RuntimeGitCredentialRecord["status"];
+
+interface RuntimeGitCredentialLookup {
+  readonly repositoryId: number;
+  readonly installationId: number;
+  readonly instanceId: string;
+  readonly runtimeId: string;
+  readonly runtimeEpoch: number;
+  readonly leaseId: string;
+  readonly permission: "read" | "write";
+}
 
 interface RuntimeGitCredentialRow {
   readonly token_id: string;
@@ -49,14 +60,48 @@ export class D1RuntimeGitCredentialStore {
 
     await this.db
       .prepare(
-        `INSERT INTO runtime_git_credentials (
+        `WITH current_authority AS (${CURRENT_RUNTIME_AUTHORITY_SQL})
+         INSERT INTO runtime_git_credentials (
            token_id, repository_id, installation_id, instance_id, runtime_id,
            runtime_epoch, lease_id, permission, expires_at, encrypted_secret_json,
            status, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-         ON CONFLICT(token_id) DO NOTHING`,
+         ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM current_authority authority
+             WHERE authority.repository_id = ?
+               AND authority.installation_id = ?
+               AND (CASE
+                 WHEN authority.runtime_epoch = authority.legacy_runtime_epoch
+                   THEN authority.instance_id
+                 ELSE 'run_' || substr(authority.instance_id, 5) || '_' || authority.runtime_epoch
+               END) = ?
+               AND authority.runtime_id = ?
+               AND authority.runtime_epoch = ?
+               AND authority.lease_id = ?
+           ) THEN 'active' ELSE 'revocation_pending' END,
+           ?, ?
+         ON CONFLICT(token_id) DO UPDATE SET
+           status = CASE
+             WHEN runtime_git_credentials.status = 'active' THEN excluded.status
+             ELSE runtime_git_credentials.status
+           END,
+           updated_at = CASE
+             WHEN runtime_git_credentials.status = 'active'
+               AND runtime_git_credentials.status <> excluded.status THEN excluded.updated_at
+             ELSE runtime_git_credentials.updated_at
+           END
+         WHERE runtime_git_credentials.repository_id = excluded.repository_id
+           AND runtime_git_credentials.installation_id = excluded.installation_id
+           AND runtime_git_credentials.instance_id = excluded.instance_id
+           AND runtime_git_credentials.runtime_id = excluded.runtime_id
+           AND runtime_git_credentials.runtime_epoch = excluded.runtime_epoch
+           AND runtime_git_credentials.lease_id = excluded.lease_id
+           AND runtime_git_credentials.permission = excluded.permission
+           AND runtime_git_credentials.expires_at = excluded.expires_at`,
       )
       .bind(
+        registration.repositoryId,
+        now,
         registration.tokenId,
         registration.repositoryId,
         registration.installationId,
@@ -67,6 +112,12 @@ export class D1RuntimeGitCredentialStore {
         registration.permission,
         expiresAt,
         JSON.stringify(registration.encryptedSecret),
+        registration.repositoryId,
+        registration.installationId,
+        registration.instanceId,
+        registration.runtimeId,
+        registration.runtimeEpoch,
+        registration.leaseId,
         now,
         now,
       )
@@ -76,6 +127,65 @@ export class D1RuntimeGitCredentialStore {
     if (!existing || !matchesRegistration(existing, registration, expiresAt))
       throw new RuntimeGitCredentialConflictError();
     return existing;
+  }
+
+  async findReusable(
+    lookup: RuntimeGitCredentialLookup,
+    now: number,
+  ): Promise<RuntimeGitCredentialRecord | null> {
+    validateTimestamp(now);
+    validateRepositoryId(lookup.repositoryId);
+    validateRepositoryId(lookup.installationId);
+    validateId(lookup.instanceId, "instance ID");
+    validateId(lookup.runtimeId, "runtime ID");
+    validateRuntimeEpoch(lookup.runtimeEpoch);
+    validateId(lookup.leaseId, "lease ID");
+    if (lookup.permission !== "read" && lookup.permission !== "write")
+      throw new TypeError("runtime Git credential permission is invalid");
+
+    const row = await this.db
+      .prepare(
+        `WITH current_authority AS (${CURRENT_RUNTIME_AUTHORITY_SQL})
+         SELECT credential.* FROM runtime_git_credentials credential
+         WHERE EXISTS (
+           SELECT 1 FROM current_authority authority
+           WHERE authority.repository_id = credential.repository_id
+             AND authority.installation_id = credential.installation_id
+             AND (CASE
+               WHEN authority.runtime_epoch = authority.legacy_runtime_epoch
+                 THEN authority.instance_id
+               ELSE 'run_' || substr(authority.instance_id, 5) || '_' || authority.runtime_epoch
+             END) = credential.instance_id
+             AND authority.runtime_id = credential.runtime_id
+             AND authority.runtime_epoch = credential.runtime_epoch
+             AND authority.lease_id = credential.lease_id
+         )
+           AND credential.repository_id = ?
+           AND credential.installation_id = ?
+           AND credential.instance_id = ?
+           AND credential.runtime_id = ?
+           AND credential.runtime_epoch = ?
+           AND credential.lease_id = ?
+           AND credential.permission = ?
+           AND credential.status = 'active'
+           AND credential.expires_at > ?
+         ORDER BY credential.expires_at DESC, credential.created_at DESC, credential.token_id ASC
+         LIMIT 1`,
+      )
+      .bind(
+        lookup.repositoryId,
+        now,
+        lookup.repositoryId,
+        lookup.installationId,
+        lookup.instanceId,
+        lookup.runtimeId,
+        lookup.runtimeEpoch,
+        lookup.leaseId,
+        lookup.permission,
+        now + 30_000,
+      )
+      .first<RuntimeGitCredentialRow>();
+    return row === null ? null : toRecord(row);
   }
 
   /** Marks active credentials for one exact runtime as requiring Gateway revocation. */
@@ -221,6 +331,9 @@ function matchesRegistration(
   registration: RuntimeGitCredentialRegistration,
   expiresAt: number,
 ): boolean {
+  // `tokenId` is the SHA-256 of the bearer. AES-GCM sealing uses a fresh IV, so
+  // an idempotent replay can have a different valid envelope; retain the first
+  // envelope and compare the immutable scope/lifetime instead.
   return (
     record.tokenId === registration.tokenId &&
     record.repositoryId === registration.repositoryId &&
@@ -230,11 +343,7 @@ function matchesRegistration(
     record.runtimeEpoch === registration.runtimeEpoch &&
     record.leaseId === registration.leaseId &&
     record.permission === registration.permission &&
-    Date.parse(record.expiresAt) === expiresAt &&
-    record.encryptedSecret.version === registration.encryptedSecret.version &&
-    record.encryptedSecret.keyId === registration.encryptedSecret.keyId &&
-    record.encryptedSecret.iv === registration.encryptedSecret.iv &&
-    record.encryptedSecret.ciphertext === registration.encryptedSecret.ciphertext
+    Date.parse(record.expiresAt) === expiresAt
   );
 }
 

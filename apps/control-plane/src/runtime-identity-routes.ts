@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { issueRuntimeIdentityCredential } from "@praetorium/auth";
-import type { OperationService } from "@praetorium/application/operations";
-import type { D1Database } from "@praetorium/persistence/d1";
+import { CURRENT_RUNTIME_AUTHORITY_SQL, type D1Database } from "@praetorium/persistence/d1";
 import type { RuntimeBindingMetadata, RuntimeBindingMetadataReader } from "./runtime-binding.js";
 
 const ID = z.string().min(1).max(128);
@@ -59,7 +58,6 @@ type RuntimeIdentityRequest = z.infer<typeof RuntimeIdentityRequestSchema>;
 export interface RuntimeIdentityRoutesDependencies {
   readonly db: D1Database;
   readonly runtimeBindings: RuntimeBindingMetadataReader;
-  readonly operations: Pick<OperationService, "getById">;
   readonly signingKey: {
     readonly kid: string;
     readonly privateKeyJwk: JsonWebKey;
@@ -95,13 +93,8 @@ interface TargetLeaseRow {
   worker_id: string | null;
   lease_token: string | null;
   lease_expires_at: number | null;
-  checkpoint_sequence: number;
   cluster_id: string | null;
   reservation_id: string | null;
-  observed_state: string;
-  observed_runtime_epoch: number | null;
-  current_checkpoint: string;
-  absence_checkpoint: string;
 }
 
 class RequestTooLargeError extends Error {}
@@ -275,115 +268,55 @@ async function verifyTargetLease(
   if (operationId === undefined || leaseToken === undefined || leaseEpoch === undefined)
     return null;
 
-  const [operation, row] = await Promise.all([
-    deps.operations.getById(operationId),
-    deps.db
-      .prepare(
-        `SELECT o.operation_id, o.instance_id, o.repository_id, o.generation,
-                o.runtime_epoch, o.kind, o.status, o.phase, o.lease_epoch,
-                o.worker_id, o.lease_token, o.lease_expires_at, o.checkpoint_sequence,
-                o.cluster_id,
-                o.reservation_id, i.observed_state, i.observed_runtime_epoch,
-                latest.checkpoint_json AS current_checkpoint,
-                absence.checkpoint_json AS absence_checkpoint
-         FROM repository_bindings b
-         JOIN logical_instances i ON i.instance_id = b.instance_id
-         JOIN operations o ON o.instance_id = i.instance_id
-           AND o.repository_id = i.repository_id
-         JOIN runtime_reservations r ON r.reservation_id = o.reservation_id
-           AND r.instance_id = i.instance_id AND r.repository_id = i.repository_id
-           AND r.runtime_epoch = o.runtime_epoch
-         JOIN operation_checkpoints latest ON latest.operation_id = o.operation_id
-           AND latest.sequence = o.checkpoint_sequence
-           AND latest.runtime_epoch = o.runtime_epoch
-         JOIN operation_checkpoints absence ON absence.operation_id = o.operation_id
-           AND absence.phase = 'old-writer-absent'
-           AND absence.runtime_epoch = o.runtime_epoch
-           AND absence.sequence <= latest.sequence
-         WHERE b.repository_id = ? AND b.suspended = 0
-           AND o.operation_id = ?
-           AND o.kind IN ('start', 'redeploy', 'update')
-           AND o.status IN ('claimed', 'running')
-           AND o.lease_expires_at > ?
-           AND o.phase IN ('old-writer-absent', 'starting-target', 'target-ready', 'route-activated', 'complete')
-           AND latest.phase = o.phase
-           AND latest.checkpoint_json = o.checkpoint_json
-           AND o.generation = i.generation AND o.runtime_epoch = i.runtime_epoch
-           AND o.runtime_epoch > COALESCE(i.observed_runtime_epoch, 0)
-           AND (
-             (i.observed_state = 'ready' AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = i.observed_runtime_epoch)
-             OR (i.observed_state IN ('absent', 'stopped') AND (
-               json_extract(latest.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') IS NULL
-               OR json_extract(latest.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = i.observed_runtime_epoch
-             ))
-           )
-           AND i.reservation_id = r.reservation_id
-           AND r.status IN ('reserved', 'allocated')
-           AND r.cluster_id = o.cluster_id
-           AND r.reservation_id = ? AND r.instance_id = ?
-           AND r.repository_id = ? AND r.runtime_epoch = ? AND r.cluster_id = ?
-           AND json_extract(latest.checkpoint_json, '$.schemaVersion') = 1
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.instanceId') = i.instance_id
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.repositoryId') = i.repository_id
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.source') = 'runtime-provider-census'
-           AND json_type(latest.checkpoint_json, '$.writerAbsenceProof.remainingWriters') = 'integer'
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.remainingWriters') = 0
-           AND json_type(latest.checkpoint_json, '$.writerAbsenceProof.providerObservationId') = 'text'
-           AND length(json_extract(latest.checkpoint_json, '$.writerAbsenceProof.providerObservationId')) BETWEEN 1 AND 512
-           AND json_type(latest.checkpoint_json, '$.writerAbsenceProof.censusObservedAt') = 'text'
-           AND julianday(json_extract(latest.checkpoint_json, '$.writerAbsenceProof.censusObservedAt')) <= julianday(?)
-           AND json_type(latest.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities') = 'array'
-           AND NOT EXISTS (
-             SELECT 1 FROM json_each(latest.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities') evidence_identity
-             WHERE evidence_identity.type <> 'text' OR length(evidence_identity.value) > 512
-           )
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.instanceId') IS json_extract(absence.checkpoint_json, '$.writerAbsenceProof.instanceId')
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.repositoryId') IS json_extract(absence.checkpoint_json, '$.writerAbsenceProof.repositoryId')
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') IS json_extract(absence.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch')
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.providerObservationId') IS json_extract(absence.checkpoint_json, '$.writerAbsenceProof.providerObservationId')
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.censusObservedAt') IS json_extract(absence.checkpoint_json, '$.writerAbsenceProof.censusObservedAt')
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.remainingWriters') IS json_extract(absence.checkpoint_json, '$.writerAbsenceProof.remainingWriters')
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities') IS json_extract(absence.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities')
-           AND json_extract(latest.checkpoint_json, '$.writerAbsenceProof.source') IS json_extract(absence.checkpoint_json, '$.writerAbsenceProof.source')
-         LIMIT 1`,
-      )
-      .bind(
-        input.repositoryId,
-        operationId,
-        nowMs,
-        binding.leaseId,
-        binding.instanceId,
-        binding.repositoryId,
-        binding.runtimeEpoch,
-        binding.clusterId,
-        new Date(nowMs).toISOString(),
-      )
-      .first<TargetLeaseRow>(),
-  ]);
-  if (!operation || !row || !row.lease_expires_at) return null;
+  const row = await deps.db
+    .prepare(
+      `WITH current_authority AS (${CURRENT_RUNTIME_AUTHORITY_SQL})
+       SELECT o.operation_id, o.instance_id, o.repository_id, o.generation,
+              o.runtime_epoch, o.kind, o.status, o.phase, o.lease_epoch,
+              o.worker_id, o.lease_token, o.lease_expires_at, o.cluster_id,
+              o.reservation_id
+       FROM current_authority authority
+       JOIN logical_instances i ON i.instance_id = authority.instance_id
+       JOIN operations o ON o.operation_id = i.runtime_authority_operation_id
+       JOIN runtime_reservations r ON r.reservation_id = i.runtime_authority_reservation_id
+       WHERE authority.authority = 'post-absence-target'
+         AND authority.repository_id = ?
+         AND authority.instance_id = ?
+         AND authority.runtime_epoch = ?
+         AND authority.lease_id = ?
+         AND authority.cluster_id = ?
+         AND o.operation_id = ?
+         AND o.worker_id = ?
+         AND o.lease_epoch = ?
+         AND o.lease_expires_at > ?
+         AND o.lease_token IS NOT NULL
+         AND o.status IN ('claimed', 'running')
+         AND o.phase IN ('old-writer-absent', 'starting-target', 'target-ready', 'route-activated', 'complete')
+         AND o.instance_id = i.instance_id AND o.repository_id = i.repository_id
+         AND o.generation = i.generation AND o.runtime_epoch = i.runtime_epoch
+         AND o.reservation_id = r.reservation_id
+         AND r.instance_id = i.instance_id AND r.repository_id = i.repository_id
+         AND r.runtime_epoch = o.runtime_epoch AND r.cluster_id = o.cluster_id
+         AND r.status IN ('reserved', 'allocated')
+       LIMIT 1`,
+    )
+    .bind(
+      input.repositoryId,
+      nowMs,
+      input.repositoryId,
+      binding.instanceId,
+      binding.runtimeEpoch,
+      binding.leaseId,
+      binding.clusterId,
+      operationId,
+      deps.workerId,
+      leaseEpoch,
+      nowMs,
+    )
+    .first<TargetLeaseRow>();
+  if (!row || !row.lease_expires_at) return null;
   if (
-    operation.id !== input.operationId ||
-    operation.instanceId !== binding.instanceId ||
-    operation.repositoryId !== binding.repositoryId ||
-    operation.runtimeEpoch !== binding.runtimeEpoch ||
-    operation.generation !== row.generation ||
-    operation.reservationId !== binding.leaseId ||
-    operation.clusterId !== binding.clusterId ||
-    operation.workerId !== deps.workerId ||
-    operation.leaseEpoch !== input.leaseEpoch ||
-    operation.leaseToken === null ||
-    !(await equalSecret(operation.leaseToken, leaseToken)) ||
-    operation.leaseExpiresAt === null ||
-    operation.leaseExpiresAt <= nowMs ||
-    (operation.status !== "claimed" && operation.status !== "running") ||
-    operation.kind !== row.kind ||
-    operation.phase !== row.phase ||
-    !TARGET_PHASES.has(operation.phase) ||
-    operation.status !== row.status ||
-    operation.checkpointSequence !== row.checkpoint_sequence ||
-    operation.checkpoint === null ||
-    JSON.stringify(operation.checkpoint) !== row.current_checkpoint ||
-    row.operation_id !== operation.id ||
+    row.operation_id !== operationId ||
     row.instance_id !== binding.instanceId ||
     row.repository_id !== binding.repositoryId ||
     row.runtime_epoch !== binding.runtimeEpoch ||
@@ -391,105 +324,15 @@ async function verifyTargetLease(
     row.cluster_id !== binding.clusterId ||
     row.worker_id !== deps.workerId ||
     row.lease_epoch !== input.leaseEpoch ||
-    row.lease_expires_at !== operation.leaseExpiresAt ||
-    !(await equalSecret(row.lease_token ?? "", leaseToken)) ||
-    !validAbsenceCheckpoint(row.current_checkpoint, binding, row, nowMs) ||
-    !sameAbsenceCheckpoint(row.current_checkpoint, row.absence_checkpoint, binding, row, nowMs)
+    row.lease_expires_at <= nowMs ||
+    (row.status !== "claimed" && row.status !== "running") ||
+    !TARGET_PHASES.has(row.phase) ||
+    (row.kind !== "start" && row.kind !== "redeploy" && row.kind !== "update") ||
+    row.lease_token === null ||
+    !(await equalSecret(row.lease_token, leaseToken))
   )
     return null;
-  return { leaseExpiresAt: operation.leaseExpiresAt };
-}
-
-function validAbsenceCheckpoint(
-  serialized: string,
-  binding: RuntimeBindingMetadata,
-  row: TargetLeaseRow,
-  nowMs: number,
-): boolean {
-  try {
-    const checkpoint: unknown = JSON.parse(serialized);
-    if (
-      !isRecord(checkpoint) ||
-      checkpoint.schemaVersion !== 1 ||
-      !isRecord(checkpoint.writerAbsenceProof)
-    )
-      return false;
-    const proof = checkpoint.writerAbsenceProof;
-    const censusTime =
-      typeof proof.censusObservedAt === "string" ? Date.parse(proof.censusObservedAt) : NaN;
-    return (
-      proof.instanceId === binding.instanceId &&
-      proof.repositoryId === binding.repositoryId &&
-      proof.source === "runtime-provider-census" &&
-      proof.remainingWriters === 0 &&
-      typeof proof.providerObservationId === "string" &&
-      proof.providerObservationId.length > 0 &&
-      proof.providerObservationId.length <= 512 &&
-      Number.isFinite(censusTime) &&
-      censusTime <= nowMs &&
-      Array.isArray(proof.evidenceIdentities) &&
-      proof.evidenceIdentities.every(
-        (identity) => typeof identity === "string" && identity.length <= 512,
-      ) &&
-      (proof.retiredRuntimeEpoch === null ||
-        (Number.isSafeInteger(proof.retiredRuntimeEpoch) &&
-          (proof.retiredRuntimeEpoch as number) >= 0 &&
-          (proof.retiredRuntimeEpoch as number) < binding.runtimeEpoch)) &&
-      (row.observed_state !== "ready" ||
-        proof.retiredRuntimeEpoch === row.observed_runtime_epoch) &&
-      ["ready", "absent", "stopped"].includes(row.observed_state)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function sameAbsenceCheckpoint(
-  current: string,
-  historical: string,
-  binding: RuntimeBindingMetadata,
-  row: TargetLeaseRow,
-  nowMs: number,
-): boolean {
-  try {
-    const currentCheckpoint: unknown = JSON.parse(current);
-    const historicalCheckpoint: unknown = JSON.parse(historical);
-    if (
-      !isRecord(currentCheckpoint) ||
-      !isRecord(historicalCheckpoint) ||
-      !isRecord(currentCheckpoint.writerAbsenceProof) ||
-      !isRecord(historicalCheckpoint.writerAbsenceProof)
-    )
-      return false;
-    const currentProof = currentCheckpoint.writerAbsenceProof;
-    const historicalProof = historicalCheckpoint.writerAbsenceProof;
-    if (!validAbsenceCheckpoint(current, binding, row, nowMs)) return false;
-    const historicalSerialized = JSON.stringify({
-      schemaVersion: historicalCheckpoint.schemaVersion,
-      writerAbsenceProof: historicalProof,
-    });
-    const historicalRow = { ...row, current_checkpoint: historicalSerialized };
-    if (!validAbsenceCheckpoint(historicalSerialized, binding, historicalRow, nowMs)) return false;
-    const fields = [
-      "instanceId",
-      "repositoryId",
-      "retiredRuntimeEpoch",
-      "providerObservationId",
-      "censusObservedAt",
-      "remainingWriters",
-      "evidenceIdentities",
-      "source",
-    ] as const;
-    return fields.every((field) => {
-      const left = currentProof[field];
-      const right = historicalProof[field];
-      if (Array.isArray(left) && Array.isArray(right))
-        return left.length === right.length && left.every((value, index) => value === right[index]);
-      return left === right;
-    });
-  } catch {
-    return false;
-  }
+  return { leaseExpiresAt: row.lease_expires_at };
 }
 
 async function boundedJson(request: Request): Promise<unknown> {
@@ -589,8 +432,4 @@ async function equalSecret(left: string, right: string): Promise<boolean> {
   for (let index = 0; index < leftBytes.length; index++)
     mismatch |= leftBytes[index]! ^ rightBytes[index]!;
   return mismatch === 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

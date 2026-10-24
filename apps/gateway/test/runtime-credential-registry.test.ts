@@ -53,6 +53,57 @@ function parseRequest(init: RequestInit | undefined): Record<string, unknown> {
   return JSON.parse(init.body) as Record<string, unknown>;
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function credentialContext(metadata: {
+  readonly tokenId: string;
+  readonly repositoryId: number;
+  readonly installationId: number;
+  readonly instanceId: string;
+  readonly runtimeId: string;
+  readonly runtimeEpoch: number;
+  readonly leaseId: string;
+  readonly permission: "read" | "write";
+  readonly expiresAt: string;
+}): string {
+  return JSON.stringify([
+    "praetorium-runtime-git-credential:v1",
+    metadata.tokenId,
+    metadata.repositoryId,
+    metadata.installationId,
+    metadata.instanceId,
+    metadata.runtimeId,
+    metadata.runtimeEpoch,
+    metadata.leaseId,
+    metadata.permission,
+    metadata.expiresAt,
+  ]);
+}
+
+async function encryptedRecord(
+  overrides: Partial<RuntimeGitCredentialRecord> = {},
+): Promise<RuntimeGitCredentialRecord> {
+  const tokenId = await sha256Hex(CREDENTIAL.token);
+  const metadata = {
+    tokenId,
+    ...IDENTITY,
+    permission: CREDENTIAL.permission,
+    expiresAt: CREDENTIAL.expiresAt,
+  };
+  const vault = await createVault();
+  return {
+    ...metadata,
+    encryptedSecret: await vault.seal(CREDENTIAL.token, credentialContext(metadata)),
+    status: "active",
+    createdAt: NOW.getTime(),
+    updatedAt: NOW.getTime(),
+    ...overrides,
+  };
+}
+
 async function makeRegistry(
   controlPlane: ControlPlaneBinding,
   revoker: GitHubInstallationTokenRevoker = { revoke: async () => undefined },
@@ -68,6 +119,106 @@ async function makeRegistry(
 }
 
 describe("runtime Git credential registry", () => {
+  it("opens an active exact-scope encrypted credential returned by the authenticated lookup", async () => {
+    const record = await encryptedRecord();
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://control-plane.internal/internal/runtime-credentials/reuse");
+      expect(new Headers(init?.headers).get("X-Control-Plane-Gateway-Auth")).toBe(AUTH);
+      const request = parseRequest(init);
+      expect(request).toEqual({ ...IDENTITY, permission: "read" });
+      expect(JSON.stringify(request)).not.toContain(CREDENTIAL.token);
+      return json({ credential: record });
+    });
+    const registry = await makeRegistry(binding(fetch));
+
+    await expect(registry.findReusable(IDENTITY, "read", NOW.toISOString())).resolves.toEqual(CREDENTIAL);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["reuse", "registration"] as const)(
+    "a delayed %s response cannot leave an old bearer usable after retirement completes",
+    async (requestKind) => {
+      let record = await encryptedRecord();
+      const usableTokens = new Set([CREDENTIAL.token]);
+      let releaseResponse!: () => void;
+      let signalSnapshot!: () => void;
+      const snapshotTaken = new Promise<void>((resolve) => { signalSnapshot = resolve; });
+      const responseGate = new Promise<void>((resolve) => { releaseResponse = resolve; });
+      const fetch = async (input: RequestInfo | URL) => {
+        const path = new URL(String(input)).pathname;
+        if (path === "/internal/runtime-credentials/reuse" || path === "/internal/runtime-credentials") {
+          // The D1 read committed before quiesce, but its response reaches Gateway later.
+          const snapshot = path.endsWith("/reuse")
+            ? json({ credential: record }) : json({ status: record.status });
+          signalSnapshot();
+          await responseGate;
+          return snapshot;
+        }
+        if (path.endsWith("/pending")) {
+          const pending = record.status === "revocation_pending" ? [record] : [];
+          return json({ credentials: pending, remaining: pending.length });
+        }
+        if (path.endsWith("/revoked")) {
+          record = { ...record, status: "revoked" };
+          return json({ revoked: true });
+        }
+        throw new Error("unexpected endpoint");
+      };
+      const registry = await makeRegistry(binding(fetch), { revoke: async (credential) => {
+        usableTokens.delete(credential.token);
+      } });
+      const inFlight = requestKind === "reuse"
+        ? registry.findReusable(IDENTITY, "read", NOW.toISOString())
+        : registry.recordIssued(IDENTITY, CREDENTIAL);
+      await snapshotTaken;
+      // The checkpoint atomically withdraws the grant and marks the existing row pending.
+      record = { ...record, status: "revocation_pending" };
+      await expect(registry.retire({ repositoryId: IDENTITY.repositoryId,
+        runtimeEpoch: IDENTITY.runtimeEpoch })).resolves.toEqual({ complete: true });
+      expect(usableTokens.has(CREDENTIAL.token)).toBe(false);
+      releaseResponse();
+      await inFlight;
+      // Even an earlier successful registry snapshot can now return only a revoked bearer.
+      expect(usableTokens.has(CREDENTIAL.token)).toBe(false);
+    },
+  );
+
+  it("fails closed on pending or misbound rows and declines a row within the expiry margin", async () => {
+    const records = [
+      await encryptedRecord({ status: "revocation_pending" }),
+      await encryptedRecord({ runtimeEpoch: IDENTITY.runtimeEpoch + 1 }),
+      await encryptedRecord({ expiresAt: new Date(NOW.getTime() + 20_000).toISOString() }),
+    ];
+    for (const [index, record] of records.entries()) {
+      const registry = await makeRegistry(binding(async () => json({ credential: record })));
+      if (index === 2)
+        await expect(registry.findReusable(IDENTITY, "read", NOW.toISOString())).resolves.toBeNull();
+      else
+        await expect(registry.findReusable(IDENTITY, "read", NOW.toISOString())).rejects.toThrow();
+    }
+  });
+
+  it("fails closed when an active lookup record does not decrypt to its hash", async () => {
+    const record: RuntimeGitCredentialRecord = {
+      tokenId: "a".repeat(64),
+      ...IDENTITY,
+      permission: "read",
+      expiresAt: CREDENTIAL.expiresAt,
+      encryptedSecret: {
+        version: 1,
+        keyId: "registry-test-key",
+        iv: "AAAAAAAAAAAAAAAA",
+        ciphertext: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      },
+      status: "active",
+      createdAt: NOW.getTime(),
+      updatedAt: NOW.getTime(),
+    };
+    const registry = await makeRegistry(binding(async () => json({ credential: record })));
+
+    await expect(registry.findReusable(IDENTITY, "read", NOW.toISOString())).rejects.toThrow();
+  });
+
   it("rejects redirects without forwarding credentials to their target", async () => {
     const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.redirect).toBe("manual");

@@ -158,7 +158,9 @@ async function setup(
     },
   } as unknown as Fetcher;
   const repositoryBindings = {
-    async getByRepositoryId(repositoryId: number) {
+    calls: [] as (unknown | null)[],
+    async getByRepositoryId(repositoryId: number, currentRuntime?: unknown | null) {
+      this.calls.push(currentRuntime ?? null);
       expect(repositoryId).toBe(REPOSITORY_ID);
       return {
         repositoryId,
@@ -191,13 +193,13 @@ async function setup(
     now: () => NOW,
     githubFetchImpl: githubFetch,
   });
-  return { broker, proof, cpCalls, githubCalls, accessProvider, runtimeJwks, receiptPair };
+  return { broker, proof, cpCalls, githubCalls, accessProvider, runtimeJwks, receiptPair, repositoryBindings };
 }
 
 const CONTROL_PLANE_ORIGIN = "https://control-plane.internal";
 
 describe("runtime Git credential broker composition", () => {
-  it("uses fixed authenticated Control Plane binding reads and the scoped GitHub App issuer", async () => {
+  it("uses one fixed authenticated current-binding read and the scoped GitHub App issuer", async () => {
     const h = await setup();
     const result = await h.broker.issue({ proof: h.proof, operation: "fetch" });
 
@@ -214,10 +216,10 @@ describe("runtime Git credential broker composition", () => {
     expect(h.cpCalls.map(({ url }) => url)).toEqual([
       `${CONTROL_PLANE_ORIGIN}/.well-known/runtime-identity-jwks.json`,
       `${CONTROL_PLANE_ORIGIN}/internal/runtime-bindings/${REPOSITORY_ID}`,
-      `${CONTROL_PLANE_ORIGIN}/internal/runtime-bindings/${REPOSITORY_ID}`,
     ]);
     expect(h.githubCalls).toHaveLength(1);
     expect(h.accessProvider.checkBoundAccess).not.toHaveBeenCalled();
+    expect(h.repositoryBindings.calls).toHaveLength(1);
   });
 
   it("fails closed when the public identity-key response exceeds its byte bound", async () => {

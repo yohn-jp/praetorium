@@ -108,6 +108,10 @@ export interface ProvisionerRoutesDependencies {
   retireCredentials?: (
     operation: Awaited<ReturnType<OperationService["checkpoint"]>>,
   ) => Promise<boolean | void>;
+  publishRuntimeAuthority?: (
+    operation: Awaited<ReturnType<OperationService["checkpoint"]>>,
+    now: number,
+  ) => Promise<boolean | void>;
   issueControlCredential?: (input: unknown) => Promise<unknown>;
   resolveRuntimeContext: (claim: ClaimedOperation) => Promise<unknown>;
 }
@@ -180,7 +184,10 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
     let operation: Awaited<ReturnType<OperationService["checkpoint"]>>;
     const isRetirementCheckpoint =
       input.phase === "quiescing-old" || input.phase === "old-writer-absent";
-    const existing = isRetirementCheckpoint
+    // Both retirement and confirmed resume have work after durable checkpoint
+    // persistence. Replaying either must finish that work after a lost response.
+    const isReplayableCheckpoint = isRetirementCheckpoint || input.phase === "accepted";
+    const existing = isReplayableCheckpoint
       ? await deps.operations.getById(input.operationId)
       : null;
     const replay =
@@ -195,19 +202,24 @@ export function createProvisionerRoutes(deps: ProvisionerRoutesDependencies) {
       existing.leaseExpiresAt > now &&
       sameJson(existing.checkpoint, input.checkpoint);
     if (replay) {
-      // The first call durably appended this exact checkpoint, but its bounded
-      // credential-revocation batch was incomplete. Reuse the same sequence
+      // The first call durably appended this exact checkpoint, but retirement,
+      // authority publication or the response may have failed. Reuse the sequence
       // only for the live lease and byte-equivalent persisted payload; never
       // append a duplicate checkpoint or accept a different effect payload.
       operation = existing;
     } else {
       operation = await deps.operations.checkpoint({ ...input, now });
     }
-    if (input.phase === "quiescing-old" || input.phase === "old-writer-absent") {
+    if (isRetirementCheckpoint) {
       if (!deps.retireCredentials)
         return c.json({ error: { code: "CREDENTIAL_RETIREMENT_UNAVAILABLE" } }, 503);
       const complete = await deps.retireCredentials(operation);
       if (complete === false)
+        return c.json({ operation, credentialRetirementPending: true }, 202);
+    }
+    if (input.phase === "old-writer-absent" || input.phase === "accepted") {
+      const published = await deps.publishRuntimeAuthority?.(operation, deps.now());
+      if (published === false)
         return c.json({ operation, credentialRetirementPending: true }, 202);
     }
     return c.json({ operation });

@@ -27,12 +27,34 @@ second service is a separate application-identity change, not an MCP rewrite.
 2. An unauthenticated client receives `401` with
    `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"`.
    This works with a running service and through Instance Access while stopped.
-   Discovery is public and MUST NOT wake the service.
+   Discovery is public and MUST NOT wake the service. Both
+   `/.well-known/oauth-protected-resource` and
+   `/.well-known/oauth-protected-resource/mcp` serve the same origin-bound
+   resource metadata, including through the stopped-instance fallback.
 3. Protected Resource Metadata names the Praetorium Gateway origin.
    Gateway `/.well-known/oauth-authorization-server` describes
-   `/oauth/authorize`, `/oauth/token`, and `/oauth/register`.
-   Dynamic Client Registration creates a public PKCE client with a restricted
-   registered redirect URI; registering does not give access to a repository.
+   `/oauth/authorize` and `/oauth/token`, and advertises
+   `client_id_metadata_document_supported: true`. New ChatGPT connections use
+   CIMD: the HTTPS client ID identifies the client metadata document, whose
+   `client_id` must match exactly and whose `redirect_uris` constrain redirects.
+   Gateway fetches only the reviewed `https://chatgpt.com/oauth/client.json` and
+   `https://chatgpt.com/oauth/<callback-id>/client.json` forms, without redirects,
+   cookies or authorization headers, with a bounded body and timeout. Other
+   metadata origins require a separately reviewed client policy.
+   The public-client method is `none` with PKCE S256; a metadata document's
+   supported methods must include `none` even if its legacy preference names
+   `private_key_jwt`. Gateway does not advertise or accept `private_key_jwt`.
+   Metadata is fetched afresh for authorization and token exchanges; upstream
+   unavailability fails closed and does not silently select DCR.
+   Existing registered client IDs, authorization codes and refresh credentials
+   remain valid under the existing checks. `/oauth/register` remains available
+   for legacy DCR clients and explicit administrator pre-registration, but is
+   no longer advertised as the registration mechanism for new connections.
+   Administrators may pre-register a public client with the connection's exact
+   redirect URI and configure its returned client ID using provided OAuth
+   credentials with method `none` (no secret). Registration alone gives no
+   repository access. No existing clients are deleted or assigned an automatic
+   migration deadline.
 4. Authorization Code + PKCE S256 starts at Praetorium. The existing GitHub
    OAuth login creates the authenticated Gateway browser session; a separate
    **explicit MCP consent** names the client, stable service origin and requested

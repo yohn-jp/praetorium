@@ -470,7 +470,8 @@ export function createInstanceAccessHandler(
       return fallbackEntry(instance, config);
     }
 
-    if (url.pathname === "/.well-known/oauth-protected-resource" && request.method === "GET") {
+    if ((url.pathname === "/.well-known/oauth-protected-resource" ||
+        url.pathname === "/.well-known/oauth-protected-resource/mcp") && request.method === "GET") {
       return json({
         resource: instance.origin,
         authorization_servers: [config.gatewayOrigin],

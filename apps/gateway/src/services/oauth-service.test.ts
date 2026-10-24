@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSession, deriveCodeChallengeS256, type UserId } from "@praetorium/auth";
 import { createInMemorySessionStore } from "@praetorium/auth/testing";
 import type { GatewayContext } from "../context.js";
@@ -11,6 +11,9 @@ const RESOURCE = "https://482901.scriptorium.yohn.jp";
 const REDIRECT = "https://client.example.test/oauth/callback";
 const VERIFIER = "v".repeat(48);
 const INSTANCE = "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const CIMD = "https://chatgpt.com/oauth/client.json";
+
+afterEach(() => vi.unstubAllGlobals());
 
 type Entry = { digest: string; record: Record<string, unknown> };
 
@@ -107,15 +110,24 @@ describe("generic service MCP OAuth", () => {
     const f = await fixture();
     const response = authorizationServerMetadata(f.context);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    const metadata = await response.json();
+    expect(metadata).toMatchObject({
       issuer: GATEWAY, code_challenge_methods_supported: ["S256"],
       token_endpoint: GATEWAY + "/oauth/token",
+      client_id_metadata_document_supported: true,
+      token_endpoint_auth_methods_supported: ["none"],
     });
+    expect(metadata).not.toHaveProperty("registration_endpoint");
   });
 
-  it("consents, exchanges one-use PKCE code and atomically rotates refresh", async () => {
+  it.each(["legacy DCR", "CIMD"])("%s consents, exchanges one-use PKCE code and atomically rotates refresh", async (kind) => {
     const f = await fixture();
-    const clientId = await registered(f);
+    const clientId = kind === "legacy DCR" ? await registered(f) : CIMD;
+    if (kind === "CIMD") vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      client_id: CIMD, client_name: "Test MCP client", redirect_uris: [REDIRECT],
+      token_endpoint_auth_method: "private_key_jwt",
+      token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+    })));
     const challenge = await deriveCodeChallengeS256(VERIFIER);
     const parameters = new URLSearchParams({
       client_id: clientId, redirect_uri: REDIRECT, resource: RESOURCE,
@@ -149,6 +161,10 @@ describe("generic service MCP OAuth", () => {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: tokenParameters,
     }), f.context);
+    if (kind === "CIMD") {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error("metadata unavailable"));
+      expect((await exchange()).status).toBe(503);
+    }
     const granted = await exchange();
     expect(granted.status).toBe(200);
     const data = await granted.json() as { access_token: string; refresh_token: string };
@@ -162,16 +178,39 @@ describe("generic service MCP OAuth", () => {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, resource: RESOURCE, refresh_token: raw }),
     }), f.context);
+    if (kind === "CIMD") {
+      vi.mocked(fetch).mockRejectedValueOnce(new Error("metadata unavailable"));
+      expect((await refresh(data.refresh_token)).status).toBe(503);
+    }
     const rotated = await refresh(data.refresh_token);
     expect(rotated.status).toBe(200);
     expect((await rotated.json() as { refresh_token: string }).refresh_token).not.toBe(data.refresh_token);
     expect((await refresh(data.refresh_token)).status).toBe(400);
     expect(f.checkBoundAccess).toHaveBeenCalled();
+    if (kind === "CIMD") expect(f.ephemeral.state.has("oauth-client:" + CIMD)).toBe(false);
   });
 
-  it("rejects unregistered redirect URI and absent GitHub-backed session", async () => {
+  it("does not consume an authorization code when a client supplies unsupported authentication", async () => {
     const f = await fixture();
-    const id = await registered(f);
+    const clientId = await registered(f);
+    for (const field of ["client_secret", "client_assertion", "client_assertion_type"]) {
+      const response = await exchangeOAuthToken(new Request(GATEWAY + "/oauth/token", {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "authorization_code", client_id: clientId,
+          resource: RESOURCE, [field]: "unsupported" }),
+      }), f.context);
+      expect(response.status).toBe(400);
+    }
+    expect(f.ephemeral.fetcher.mock.calls.some(([request]) => new URL(request.url).pathname === "/consume")).toBe(false);
+  });
+
+  it.each(["legacy DCR", "CIMD"])("%s rejects an unregistered redirect URI and requires GitHub-backed login", async (kind) => {
+    const f = await fixture();
+    const id = kind === "legacy DCR" ? await registered(f) : CIMD;
+    if (kind === "CIMD") vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      client_id: CIMD, client_name: "ChatGPT", redirect_uris: [REDIRECT],
+      token_endpoint_auth_method: "none",
+    })));
     const params = new URLSearchParams({
       client_id: id, response_type: "code", redirect_uri: "https://attacker.test/callback",
       resource: RESOURCE, state: "oauth-request-state", scope: "read",

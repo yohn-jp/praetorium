@@ -459,6 +459,75 @@ export class D1T11ReleaseRolloutStore
     if (!Number.isSafeInteger(input.now) || input.now < 0)
       throw new TypeError("canary build wake time is invalid");
     const requestedModulesJson = JSON.stringify([...input.binding.requestedModules].sort());
+    const candidate = (mode: "wake" | "duplicate") => {
+      const duePredicate = mode === "wake" ? "w.next_attempt_at > ?" : "w.next_attempt_at <= ?";
+      const leasePredicate = mode === "wake"
+        ? "((w.lease_owner IS NULL AND w.lease_expires_at IS NULL) OR (w.lease_owner IS NOT NULL AND w.lease_expires_at <= ?))"
+        : "w.lease_owner IS NULL AND w.lease_expires_at IS NULL";
+      return {
+        sql: `SELECT w.release_id
+          FROM release_candidate_workflows w
+          JOIN release_candidates c ON c.release_id = w.release_id
+          JOIN builds b ON b.build_key = w.canary_build_key
+          JOIN deployment_revisions d ON d.build_id = b.build_id AND d.build_key = b.build_key
+          JOIN artifacts a ON a.build_id = b.build_id AND a.build_key = b.build_key
+                           AND a.artifact_digest = d.artifact_digest AND a.status = 'admitted'
+          JOIN idempotency_records p
+            ON p.scope = 'repository:' || d.repository_id
+           AND p.idempotency_key = 'stable-canary-plan:' || c.release_id
+           AND p.response_kind = 'configuration-plan'
+           AND p.response_id = d.revision_id
+          JOIN logical_instances i ON i.instance_id = d.instance_id
+          JOIN repository_bindings rb ON rb.repository_id = d.repository_id
+                                      AND rb.instance_id = i.instance_id
+         WHERE b.build_id = ? AND b.status = 'succeeded'
+           AND EXISTS (
+             SELECT 1 FROM build_attempts completed
+             WHERE completed.attempt_id = b.active_attempt_id
+               AND completed.build_id = b.build_id
+               AND completed.status = 'succeeded'
+               AND completed.lease_epoch = b.lease_epoch
+               AND completed.report_sequence = b.report_sequence
+               AND completed.last_report_digest = b.last_report_digest
+           )
+           AND c.status = 'candidate'
+           AND w.state = 'canary_building'
+           AND (w.failure_code IS NULL OR w.failure_code = 'canary_configuration_conflict')
+           AND ${duePredicate}
+           AND ${leasePredicate}
+           AND w.canary_artifact_digest IS NULL
+           AND w.canary_runtime_id IS NULL AND w.canary_operation_id IS NULL
+           AND d.status = 'admitted' AND d.artifact_digest IS NOT NULL
+           AND d.actor_id = 'system:stable-release-canary'
+           AND d.repository_id = ? AND d.instance_id = ?
+           AND json_extract(d.selection_json, '$.releaseId') = c.release_id
+           AND json_extract(d.selection_json, '$.policy') = 'pinned'
+           AND json_extract(d.selection_json, '$.resourceProfileId') = ?
+           AND json_extract(d.selection_json, '$.requestedModules') = ?
+           AND rb.binding_epoch = ? AND rb.authorization_revision = ? AND rb.suspended = 0
+           AND i.repository_id = d.repository_id AND i.generation = d.generation
+           AND i.desired_revision_id = d.revision_id
+           AND i.desired_state = 'stopped' AND i.observed_state = 'absent'
+           AND i.observed_generation IS NULL AND i.observed_runtime_epoch IS NULL
+           AND i.runtime_epoch = 0 AND i.reservation_state IN ('none', 'released')
+           AND i.reservation_id IS NULL AND i.desired_artifact_digest = d.artifact_digest
+           AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id)
+           AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id)
+         ORDER BY w.next_attempt_at, w.release_id LIMIT 1`,
+        values: [
+          input.buildId,
+          input.now,
+          ...(mode === "wake" ? [input.now] : []),
+          input.binding.repositoryId,
+          input.binding.instanceId,
+          input.binding.resourceProfileId,
+          requestedModulesJson,
+          input.binding.bindingEpoch,
+          input.binding.authorizationRevision,
+        ] as const,
+      };
+    };
+    const target = candidate("wake");
     const rows = await this.db
       .prepare(
         `UPDATE release_candidate_workflows
@@ -466,74 +535,21 @@ export class D1T11ReleaseRolloutStore
                 lease_owner = NULL,
                 lease_epoch = lease_epoch + CASE WHEN lease_owner IS NULL THEN 0 ELSE 1 END,
                 lease_expires_at = NULL
-          WHERE release_id = (
-            SELECT w.release_id
-              FROM release_candidate_workflows w
-              JOIN release_candidates c ON c.release_id = w.release_id
-              JOIN builds b ON b.build_key = w.canary_build_key
-              JOIN deployment_revisions d ON d.build_id = b.build_id AND d.build_key = b.build_key
-              JOIN artifacts a ON a.build_id = b.build_id AND a.build_key = b.build_key
-                               AND a.artifact_digest = d.artifact_digest AND a.status = 'admitted'
-              JOIN idempotency_records p
-                ON p.scope = 'repository:' || d.repository_id
-               AND p.idempotency_key = 'stable-canary-plan:' || c.release_id
-               AND p.response_kind = 'configuration-plan'
-               AND p.response_id = d.revision_id
-              JOIN logical_instances i ON i.instance_id = d.instance_id
-              JOIN repository_bindings rb ON rb.repository_id = d.repository_id
-                                          AND rb.instance_id = i.instance_id
-             WHERE b.build_id = ? AND b.status = 'succeeded'
-               AND EXISTS (
-                 SELECT 1 FROM build_attempts completed
-                 WHERE completed.attempt_id = b.active_attempt_id
-                   AND completed.build_id = b.build_id
-                   AND completed.status = 'succeeded'
-                   AND completed.lease_epoch = b.lease_epoch
-                   AND completed.report_sequence = b.report_sequence
-                   AND completed.last_report_digest = b.last_report_digest
-               )
-               AND c.status = 'candidate'
-               AND w.state = 'canary_building' AND w.failure_code IS NULL
-               AND w.next_attempt_at > ?
-               AND ((w.lease_owner IS NULL AND w.lease_expires_at IS NULL)
-                    OR (w.lease_owner IS NOT NULL AND w.lease_expires_at <= ?))
-               AND w.canary_artifact_digest IS NULL
-               AND w.canary_runtime_id IS NULL AND w.canary_operation_id IS NULL
-               AND d.status = 'admitted' AND d.artifact_digest IS NOT NULL
-               AND d.actor_id = 'system:stable-release-canary'
-               AND d.repository_id = ? AND d.instance_id = ?
-               AND json_extract(d.selection_json, '$.releaseId') = c.release_id
-               AND json_extract(d.selection_json, '$.policy') = 'pinned'
-               AND json_extract(d.selection_json, '$.resourceProfileId') = ?
-               AND json_extract(d.selection_json, '$.requestedModules') = ?
-               AND rb.binding_epoch = ? AND rb.authorization_revision = ? AND rb.suspended = 0
-               AND i.repository_id = d.repository_id AND i.generation = d.generation
-               AND i.desired_revision_id = d.revision_id
-               AND i.desired_state = 'stopped' AND i.observed_state = 'absent'
-               AND i.observed_generation IS NULL AND i.observed_runtime_epoch IS NULL
-               AND i.runtime_epoch = 0 AND i.reservation_state IN ('none', 'released')
-               AND i.reservation_id IS NULL AND i.desired_artifact_digest = d.artifact_digest
-               AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id)
-               AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id)
-             ORDER BY w.next_attempt_at, w.release_id LIMIT 1
-          )
+          WHERE release_id = (${target.sql})
           RETURNING release_id`,
       )
-      .bind(
-        input.now,
-        input.now,
-        input.buildId,
-        input.now,
-        input.now,
-        input.binding.repositoryId,
-        input.binding.instanceId,
-        input.binding.resourceProfileId,
-        requestedModulesJson,
-        input.binding.bindingEpoch,
-        input.binding.authorizationRevision,
-      )
+      .bind(input.now, input.now, ...target.values)
       .all<{ readonly release_id: string }>();
-    return rows.results[0]?.release_id ?? null;
+    const woken = rows.results[0]?.release_id;
+    if (woken) return woken;
+
+    // A duplicate completion callback may arrive after the first wake committed
+    // but before it advanced the workflow. Return the exact already-due row so
+    // the caller can retry its bounded promotion pass; the claim CAS below is
+    // still the only authority to advance it.
+    const due = candidate("duplicate");
+    const existing = await this.db.prepare(due.sql).bind(...due.values).first<{ release_id: string }>();
+    return existing?.release_id ?? null;
   }
 
   /** Returns only bounded status fields suitable for an authenticated operator client. */

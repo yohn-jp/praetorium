@@ -33,6 +33,7 @@ test("remote Builder helper is syntax-valid and offers only explicit bounded act
 
 test("remote Builder helper isolates state and leaves production BuildKit protected", () => {
   assert.match(source, /podman version 5\.7\.0/u);
+  assert.match(source, /need fuse-overlayfs/u);
   assert.match(source, /kind v0\.31\.0/u);
   assert.match(source, /v1\.35\.0/u);
   assert.match(source, /graphroot = "\$MOUNT\/podman\/graphroot/u);

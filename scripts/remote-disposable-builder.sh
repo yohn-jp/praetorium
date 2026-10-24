@@ -42,7 +42,7 @@ check_subid_free() {
 
 check_tools() {
   local required_root_free=${1:-10737418240}
-  need systemctl; need systemd-run; need systemd-analyze; need podman; need kind; need kubectl; need node; need pnpm; need ss; need newuidmap; need newgidmap; need losetup; need realpath; need useradd; need usermod; need getent; need fallocate; need mkfs.ext4; need blkid; need python3
+  need systemctl; need systemd-run; need systemd-analyze; need podman; need fuse-overlayfs; need kind; need kubectl; need node; need pnpm; need ss; need newuidmap; need newgidmap; need losetup; need realpath; need useradd; need usermod; need getent; need fallocate; need mkfs.ext4; need blkid; need python3
   [[ $(podman --version) == 'podman version 5.7.0' ]] || fail 'Podman must be the observed apt version 5.7.0'
   [[ $(kind --version) == 'kind v0.31.0 '* ]] || fail 'Kind must be pinned to v0.31.0'
   [[ $(node --version) == v24.* ]] || fail 'Node must be v24'
@@ -244,6 +244,8 @@ if [[ $action == run ]]; then
   test_uid=$(id -u "$OWNER")
   slice_hash=$(sha256sum "/etc/systemd/system/$SLICE_UNIT" | awk '{print $1}')
   node "$STATE_MODULE" cgroup-validate "$CGROUP_RECEIPT" "$test_uid" "$slice_hash"
+  live_slice_path="/sys/fs/cgroup$(systemctl show "$SLICE_UNIT" -p ControlGroup --value)"
+  [[ $(cat "$live_slice_path/cpu.max") == '200000 100000' && $(cat "$live_slice_path/memory.max") == '4294967296' && $(cat "$live_slice_path/pids.max") == '2048' ]] || fail 'live T14 slice limits changed after cgroup verification'
   install -d -o "$OWNER" -g "$OWNER" -m 0700 "/run/user/$test_uid" "/run/user/$test_uid/containers"
   exec systemd-run --scope --slice="$SLICE_UNIT" --uid="$OWNER" \
     --property=Delegate=yes --working-directory="$PWD" \
@@ -261,7 +263,11 @@ if [[ $action == verify-cgroup ]]; then
   systemd-run --scope --slice="$SLICE_UNIT" --unit="$probe" --uid="$OWNER" \
     --property=Delegate=yes -- /usr/bin/sleep 5 &
   runner_pid=$!
-  stop_probe() { kill "$runner_pid" 2>/dev/null || true; wait "$runner_pid" 2>/dev/null || true; }
+  stop_probe() {
+    systemctl stop "$probe" 2>/dev/null || true
+    kill "$runner_pid" 2>/dev/null || true
+    wait "$runner_pid" 2>/dev/null || true
+  }
   trap stop_probe EXIT
   control_group=''
   for _ in {1..40}; do
@@ -271,12 +277,18 @@ if [[ $action == verify-cgroup ]]; then
     sleep 0.1
   done
   [[ $control_group == *"$SLICE_UNIT/"* ]] || fail 'transient scope is not beneath the T14 slice'
+  [[ $(systemctl show "$probe" -p Slice --value) == "$SLICE_UNIT" ]] || fail 'transient scope Slice property differs'
   slice_path="/sys/fs/cgroup${control_group%/*}"
   [[ -r $slice_path/cpu.max && -r $slice_path/memory.max && -r $slice_path/pids.max ]] || fail 'slice cgroup controller files are unavailable'
   cpu_limit=$(cat "$slice_path/cpu.max")
   memory_limit=$(cat "$slice_path/memory.max")
   process_limit=$(cat "$slice_path/pids.max")
   [[ $cpu_limit == '200000 100000' && $memory_limit == '4294967296' && $process_limit == '2048' ]] || fail "effective T14 slice limits differ (cpu=$cpu_limit memory=$memory_limit pids=$process_limit)"
+  scope_pids=$(cat "/sys/fs/cgroup$control_group/cgroup.procs")
+  [[ -n $scope_pids ]] || fail 'delegated scope contains no live probe process'
+  while IFS= read -r scope_pid; do
+    [[ $(awk '/^Uid:/ {print $2}' "/proc/$scope_pid/status") == "$(id -u "$OWNER")" ]] || fail 'delegated probe process does not run as the T14 account'
+  done <<<"$scope_pids"
   test_uid=$(id -u "$OWNER")
   slice_hash=$(sha256sum "/etc/systemd/system/$SLICE_UNIT" | awk '{print $1}')
   node "$STATE_MODULE" cgroup-write "$CGROUP_RECEIPT" "$test_uid" "$slice_hash"

@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - provisioner-rbac.yaml
   - provisioner-boundary.yaml
+  - provisioner-history-pvc.yaml
   - provisioner-rolebinding.yaml
   - tenant-pod-policy.yaml
   - provisioner-networkpolicy.yaml

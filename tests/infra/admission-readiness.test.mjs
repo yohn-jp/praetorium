@@ -16,6 +16,7 @@ const require = createRequire(resolve(repositoryRoot, "package.json"));
 const yaml = require(resolve(repositoryRoot, "node_modules/.pnpm/node_modules/js-yaml"));
 const policyFiles = [
   "provisioner-boundary.yaml",
+  "provisioner-history-pvc.yaml",
   "provisioner-rolebinding.yaml",
   "provisioner-ingressroute.yaml",
   "provisioner-networkpolicy.yaml",
@@ -134,8 +135,8 @@ test("admission discovery requires both v1 policy resources", () => {
 });
 
 test("readiness waits for the seven source policies and same-name bindings", async () => {
-  assert.equal(sourcePolicies.length, 7);
-  assert.equal(sourceBindings.length, 7);
+  assert.equal(sourcePolicies.length, 8);
+  assert.equal(sourceBindings.length, 8);
   const readers = readerMaps();
   await waitForAdmissionGuards(readers);
   assert.deepEqual(
@@ -409,15 +410,15 @@ test("guard extraction selects only the exact seven policy and binding documents
   const bundle = documents.map((document) => yaml.dump(document)).join("---\n");
   const selected = selectAdmissionGuards(bundle);
   const selectedDocuments = yaml.loadAll(selected);
-  assert.equal(selectedDocuments.length, 14);
+  assert.equal(selectedDocuments.length, 16);
   assert.equal(
     selectedDocuments.filter((document) => document.kind === "ValidatingAdmissionPolicy").length,
-    7,
+    8,
   );
   assert.equal(
     selectedDocuments.filter((document) => document.kind === "ValidatingAdmissionPolicyBinding")
       .length,
-    7,
+    8,
   );
   assert.ok(
     selectedDocuments.every(
@@ -470,7 +471,7 @@ const kustomize = spawnSync(
 );
 
 test(
-  "actual Kustomize base bundle splits out only the 14 admission guards",
+  "actual Kustomize base bundle splits out only the 16 admission guards",
   {
     skip:
       kustomize.error || kustomize.status !== 0
@@ -481,15 +482,15 @@ test(
     const selected = selectAdmissionGuards(kustomize.stdout);
     const fullDocuments = yaml.loadAll(kustomize.stdout);
     const selectedDocuments = yaml.loadAll(selected);
-    assert.equal(selectedDocuments.length, 14);
+    assert.equal(selectedDocuments.length, 16);
     assert.equal(
       selectedDocuments.filter((document) => document.kind === "ValidatingAdmissionPolicy").length,
-      7,
+      8,
     );
     assert.equal(
       selectedDocuments.filter((document) => document.kind === "ValidatingAdmissionPolicyBinding")
         .length,
-      7,
+      8,
     );
     assert.ok(fullDocuments.some((document) => document.kind === "ClusterRole"));
     assert.ok(fullDocuments.some((document) => document.kind === "ClusterRoleBinding"));

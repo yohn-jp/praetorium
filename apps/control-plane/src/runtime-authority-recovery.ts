@@ -157,8 +157,8 @@ export function createRuntimeAuthorityRecovery(input: {
       runtime_authority_reservation_id: string | null;
       runtime_authority_operation_id: string | null;
     }>();
-    const responseNow = input.now();
     const confirmedOperation = await input.operations.getById(operation.id);
+    const responseNow = input.now();
     return confirmedOperation !== null &&
       confirmedOperation.workerId === request.workerId &&
       confirmedOperation.leaseToken === request.leaseToken &&

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { OperationService, OperationFenceConflict } from "@praetorium/application/operations";
 import { physicalInstanceId } from "@praetorium/contracts";
 import {
@@ -608,6 +608,29 @@ describe("runtime authority checkpoint recovery", () => {
     }));
     expect(response.status).toBe(409);
     expect(await h.reader.getCurrent(REPOSITORY_ID)).toBeNull();
+    expect(await checkpointCount(h.db)).toBe(2);
+  });
+
+  it("does not acknowledge recovery when the lease expires during the final operation read", async () => {
+    const h = await harness();
+    await prepareRecoverableOperation(h);
+    const readOperation = h.operations.getById.bind(h.operations);
+    let reads = 0;
+    vi.spyOn(h.operations, "getById").mockImplementation(async (id) => {
+      const operation = await readOperation(id);
+      if (++reads === 3) h.clock.value = NOW + 30_000;
+      return operation;
+    });
+    const response = await h.app.request("/runtime-authority/recover", jsonInit({
+      operationId: OPERATION_ID,
+      workerId: WORKER_ID,
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 2,
+      evidence: recoveryEvidence(),
+    }));
+    expect(reads).toBe(3);
+    expect(response.status).toBe(409);
     expect(await checkpointCount(h.db)).toBe(2);
   });
 

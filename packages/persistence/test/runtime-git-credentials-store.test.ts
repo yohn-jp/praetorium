@@ -24,6 +24,7 @@ class SQLiteD1 implements D1Database {
       "../../../apps/control-plane/migrations/0003_staged_configurations.sql",
       "../../../apps/control-plane/migrations/0004_runtime_git_credentials.sql",
       "../../../apps/control-plane/migrations/0006_application_origins.sql",
+      "../../../apps/control-plane/migrations/0009_runtime_authority.sql",
     ])
       this.database.exec(readFileSync(new URL(migration, import.meta.url), "utf8"));
     seedBinding(this);
@@ -101,8 +102,14 @@ class SQLiteD1Statement implements D1PreparedStatement {
 function seedBinding(db: SQLiteD1): void {
   db.database
     .prepare(
-      `INSERT INTO logical_instances (instance_id, repository_id, desired_state, created_at, updated_at)
-       VALUES ('ins_repo-7001', 7001, 'running', ?, ?)`,
+      `INSERT INTO logical_instances (
+         instance_id, repository_id, generation, runtime_epoch, desired_state,
+         observed_generation, observed_runtime_epoch, observed_sequence, observed_state,
+         desired_revision_id, observed_revision_id, desired_artifact_digest, current_artifact_digest,
+         reservation_state, reservation_id, created_at, updated_at
+       ) VALUES ('ins_repo-7001', 7001, 7, 4, 'running', 7, 4, 1, 'ready',
+         'revision-7', 'revision-7', 'sha256:artifact-7', 'sha256:artifact-7',
+         'allocated', 'res_epoch-4', ?, ?)`,
     )
     .run(NOW, NOW);
   db.database
@@ -118,16 +125,23 @@ function seedBinding(db: SQLiteD1): void {
          reservation_id, instance_id, repository_id, runtime_epoch, generation,
          cluster_id, status, capacity_snapshot_epoch, cpu_milli, memory_mib,
          ephemeral_storage_mib, created_at, updated_at
-       ) VALUES ('res_epoch-4', 'ins_repo-7001', 7001, 4, 7, 'cluster-1', 'released',
+       ) VALUES ('res_epoch-4', 'ins_repo-7001', 7001, 4, 7, 'cluster-1', 'allocated',
          1, 100, 256, 128, ?, ?)`,
     )
     .run(NOW, NOW);
+  db.database
+    .prepare(
+      "UPDATE logical_instances SET runtime_authority_reservation_id = 'res_epoch-4' WHERE instance_id = 'ins_repo-7001'",
+    )
+    .run();
 }
 
 function registration(
   index = 1,
   options: {
     readonly runtimeEpoch?: number;
+    readonly runtimeId?: string;
+    readonly leaseId?: string;
     readonly expiresAt?: string;
     readonly permission?: "read" | "write";
     readonly repositoryId?: number;
@@ -135,14 +149,16 @@ function registration(
     readonly instanceId?: string;
   } = {},
 ): RuntimeGitCredentialRegistration {
+  const repositoryId = options.repositoryId ?? 7001;
+  const runtimeEpoch = options.runtimeEpoch ?? 4;
   return {
     tokenId: index.toString(16).padStart(64, "0"),
-    repositoryId: options.repositoryId ?? 7001,
+    repositoryId,
     installationId: options.installationId ?? 9001,
-    instanceId: options.instanceId ?? "ins_repo-7001",
-    runtimeId: `res_epoch-${options.runtimeEpoch ?? 4}`,
-    runtimeEpoch: options.runtimeEpoch ?? 4,
-    leaseId: `res_epoch-${options.runtimeEpoch ?? 4}`,
+    instanceId: options.instanceId ?? `run_repo-${repositoryId}_${runtimeEpoch}`,
+    runtimeId: options.runtimeId ?? `res_epoch-${runtimeEpoch}`,
+    runtimeEpoch,
+    leaseId: options.leaseId ?? `res_epoch-${runtimeEpoch}`,
     permission: options.permission ?? "read",
     expiresAt: options.expiresAt ?? new Date(NOW + 60_000).toISOString(),
     encryptedSecret: {
@@ -176,16 +192,31 @@ describe("D1RuntimeGitCredentialStore", () => {
     expect(stored.encrypted_secret_json).not.toContain("gho_");
   });
 
-  it("rejects token ID reuse with changed binding, permission, expiry, or ciphertext", async () => {
-    const store = new D1RuntimeGitCredentialStore(new SQLiteD1());
+  it("replays a token ID across fresh encryption IVs but rejects changed identity or scope", async () => {
+    const db = new SQLiteD1();
+    const store = new D1RuntimeGitCredentialStore(db);
     const original = registration();
     await store.register(original, NOW);
+
+    const resealed = {
+      ...original,
+      encryptedSecret: {
+        ...original.encryptedSecret,
+        iv: "CCCCCCCCCCCCCCCC",
+        ciphertext: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      },
+    };
+    await expect(store.register(resealed, NOW + 1)).resolves.toMatchObject(original);
+    expect(
+      db.database
+        .prepare("SELECT encrypted_secret_json FROM runtime_git_credentials WHERE token_id = ?")
+        .get(original.tokenId),
+    ).toMatchObject({ encrypted_secret_json: JSON.stringify(original.encryptedSecret) });
 
     const changed = [
       { ...original, runtimeEpoch: 5, runtimeId: "res_epoch-5", leaseId: "res_epoch-5" },
       { ...original, permission: "write" as const },
       { ...original, expiresAt: new Date(NOW + 120_000).toISOString() },
-      { ...original, encryptedSecret: { ...original.encryptedSecret, ciphertext: "CCCCCCCCCCCCCCCC" } },
     ];
     for (const input of changed)
       await expect(store.register(input, NOW + 1)).rejects.toBeInstanceOf(
@@ -197,11 +228,19 @@ describe("D1RuntimeGitCredentialStore", () => {
     const store = new D1RuntimeGitCredentialStore(new SQLiteD1());
     const input = registration();
     await store.register(input, NOW);
+    const resealed = {
+      ...input,
+      encryptedSecret: {
+        ...input.encryptedSecret,
+        iv: "CCCCCCCCCCCCCCCC",
+        ciphertext: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      },
+    };
     expect(await store.markPending(input.tokenId, NOW + 1)).toMatchObject({
       status: "revocation_pending",
       updatedAt: NOW + 1,
     });
-    expect(await store.register(input, NOW + 2)).toMatchObject({
+    expect(await store.register(resealed, NOW + 2)).toMatchObject({
       status: "revocation_pending",
       updatedAt: NOW + 1,
     });
@@ -209,7 +248,7 @@ describe("D1RuntimeGitCredentialStore", () => {
       status: "revoked",
       updatedAt: NOW + 3,
     });
-    expect(await store.register(input, NOW + 4)).toMatchObject({
+    expect(await store.register(resealed, NOW + 4)).toMatchObject({
       status: "revoked",
       updatedAt: NOW + 3,
     });
@@ -220,13 +259,17 @@ describe("D1RuntimeGitCredentialStore", () => {
   });
 
   it("marks only the exact repository, instance, and epoch pending", async () => {
-    const store = new D1RuntimeGitCredentialStore(new SQLiteD1());
+    const db = new SQLiteD1();
+    const store = new D1RuntimeGitCredentialStore(db);
     const current = registration(1);
     const otherEpoch = registration(2, { runtimeEpoch: 5 });
     await store.register(current, NOW);
     await store.register(otherEpoch, NOW);
+    db.database
+      .prepare("UPDATE runtime_git_credentials SET status = 'active' WHERE token_id = ?")
+      .run(otherEpoch.tokenId);
 
-    await expect(store.markPendingForRuntime(7001, "ins_repo-7001", 4, NOW + 1)).resolves.toBe(1);
+    await expect(store.markPendingForRuntime(7001, "run_repo-7001_4", 4, NOW + 1)).resolves.toBe(1);
     await expect(store.listPending(7001, 4, NOW + 1, 8)).resolves.toMatchObject([
       { tokenId: current.tokenId, status: "revocation_pending" },
     ]);
@@ -250,20 +293,66 @@ describe("D1RuntimeGitCredentialStore", () => {
     await expect(store.pendingCount(7001, 4, NOW)).resolves.toBe(9);
   });
 
+  it("reuses only the newest active exact-scope credential with a 30-second lifetime margin", async () => {
+    const store = new D1RuntimeGitCredentialStore(new SQLiteD1());
+    const shorterRead = registration(91, { expiresAt: new Date(NOW + 60_000).toISOString() });
+    const longerRead = registration(92, { expiresAt: new Date(NOW + 120_000).toISOString() });
+    const nearExpiryRead = registration(93, { expiresAt: new Date(NOW + 20_000).toISOString() });
+    const write = registration(94, { permission: "write" });
+    for (const input of [shorterRead, longerRead, nearExpiryRead, write])
+      await store.register(input, NOW);
+
+    const identity = {
+      repositoryId: 7001,
+      installationId: 9001,
+      instanceId: "run_repo-7001_4",
+      runtimeId: "res_epoch-4",
+      runtimeEpoch: 4,
+      leaseId: "res_epoch-4",
+    };
+    await expect(store.findReusable({ ...identity, permission: "read" }, NOW)).resolves.toMatchObject({
+      tokenId: longerRead.tokenId,
+      permission: "read",
+      status: "active",
+    });
+    await expect(store.findReusable({ ...identity, permission: "write" }, NOW)).resolves.toMatchObject({
+      tokenId: write.tokenId,
+      permission: "write",
+      status: "active",
+    });
+    await expect(
+      store.findReusable({ ...identity, runtimeEpoch: 5, permission: "read" }, NOW),
+    ).resolves.toBeNull();
+
+    await store.markPendingForRuntime(7001, "run_repo-7001_4", 4, NOW + 1);
+    await expect(store.findReusable({ ...identity, permission: "read" }, NOW + 1)).resolves.toBeNull();
+  });
+
   it("retires only exact active credentials in the atomic current-lease quiescing checkpoint", async () => {
     const db = new SQLiteD1();
     const credentialStore = new D1RuntimeGitCredentialStore(db);
     const current = registration(101);
+    const secondCurrent = registration(104);
     const otherEpoch = registration(102, { runtimeEpoch: 5 });
+    const otherInstance = registration(106, { instanceId: "ins_repo-7001-other" });
     const otherRepository = registration(103, {
       repositoryId: 7002,
       installationId: 9002,
-      instanceId: "ins_repo-7002",
+      instanceId: "run_repo-7002_4",
+      runtimeId: "res_epoch-4-other",
+      leaseId: "res_epoch-4-other",
     });
     seedOtherBinding(db);
     await credentialStore.register(current, NOW);
+    await credentialStore.register(secondCurrent, NOW);
     await credentialStore.register(otherEpoch, NOW);
+    await credentialStore.register(otherInstance, NOW);
     await credentialStore.register(otherRepository, NOW);
+    // Model active rows admitted before the runtime-authority pointer was introduced;
+    // retirement must still scope its mutation to the checkpoint's exact old epoch.
+    db.database
+      .prepare("UPDATE runtime_git_credentials SET status = 'active' WHERE token_id IN (?, ?)")
+      .run(otherEpoch.tokenId, otherInstance.tokenId);
     seedRunningOperation(db);
 
     const platform = new D1PlatformStore(db);
@@ -288,6 +377,11 @@ describe("D1RuntimeGitCredentialStore", () => {
     await expect(
       platform.appendOperationCheckpoint({ ...checkpoint, expectedCheckpointSequence: 1 }),
     ).resolves.toBeNull();
+    expect(
+      db.database
+        .prepare("SELECT runtime_authority_reservation_id, runtime_authority_operation_id FROM logical_instances WHERE instance_id = ?")
+        .get("ins_repo-7001"),
+    ).toEqual({ runtime_authority_reservation_id: "res_epoch-4", runtime_authority_operation_id: null });
     expect(await credentialStore.listPending(7001, 4, NOW + 1, 8)).toEqual([]);
     expect(await credentialStore.listPending(7001, 5, NOW + 1, 8)).toEqual([]);
     expect(await credentialStore.listPending(7002, 4, NOW + 1, 8)).toEqual([]);
@@ -297,9 +391,16 @@ describe("D1RuntimeGitCredentialStore", () => {
       phase: "quiescing-old",
       checkpointSequence: 1,
     });
-    await expect(credentialStore.listPending(7001, 4, NOW + 1, 8)).resolves.toMatchObject([
-      { tokenId: current.tokenId, status: "revocation_pending" },
-    ]);
+    expect(
+      db.database
+        .prepare("SELECT runtime_authority_reservation_id, runtime_authority_operation_id FROM logical_instances WHERE instance_id = ?")
+        .get("ins_repo-7001"),
+    ).toEqual({ runtime_authority_reservation_id: null, runtime_authority_operation_id: null });
+    const pendingCurrent = await credentialStore.listPending(7001, 4, NOW + 1, 8);
+    expect(pendingCurrent.map((record) => record.tokenId).sort()).toEqual(
+      [current.tokenId, secondCurrent.tokenId].sort(),
+    );
+    expect(pendingCurrent.every((record) => record.status === "revocation_pending")).toBe(true);
     await expect(credentialStore.listPending(7001, 5, NOW + 1, 8)).resolves.toEqual([]);
     await expect(credentialStore.listPending(7002, 4, NOW + 1, 8)).resolves.toEqual([]);
     expect(
@@ -310,26 +411,61 @@ describe("D1RuntimeGitCredentialStore", () => {
     expect(
       db.database
         .prepare("SELECT status FROM runtime_git_credentials WHERE token_id = ?")
+        .get(otherInstance.tokenId),
+    ).toMatchObject({ status: "active" });
+    expect(
+      db.database
+        .prepare("SELECT status FROM runtime_git_credentials WHERE token_id = ?")
         .get(otherRepository.tokenId),
     ).toMatchObject({ status: "active" });
+
+    const late = registration(105);
+    await expect(credentialStore.register(late, NOW + 2)).resolves.toMatchObject({
+      status: "revocation_pending",
+    });
+    await expect(
+      credentialStore.findReusable(
+        {
+          repositoryId: 7001,
+          installationId: 9001,
+          instanceId: "run_repo-7001_4",
+          runtimeId: "res_epoch-4",
+          runtimeEpoch: 4,
+          leaseId: "res_epoch-4",
+          permission: "read",
+        },
+        NOW + 2,
+      ),
+    ).resolves.toBeNull();
   });
 
   it.each([false, true])("retires the proof-bound old epoch atomically (physical identity: %s)", async (physical) => {
     const db = new SQLiteD1();
     const credentialStore = new D1RuntimeGitCredentialStore(db);
-    const retired = registration(111, physical ? { instanceId: "run_repo-7001_4" } : {});
+    if (!physical)
+      db.database
+        .prepare("UPDATE logical_instances SET legacy_runtime_epoch = 4 WHERE instance_id = ?")
+        .run("ins_repo-7001");
+    const retired = registration(111, {
+      instanceId: physical ? "run_repo-7001_4" : "ins_repo-7001",
+    });
     const otherEpoch = registration(112, { runtimeEpoch: 5 });
     const otherInstance = registration(113, { instanceId: "ins_repo-7001-other" });
     const otherRepository = registration(114, {
       repositoryId: 7002,
       installationId: 9002,
-      instanceId: "ins_repo-7002",
+      instanceId: "run_repo-7002_4",
+      runtimeId: "res_epoch-4-other",
+      leaseId: "res_epoch-4-other",
     });
     seedOtherBinding(db);
     await credentialStore.register(retired, NOW);
     await credentialStore.register(otherEpoch, NOW);
     await credentialStore.register(otherInstance, NOW);
     await credentialStore.register(otherRepository, NOW);
+    db.database
+      .prepare("UPDATE runtime_git_credentials SET status = 'active' WHERE token_id IN (?, ?)")
+      .run(otherEpoch.tokenId, otherInstance.tokenId);
     seedRunningOperation(db, 5);
 
     const platform = new D1PlatformStore(db);
@@ -422,8 +558,14 @@ function absenceProof(input: {
 function seedOtherBinding(db: SQLiteD1): void {
   db.database
     .prepare(
-      `INSERT INTO logical_instances (instance_id, repository_id, desired_state, created_at, updated_at)
-       VALUES ('ins_repo-7002', 7002, 'running', ?, ?)`,
+      `INSERT INTO logical_instances (
+         instance_id, repository_id, generation, runtime_epoch, desired_state,
+         observed_generation, observed_runtime_epoch, observed_sequence, observed_state,
+         desired_revision_id, observed_revision_id, desired_artifact_digest, current_artifact_digest,
+         reservation_state, reservation_id, created_at, updated_at
+       ) VALUES ('ins_repo-7002', 7002, 7, 4, 'running', 7, 4, 1, 'ready',
+         'revision-7-other', 'revision-7-other', 'sha256:artifact-7-other', 'sha256:artifact-7-other',
+         'allocated', 'res_epoch-4-other', ?, ?)`,
     )
     .run(NOW, NOW);
   db.database
@@ -433,6 +575,21 @@ function seedOtherBinding(db: SQLiteD1): void {
        ) VALUES (7002, 'ins_repo-7002', 9002, 'owner', 'other-repo', ?, ?)`,
     )
     .run(NOW, NOW);
+  db.database
+    .prepare(
+      `INSERT INTO runtime_reservations (
+         reservation_id, instance_id, repository_id, runtime_epoch, generation,
+         cluster_id, status, capacity_snapshot_epoch, cpu_milli, memory_mib,
+         ephemeral_storage_mib, created_at, updated_at
+       ) VALUES ('res_epoch-4-other', 'ins_repo-7002', 7002, 4, 7, 'cluster-1', 'allocated',
+         1, 100, 256, 128, ?, ?)`,
+    )
+    .run(NOW, NOW);
+  db.database
+    .prepare(
+      "UPDATE logical_instances SET runtime_authority_reservation_id = 'res_epoch-4-other' WHERE instance_id = 'ins_repo-7002'",
+    )
+    .run();
 }
 
 function seedRunningOperation(db: SQLiteD1, runtimeEpoch = 4): void {

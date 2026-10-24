@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type {
   RuntimeGitCredentialRecord,
   RuntimeGitCredentialRegistration,
@@ -126,6 +126,14 @@ class MemoryCredentials implements RuntimeGitCredentialStore {
   readonly records = new Map<string, RuntimeGitCredentialRecord>();
   readonly purgeCalls: { readonly now: number; readonly limit: number }[] = [];
   afterRegister?: () => void;
+  isCurrentAuthority: (input: {
+    readonly repositoryId: number;
+    readonly installationId: number;
+    readonly instanceId: string;
+    readonly runtimeId: string;
+    readonly runtimeEpoch: number;
+    readonly leaseId: string;
+  }) => boolean = () => true;
 
   async purgeExpired(now: number, limit: number): Promise<number> {
     this.purgeCalls.push({ now, limit });
@@ -136,17 +144,51 @@ class MemoryCredentials implements RuntimeGitCredentialStore {
     registration: RuntimeGitCredentialRegistration,
     now: number,
   ): Promise<RuntimeGitCredentialRecord> {
+    const current = this.isCurrentAuthority(registration);
     const existing = this.records.get(registration.tokenId);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.status === "active" && !current) {
+        const pending = { ...existing, status: "revocation_pending" as const, updatedAt: now };
+        this.records.set(existing.tokenId, pending);
+        return pending;
+      }
+      return existing;
+    }
     const record: RuntimeGitCredentialRecord = {
       ...registration,
-      status: "active",
+      status: current ? "active" : "revocation_pending",
       createdAt: now,
       updatedAt: now,
     };
     this.records.set(record.tokenId, record);
     this.afterRegister?.();
     return record;
+  }
+
+  async findReusable(
+    input: {
+      readonly repositoryId: number;
+      readonly installationId: number;
+      readonly instanceId: string;
+      readonly runtimeId: string;
+      readonly runtimeEpoch: number;
+      readonly leaseId: string;
+      readonly permission: "read" | "write";
+    },
+    now: number,
+  ): Promise<RuntimeGitCredentialRecord | null> {
+    if (!this.isCurrentAuthority(input)) return null;
+    return [...this.records.values()].find((record) =>
+      record.status === "active" &&
+      Date.parse(record.expiresAt) > now &&
+      record.repositoryId === input.repositoryId &&
+      record.installationId === input.installationId &&
+      record.instanceId === input.instanceId &&
+      record.runtimeId === input.runtimeId &&
+      record.runtimeEpoch === input.runtimeEpoch &&
+      record.leaseId === input.leaseId &&
+      record.permission === input.permission
+    ) ?? null;
   }
 
   async markPending(tokenId: string, now: number): Promise<RuntimeGitCredentialRecord | null> {
@@ -216,6 +258,16 @@ const registration = (index = 1): RuntimeGitCredentialRegistration => ({
   },
 });
 
+const lookup = {
+  repositoryId: 7001,
+  installationId: 9001,
+  instanceId: "ins_repo-7001",
+  runtimeId: "res_epoch-4",
+  runtimeEpoch: 4,
+  leaseId: "res_epoch-4",
+  permission: "read" as const,
+};
+
 const currentBinding: RuntimeBindingMetadata = {
   repositoryId: 7001,
   installationId: 9001,
@@ -235,18 +287,25 @@ function createRoutes(input: {
   readonly onReadBinding?: () => void;
 }): { readonly app: ReturnType<typeof createRuntimeGitCredentialRoutes>; readonly credentials: MemoryCredentials } {
   const credentials = input.credentials ?? new MemoryCredentials();
-  const runtimeBindings = {
-    getCurrent: vi.fn(async () => {
-      input.onReadBinding?.();
-      return input.binding === undefined ? currentBinding : input.binding;
-    }),
+  credentials.isCurrentAuthority = (candidate) => {
+    input.onReadBinding?.();
+    const binding = input.binding === undefined ? currentBinding : input.binding;
+    return (
+      binding !== null &&
+      binding.active &&
+      binding.repositoryId === candidate.repositoryId &&
+      binding.installationId === candidate.installationId &&
+      (binding.physicalInstanceId ?? binding.instanceId) === candidate.instanceId &&
+      binding.runtimeId === candidate.runtimeId &&
+      binding.runtimeEpoch === candidate.runtimeEpoch &&
+      binding.leaseId === candidate.leaseId
+    );
   };
   return {
     credentials,
     app: createRuntimeGitCredentialRoutes({
       db: input.db,
       credentials,
-      runtimeBindings,
       now: () => NOW,
     }),
   };
@@ -261,7 +320,7 @@ afterEach(() => {
 });
 
 describe("Control Plane runtime Git credential routes", () => {
-  it("persists encrypted registration before checking every current runtime binding field", async () => {
+  it("persists ciphertext and determines registration status from current authority", async () => {
     const db = new SQLiteD1();
     const credentials = new MemoryCredentials();
     credentials.afterRegister = () => {
@@ -276,7 +335,30 @@ describe("Control Plane runtime Git credential routes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "active" });
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(credentials.purgeCalls).toEqual([{ now: NOW, limit: 64 }]);
+    expect(credentials.purgeCalls).toEqual([]);
+  });
+
+  it("returns only an active unexpired credential for the exact requested identity and permission", async () => {
+    const db = new SQLiteD1();
+    const credentials = new MemoryCredentials();
+    const active = await credentials.register(registration(), NOW);
+    const pending = await credentials.register(registration(2), NOW);
+    await credentials.markPending(pending.tokenId, NOW);
+    const { app } = createRoutes({ db, credentials });
+
+    const response = await app.request(
+      "/internal/runtime-credentials/reuse",
+      jsonRequest(lookup),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ credential: active });
+
+    const wrongScope = await app.request(
+      "/internal/runtime-credentials/reuse",
+      jsonRequest({ ...lookup, permission: "write" }),
+    );
+    expect(await wrongScope.json()).toEqual({ credential: null });
   });
 
   it("marks inactive or mismatched registrations pending and preserves an already-revoked duplicate", async () => {
@@ -313,24 +395,7 @@ describe("Control Plane runtime Git credential routes", () => {
   });
 
   it("fails closed when an inactive or unavailable binding cannot confirm the stored registration", async () => {
-    const absentRecordCredentials = new MemoryCredentials();
-    absentRecordCredentials.markPending = async () => null;
-    const inactive = createRoutes({
-      db: new SQLiteD1(),
-      credentials: absentRecordCredentials,
-      binding: null,
-    });
-    const inactiveResponse = await inactive.app.request(
-      "/internal/runtime-credentials",
-      jsonRequest(registration()),
-    );
-    expect(inactiveResponse.status).toBe(503);
-    expect(await inactiveResponse.json()).toEqual({
-      error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" },
-    });
-
     const unavailableCredentials = new MemoryCredentials();
-    unavailableCredentials.markPending = async () => null;
     const unavailable = createRoutes({
       db: new SQLiteD1(),
       credentials: unavailableCredentials,
@@ -346,6 +411,7 @@ describe("Control Plane runtime Git credential routes", () => {
     expect(await unavailableResponse.json()).toEqual({
       error: { code: "RUNTIME_GIT_CREDENTIAL_STATE_UNAVAILABLE" },
     });
+    expect(unavailable.credentials.records.size).toBe(0);
   });
 
   it("rejects plaintext or extra fields and credential expiries outside the bounded GitHub lifetime", async () => {

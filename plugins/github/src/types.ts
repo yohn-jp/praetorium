@@ -59,7 +59,10 @@ export interface RepositoryBinding {
 }
 
 export interface RepositoryBindingReader {
-  getByRepositoryId(repositoryId: GitHubRepositoryId): Promise<RepositoryBinding | null>;
+  getByRepositoryId(
+    repositoryId: GitHubRepositoryId,
+    currentRuntime?: CurrentRuntimeBinding | null,
+  ): Promise<RepositoryBinding | null>;
 }
 
 export interface GitHubServicePolicy {

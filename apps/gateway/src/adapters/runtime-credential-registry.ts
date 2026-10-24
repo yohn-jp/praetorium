@@ -21,6 +21,9 @@ const MAX_REVOCATION_CONCURRENCY = 4;
 const RegistrationResponseSchema = z.strictObject({
   status: z.enum(["active", "revocation_pending", "revoked"]),
 });
+const ReusableCredentialResponseSchema = z.strictObject({
+  credential: RuntimeGitCredentialRecordSchema.nullable(),
+});
 const PendingResponseSchema = z.strictObject({
   credentials: z.array(RuntimeGitCredentialRecordSchema).max(MAX_PENDING_CREDENTIALS),
   remaining: z.number().int().nonnegative().safe(),
@@ -43,6 +46,11 @@ export interface RuntimeCredentialRetirementRequest {
 }
 
 export interface RuntimeCredentialRegistry {
+  findReusable(
+    identity: RuntimeIdentity,
+    permission: "read" | "write",
+    now: string,
+  ): Promise<InstallationToken | null>;
   recordIssued(identity: RuntimeIdentity, credential: InstallationToken): Promise<boolean>;
   retire(input: RuntimeCredentialRetirementRequest): Promise<{ readonly complete: boolean }>;
 }
@@ -303,6 +311,59 @@ export function createRuntimeCredentialRegistry(
   }
 
   return {
+    async findReusable(identity, permission, requestedAt) {
+      const nowMs = Date.parse(requestedAt);
+      if (!Number.isSafeInteger(nowMs) || new Date(nowMs).toISOString() !== requestedAt)
+        throw new TypeError("runtime credential lookup time is invalid");
+      const response = ReusableCredentialResponseSchema.parse(
+        await postJson(
+          "/internal/runtime-credentials/reuse",
+          {
+            repositoryId: identity.repositoryId,
+            installationId: identity.installationId,
+            instanceId: identity.instanceId,
+            runtimeId: identity.runtimeId,
+            runtimeEpoch: identity.runtimeEpoch,
+            leaseId: identity.leaseId,
+            permission,
+          },
+          PENDING_RESPONSE_BYTES,
+        ),
+      );
+      const record = response.credential;
+      if (!record) return null;
+      const expiresAt = Date.parse(record.expiresAt);
+      if (
+        record.status !== "active" ||
+        record.repositoryId !== identity.repositoryId ||
+        record.installationId !== identity.installationId ||
+        record.instanceId !== identity.instanceId ||
+        record.runtimeId !== identity.runtimeId ||
+        record.runtimeEpoch !== identity.runtimeEpoch ||
+        record.leaseId !== identity.leaseId ||
+        record.permission !== permission ||
+        !Number.isSafeInteger(expiresAt) ||
+        expiresAt <= nowMs ||
+        expiresAt > nowMs + 3_605_000
+      )
+        throw new TypeError("Control Plane returned a credential outside the requested scope");
+      if (expiresAt <= nowMs + 30_000) return null;
+
+      const token = await config.tokenVault.open(
+        record.encryptedSecret,
+        credentialVaultContext(record),
+      );
+      if ((await sha256Hex(token)) !== record.tokenId)
+        throw new TypeError("decrypted credential does not match its registry identifier");
+      return {
+        token,
+        expiresAt: record.expiresAt,
+        installationId: record.installationId,
+        repositoryId: record.repositoryId,
+        permission: record.permission,
+      };
+    },
+
     async recordIssued(identity, credential) {
       let tokenId: string | undefined;
       let revocationAttempted = false;

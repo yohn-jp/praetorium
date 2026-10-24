@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Hono } from "hono";
 import type { InstanceService, RepositoryRegistryService } from "@praetorium/application/instances";
 import { createControlPlaneApp } from "./app.js";
 
@@ -36,5 +37,27 @@ describe("dedicated Admin service-credential scope", () => {
       headers: { "X-Control-Plane-Gateway-Auth": gateway },
     })).status).toBe(404);
     expect((await cp.request("/v1/operator/source-builds", { headers })).status).toBe(404);
+  });
+
+  it("keeps runtime credential reuse behind Gateway service authentication", async () => {
+    const credentialRoutes = new Hono();
+    credentialRoutes.post("/internal/runtime-credentials/reuse", (context) =>
+      context.json({ credential: null }),
+    );
+    const cp = createControlPlaneApp({
+      gatewaySecret: gateway,
+      adminSecret: admin,
+      registry: {} as RepositoryRegistryService,
+      instances: {} as InstanceService,
+      runtimeCredentials: credentialRoutes,
+    });
+    const path = "/internal/runtime-credentials/reuse";
+
+    expect((await cp.request(path, { method: "POST" })).status).toBe(401);
+    expect((await cp.request(path, { method: "POST", headers })).status).toBe(401);
+    expect((await cp.request(path, {
+      method: "POST",
+      headers: { "X-Control-Plane-Gateway-Auth": gateway },
+    })).status).toBe(200);
   });
 });

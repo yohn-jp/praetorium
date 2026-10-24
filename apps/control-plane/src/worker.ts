@@ -154,7 +154,6 @@ function composeServices(env: ControlPlaneEnv) {
       : {}),
     runtimeCredentials: createRuntimeGitCredentialRoutes({
       db: env.CONTROL_PLANE_DB,
-      runtimeBindings: createRuntimeBindingMetadataReader({ db: env.CONTROL_PLANE_DB }),
       credentials: new D1RuntimeGitCredentialStore(env.CONTROL_PLANE_DB),
     }),
     ...(env.RUNTIME_IDENTITY_SIGNING_KEY

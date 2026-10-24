@@ -460,6 +460,67 @@ describe("OperationServiceHttpClient", () => {
     expect(claim?.snapshot.instance.observedSequence).toBe(12);
   });
 
+  it("posts fenced target authority recovery with exact provider evidence", async () => {
+    let requestUrl = "";
+    let requestInit: RequestInit | undefined;
+    const service = client(async (input, init) => {
+      requestUrl = String(input);
+      requestInit = init;
+      return Response.json({ recovered: true });
+    });
+    const evidence = {
+      instanceId: "ins_01",
+      repositoryId: 123456,
+      generation: 2,
+      runtimeEpoch: 5,
+      clusterId: "cluster-a",
+      reservationId: "res_01",
+      actualImageDigest: `sha256:${"d".repeat(64)}`,
+      imageIdentityVerified: true as const,
+      census: {
+        complete: true,
+        providerObservationId: "ns-uid/pods-rv-10",
+        observedAt: new Date(Date.now() - 100).toISOString(),
+        matchedWriterCount: 1,
+        writers: [{ runtimeEpoch: 5, phase: "running" as const, identities: ["pod-uid-1"] }],
+      },
+    };
+
+    await service.recoverRuntimeAuthority({
+      operationId: "op_01",
+      workerId: "worker-a",
+      leaseToken: "l".repeat(48),
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 5,
+      evidence,
+    });
+
+    expect(requestUrl).toBe(
+      "https://control.example.test/internal/provisioner/runtime-authority/recover",
+    );
+    expect(requestInit?.redirect).toBe("error");
+    expect(JSON.parse(String(requestInit?.body))).toEqual({
+      operationId: "op_01",
+      workerId: "worker-a",
+      leaseToken: "l".repeat(48),
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 5,
+      evidence,
+    });
+
+    const malformed = client(async () => Response.json({ recovered: false }));
+    await expect(
+      malformed.recoverRuntimeAuthority({
+        operationId: "op_01",
+        workerId: "worker-a",
+        leaseToken: "l".repeat(48),
+        leaseEpoch: 4,
+        expectedCheckpointSequence: 5,
+        evidence,
+      }),
+    ).rejects.toThrow("did not confirm runtime authority recovery");
+  });
+
   it("accepts the Control Plane's JSON null when its operation queue is empty", async () => {
     const service = client(async () => Response.json(null));
 

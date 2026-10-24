@@ -459,3 +459,19 @@ it("focuses an admitted newer Source instead of obsolete failed jobs on Overview
   expect(focus).not.toContain("ACTIVE INCIDENT");
   expect(focus).not.toContain("SOURCE_BUILD_FAILED");
 });
+
+
+it("never offers Build and deploy again for an already admitted Source version", () => {
+  const admitted={...sourceJob,releaseId:416422590,tag:"v0.3.4",version:"0.3.4",
+    state:"admitted" as const,error:null,retryable:false,admittedReleaseId:"rel_abcd"};
+  const html=renderMobileConsole(model({
+    section:"releases",
+    builds:dependency({items:[admitted],nextCursor:null},"source builds"),
+    sourceViews:dependency([{source:{id:"scriptorium",label:"Scriptorium",githubRepository:"yohn-jp/scriptorium",
+      adapter:"scriptorium-v1"},releases:[{id:416422590,tag:"v0.3.4",name:"v0.3.4",
+      version:"0.3.4",publishedAt:"2026-10-23T15:58:15Z",prerelease:false,notes:""}],
+      error:null,endpoint:"github",status:200,code:null}],"source views"),
+  }));
+  expect(html).toContain('href="/releases/rel_abcd?ui=mobile"');
+  expect(html).not.toContain('action="/source-releases/deploy?ui=mobile"');
+});

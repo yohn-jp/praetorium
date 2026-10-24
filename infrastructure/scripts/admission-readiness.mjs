@@ -41,12 +41,18 @@ const networkPolicyRules = [
   rule(["networking.k8s.io"], ["v1"], ["CREATE", "UPDATE"], ["networkpolicies"]),
 ];
 const tenantPodRules = [rule([""], ["v1"], ["CREATE", "UPDATE"], ["pods"])];
+const historyPvcRules = [rule([""], ["v1"], ["CREATE", "UPDATE"], ["persistentvolumeclaims"])];
 
 function provisionerCondition(name) {
   return [{ name, expression: PROVISIONER_IDENTITY_EXPRESSION }];
 }
 
 const ADMISSION_GUARDS = [
+  {
+    name: "praetorium-provisioner-history-pvc",
+    resourceRules: historyPvcRules,
+    matchConditions: provisionerCondition("dedicated-provisioner-identity"),
+  },
   {
     name: "praetorium-provisioner-instance-namespaces",
     resourceRules: namespaceRules,

@@ -15,6 +15,7 @@ import {
   type QuiesceReceipt,
   type QuiesceRequest,
   type RuntimeAssignment,
+  type WriterCensus,
 } from "@praetorium/application/lifecycle";
 import type {
   ClaimedProvisionerOperation,
@@ -135,7 +136,14 @@ export interface RuntimeAuthAcceptanceProbe {
     operationId: string,
     signal?: AbortSignal,
   ): ReturnType<LifecycleAuthProbeProvider["verify"]>;
-  forLease(claim: ClaimedProvisionerOperation, workerId?: string): LifecycleAuthProbeProvider;
+  forLease(claim: ClaimedProvisionerOperation, workerId?: string): RuntimeAuthAcceptanceProbe;
+  drainLegacyHistory?(
+    assignment: RuntimeAssignment,
+    census: WriterCensus,
+    expectedCheckpointSequence: number,
+    beforeEffect: () => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 
 export interface ScriptoriumControlClientOptions {
@@ -708,7 +716,7 @@ export class UnavailableRuntimeAuthAcceptanceProbe
     return Promise.reject(new Error("runtime_grant_auth_probe_transport_unavailable"));
   }
 
-  forLease(): LifecycleAuthProbeProvider {
+  forLease(): RuntimeAuthAcceptanceProbe {
     return this;
   }
 }

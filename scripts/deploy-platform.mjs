@@ -76,23 +76,31 @@ const cloudflare = ["--inventory", options["--inventory"], "--secret-files", opt
 function preflight(candidate) {
   execute("deploy-k3s.mjs", ["--inventory", candidate, ...k3s.slice(2), "--check"]);
   execute("deploy-cloudflare.mjs", ["--inventory", candidate, ...cloudflare.slice(2), "--preflight"]);
-  coordination(candidate, true);
+  managementService(candidate, "coordination", true);
+  managementService(candidate, "observer", true);
 }
-function coordination(candidate, check) {
+function managementService(candidate, role, check) {
   const inventory = readInventory(candidate);
-  if (inventory.errors.length || inventory.blockers.length || !inventory.inventory.images.coordination) {
-    throw new Error("Coordination requires the verified candidate inventory");
+  if (inventory.errors.length || inventory.blockers.length || !inventory.inventory.images[role]) {
+    throw new Error(role + " requires the verified candidate inventory");
+  }
+  const variables = { [`${role}_enabled`]: true, [`${role}_image`]: inventory.inventory.images[role] };
+  if (role === "observer") {
+    const secrets = JSON.parse(readFileSync(privateFile(options["--secret-files"], "secret manifest"), "utf8"));
+    variables.observer_registry_auth_src = privateFile(
+      secrets.values?.applicationImagePull, "Observer read-only registry credential",
+    );
   }
   const args = ["-i", options["--management-inventory"],
     path.join(root, "infrastructure/ansible/playbooks/host-bootstrap.yml"),
-    "--limit", "management", "--tags", "coordination",
-    "--extra-vars", JSON.stringify({ coordination_enabled: true, coordination_image: inventory.inventory.images.coordination }),
+    "--limit", "management", "--tags", role,
+    "--extra-vars", JSON.stringify(variables),
     ...(check ? ["--check"] : [])];
   const result = spawnSync("ansible-playbook", args, {
     cwd: path.join(root, "infrastructure/ansible"), env: process.env, encoding: "utf8",
     stdio: "inherit", timeout: 20 * 60_000,
   });
-  if (result.error || result.status !== 0) throw new Error("Coordination Ansible " + (check ? "preflight" : "rollout") + " failed");
+  if (result.error || result.status !== 0) throw new Error(role + " Ansible " + (check ? "preflight" : "rollout") + " failed");
 }
 async function deploy() {
  for (const step of platformDeploymentSteps(options.mode, notificationsEnabled)) {
@@ -100,8 +108,8 @@ async function deploy() {
   if (step.script === "service-image-publication.mjs") {
     await adoptCiServiceImages({ root, inventoryPath: options["--inventory"],
       secretFilesPath: options["--secret-files"], preflight });
-  } else if (step.script === "coordination") {
-    coordination(options["--inventory"], false);
+  } else if (step.script === "coordination" || step.script === "observer") {
+    managementService(options["--inventory"], step.script, false);
   } else if (step.script === "verify-work-notifications.mjs") {
     execute(step.script, [
       "--inventory", options["--inventory"],

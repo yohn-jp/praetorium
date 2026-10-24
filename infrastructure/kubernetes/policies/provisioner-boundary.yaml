@@ -156,7 +156,8 @@ spec:
                   : request.resource.resource == "secrets"
                     ? (object.metadata.name in [
                         "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-runtime",
-                        "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-image-pull"
+                        "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-image-pull",
+                        "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history-seed"
                       ] ? object.metadata.name : "")
                     : request.resource.resource == "services"
                       ? (object.metadata.name in [
@@ -171,11 +172,18 @@ spec:
         object.metadata.labels["app.kubernetes.io/managed-by"] == namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] &&
         object.metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
         object.metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
-        object.metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
-        int(object.metadata.labels["praetorium.io/runtime-epoch"]) <= 9007199254740991 &&
-        object.metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
-        int(object.metadata.labels["arcadia.io/generation"]) <= 9007199254740991 &&
-        object.metadata.labels["arcadia.io/release-id"].matches("^(none|[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)$") &&
+        (request.resource.resource != "secrets" || object.metadata.name != "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history-seed" || (
+          !("praetorium.io/runtime-epoch" in object.metadata.labels) &&
+          !("arcadia.io/generation" in object.metadata.labels) &&
+          !("arcadia.io/release-id" in object.metadata.labels)
+        )) &&
+        (request.resource.resource == "secrets" && object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history-seed" || (
+          object.metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
+          int(object.metadata.labels["praetorium.io/runtime-epoch"]) <= 9007199254740991 &&
+          object.metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
+          int(object.metadata.labels["arcadia.io/generation"]) <= 9007199254740991 &&
+          object.metadata.labels["arcadia.io/release-id"].matches("^(none|[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)$")
+        )) &&
         object.metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
         object.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
         object.metadata.labels["app.kubernetes.io/name"] == "scriptorium"
@@ -216,13 +224,22 @@ spec:
               dyn(object).data["runtime-assignment.json"].size() <= 131072 &&
               dyn(object).data["runtime-identity.jwt"].size() >= 16 &&
               dyn(object).data["runtime-identity.jwt"].size() <= 4096
-            : object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-image-pull" &&
-              dyn(object).type == "kubernetes.io/dockerconfigjson" &&
-              has(dyn(object).data) &&
-              dyn(object).data.size() == 1 &&
-              ".dockerconfigjson" in dyn(object).data &&
-              dyn(object).data[".dockerconfigjson"].size() > 0 &&
-              dyn(object).data[".dockerconfigjson"].size() <= 131072
+            : object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-image-pull"
+              ? dyn(object).type == "kubernetes.io/dockerconfigjson" &&
+                has(dyn(object).data) &&
+                dyn(object).data.size() == 1 &&
+                ".dockerconfigjson" in dyn(object).data &&
+                dyn(object).data[".dockerconfigjson"].size() > 0 &&
+                dyn(object).data[".dockerconfigjson"].size() <= 131072
+              : object.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history-seed" &&
+                object.metadata.annotations["praetorium.io/history-contract"] == "v1" &&
+                dyn(object).type == "Opaque" &&
+                dyn(object).immutable == true &&
+                has(dyn(object).data) &&
+                dyn(object).data.size() == 1 &&
+                "snapshot.json" in dyn(object).data &&
+                dyn(object).data["snapshot.json"].size() > 0 &&
+                dyn(object).data["snapshot.json"].size() <= 1000000
         )
       message: Runtime Secrets must match the fixed assignment projection or image-pull credential name, type, and key set.
     - expression: >-
@@ -233,11 +250,18 @@ spec:
           oldObject.metadata.labels["app.kubernetes.io/managed-by"] == namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] &&
           oldObject.metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
           oldObject.metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
-          oldObject.metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
-          int(oldObject.metadata.labels["praetorium.io/runtime-epoch"]) <= 9007199254740991 &&
-          oldObject.metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
-          int(oldObject.metadata.labels["arcadia.io/generation"]) <= 9007199254740991 &&
-          oldObject.metadata.labels["arcadia.io/release-id"].matches("^(none|[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)$") &&
+          (request.resource.resource != "secrets" || oldObject.metadata.name != "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history-seed" || (
+            !("praetorium.io/runtime-epoch" in oldObject.metadata.labels) &&
+            !("arcadia.io/generation" in oldObject.metadata.labels) &&
+            !("arcadia.io/release-id" in oldObject.metadata.labels)
+          )) &&
+          (request.resource.resource == "secrets" && oldObject.metadata.name == "arcadia-ins-" + namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history-seed" || (
+            oldObject.metadata.labels["praetorium.io/runtime-epoch"].matches("^[1-9][0-9]*$") &&
+            int(oldObject.metadata.labels["praetorium.io/runtime-epoch"]) <= 9007199254740991 &&
+            oldObject.metadata.labels["arcadia.io/generation"].matches("^[1-9][0-9]*$") &&
+            int(oldObject.metadata.labels["arcadia.io/generation"]) <= 9007199254740991 &&
+            oldObject.metadata.labels["arcadia.io/release-id"].matches("^(none|[A-Za-z0-9]([A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?)$")
+          )) &&
           oldObject.metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
           oldObject.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
           oldObject.metadata.labels["app.kubernetes.io/name"] == "scriptorium" &&

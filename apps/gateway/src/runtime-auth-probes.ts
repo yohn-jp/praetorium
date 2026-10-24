@@ -7,14 +7,47 @@ import type { GatewayContext } from "./context.js";
 
 const MAX_REQUEST_BYTES = 8_192;
 const RuntimeAuthProbeRequestSchema = z.strictObject({
-  operationId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/u),
+  operationId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9_.:-]+$/u),
   actorId: z.string().regex(/^[1-9][0-9]{0,15}$/u),
-  instanceId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/u),
+  instanceId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9_.:-]+$/u),
   repositoryId: z.number().int().positive().safe(),
   generation: z.number().int().nonnegative().safe(),
   runtimeEpoch: z.number().int().positive().safe(),
   authorizationRevision: z.number().int().nonnegative().safe(),
 });
+const HistoryDrainGrantRequestSchema = z
+  .strictObject({
+    operationId: z
+      .string()
+      .min(4)
+      .max(128)
+      .regex(/^op_[A-Za-z0-9_.:-]+$/u),
+    actorId: z.string().regex(/^[1-9][0-9]{0,15}$/u),
+    repositoryId: z.number().int().positive().safe(),
+    instanceId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9_.:-]+$/u),
+    authorizationRevision: z.number().int().nonnegative().safe(),
+    oldGeneration: z.number().int().nonnegative().safe(),
+    oldRuntimeEpoch: z.number().int().positive().safe(),
+    currentGeneration: z.number().int().nonnegative().safe(),
+    currentRuntimeEpoch: z.number().int().positive().safe(),
+  })
+  .refine(
+    (input) =>
+      input.oldGeneration !== input.currentGeneration ||
+      input.oldRuntimeEpoch !== input.currentRuntimeEpoch,
+  );
 
 export interface RuntimeAuthProbeGrantSet {
   readonly issuer: string;
@@ -32,7 +65,10 @@ async function boundedJson(request: Request): Promise<unknown> {
   const mediaType = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (mediaType !== "application/json") throw new TypeError("invalid runtime auth probe request");
   const rawLength = request.headers.get("Content-Length");
-  if (rawLength !== null && (!/^(0|[1-9][0-9]*)$/u.test(rawLength) || Number(rawLength) > MAX_REQUEST_BYTES)) {
+  if (
+    rawLength !== null &&
+    (!/^(0|[1-9][0-9]*)$/u.test(rawLength) || Number(rawLength) > MAX_REQUEST_BYTES)
+  ) {
     throw new TypeError("runtime auth probe request is too large");
   }
   const reader = request.body?.getReader();
@@ -59,14 +95,19 @@ async function boundedJson(request: Request): Promise<unknown> {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)) as unknown;
+  return JSON.parse(
+    new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes),
+  ) as unknown;
 }
 
 function response(status: number, code: string): Response {
-  return Response.json({ error: { code } }, {
-    status,
-    headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
-  });
+  return Response.json(
+    { error: { code } },
+    {
+      status,
+      headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" },
+    },
+  );
 }
 
 function differentRepository(repositoryId: number): number {
@@ -85,12 +126,100 @@ function differentEpoch(runtimeEpoch: number): number {
  */
 export function createRuntimeAuthProbeRoutes(context: GatewayContext): Hono {
   const app = new Hono();
+  app.post("/internal/provisioner/history-drain-grant", async (c) => {
+    const secret = c.req.header("X-Control-Plane-Gateway-Auth") ?? "";
+    if (
+      c.req.header("Cookie") !== undefined ||
+      !constantTimeEqual(secret, context.config.controlPlaneSecret)
+    )
+      return response(401, "UNAUTHORIZED");
+
+    let input: z.infer<typeof HistoryDrainGrantRequestSchema>;
+    try {
+      input = HistoryDrainGrantRequestSchema.parse(await boundedJson(c.req.raw));
+    } catch {
+      return response(400, "INVALID_REQUEST");
+    }
+
+    const nowMs = Date.parse(context.requestNow);
+    if (!Number.isFinite(nowMs)) return response(503, "AUTHORITY_UNAVAILABLE");
+    try {
+      const before = await context.controlPlane.getByRepositoryId(input.repositoryId);
+      if (!historyDrainBindingMatches(before, input))
+        return response(403, "CURRENT_BINDING_REQUIRED");
+
+      const access = await context.githubAccess.authorize(
+        input.actorId,
+        input.repositoryId,
+        "read",
+      );
+      if (
+        !access.allowed ||
+        access.repositoryId !== input.repositoryId ||
+        access.installationId !== before.binding.installationId ||
+        !access.permissions.includes("read") ||
+        access.expiresAt <= nowMs
+      )
+        return response(403, "CURRENT_GITHUB_ACCESS_REQUIRED");
+
+      const after = await context.controlPlane.getByRepositoryId(input.repositoryId);
+      if (!historyDrainBindingMatches(after, input) || !sameHistoryDrainBinding(before, after))
+        return response(409, "CURRENT_BINDING_CHANGED");
+
+      const latestNowMs = Math.max(nowMs, Date.now());
+      const ttlSeconds = Math.min(
+        30,
+        context.config.accessGrantTtlSeconds,
+        Math.floor((access.expiresAt - latestNowMs) / 1_000),
+      );
+      if (ttlSeconds < 1) return response(403, "CURRENT_GITHUB_ACCESS_REQUIRED");
+
+      const origin = `https://${applicationHostname("scriptorium", input.repositoryId)}`;
+      const signingKey = await context.getSigningKey();
+      const grant = await issueAccessGrant(signingKey, {
+        id: AccessGrantId.parse(
+          newAccessGrantId(latestNowMs, crypto.getRandomValues(new Uint8Array(10))),
+        ),
+        issuer: context.config.origin,
+        audience: origin,
+        subjectUserId: input.actorId,
+        repositoryId: input.repositoryId,
+        audienceInstanceId: physicalInstanceId(
+          input.instanceId,
+          input.oldRuntimeEpoch,
+          after.instance.legacyRuntimeEpoch,
+        ),
+        runtimeEpoch: input.oldRuntimeEpoch,
+        permissions: ["read"],
+        sessionRevision: 0,
+        authorizationRevision: after.binding.authorizationRevision,
+        now: new Date(latestNowMs).toISOString(),
+        ttlSeconds,
+      });
+      return Response.json(
+        {
+          issuer: context.config.origin,
+          jwksUrl: `${context.config.origin}/.well-known/jwks.json`,
+          origin,
+          audience: origin,
+          authorizationRevision: after.binding.authorizationRevision,
+          grant: grant.token,
+          permissions: ["read"],
+        },
+        { headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } },
+      );
+    } catch {
+      return response(503, "AUTHORITY_UNAVAILABLE");
+    }
+  });
+
   app.post("/internal/provisioner/runtime-auth-probe", async (c) => {
     const secret = c.req.header("X-Control-Plane-Gateway-Auth") ?? "";
     if (
       c.req.header("Cookie") !== undefined ||
       !constantTimeEqual(secret, context.config.controlPlaneSecret)
-    ) return response(401, "UNAUTHORIZED");
+    )
+      return response(401, "UNAUTHORIZED");
 
     let input: z.infer<typeof RuntimeAuthProbeRequestSchema>;
     try {
@@ -107,14 +236,19 @@ export function createRuntimeAuthProbeRoutes(context: GatewayContext): Hono {
       const before = await context.controlPlane.getByRepositoryId(input.repositoryId);
       if (!currentBindingMatches(before, input)) return response(403, "CURRENT_BINDING_REQUIRED");
 
-      const access = await context.githubAccess.authorize(input.actorId, input.repositoryId, "read");
+      const access = await context.githubAccess.authorize(
+        input.actorId,
+        input.repositoryId,
+        "read",
+      );
       if (
         !access.allowed ||
         access.repositoryId !== input.repositoryId ||
         access.installationId !== before.binding.installationId ||
         !access.permissions.includes("read") ||
         access.expiresAt <= nowMs
-      ) return response(403, "CURRENT_GITHUB_ACCESS_REQUIRED");
+      )
+        return response(403, "CURRENT_GITHUB_ACCESS_REQUIRED");
 
       // Re-read authority after GitHub calls so a binding, generation, epoch, or
       // authorization revision change cannot race issuance of a fresh probe.
@@ -135,7 +269,11 @@ export function createRuntimeAuthProbeRoutes(context: GatewayContext): Hono {
         issuer: context.config.origin,
         audience: origin,
         subjectUserId: input.actorId,
-        audienceInstanceId: physicalInstanceId(input.instanceId, input.runtimeEpoch, after.instance.legacyRuntimeEpoch),
+        audienceInstanceId: physicalInstanceId(
+          input.instanceId,
+          input.runtimeEpoch,
+          after.instance.legacyRuntimeEpoch,
+        ),
         runtimeEpoch: input.runtimeEpoch,
         // Repeated health checks only prove access to the assigned runtime.
         // They must never turn the operation actor into an authoring principal.
@@ -152,17 +290,23 @@ export function createRuntimeAuthProbeRoutes(context: GatewayContext): Hono {
       const [valid, wrongRepository, wrongEpoch] = await Promise.all([
         issueAccessGrant(signingKey, {
           ...common,
-          id: AccessGrantId.parse(newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10)))),
+          id: AccessGrantId.parse(
+            newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10))),
+          ),
           repositoryId: input.repositoryId,
         }),
         issueAccessGrant(signingKey, {
           ...common,
-          id: AccessGrantId.parse(newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10)))),
+          id: AccessGrantId.parse(
+            newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10))),
+          ),
           repositoryId: differentRepository(input.repositoryId),
         }),
         issueAccessGrant(signingKey, {
           ...common,
-          id: AccessGrantId.parse(newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10)))),
+          id: AccessGrantId.parse(
+            newAccessGrantId(nowMs, crypto.getRandomValues(new Uint8Array(10))),
+          ),
           repositoryId: input.repositoryId,
           runtimeEpoch: differentEpoch(input.runtimeEpoch),
         }),
@@ -194,14 +338,64 @@ function currentBindingMatches(
 ): snapshot is NonNullable<typeof snapshot> {
   return Boolean(
     snapshot &&
-    !snapshot.binding.suspended &&
-    snapshot.binding.repositoryId === input.repositoryId &&
-    snapshot.binding.instanceId === input.instanceId &&
-    snapshot.binding.authorizationRevision === input.authorizationRevision &&
-    snapshot.instance.repositoryId === input.repositoryId &&
-    snapshot.instance.instanceId === input.instanceId &&
-    snapshot.instance.generation === input.generation &&
-    snapshot.instance.runtimeEpoch === input.runtimeEpoch,
+      !snapshot.binding.suspended &&
+      snapshot.binding.repositoryId === input.repositoryId &&
+      snapshot.binding.instanceId === input.instanceId &&
+      snapshot.binding.authorizationRevision === input.authorizationRevision &&
+      snapshot.instance.repositoryId === input.repositoryId &&
+      snapshot.instance.instanceId === input.instanceId &&
+      snapshot.instance.generation === input.generation &&
+      snapshot.instance.runtimeEpoch === input.runtimeEpoch,
+  );
+}
+
+function historyDrainBindingMatches(
+  snapshot: Awaited<ReturnType<GatewayContext["controlPlane"]["getByRepositoryId"]>>,
+  input: z.infer<typeof HistoryDrainGrantRequestSchema>,
+): snapshot is NonNullable<typeof snapshot> {
+  return Boolean(
+    snapshot &&
+      !snapshot.binding.suspended &&
+      snapshot.binding.repositoryId === input.repositoryId &&
+      snapshot.binding.instanceId === input.instanceId &&
+      snapshot.binding.authorizationRevision === input.authorizationRevision &&
+      (snapshot.binding.appIdentity ?? "scriptorium") === "scriptorium" &&
+      snapshot.instance.repositoryId === input.repositoryId &&
+      snapshot.instance.instanceId === input.instanceId &&
+      snapshot.instance.generation === input.currentGeneration &&
+      snapshot.instance.runtimeEpoch === input.currentRuntimeEpoch &&
+      snapshot.instance.observedGeneration === input.oldGeneration &&
+      snapshot.instance.observedRuntimeEpoch === input.oldRuntimeEpoch &&
+      snapshot.instance.observedState === "ready" &&
+      snapshot.instance.observedRevisionId !== null &&
+      snapshot.instance.currentArtifactDigest !== null,
+  );
+}
+
+function sameHistoryDrainBinding(
+  left: Awaited<ReturnType<GatewayContext["controlPlane"]["getByRepositoryId"]>>,
+  right: Awaited<ReturnType<GatewayContext["controlPlane"]["getByRepositoryId"]>>,
+): boolean {
+  return Boolean(
+    left &&
+      right &&
+      left.binding.repositoryId === right.binding.repositoryId &&
+      left.binding.instanceId === right.binding.instanceId &&
+      left.binding.installationId === right.binding.installationId &&
+      left.binding.bindingEpoch === right.binding.bindingEpoch &&
+      left.binding.authorizationRevision === right.binding.authorizationRevision &&
+      left.binding.suspended === right.binding.suspended &&
+      left.binding.appIdentity === right.binding.appIdentity &&
+      left.instance.instanceId === right.instance.instanceId &&
+      left.instance.repositoryId === right.instance.repositoryId &&
+      left.instance.generation === right.instance.generation &&
+      left.instance.runtimeEpoch === right.instance.runtimeEpoch &&
+      left.instance.observedGeneration === right.instance.observedGeneration &&
+      left.instance.observedRuntimeEpoch === right.instance.observedRuntimeEpoch &&
+      left.instance.observedState === right.instance.observedState &&
+      left.instance.observedRevisionId === right.instance.observedRevisionId &&
+      left.instance.currentArtifactDigest === right.instance.currentArtifactDigest &&
+      left.instance.legacyRuntimeEpoch === right.instance.legacyRuntimeEpoch,
   );
 }
 
@@ -209,13 +403,16 @@ function sameCurrentBinding(
   left: Awaited<ReturnType<GatewayContext["controlPlane"]["getByRepositoryId"]>>,
   right: Awaited<ReturnType<GatewayContext["controlPlane"]["getByRepositoryId"]>>,
 ): boolean {
-  return Boolean(left && right &&
-    left.binding.repositoryId === right.binding.repositoryId &&
-    left.binding.instanceId === right.binding.instanceId &&
-    left.binding.installationId === right.binding.installationId &&
-    left.binding.bindingEpoch === right.binding.bindingEpoch &&
-    left.binding.authorizationRevision === right.binding.authorizationRevision &&
-    left.binding.suspended === right.binding.suspended &&
-    left.instance.generation === right.instance.generation &&
-    left.instance.runtimeEpoch === right.instance.runtimeEpoch);
+  return Boolean(
+    left &&
+      right &&
+      left.binding.repositoryId === right.binding.repositoryId &&
+      left.binding.instanceId === right.binding.instanceId &&
+      left.binding.installationId === right.binding.installationId &&
+      left.binding.bindingEpoch === right.binding.bindingEpoch &&
+      left.binding.authorizationRevision === right.binding.authorizationRevision &&
+      left.binding.suspended === right.binding.suspended &&
+      left.instance.generation === right.instance.generation &&
+      left.instance.runtimeEpoch === right.instance.runtimeEpoch,
+  );
 }

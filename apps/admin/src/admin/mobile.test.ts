@@ -431,6 +431,37 @@ describe("mobile operator console", () => {
     expect(html).toContain('name="expectedRevision" value="7"');
   });
 
+  it("explains a known Canary configuration conflict on Source and Release detail without inventing operation links", () => {
+    const conflict = "canary_configuration_conflict";
+    const guidance = "Canary configuration changed or an operation is still active; inspect the current operation and let normal recovery finish before automatic retry.";
+    const source = renderMobileConsole(model({
+      selectedBuildId: sourceJob.id,
+      detail: dependency({
+        job: { ...sourceJob, error: conflict },
+        attempts: [{ ...attempt, failureCode: conflict, stage: "metadata" }],
+        nextCursor: null,
+        evidence: "not_recorded",
+      }, "GET /v1/operator/source-builds/:id"),
+    }));
+    expect(source).toContain(`<code>${conflict}</code>`);
+    expect(source).toContain(guidance);
+    expect(source).not.toContain('href="/operations/');
+
+    const release = renderMobileConsole(model({
+      section: "releases", selectedReleaseId: "release-conflict",
+      releaseDetail: dependency({
+        release: { id: "release-conflict", version: "0.3.8", imageDigest: "sha256:" + "e".repeat(64), status: "candidate" },
+        workflow: { state: "canary_building", revision: 12, failureCode: conflict, attempts: 2,
+          nextAttemptAt: null, canaryBuildKey: null, canaryOperationId: null },
+        build: { id: "build-conflict", status: "building", attemptCount: 1, failure: null },
+      }, "GET /v1/operator/releases/release-conflict"),
+    }));
+    expect(release).toContain(`<code>${conflict}</code>`);
+    expect(release).toContain(guidance);
+    expect(release).not.toContain('href="/operations/');
+    expect(release).not.toContain(">Retry Canary build</button>");
+  });
+
   it("follows admitted builds to their release status in mobile mode", () => {
     const detail: SourceBuildDetail = {
       job: { ...sourceJob, admittedReleaseId: "release-admitted" },

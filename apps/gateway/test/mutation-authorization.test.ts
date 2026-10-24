@@ -875,7 +875,7 @@ describe("Gateway mutation authorization endpoint", () => {
     }));
     const host = `https://${REPOSITORY_ID}.scriptorium.yohn.jp`;
     expect(response.status).toBe(200);
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, no-transform");
     expect(response.headers.get("Content-Security-Policy")).toContain(`form-action ${host}`);
     expect(response.headers.get("Location")).toBeNull();
     const html = await response.text();

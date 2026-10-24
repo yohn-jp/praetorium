@@ -4,6 +4,10 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  quotaStatusMatchesLiveSpec,
+  renderTestManifestDocuments,
+} from "../../scripts/ci/history-admission-readiness.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(resolve(repositoryRoot, "package.json"));
@@ -19,6 +23,9 @@ const namespaceDocuments = parseYamlDocuments(
 const ingressRoutePolicyDocuments = parseYamlDocuments(
   "infrastructure/kubernetes/policies/provisioner-ingressroute.yaml",
 );
+const historyPvcPolicyDocuments = parseYamlDocuments(
+  "infrastructure/kubernetes/policies/provisioner-history-pvc.yaml",
+);
 const traefikHelmDocuments = parseYamlDocuments(
   "infrastructure/kubernetes/controllers/helm-releases.yaml",
 );
@@ -31,6 +38,48 @@ const namespacePolicy = namespaceDocuments.find(
 const namespaceBinding = namespaceDocuments.find(
   (document) => document.kind === "ValidatingAdmissionPolicyBinding",
 );
+
+test("quota readiness compares API-canonicalized live spec and status quantities", () => {
+  const renderedQuota = {
+    spec: { hard: { "limits.ephemeral-storage": "8192Mi", "requests.storage": "512Mi" } },
+  };
+  const liveQuota = {
+    spec: { hard: { "requests.storage": "512Mi", "limits.ephemeral-storage": "8Gi" } },
+    status: { hard: { "limits.ephemeral-storage": "8Gi", "requests.storage": "512Mi" } },
+  };
+  assert.equal(renderedQuota.spec.hard["limits.ephemeral-storage"], "8192Mi");
+  assert.equal(liveQuota.spec.hard["limits.ephemeral-storage"], "8Gi");
+  assert.equal(quotaStatusMatchesLiveSpec(liveQuota), true);
+  assert.equal(
+    quotaStatusMatchesLiveSpec({
+      ...liveQuota,
+      status: { hard: { ...liveQuota.status.hard, "limits.ephemeral-storage": "7Gi" } },
+    }),
+    false,
+  );
+  assert.equal(quotaStatusMatchesLiveSpec({ spec: liveQuota.spec }), false);
+  assert.equal(quotaStatusMatchesLiveSpec({ spec: { hard: {} }, status: { hard: {} } }), false);
+});
+
+test("CI admission manifest rendering substitutes cluster IDs and rejects unresolved placeholders", () => {
+  const clusterId = "ci-owned-cluster";
+  const render = (path) =>
+    renderTestManifestDocuments(parseYamlDocuments(path), { CLUSTER_ID: clusterId });
+  const boundary = render("infrastructure/kubernetes/policies/provisioner-boundary.yaml");
+  const history = render("infrastructure/kubernetes/policies/provisioner-history-pvc.yaml");
+  const tenant = render("infrastructure/kubernetes/policies/tenant-pod-policy.yaml");
+  const rbac = render("infrastructure/kubernetes/policies/provisioner-rbac.yaml");
+  assert.match(JSON.stringify(boundary), /ci-owned-cluster/u);
+  assert.match(JSON.stringify(history), /ci-owned-cluster/u);
+  assert.doesNotMatch(
+    JSON.stringify([...boundary, ...history, ...tenant, ...rbac]),
+    /@@[A-Z0-9_]+@@/u,
+  );
+  assert.throws(
+    () => renderTestManifestDocuments([{ value: "@@UNKNOWN_CLUSTER_TOKEN@@" }], {}),
+    /unresolved admission test placeholders: @@UNKNOWN_CLUSTER_TOKEN@@/u,
+  );
+});
 const roleBindingPolicy = roleBindingDocuments.find(
   (document) => document.kind === "ValidatingAdmissionPolicy",
 );
@@ -60,6 +109,60 @@ const ingressRoutePolicy = ingressRoutePolicyDocuments.find(
     document.kind === "ValidatingAdmissionPolicy" &&
     document.metadata.name === "praetorium-provisioner-tenant-ingressroute",
 );
+const historyPvcPolicy = historyPvcPolicyDocuments.find(
+  (document) =>
+    document.kind === "ValidatingAdmissionPolicy" &&
+    document.metadata.name === "praetorium-provisioner-history-pvc",
+);
+const historyPvcBinding = historyPvcPolicyDocuments.find(
+  (document) =>
+    document.kind === "ValidatingAdmissionPolicyBinding" &&
+    document.metadata.name === "praetorium-provisioner-history-pvc",
+);
+
+test("history PVC admission is bound to one stable, owned local-path claim", () => {
+  assert.ok(historyPvcPolicy);
+  assert.ok(historyPvcBinding);
+  assert.equal(historyPvcPolicy.spec.failurePolicy, "Fail");
+  assert.deepEqual(historyPvcBinding.spec.validationActions, ["Deny"]);
+  assert.equal(historyPvcBinding.spec.policyName, historyPvcPolicy.metadata.name);
+  assert.deepEqual(historyPvcPolicy.spec.matchConstraints.resourceRules, [
+    {
+      apiGroups: [""],
+      apiVersions: ["v1"],
+      operations: ["CREATE", "UPDATE"],
+      resources: ["persistentvolumeclaims"],
+    },
+  ]);
+  assert.match(
+    historyPvcPolicy.spec.matchConditions[0].expression,
+    /system:serviceaccount:praetorium-system:praetorium-provisioner/u,
+  );
+  const expressions = historyPvcPolicy.spec.validations.map(({ expression }) => expression);
+  assert.match(
+    expressions[0],
+    /namespaceObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\] == "@@CLUSTER_ID@@"/u,
+  );
+  assert.match(expressions[1], /-history"/u);
+  assert.match(
+    expressions[1],
+    /object\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\] == namespaceObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\]/u,
+  );
+  assert.doesNotMatch(expressions[1], /praetorium\.io\/runtime-cluster-id/u);
+  assert.match(expressions[1], /praetorium\.io\/history-contract/u);
+  assert.match(expressions[1], /!\("praetorium\.io\/runtime-epoch" in object\.metadata\.labels\)/u);
+  assert.match(expressions[1], /!\("arcadia\.io\/generation" in object\.metadata\.labels\)/u);
+  assert.match(expressions[1], /!\("arcadia\.io\/release-id" in object\.metadata\.labels\)/u);
+  assert.match(expressions[2], /storageClassName == "local-path"/u);
+  assert.match(expressions[2], /accessModes == \["ReadWriteOnce"\]/u);
+  assert.match(expressions[2], /dataSourceRef/u);
+  assert.match(expressions[3], /request\.operation != "UPDATE"/u);
+  assert.match(
+    expressions[3],
+    /oldObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\] == object\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\]/u,
+  );
+  assert.match(expressions[3], /requests\["storage"\]/u);
+});
 
 test("tenant IngressRoute deny-list covers the pinned Traefik CRD object fields", () => {
   const traefikRelease = traefikHelmDocuments.find(
@@ -449,6 +552,7 @@ test("policy identity matches the provider principal and emitted ownership contr
     ...roleBindingPolicy.spec.validations.map(({ expression }) => expression),
     ...runtimeResourcePolicy.spec.validations.map(({ expression }) => expression),
     ...runtimeResourceDeletePolicy.spec.validations.map(({ expression }) => expression),
+    ...historyPvcPolicy.spec.validations.map(({ expression }) => expression),
   ].join("\n");
   for (const key of sourceLabelKeys) {
     assert.ok(expressions.includes(key), `admission policies do not cover provider label ${key}`);
@@ -485,4 +589,140 @@ test("the boundary excludes legacy data operations and unrelated runtime resourc
     );
   }
   assert.equal(policySources.includes("${CLUSTER_ID}"), false);
+});
+
+test("the history seed Secret has a bounded create-once shape with stable ownership", () => {
+  const identity = runtimeResourcePolicy.spec.validations[1].expression;
+  const secretShape = runtimeResourcePolicy.spec.validations[3].expression;
+  const update = runtimeResourcePolicy.spec.validations[4].expression;
+  const deleteSecretShape = runtimeResourceDeletePolicy.spec.validations[1].expression;
+  const normalizedIdentity = identity.replace(/\s+/gu, " ");
+  assert.match(normalizedIdentity, /-history-seed/u);
+  assert.match(
+    normalizedIdentity,
+    /!\("praetorium\.io\/runtime-epoch" in object\.metadata\.labels\)/u,
+  );
+  assert.match(normalizedIdentity, /!\("arcadia\.io\/generation" in object\.metadata\.labels\)/u);
+  assert.match(normalizedIdentity, /!\("arcadia\.io\/release-id" in object\.metadata\.labels\)/u);
+  assert.match(secretShape, /-history-seed/u);
+  assert.match(secretShape, /history-contract"\] == "v1"/u);
+  assert.match(secretShape, /dyn\(object\)\.immutable == true/u);
+  assert.match(secretShape, /"snapshot\.json" in dyn\(object\)\.data/u);
+  assert.match(secretShape, /snapshot\.json"\]\.size\(\) <= 1000000/u);
+  assert.match(update, /oldObject\.metadata\.labels\["arcadia\.io\/ownership-version"\]/u);
+  assert.match(update, /oldObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\]/u);
+  assert.doesNotMatch(deleteSecretShape, /-history-seed/u);
+  assert.equal(
+    runtimeResourceDeletePolicy.spec.matchConstraints.resourceRules.some((rule) =>
+      rule.resources.includes("persistentvolumeclaims"),
+    ),
+    false,
+  );
+});
+
+test("the canonical Kind job runs real server-side history admission scenarios", () => {
+  const workflow = readFileSync(
+    resolve(repositoryRoot, ".github/workflows/publish-services.yml"),
+    "utf8",
+  );
+  const runner = readFileSync(
+    resolve(repositoryRoot, "scripts/ci/verify-history-admission.mjs"),
+    "utf8",
+  );
+  assert.match(
+    workflow,
+    /node scripts\/ci\/verify-history-admission\.mjs \/tmp\/praetorium-runtime\.json/u,
+  );
+  assert.match(runner, /kind-praetorium-ci/u);
+  assert.match(runner, /--dry-run=server/u);
+  assert.match(runner, /function loadRenderedTestYaml\(path\)/u);
+  for (const path of [
+    "provisioner-rbac.yaml",
+    "provisioner-history-pvc.yaml",
+    "tenant-pod-policy.yaml",
+  ])
+    assert.ok(
+      runner.includes(`loadRenderedTestYaml("infrastructure/kubernetes/policies/${path}")`),
+      `Kind policy apply bypasses CI template rendering for ${path}`,
+    );
+  assert.match(
+    runner,
+    /const ownerPolicies\s*=\s*loadRenderedTestYaml\([\s\S]*?provisioner-boundary\.yaml/u,
+  );
+  assert.doesNotMatch(runner, /applyObjects\(loadYaml\(/u);
+  for (const expectedPolicy of [
+    "praetorium-provisioner-history-pvc",
+    "praetorium-provisioner-runtime-resources",
+    "praetorium-tenant-pods-restricted",
+  ]) {
+    assert.ok(runner.includes(expectedPolicy), `Kind scenarios omit ${expectedPolicy}`);
+  }
+  assert.match(runner, /wrongOwnerPvc/u);
+  assert.match(runner, /oversizedPvc/u);
+  assert.match(runner, /badSizePatch/u);
+  assert.match(runner, /badContractPatch/u);
+  assert.match(runner, /requests\.storage, "512Mi"/u);
+  assert.match(runner, /wrongPodClaim/u);
+  assert.match(runner, /wrongPodPath/u);
+  const readinessCall = runner.lastIndexOf("waitForHistoryAdmissionReadiness(quota)");
+  const firstScenario = runner.indexOf("createObject(pvc, { dryRun: true, asProvisioner: true })");
+  assert.ok(
+    runner.indexOf(
+      'applyObjects(loadYaml("infrastructure/kubernetes/policies/tenant-pod-policy.yaml"))',
+    ) < readinessCall,
+  );
+  assert.ok(readinessCall >= 0 && readinessCall < firstScenario);
+  for (const policy of [
+    "praetorium-provisioner-runtime-resources",
+    "praetorium-provisioner-runtime-resource-delete",
+    "praetorium-provisioner-history-pvc",
+    "praetorium-tenant-pods-restricted",
+  ])
+    assert.ok(runner.includes(`"${policy}"`), `readiness gate omits ${policy}`);
+  assert.match(runner, /--for=jsonpath=\{\.status\.observedGeneration\}=1/u);
+  assert.match(runner, /--timeout=\$\{timeoutMs\}ms/u);
+  assert.match(runner, /status\?\.observedGeneration !== 1/u);
+  assert.match(runner, /status\?\.typeChecking/u);
+  assert.match(runner, /status\?\.conditions/u);
+  assert.ok(runner.includes(`JSON.stringify(binding.spec?.validationActions) !== '["Deny"]'`));
+  assert.match(runner, /quotaStatusMatchesLiveSpec\(lastObserved\)/u);
+  assert.doesNotMatch(runner, /waitForAdmissionGuards/u);
+  assert.match(runner, /DEFAULT_KUBECTL_TIMEOUT_MS = 60_000/u);
+  assert.equal((runner.match(/spawnSync\("kubectl"/gu) ?? []).length, 1);
+  assert.match(runner, /--request-timeout=\$\{timeoutMs\}ms/u);
+  assert.match(runner, /timeout: timeoutMs/u);
+  assert.match(runner, /readiness deadline expired before kubectl request/u);
+  assert.match(
+    runner,
+    /readJsonResource\("validatingadmissionpolicy", name, undefined, deadline\)/u,
+  );
+  assert.match(runner, /quota\.metadata\.namespace,\s*deadline/u);
+  const negativePvcCreates = [
+    runner.indexOf("createObject(wrongOwnerPvc"),
+    runner.indexOf("createObject(wrongClassPvc"),
+    runner.indexOf("createObject(wrongNamePvc"),
+    runner.indexOf("createObject(oversizedPvc"),
+  ];
+  const validPvcUpdateFixture = runner.indexOf(
+    'createObject(pvc, { asProvisioner: true, label: "history-pvc-update-fixture" })',
+  );
+  const firstPvcUpdate = runner.indexOf("kubectl(\n  [", runner.indexOf("const badSizePatch"));
+  assert.ok(negativePvcCreates.every((index) => index >= 0 && index < validPvcUpdateFixture));
+  assert.ok(validPvcUpdateFixture < firstPvcUpdate);
+  assert.match(runner, /const runtimeServiceAccounts = rendered\.filter/u);
+  assert.match(
+    runner,
+    /runtimeServiceAccount\.metadata\.name,[\s\S]*deployment\.spec\.template\.spec\.serviceAccountName/u,
+  );
+  const positivePodAdmission = runner.indexOf("createObject(pod, { dryRun: true })");
+  const seedPrerequisite = runner.indexOf(
+    'createObject(seedSecret, { asProvisioner: true, label: "history-seed-pod-prerequisite" })',
+  );
+  const serviceAccountPrerequisite = runner.indexOf("createObject(runtimeServiceAccount,");
+  assert.ok(seedPrerequisite >= 0 && seedPrerequisite < positivePodAdmission);
+  assert.ok(serviceAccountPrerequisite >= 0 && serviceAccountPrerequisite < positivePodAdmission);
+  assert.match(runner, /function safeStderr\(stderr\)/u);
+  assert.match(runner, /subarray\(0, 4096\)/u);
+  assert.ok(runner.includes("replace(/\\u001b\\[[0-?]*"));
+  assert.match(runner, /action=\$\{action\} namespace=\$\{namespace\} name=\$\{name\}/u);
 });

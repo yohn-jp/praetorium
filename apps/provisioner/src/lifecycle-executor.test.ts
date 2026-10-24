@@ -37,7 +37,7 @@ describe("recovered completion auth transport", () => {
     const probe = {
       available: true,
       withEndpointResolver: (resolve: typeof resolveEndpoint) => {
-        resolveEndpoint = resolve;
+        if (resolveEndpoint === undefined) resolveEndpoint = resolve;
         return probe;
       },
       forLease: () => probe,

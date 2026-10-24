@@ -102,10 +102,10 @@ test(
         result.stdout,
         /PRAETORIUM_BUILD_COMPOSITION_REPOSITORY: ["']?praetorium-render\/compositions["']?\s*$/m,
       );
-      assert.equal((result.stdout.match(/^kind: ValidatingAdmissionPolicy$/gm) ?? []).length, 7);
+      assert.equal((result.stdout.match(/^kind: ValidatingAdmissionPolicy$/gm) ?? []).length, 8);
       assert.equal(
         (result.stdout.match(/^kind: ValidatingAdmissionPolicyBinding$/gm) ?? []).length,
-        7,
+        8,
       );
       assert.equal((result.stdout.match(/^kind: ClusterRole$/gm) ?? []).length, 2);
       assert.equal((result.stdout.match(/^kind: ClusterRoleBinding$/gm) ?? []).length, 1);

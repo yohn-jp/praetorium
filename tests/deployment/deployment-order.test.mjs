@@ -27,6 +27,7 @@ test("platform apply migrates and reads back D1 before Build Worker images and W
     ["service-image-publication.mjs", null],
     ["deploy-cloudflare.mjs", "--migrate"],
     ["coordination", "--apply"],
+    ["observer", "--apply"],
     ["deploy-k3s.mjs", "--apply"],
     ["verify-work-notifications.mjs", null],
     ["deploy-cloudflare.mjs", "--workers"],

@@ -7,6 +7,7 @@ export const KUBERNETES_RESOURCE_KINDS = [
   "IngressRoute",
   "LimitRange",
   "NetworkPolicy",
+  "PersistentVolumeClaim",
   "ResourceQuota",
   "RoleBinding",
   "Secret",
@@ -35,6 +36,7 @@ export interface KubernetesResource {
   readonly data?: Readonly<Record<string, string>>;
   readonly stringData?: Readonly<Record<string, string>>;
   readonly type?: string;
+  readonly immutable?: boolean;
   readonly automountServiceAccountToken?: boolean;
   readonly roleRef?: Readonly<Record<string, string>>;
   readonly subjects?: readonly Readonly<Record<string, string>>[];

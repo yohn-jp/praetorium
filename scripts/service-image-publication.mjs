@@ -39,7 +39,16 @@ export const serviceImages = [
     key: "coordination",
     dockerfile: "infrastructure/docker/service-runtime.Dockerfile",
   },
+  {
+    service: "observer",
+    key: "observer",
+    dockerfile: "infrastructure/docker/service-runtime.Dockerfile",
+  },
 ];
+
+export function serviceImageRepository(service) {
+  return `yohn-jp/praetorium/${service === "observer" ? "management-observer" : service}`;
+}
 const NODE_IMAGE =
   "docker.io/library/node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5";
 const BUILDKIT_IMAGE =
@@ -120,7 +129,7 @@ export function verifiedMain(root, execute = (command, args) => run(root, comman
   const jobs = JSON.parse(
     execute("gh", ["api", `repos/${REPOSITORY}/actions/runs/${ci.id}/jobs?per_page=100`]),
   ).jobs?.filter((job) => !((job.name === "candidate-images" || job.name.startsWith("candidate-images (")) && job.conclusion === "skipped"));
-  const verifiedServices = [...serviceImages.map(({ service }) => service), "observer"];
+  const verifiedServices = serviceImages.map(({ service }) => service);
   if (
     !Array.isArray(jobs) ||
     jobs.length !== verifiedServices.length + 3 ||
@@ -225,7 +234,7 @@ export function serviceBuildArguments({
     "--opt",
     "attest:provenance=mode=max",
     "--output",
-    `type=image,name=ghcr.io/${REPOSITORY}/${service}:${tag},push=true,oci-mediatypes=true`,
+    `type=image,name=ghcr.io/${serviceImageRepository(service)}:${tag},push=true,oci-mediatypes=true`,
     "--metadata-file",
     metadata,
   ];
@@ -245,7 +254,7 @@ export async function prepareServiceImages({
   const result = structuredClone(inventory);
   for (const { service, key } of serviceImages) {
     const current = inventory.images[key];
-    if (current != null && !current.startsWith(`ghcr.io/${REPOSITORY}/${service}@sha256:`)) {
+    if (current != null && !current.startsWith(`ghcr.io/${serviceImageRepository(service)}@sha256:`)) {
       throw new Error(
         `Existing ${service} repository differs from the canonical publication destination`,
       );
@@ -254,7 +263,7 @@ export async function prepareServiceImages({
   const tag = published ? `source-${source.revision}` : `source-${source.revision}-${randomUUID()}`;
   const images = {};
   for (const image of serviceImages) {
-    const repository = `${REPOSITORY}/${image.service}`;
+    const repository = serviceImageRepository(image.service);
     let digest;
     if (published) {
       const receipt = published[image.service];
@@ -385,7 +394,7 @@ export async function adoptCiServiceImages({
     );
     const registry = new GhcrRegistryClient({
       pullCredential: await readRegistryPullCredential(secrets.buildWorkerRegistryPull),
-      allowedRepositories: serviceImages.map(({ service }) => `${REPOSITORY}/${service}`),
+      allowedRepositories: serviceImages.map(({ service }) => serviceImageRepository(service)),
       maxImageLayerBytes: inventory.buildPolicy.maxImageLayerBytes,
       maxImageVerificationMs: inventory.buildPolicy.maxImageVerificationMs,
       maxRegistryRequestMs: inventory.buildPolicy.maxRegistryRequestMs,
@@ -418,7 +427,7 @@ export async function adoptCiServiceImages({
           throw new Error("Main changed during image admission");
       },
     });
-    console.log(`Adopted four CI-published service images. Prior inventory retained at ${backup}`);
+    console.log(`Adopted five CI-published service images. Prior inventory retained at ${backup}`);
     console.log(`Image receipt: ${receiptPath}`);
     return prepared.receipt;
   } finally {

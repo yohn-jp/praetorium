@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url);
 const yaml = require("../../node_modules/.pnpm/node_modules/js-yaml");
 const documents = [
   "provisioner-boundary.yaml",
+  "provisioner-history-pvc.yaml",
   "provisioner-rolebinding.yaml",
   "provisioner-ingressroute.yaml",
   "provisioner-networkpolicy.yaml",
@@ -59,7 +60,7 @@ function clients(failure) {
       if (input === bundle) check("full-apply");
       else {
         assert.doesNotMatch(input, /kind: ClusterRoleBinding/);
-        assert.equal(yaml.loadAll(input).length, 14);
+        assert.equal(yaml.loadAll(input).length, 16);
         check("guard-apply");
       }
     },
@@ -87,8 +88,8 @@ test("bootstrap bundle is applied only after discovery, full server dry-run, gua
   const client = clients();
   await applyGuardedBundle(client);
   assert.deepEqual(client.calls.slice(0, 3), ["discovery", "dry-run", "guard-apply"]);
-  assert.equal(client.calls.filter((call) => call === "read-policy").length, 7);
-  assert.equal(client.calls.filter((call) => call === "read-binding").length, 7);
+  assert.equal(client.calls.filter((call) => call === "read-policy").length, 8);
+  assert.equal(client.calls.filter((call) => call === "read-binding").length, 8);
   assert.equal(client.calls.at(-1), "full-apply");
 });
 

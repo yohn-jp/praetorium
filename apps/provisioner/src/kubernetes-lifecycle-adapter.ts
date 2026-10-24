@@ -239,6 +239,14 @@ export class KubernetesLifecycleRuntimeAdapter
   private readonly pollIntervalMs: number;
   private identityRenewalController: AbortController | undefined;
   private identityRenewalTask: Promise<void> | undefined;
+  private legacyHistoryDrain:
+    | ((
+        assignment: RuntimeAssignment,
+        census: WriterCensus,
+        beforeEffect: BeforeLifecycleEffect,
+        signal?: AbortSignal,
+      ) => Promise<void>)
+    | undefined;
 
   constructor(
     options: InClusterRuntimeOptions,
@@ -291,6 +299,17 @@ export class KubernetesLifecycleRuntimeAdapter
     const identity = writerCensusIdentity(instanceId, repositoryId, this.fence);
     const observation = await this.provider.inspect(identity, signal);
     return censusOf(observation);
+  }
+
+  setLegacyHistoryDrain(
+    drain: (
+      assignment: RuntimeAssignment,
+      census: WriterCensus,
+      beforeEffect: BeforeLifecycleEffect,
+      signal?: AbortSignal,
+    ) => Promise<void>,
+  ): void {
+    this.legacyHistoryDrain = drain;
   }
 
   async recoverTargetAuthority(
@@ -375,6 +394,26 @@ export class KubernetesLifecycleRuntimeAdapter
   ): Promise<void> {
     const spec = runtimeSpec(assignment);
     const deadline = this.now() + this.convergenceTimeoutMs;
+    await beforeEffect();
+    await this.provider.preserveHistoryBeforeStop(
+      spec,
+      signal ?? new AbortController().signal,
+      beforeEffect,
+      async ({ podName, podUid }) => {
+        const drain = this.legacyHistoryDrain;
+        if (drain === undefined) throw new Error("legacy_history_drain_transport_unavailable");
+        const before = await this.inspectExactLegacyHistoryWriter(
+          assignment,
+          podName,
+          podUid,
+          signal,
+        );
+        await beforeEffect();
+        await drain(assignment, before, beforeEffect, signal);
+        await beforeEffect();
+        await this.inspectExactLegacyHistoryWriter(assignment, podName, podUid, signal);
+      },
+    );
     do {
       await beforeEffect();
       const result = await this.provider.ensureStopped(
@@ -657,6 +696,28 @@ export class KubernetesLifecycleRuntimeAdapter
       signal ?? new AbortController().signal,
       beforeEffect,
     );
+  }
+
+  private async inspectExactLegacyHistoryWriter(
+    assignment: RuntimeAssignment,
+    podName: string,
+    podUid: string,
+    signal?: AbortSignal,
+  ): Promise<WriterCensus> {
+    const identity = parseIdentity(assignment);
+    const observation = await this.provider.inspect(identity, signal);
+    const census = censusOf(observation);
+    const writer = observation.writerCensus.pods[0];
+    if (
+      !sameIdentity(observation, assignment) ||
+      !isExactSoleTargetCensus(census, assignment.runtimeEpoch, this.now()) ||
+      observation.observedImageDigest !== assignment.deployment.platformManifestDigest ||
+      writer?.name !== podName ||
+      writer.uid !== podUid ||
+      writer.generation !== assignment.generation ||
+      !writer.imageIds.some((imageId) => imageId.endsWith(assignment.deployment.platformManifestDigest))
+    ) throw new Error("legacy_history_drain_writer_changed");
+    return census;
   }
 
   private get fenceRepositoryId(): number {

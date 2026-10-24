@@ -498,20 +498,36 @@ export class LifecycleProvisionerExecutor implements ProvisionerOperationExecuto
         currentReservationEpoch: retirementReservation?.runtimeEpoch ?? null,
       },
     });
+    const lifecycleAuthProbe = this.options.authProbe
+      .withEndpointResolver(async (assignment, signal) => {
+        // A recovered completion checkpoint skips start(), including its
+        // identity renewal loop. Remote snapshot reads still need a current
+        // repository proof; renew through the existing fenced provider.
+        await runtime.refreshRuntimeIdentity(assignment, context.assertLease, signal);
+        return runtime.controlEndpoint(assignment, signal);
+      })
+      .forLease(claim, this.options.workerId);
+    const historyDrainProbe = this.options.authProbe
+      .withEndpointResolver((assignment, signal) => runtime.controlEndpoint(assignment, signal))
+      .forLease(claim, this.options.workerId);
+    runtime.setLegacyHistoryDrain(async (assignment, census, beforeEffect, signal) => {
+      const drain = historyDrainProbe.drainLegacyHistory;
+      if (drain === undefined) throw new Error("runtime_history_drain_transport_unavailable");
+      await drain.call(
+        historyDrainProbe,
+        assignment,
+        census,
+        journal.currentCheckpointSequence,
+        beforeEffect,
+        signal,
+      );
+    });
     const service = new LifecycleService({
       journal,
       builds: new ClaimedArtifactBuildProvider(claim),
       capacity,
       producer,
-      authProbe: this.options.authProbe
-        .withEndpointResolver(async (assignment, signal) => {
-          // A recovered completion checkpoint skips start(), including its
-          // identity renewal loop. Remote snapshot reads still need a current
-          // repository proof; renew through the existing fenced provider.
-          await runtime.refreshRuntimeIdentity(assignment, context.assertLease, signal);
-          return runtime.controlEndpoint(assignment, signal);
-        })
-        .forLease(claim, this.options.workerId),
+      authProbe: lifecycleAuthProbe,
       runtime,
       routes: runtime,
       recoverTargetAuthority: (input, beforeEffect, signal) =>

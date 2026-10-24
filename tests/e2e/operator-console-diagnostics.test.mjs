@@ -16,6 +16,7 @@ const COMMIT = "a".repeat(40);
 const SESSION_COOKIE = "__Host-praetorium_session";
 const CSRF_COOKIE = "__Host-praetorium_csrf";
 const ADMIN_ID = "213253858";
+const FORCED_IDEMPOTENCY_TOKEN = "_AAAAAAAAAAAAAAAAAAAAA";
 const EVIDENCE_DIR = process.env.PRAETORIUM_OPERATOR_EVIDENCE_DIR ??
   "/data/praetorium-console-browser/artifacts";
 
@@ -261,6 +262,33 @@ async function startServer(controller) {
   return { origin, server, csrf };
 }
 
+async function renderWithNonAlphanumericLeadingToken(render) {
+  const webCrypto = globalThis.crypto;
+  const originalDescriptor = Object.getOwnPropertyDescriptor(webCrypto, "getRandomValues");
+  const nativeGetRandomValues = webCrypto.getRandomValues.bind(webCrypto);
+  let injected = false;
+  Object.defineProperty(webCrypto, "getRandomValues", {
+    configurable: true,
+    value(array) {
+      nativeGetRandomValues(array);
+      if (!injected && array.byteLength === 16) {
+        // A deterministic 128-bit token whose base64url form starts with `_`.
+        array.fill(0);
+        array[0] = 0xfc;
+        injected = true;
+      }
+      return array;
+    },
+  });
+  try {
+    await render();
+    assert.equal(injected, true, "the real 128-bit retry idempotency key must be injected");
+  } finally {
+    if (originalDescriptor) Object.defineProperty(webCrypto, "getRandomValues", originalDescriptor);
+    else delete webCrypto.getRandomValues;
+  }
+}
+
 function stableReleasePayload() {
   return {
     items: [],
@@ -347,11 +375,13 @@ test("operator console browser diagnostics contract uses local fixture data", { 
   const serverFixture = await startServer(controller);
   let browser;
   let currentPage;
+  const sourceRetryTraffic = [];
   const result = {
     proof: "local-server-rendered operator diagnostics browser contract",
     hostedAcceptance: "NOT_CHECKED",
     viewports: [],
     states: [],
+    sourceRetryProof: [],
   };
   const oldFetch = globalThis.fetch;
   try {
@@ -391,6 +421,34 @@ test("operator console browser diagnostics contract uses local fixture data", { 
     currentPage.setDefaultTimeout(8_000);
     const consoleErrors = [];
     currentPage.on("pageerror", (error) => consoleErrors.push(error.message));
+    currentPage.on("request", (request) => {
+      const url = new URL(request.url());
+      if (request.method() === "POST" && url.pathname === `/source-builds/${JOB_ID}/retry`) {
+        const fields = new URLSearchParams(request.postData() ?? "");
+        sourceRetryTraffic.push({
+          method: request.method(),
+          path: url.pathname,
+          query: url.search,
+          formFields: [...fields.keys()].sort(),
+          commandKeyStartsAlphanumeric: /^[A-Za-z0-9]/u.test(fields.get("idempotencyKey") ?? ""),
+          containsForcedRandomToken: (fields.get("idempotencyKey") ?? "").includes(FORCED_IDEMPOTENCY_TOKEN),
+          contentType: request.headers()["content-type"] ?? null,
+          event: "request",
+        });
+      }
+    });
+    currentPage.on("response", (response) => {
+      const url = new URL(response.url());
+      if (url.pathname === `/source-builds/${JOB_ID}/retry`) {
+        const location = response.headers()["location"];
+        sourceRetryTraffic.push({
+          status: response.status(),
+          path: url.pathname,
+          location: location ? new URL(location, url).pathname + new URL(location, url).search : null,
+          event: "response",
+        });
+      }
+    });
 
     async function runBuildJourney(mode, width) {
       const activate = async (locator) => {
@@ -420,7 +478,8 @@ test("operator console browser diagnostics contract uses local fixture data", { 
       result.states.push(`${mode}: building`);
 
       controller.state = "failed";
-      await currentPage.reload({ waitUntil: "domcontentloaded" });
+      await renderWithNonAlphanumericLeadingToken(() =>
+        currentPage.reload({ waitUntil: "domcontentloaded" }));
       await currentPage.getByText("SOURCE_BUILD_FAILED").first().waitFor();
       const failureText = await currentPage.locator("body").innerText();
       assert.match(failureText, /BuildKit failed <img src=x onerror="alert\(1\)">/i);
@@ -441,6 +500,22 @@ test("operator console browser diagnostics contract uses local fixture data", { 
       await activate(currentPage.getByRole("button", { name: "Retry Source build" }));
       await currentPage.waitForURL((url) => url.pathname === `/builds/${JOB_ID}` &&
         url.searchParams.get("ui") === mode && url.searchParams.get("notice") === "Source retry accepted for " + JOB_ID);
+      const retryRequest = [...sourceRetryTraffic].reverse().find((event) => event.event === "request");
+      const retryResponse = [...sourceRetryTraffic].reverse().find((event) => event.event === "response");
+      assert.equal(retryRequest?.commandKeyStartsAlphanumeric, true,
+        "the accepted command key must satisfy the canonical first-character constraint");
+      assert.equal(retryRequest?.containsForcedRandomToken, true,
+        "the valid command key must preserve the injected leading-underscore token suffix");
+      assert.equal(retryResponse?.status, 303, "accepted retry must redirect to authoritative build detail");
+      assert.match(controller.retries.at(-1)?.idempotencyKey ?? "", /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u,
+        "the CP receives a parser-valid idempotency key");
+      result.sourceRetryProof.push({
+        mode,
+        commandKeyStartsAlphanumeric: retryRequest?.commandKeyStartsAlphanumeric ?? false,
+        forcedRandomTokenPreserved: retryRequest?.containsForcedRandomToken ?? false,
+        responseStatus: retryResponse?.status ?? null,
+        destinationPath: retryResponse?.location?.split("?")[0] ?? null,
+      });
       assert.match(await currentPage.locator("body").innerText(), /retry accepted/i);
       assert.match(await currentPage.locator("body").innerText(), /BuildKit failed <img src=x/i);
       const afterNotice = await currentPage.evaluate(() => {
@@ -562,6 +637,16 @@ test("operator console browser diagnostics contract uses local fixture data", { 
       `${JSON.stringify(result, null, 2)}\n`);
     t.diagnostic(JSON.stringify(result));
   } catch (error) {
+    if (currentPage) {
+      const current = new URL(currentPage.url());
+      result.failurePage = {
+        path: current.pathname + current.search,
+        visibleText: await currentPage.locator("body").innerText().catch(() => "").then(text => text.slice(0, 2000)),
+      };
+    }
+    result.sourceRetryTraffic = sourceRetryTraffic;
+    result.retryCount = controller.retries.length;
+    result.controlPlaneRoutes = controller.cpCalls.map(call => ({ method: call.method, path: call.path }));
     if (currentPage) {
       await currentPage.screenshot({
         path: path.join(EVIDENCE_DIR, "operator-console-diagnostics-failure.png"),

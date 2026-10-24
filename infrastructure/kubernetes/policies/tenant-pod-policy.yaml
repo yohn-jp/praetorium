@@ -30,6 +30,71 @@ spec:
     - expression: >-
         object.spec.?volumes.orValue([]).all(volume, !has(volume.hostPath))
       message: Host paths and host sockets are not allowed in tenant pods.
+    - expression: >-
+        object.spec.?volumes.orValue([]).all(volume,
+          !has(volume.persistentVolumeClaim) || (
+            volume.name == "history" &&
+            volume.persistentVolumeClaim.claimName == "arcadia-ins-" +
+              namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history" &&
+            (!has(volume.persistentVolumeClaim.readOnly) || volume.persistentVolumeClaim.readOnly == false)
+          )
+        )
+      message: Tenant Pods may mount only their stable history claim.
+    - expression: >-
+        object.spec.?volumes.orValue([]).all(volume,
+          !has(volume.secret) || volume.name != "history-seed" || (
+            volume.secret.secretName == "arcadia-ins-" +
+              namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history-seed" &&
+            volume.secret.defaultMode == 292
+          )
+        )
+      message: The history seed volume must use the instance-owned read-only Secret projection.
+    - expression: >-
+        object.spec.containers.all(container,
+          container.?volumeMounts.orValue([]).all(mount,
+            (mount.name != "history" || (
+              mount.mountPath == "/history" &&
+              (!has(mount.subPath) || mount.subPath == "") &&
+              (!has(mount.subPathExpr) || mount.subPathExpr == "") &&
+              (!has(mount.readOnly) || mount.readOnly == false)
+            )) &&
+            mount.name != "history-seed"
+          )
+        ) &&
+        object.spec.?initContainers.orValue([]).all(container,
+          container.?volumeMounts.orValue([]).all(mount,
+            (mount.name != "history" || (
+              mount.mountPath == "/history" &&
+              (!has(mount.subPath) || mount.subPath == "") &&
+              (!has(mount.subPathExpr) || mount.subPathExpr == "") &&
+              (!has(mount.readOnly) || mount.readOnly == false)
+            )) &&
+            (mount.name != "history-seed" || (
+              container.name == "history-restore" &&
+              mount.mountPath == "/history-seed" &&
+              mount.readOnly == true &&
+              (!has(mount.subPath) || mount.subPath == "") &&
+              (!has(mount.subPathExpr) || mount.subPathExpr == "")
+            ))
+          )
+        )
+      message: History storage must be mounted at its fixed path, with the seed mounted read-only only in the restore init container.
+    - expression: >-
+        !("app.kubernetes.io/name" in object.metadata.labels) ||
+        object.metadata.labels["app.kubernetes.io/name"] != "scriptorium" || (
+          object.spec.volumes.exists(volume, volume.name == "history" && has(volume.persistentVolumeClaim)) &&
+          object.spec.volumes.exists(volume, volume.name == "history-seed" && has(volume.secret)) &&
+          object.spec.containers.exists(container,
+            container.name == "scriptorium" &&
+            container.volumeMounts.exists(mount, mount.name == "history" && mount.mountPath == "/history")
+          ) &&
+          object.spec.?initContainers.orValue([]).exists(container,
+            container.name == "history-restore" &&
+            container.volumeMounts.exists(mount, mount.name == "history" && mount.mountPath == "/history") &&
+            container.volumeMounts.exists(mount, mount.name == "history-seed" && mount.mountPath == "/history-seed" && mount.readOnly == true)
+          )
+        )
+      message: Scriptorium Pods must mount stable history storage and restore the retained seed before startup.
     # Kubernetes v1.35 models Quantity as oneOf(string, number), so CEL omits the
     # Quantity-valued requests/limits maps from its static field declarations.
     # Keep raw access scoped to this resource map and require every key below.

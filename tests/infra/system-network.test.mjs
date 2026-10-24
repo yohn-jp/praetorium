@@ -103,7 +103,7 @@ test("Instance Access has Gateway egress and no tenant-runtime egress", async ()
   assert.match(handler, /\/internal\/instance-access\/(handoff|refresh|revoke)/u);
   assert.match(
     handler,
-    /new URL\(`\/entry\/\$\{encodeURIComponent\(instance\.id\)\}`, config\.gatewayOrigin\)/u,
+    /new URL\(`\/entry\/\$\{instance\.appIdentity\}\/\$\{instance\.repositoryId\}`, config\.gatewayOrigin\)/u,
   );
   assert.match(
     platform,

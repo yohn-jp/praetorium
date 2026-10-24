@@ -63,17 +63,18 @@ function fixture() {
   let evidenceMode = "detailed";
   let retryAccepted = false;
   let catalogUnavailable = false;
+  let canaryConfigurationConflict = false;
   const jobId = "sr_00000000-0000-4000-a000-000000000001";
   const sourceDetail = () => SourceBuildDetailSchema.parse({
     job:{id:jobId,sourceId:"scriptorium",releaseId:101,tag:"v1.2.0",version:"1.2.0",commit:"b".repeat(40),
       state:buildState==="retryQueued"?"queued":buildState==="retryBuilding"?"building":buildState,attempt:buildState==="queued"?0:buildState==="failed"?2:buildState==="retryQueued"||buildState==="retryBuilding"||retryAccepted&&buildState==="admitted"?3:1,revision:buildState==="failed"?0:1,
-      error:buildState==="failed"?"SOURCE_BUILD_FAILED":null,admittedReleaseId:buildState==="admitted"?"rel_owned":null,
+      error:buildState==="failed"?(canaryConfigurationConflict?"canary_configuration_conflict":"SOURCE_BUILD_FAILED"):null,admittedReleaseId:buildState==="admitted"?"rel_owned":null,
       retryable:buildState==="failed"},
     attempts:[{id:"owned-failed-attempt",attempt:1,revision:0,leaseEpoch:1,state:"failed",stage:"buildkit",
       startedAt:1792820000000,finishedAt:1792820001000,failureCode:"SOURCE_BUILD_FAILED",evidence:"expired",expiresAt:null,diagnostic:null},
       ...(buildState==="failed"||retryAccepted?[{id:"owned-detailed-attempt-"+"a".repeat(128),attempt:2,revision:0,leaseEpoch:2,
         state:"failed",stage:"metadata",startedAt:1792820010000,finishedAt:1792820020000,
-        failureCode:"SOURCE_BUILD_FAILED",evidence:evidenceMode === "detailed" || evidenceMode === "summary" || evidenceMode === "unavailable" ? "available" : evidenceMode,expiresAt:evidenceMode === "expired" ? 1790000000000 : 1795412020000,
+        failureCode:canaryConfigurationConflict?"canary_configuration_conflict":"SOURCE_BUILD_FAILED",evidence:evidenceMode === "detailed" || evidenceMode === "summary" || evidenceMode === "unavailable" ? "available" : evidenceMode,expiresAt:evidenceMode === "expired" ? 1790000000000 : 1795412020000,
         diagnostic:evidenceMode === "not_recorded" || evidenceMode === "expired" || evidenceMode === "unavailable" ? null : {stage:"metadata",reason:"build_failed",
           summary:"BuildKit reported a build failure. Inspect the sanitized excerpt when available.",
           excerpt:evidenceMode === "summary" ? "" : "git rev-parse HEAD failed\n" + "long-source-path/".repeat(40) + "診断.ts:42 compiler error",truncated:false}}]:[]),
@@ -124,9 +125,10 @@ function fixture() {
         return Response.json({items:[sourceDetail().job],nextCursor:null});
       if (pathname === "/v1/operator/releases/rel_owned")
         return Response.json({release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),status:"available"},
-          workflow:{state:"stable",revision:4,failureCode:null,attempts:2,nextAttemptAt:null,
-            canaryBuildKey:"composition-owned",canaryOperationId:"op_owned"},
-          build:{id:"composition-owned",status:"available",attemptCount:1,failure:null}});
+          workflow:{state:canaryConfigurationConflict?"canary_building":"stable",revision:4,
+            failureCode:canaryConfigurationConflict?"canary_configuration_conflict":null,attempts:2,nextAttemptAt:null,
+            canaryBuildKey:"composition-owned",canaryOperationId:canaryConfigurationConflict?null:"op_owned"},
+          build:{id:"composition-owned",status:canaryConfigurationConflict?"building":"available",attemptCount:1,failure:null}});
       if (pathname === "/v1/operations/op_owned/evidence")
         return Response.json({operation:{id:"op_owned",instanceId:"runtime-owned",generation:2,runtimeEpoch:5,
           kind:"deploy",status:"succeeded",phase:"stable",attempt:1,createdAt:1792820000000,updatedAt:1792820001000},
@@ -157,7 +159,7 @@ function fixture() {
         Response.json({error:"not_found"},{status:404});
     }},
   };
-  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},setCatalogUnavailable:value=>{catalogUnavailable=value;},jobId};
+  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},setCatalogUnavailable:value=>{catalogUnavailable=value;},setCanaryConfigurationConflict:value=>{canaryConfigurationConflict=value;},jobId};
 }
 async function listen(env) {
   const server = createServer(async (req,res) => {
@@ -190,7 +192,7 @@ async function listen(env) {
   return {server,origin:"http://127.0.0.1:"+address.port};
 }
 test("dedicated Admin Worker protects host telemetry and renders distinct responsive UI", async t=>{
-  const {env,calls,setBuildState,setCatalogUnavailable,jobId}=fixture();
+  const {env,calls,setBuildState,setCatalogUnavailable,setCanaryConfigurationConflict,jobId}=fixture();
   const noAuth=await worker.fetch(new Request(ADMIN+"/api/admin/v1/infrastructure/hosts"),env);
   assert.equal(noAuth.status,403);
   assert.equal(calls.observer,0);
@@ -405,6 +407,28 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.match(journey,/stable/iu);
     assert.ok(journey.includes("composition-owned"));
   }
+  // The mapped canonical conflict is actionable in both layouts without
+  // inventing an operation link when the Control Plane supplied none.
+  setCanaryConfigurationConflict(true);
+  setBuildState("failed");
+  for (const mode of ["desktop","mobile"]) {
+    const sourcePath="/builds/"+jobId+"?ui="+mode;
+    await page.goto(origin+sourcePath,{waitUntil:"domcontentloaded"});
+    const sourceConflict=await page.locator("main").innerText();
+    assert.match(sourceConflict,/canary_configuration_conflict/iu);
+    assert.match(sourceConflict,/Canary configuration changed or an operation is still active/iu);
+    assert.match(sourceConflict,/let normal recovery finish before automatic retry/iu);
+    assert.equal(await page.locator('main a[href^="/operations/"]').count(),0,
+      mode+" Source guidance must not invent an operation identifier");
+    await page.goto(origin+"/releases/rel_owned?ui="+mode,{waitUntil:"domcontentloaded"});
+    const releaseConflict=await page.locator("main").innerText();
+    assert.match(releaseConflict,/canary_configuration_conflict/iu);
+    assert.match(releaseConflict,/Canary configuration changed or an operation is still active/iu);
+    assert.match(releaseConflict,/let normal recovery finish before automatic retry/iu);
+    assert.equal(await page.locator('main a[href^="/operations/"]').count(),0,
+      mode+" Release guidance must not invent an operation identifier");
+  }
+  setCanaryConfigurationConflict(false);
   setBuildState("empty");
   // The first touch visit starts as Desktop by policy, then offers a
   // non-forcing Mobile preference backed by the normal cookie.

@@ -4,6 +4,7 @@ import { AccessGrantSchema, type AccessGrant } from "@praetorium/contracts";
 import type {
   LifecycleAuthProbeProvider,
   RuntimeAssignment,
+  WriterCensus,
 } from "@praetorium/application/lifecycle";
 import type { ClaimedProvisionerOperation } from "./operation-client.js";
 
@@ -11,6 +12,7 @@ const MAX_CONTROL_RESPONSE_BYTES = 32 * 1024;
 const MAX_APPLICATION_RESPONSE_BYTES = 14 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 8_000;
 const ACCESS_COOKIE = "__Host-praetorium_access";
+const MAX_HISTORY_JOBS_RESPONSE_BYTES = 64 * 1024;
 const MCP_PROTOCOL_VERSION = "2025-03-26";
 const INVALID_CONTROL_CREDENTIAL = "invalid-runtime-control-probe-credential";
 
@@ -142,6 +144,80 @@ export class HttpRuntimeAuthAcceptanceProbe implements LifecycleAuthProbeProvide
   /** Bind runtime requests to the provider-verified owned Service address. */
   withEndpointResolver(resolveRuntimeEndpoint: RuntimeAuthProbeEndpointResolver): HttpRuntimeAuthAcceptanceProbe {
     return new HttpRuntimeAuthAcceptanceProbe({ ...this.options, resolveRuntimeEndpoint });
+  }
+
+  /** Obtains one old-epoch read grant and requires a complete empty jobs list. */
+  async drainLegacyHistory(
+    assignment: RuntimeAssignment,
+    census: WriterCensus,
+    expectedCheckpointSequence: number,
+    beforeEffect: () => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const scope = this.options.scope?.();
+    if (!scope || scope.mode !== "lease") throw new Error("runtime_history_drain_lease_scope_unavailable");
+    const censusCheckedAt = this.now();
+    if (
+      !/^[A-Za-z0-9_.:-]{1,128}$/u.test(scope.operationId) ||
+      scope.workerId !== this.options.workerId ||
+      assignment.clusterId !== this.options.clusterId ||
+      !Number.isSafeInteger(expectedCheckpointSequence) ||
+      expectedCheckpointSequence < 0 ||
+      !Number.isSafeInteger(censusCheckedAt) ||
+      !isFreshSoleWriterCensus(census, assignment.runtimeEpoch, censusCheckedAt)
+    ) throw new TypeError("runtime_history_drain_fence_invalid");
+    const resolveRuntimeEndpoint = this.options.resolveRuntimeEndpoint;
+    if (!resolveRuntimeEndpoint) throw new Error("runtime_auth_probe_internal_endpoint_unavailable");
+    const origin = runtimeOrigin(assignment.deployment.hostname);
+    const endpointUrl = await resolveRuntimeEndpoint(assignment, signal);
+    const transport = runtimeApplicationTransport(endpointUrl, origin);
+    await beforeEffect();
+    const grantUrl = new URL(
+      `/internal/provisioner/operations/${encodeURIComponent(scope.operationId)}/history-drain-grant`,
+      this.options.controlPlaneUrl,
+    );
+    const grantResponse = await this.fetchResponse(grantUrl, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${this.options.provisionerCredential}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        workerId: scope.workerId,
+        leaseToken: scope.leaseToken,
+        leaseEpoch: scope.leaseEpoch,
+        expectedCheckpointSequence,
+        census,
+      }),
+    }, MAX_CONTROL_RESPONSE_BYTES, signal);
+    if (!grantResponse.ok)
+      throw new RuntimeAuthProbeHttpError("runtime_history_drain_authority_rejected", grantResponse.status);
+    if (!/\bno-store\b/iu.test(grantResponse.headers.get("Cache-Control") ?? ""))
+      throw new TypeError("runtime history drain grant response must be non-cacheable");
+    const grant = validateHistoryDrainGrant(
+      parseJson<unknown>(grantResponse.bytes, "runtime history drain grant response is invalid"),
+      assignment,
+      Math.floor(this.now() / 1_000),
+      origin,
+    );
+    await beforeEffect();
+    if (Math.floor(this.now() / 1_000) >= grant.expiresAt)
+      throw new Error("runtime_history_drain_grant_expired_before_read");
+    const jobs = await request(this.fetchImplementation, transport, "/api/jobs", {
+      headers: {
+        Accept: "application/json",
+        Cookie: `${ACCESS_COOKIE}=${encodeURIComponent(grant.token)}`,
+      },
+    }, signal, this.timeoutMs, MAX_HISTORY_JOBS_RESPONSE_BYTES);
+    await beforeEffect();
+    const jobsBody = parseJson<unknown>(jobs.bytes, "runtime history jobs response is invalid");
+    if (
+      jobs.status !== 200 ||
+      !jobs.headers.get("Content-Type")?.toLowerCase().startsWith("application/json") ||
+      !Array.isArray(jobsBody) ||
+      jobsBody.length !== 0
+    ) throw new Error("runtime_history_drain_jobs_not_empty");
   }
 
   private async verifyWithScope(
@@ -516,6 +592,79 @@ function validateGrantSet(input: GrantSetResponse, assignment: RuntimeAssignment
     wrongEpochClaims.exp !== validClaims.exp
   ) throw new TypeError("runtime auth probe grant binding is invalid");
   return { ...input, validClaims };
+}
+
+function isFreshSoleWriterCensus(census: WriterCensus, runtimeEpoch: number, now: number): boolean {
+  const observedAt = Date.parse(census.observedAt);
+  const writer = census.writers[0];
+  return (
+    census.complete === true &&
+    census.providerObservationId.length > 0 &&
+    census.providerObservationId.length <= 512 &&
+    Number.isSafeInteger(observedAt) &&
+    new Date(observedAt).toISOString() === census.observedAt &&
+    observedAt <= now &&
+    now - observedAt <= 30_000 &&
+    census.matchedWriterCount === 1 &&
+    census.writers.length === 1 &&
+    writer?.runtimeEpoch === runtimeEpoch &&
+    writer.phase === "running" &&
+    writer.identities.length === 1 &&
+    typeof writer.identities[0] === "string" &&
+    writer.identities[0].length > 0 &&
+    new Set(writer.identities).size === writer.identities.length
+  );
+}
+
+function validateHistoryDrainGrant(
+  value: unknown,
+  assignment: RuntimeAssignment,
+  nowSeconds: number,
+  expectedOrigin: string,
+): { readonly token: string; readonly expiresAt: number } {
+  if (!object(value)) throw new TypeError("runtime history drain grant response is invalid");
+  const keys = ["issuer", "jwksUrl", "origin", "audience", "authorizationRevision", "grant", "permissions"];
+  const actualKeys = Object.keys(value);
+  if (actualKeys.length !== keys.length || actualKeys.some((key) => !keys.includes(key)))
+    throw new TypeError("runtime history drain grant response shape is invalid");
+  const permissionSet = value["permissions"];
+  if (
+    typeof value["issuer"] !== "string" ||
+    typeof value["jwksUrl"] !== "string" ||
+    typeof value["origin"] !== "string" ||
+    typeof value["audience"] !== "string" ||
+    !Number.isSafeInteger(value["authorizationRevision"]) ||
+    (value["authorizationRevision"] as number) < 0 ||
+    typeof value["grant"] !== "string" ||
+    value["grant"].length < 16 ||
+    value["grant"].length > 16_384 ||
+    !Array.isArray(permissionSet) ||
+    permissionSet.length !== 1 ||
+    permissionSet[0] !== "read"
+  ) throw new TypeError("runtime history drain grant response fields are invalid");
+  const policy = assignment.deployment.grantPolicy;
+  if (
+    value["issuer"] !== policy.issuer ||
+    value["jwksUrl"] !== policy.jwksUrl ||
+    value["origin"] !== expectedOrigin ||
+    value["audience"] !== policy.audience
+  ) throw new TypeError("runtime history drain grant policy does not match the old assignment");
+  const claims = parseGrantClaims(value["grant"]);
+  if (
+    claims.iss !== policy.issuer ||
+    claims.aud !== policy.audience ||
+    claims.instanceId !== assignmentInstanceId(assignment) ||
+    claims.repositoryId !== assignment.repositoryId ||
+    claims.runtimeEpoch !== assignment.runtimeEpoch ||
+    claims.authorizationRevision !== value["authorizationRevision"] ||
+    claims.permissions.length !== 1 ||
+    claims.permissions[0] !== "read" ||
+    claims.iat > nowSeconds ||
+    claims.nbf > nowSeconds ||
+    claims.exp <= nowSeconds ||
+    claims.exp - nowSeconds > 30
+  ) throw new TypeError("runtime history drain grant binding or lifetime is invalid");
+  return { token: value["grant"], expiresAt: claims.exp };
 }
 
 function parseGrantSetResponse(value: unknown): GrantSetResponse {

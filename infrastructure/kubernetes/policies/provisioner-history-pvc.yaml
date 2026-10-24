@@ -1,0 +1,83 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: praetorium-provisioner-history-pvc
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["persistentvolumeclaims"]
+  matchConditions:
+    - name: dedicated-provisioner-identity
+      expression: >-
+        request.userInfo.username ==
+        "system:serviceaccount:praetorium-system:praetorium-provisioner"
+  validations:
+    - expression: >-
+        namespaceObject != null &&
+        namespaceObject.metadata.name.startsWith("praetorium-instances-") &&
+        namespaceObject.metadata.labels["arcadia.io/instance-id"].matches("^ins_[0-9A-HJKMNP-TV-Z]{26}$") &&
+        namespaceObject.metadata.name == "praetorium-instances-" +
+          namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() &&
+        namespaceObject.metadata.labels["arcadia.io/platform"] == "arcadia-platform" &&
+        namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] == "arcadia-provisioner" &&
+        namespaceObject.metadata.labels["praetorium.io/repository-id"].matches("^[1-9][0-9]*$") &&
+        int(namespaceObject.metadata.labels["praetorium.io/repository-id"]) <= 9007199254740991 &&
+        namespaceObject.metadata.labels["arcadia.io/ownership-version"] == "v1" &&
+        namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] == "@@CLUSTER_ID@@"
+      message: History storage may be managed only in a correctly owned instance namespace.
+    - expression: >-
+        object.metadata.namespace == namespaceObject.metadata.name &&
+        object.metadata.name == "arcadia-ins-" +
+          namespaceObject.metadata.labels["arcadia.io/instance-id"].substring(4).lowerAscii() + "-history" &&
+        object.metadata.labels["arcadia.io/platform"] == namespaceObject.metadata.labels["arcadia.io/platform"] &&
+        object.metadata.labels["app.kubernetes.io/managed-by"] == namespaceObject.metadata.labels["app.kubernetes.io/managed-by"] &&
+        object.metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
+        object.metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
+        object.metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
+        object.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
+        object.metadata.labels["app.kubernetes.io/name"] == "scriptorium" &&
+        !("praetorium.io/runtime-epoch" in object.metadata.labels) &&
+        !("arcadia.io/generation" in object.metadata.labels) &&
+        !("arcadia.io/release-id" in object.metadata.labels) &&
+        object.metadata.annotations["praetorium.io/history-contract"] == "v1"
+      message: The Provisioner may manage only the stable history claim owned by this instance.
+    - expression: >-
+        dyn(object).spec.storageClassName == "local-path" &&
+        dyn(object).spec.accessModes == ["ReadWriteOnce"] &&
+        (!has(dyn(object).spec.volumeMode) || dyn(object).spec.volumeMode == "Filesystem") &&
+        !has(dyn(object).spec.selector) &&
+        !has(dyn(object).spec.dataSource) &&
+        !has(dyn(object).spec.dataSourceRef) &&
+        has(dyn(object).spec.resources) &&
+        "requests" in dyn(object).spec.resources &&
+        "storage" in dyn(object).spec.resources["requests"] &&
+        dyn(object).spec.resources["requests"].size() == 1
+      message: History claims must use one local-path ReadWriteOnce filesystem volume and request only storage.
+    - expression: >-
+        request.operation != "UPDATE" || (
+          oldObject.metadata.name == object.metadata.name &&
+          oldObject.metadata.namespace == object.metadata.namespace &&
+          oldObject.metadata.labels["arcadia.io/instance-id"] == object.metadata.labels["arcadia.io/instance-id"] &&
+          oldObject.metadata.labels["praetorium.io/repository-id"] == object.metadata.labels["praetorium.io/repository-id"] &&
+          oldObject.metadata.labels["arcadia.io/ownership-version"] == object.metadata.labels["arcadia.io/ownership-version"] &&
+          oldObject.metadata.labels["arcadia.io/runtime-cluster-id"] == object.metadata.labels["arcadia.io/runtime-cluster-id"] &&
+          oldObject.metadata.annotations["praetorium.io/history-contract"] == "v1" &&
+          object.metadata.annotations["praetorium.io/history-contract"] == "v1" &&
+          dyn(oldObject).spec.storageClassName == dyn(object).spec.storageClassName &&
+          dyn(oldObject).spec.accessModes == dyn(object).spec.accessModes &&
+          dyn(oldObject).spec.resources.requests["storage"] == dyn(object).spec.resources.requests["storage"]
+        )
+      message: The Provisioner may not change a history claim's identity, storage class, access mode, or requested size.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: praetorium-provisioner-history-pvc
+spec:
+  policyName: praetorium-provisioner-history-pvc
+  validationActions: [Deny]

@@ -296,6 +296,41 @@ describe("desktop operator composition", () => {
     expect(denied).not.toContain('name="idempotencyKey"');
   });
 
+  it("explains a known Canary configuration conflict on Source and Release detail without inventing operation links", () => {
+    const conflict = "canary_configuration_conflict";
+    const guidance = "Canary configuration changed or an operation is still active; inspect the current operation and let normal recovery finish before automatic retry.";
+    const source = renderDesktopConsole(view({
+      selectedBuildId: job.id,
+      detail: dependency("GET /v1/operator/source-builds/:id", {
+        job: { ...job, error: conflict },
+        nextCursor: null,
+        evidence: "available",
+        attempts: [{
+          id: "attempt-conflict", attempt: job.attempt, revision: job.revision, leaseEpoch: 9,
+          state: "failed", stage: "metadata", startedAt: null, finishedAt: null,
+          failureCode: conflict, evidence: "not_recorded", expiresAt: null, diagnostic: null,
+        }],
+      }),
+    }));
+    expect(source).toContain(`<code>${conflict}</code>`);
+    expect(source).toContain(guidance);
+    expect(source).not.toContain('href="/operations/');
+
+    const release = renderDesktopConsole(view({
+      section: "releases", selectedReleaseId: "rel_conflict",
+      releaseDetail: dependency("GET /v1/operator/releases/rel_conflict", {
+        release: { id: "rel_conflict", version: "0.3.8", imageDigest: "sha256:" + "d".repeat(64), status: "candidate" },
+        workflow: { state: "canary_building", revision: 12, failureCode: conflict, attempts: 2,
+          nextAttemptAt: null, canaryBuildKey: null, canaryOperationId: null },
+        build: { id: "build_conflict", status: "building", attemptCount: 1, failure: null },
+      }),
+    }));
+    expect(release).toContain(`<code>${conflict}</code>`);
+    expect(release).toContain(guidance);
+    expect(release).not.toContain('href="/operations/');
+    expect(release).not.toContain(">Retry Canary build</button>");
+  });
+
   it("provides a high contrast keyboard focus and narrow viewport layout", () => {
     expect(DESKTOP_ADMIN_STYLES).toContain(":focus-visible");
     expect(DESKTOP_ADMIN_STYLES).toContain("grid-template-columns:248px");

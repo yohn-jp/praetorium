@@ -33,6 +33,8 @@ jobs:
           node --test tests/deployment/headlamp-admin.test.mjs
           node --test tests/deployment/deployment-order.test.mjs tests/deployment/migrations.test.mjs tests/deployment/worker-projection.test.mjs
           node --test tests/deployment/service-image-publication.test.mjs
+          node --test tests/deployment/observer-rollout.test.mjs
+          node --test tests/infra/*.test.mjs
           node --test tests/deployment/actions-verification.test.mjs
           node --test tests/deployment/fixture-process.test.mjs
           node --check scripts/deployment-migrations.mjs scripts/deployment-plan.mjs
@@ -285,12 +287,7 @@ jobs:
       - name: Validate dynamic Runtime objects against the disposable Kubernetes API
         run: |
           node scripts/ci/render-runtime-admission.mjs > /tmp/praetorium-runtime.json
-          RUNTIME_NAMESPACE=$(node -e 'const x=require("/tmp/praetorium-runtime.json"); const names=[...new Set(x.items.map(v=>v.metadata.namespace))]; if(names.length!==1 || !/^praetorium-ci-[a-z0-9-]+$/.test(names[0]))process.exit(1); console.log(names[0]);')
-          kubectl create namespace "$RUNTIME_NAMESPACE"
-          kubectl label namespace "$RUNTIME_NAMESPACE" \
-            pod-security.kubernetes.io/enforce=restricted \
-            pod-security.kubernetes.io/warn=restricted \
-            --overwrite
+          node scripts/ci/verify-history-admission.mjs /tmp/praetorium-runtime.json
           kubectl apply --dry-run=server --validate=strict -f /tmp/praetorium-runtime.json
       - name: Render and validate the exact Headlamp HelmRelease values
         run: |

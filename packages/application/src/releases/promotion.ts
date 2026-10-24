@@ -9,6 +9,7 @@ import type {
 } from "./model.js";
 import { compareReleaseVersions } from "./semver.js";
 import type { CompositionResult, StableRolloutPlanner } from "../rollouts/model.js";
+import { ConfigurationConflictError } from "../configurations/types.js";
 
 export const STABLE_CANARY_HEALTH_WINDOW_MS = 60 * 1_000;
 const DEFAULT_RETRY_MS = 5 * 60 * 1_000;
@@ -538,8 +539,11 @@ export async function advanceStablePromotions(
       if (outcome === "advanced") result.advanced += 1;
       else if (outcome === "retried") result.retried += 1;
       else if (outcome === "terminal") result.terminal += 1;
-    } catch {
-      await retry(deps, lease, "promotion_step_failed", deps.clock.nowMs());
+    } catch (error) {
+      const code = error instanceof ConfigurationConflictError
+        ? "canary_configuration_conflict"
+        : "promotion_step_failed";
+      await retry(deps, lease, code, deps.clock.nowMs());
       result.retried += 1;
     }
   }

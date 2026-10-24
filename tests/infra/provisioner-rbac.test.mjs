@@ -257,7 +257,13 @@ test("tenant Role grants per-instance runtime resource operations and no data or
     assert.ok(!allows(tenant, "", "secrets", verb), `unexpected core/secrets:${verb}`);
   }
   assert.ok(allows(tenant, "", "pods", "list"));
+  assert.ok(allows(tenant, "", "pods/exec", "get"));
+  assert.ok(allows(tenant, "", "pods/exec", "create"));
   assert.ok(!allows(tenant, "", "pods", "get"));
+  for (const verb of ["get", "create", "patch"]) {
+    assert.ok(allows(tenant, "", "persistentvolumeclaims", verb));
+  }
+  assert.ok(!allows(tenant, "", "persistentvolumeclaims", "delete"));
   for (const [group, resource, verb] of [
     ["", "pods", "create"],
     ["", "pods", "patch"],
@@ -290,6 +296,11 @@ test("tenant Role grants per-instance runtime resource operations and no data or
       "/limitranges:get",
       "/limitranges:patch",
       "/pods:list",
+      "/pods/exec:get",
+      "/pods/exec:create",
+      "/persistentvolumeclaims:create",
+      "/persistentvolumeclaims:get",
+      "/persistentvolumeclaims:patch",
       "/resourcequotas:create",
       "/resourcequotas:delete",
       "/resourcequotas:get",
@@ -355,6 +366,7 @@ test("provider verbs and API paths remain covered by the RBAC graph", () => {
       "IngressRoute",
       "LimitRange",
       "NetworkPolicy",
+      "PersistentVolumeClaim",
       "ResourceQuota",
       "Secret",
       "Service",

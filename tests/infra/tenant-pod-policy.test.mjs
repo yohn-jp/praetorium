@@ -79,5 +79,10 @@ test("tenant Pod policy matches the labels and security properties the runtime e
   assert.doesNotMatch(policy, /\bdyn\s*\(\s*container\s*\)/);
 
   assert.doesNotMatch(policy, /pod-security\.kubernetes\.io/);
-  assert.doesNotMatch(policy, /PersistentVolumeClaim|Restic/i);
+  assert.doesNotMatch(policy, /Restic/i);
+  assert.match(policy, /volume\.persistentVolumeClaim\.claimName/u);
+  assert.match(policy, /history-seed/u);
+  assert.match(policy, /container\.name == "history-restore"/u);
+  assert.match(policy, /mount\.mountPath == "\/history"/u);
+  assert.match(policy, /mount\.readOnly == true/u);
 });

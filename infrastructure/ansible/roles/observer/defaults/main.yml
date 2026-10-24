@@ -7,6 +7,8 @@ observer_service_home: /var/lib/praetorium/observer
 observer_subid_start: 1065536
 observer_subid_size: 65536
 observer_image: ""
+observer_registry_auth_src: ""
+observer_registry_auth_path: "{{ observer_service_home }}/.config/containers/auth.json"
 observer_targets: []
 observer_auth_token_src: ""
 observer_quadlet_root: /etc/containers/systemd/users

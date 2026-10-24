@@ -98,6 +98,10 @@ describe("desktop operator composition", () => {
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain('name="expectedRevision" value="7"');
     expect(html).toContain('name="idempotencyKey" value="');
+    const sourceRetryKey = html.match(
+      /<form method="post" action="\/source-builds\/sr_00000000-0000-4000-a000-000000000001\/retry\?ui=desktop"[^>]*>[\s\S]*?name="idempotencyKey" value="([^"]+)"/u,
+    )?.[1];
+    expect(sourceRetryKey).toMatch(/^cmd_[A-Za-z0-9_-]{22}$/u);
     expect(html).toContain('name="csrfToken" value="csrf&lt;&amp;&quot;"');
     expect(html).toContain("Attempt ID <code>attempt-2</code>");
     expect(html).toContain('class="desktop-notice-slot" aria-live="polite"');

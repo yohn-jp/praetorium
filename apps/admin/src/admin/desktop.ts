@@ -1,6 +1,7 @@
 import { generateToken } from "@praetorium/auth";
 import { canaryWaitSkipForm } from "./canary-wait-action.js";
 import { activeSourceFailures, activeReleaseFailures, currentSourceBuildAttempt } from "./incident-status.js";
+import { failureGuidance } from "./failure-guidance.js";
 import type {
   SourceBuildAttempt, SourceBuildDetail, SourceBuildSummary,
 } from "@praetorium/contracts";
@@ -268,6 +269,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     : workflow.state === "blocked" || workflow.state === "failed"
       ? `<p class="desktop-muted">Retry is unavailable under the current canonical workflow policy.</p>` : "";
   const failureCode = workflow.failureCode ?? build?.failure?.code ?? null;
+  const knownFailureGuidance = failureGuidance(failureCode);
   const stopBlocked = workflow.state === "canary_cleanup" && workflow.failureCode === "canary_stop_blocked";
   return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">CANONICAL RELEASE STATUS</p>` +
     `<h1>Release ${escapeHtml(value.release.version)}</h1><p>Admission, Canary execution, and promotion status from the Control Plane.</p>${back}</section>` +
@@ -279,6 +281,9 @@ function releaseDetail(model: ConsoleViewModel): string {
     `<div><dt>Workflow revision</dt><dd>${workflow.revision}</dd></div><div><dt>Workflow attempts</dt><dd>${workflow.attempts}</dd></div>` +
     `<div class="desktop-fact-wide"><dt>Immutable OCI digest</dt><dd><code>${escapeHtml(value.release.imageDigest)}</code></dd></div>` +
     `<div><dt>Canonical failure</dt><dd>${escapeHtml(failureCode ?? "None recorded")}</dd></div>` +
+    (knownFailureGuidance
+      ? `<div class="desktop-fact-wide desktop-known-failure-guidance" role="note"><dt>Failure guidance · <code>${escapeHtml(failureCode!)}</code></dt><dd>${escapeHtml(knownFailureGuidance)}</dd></div>`
+      : "") +
      (stopBlocked ? `<div class="desktop-fact-wide"><dt>Safe recovery</dt><dd>Canary stop is blocked by the producer. Preserve unpublished local work and obtain a new quiesce/Writer-absence proof before Stable promotion. A completed Source build alone is not Stable.</dd></div>` : "") +
     `<div><dt>Next attempt</dt><dd>${workflow.nextAttemptAt === null ? "Not scheduled" : escapeHtml(dateTime(workflow.nextAttemptAt))}</dd></div>` +
     `<div id="composition-build"><dt>Composition build</dt><dd>${build
@@ -454,13 +459,18 @@ function buildDetail(model: ConsoleViewModel): string {
     ? diagnosticEvidence(currentAttempt.evidence, currentAttempt.diagnostic, currentAttempt.expiresAt)
     : model.pageCursor ? ""
       : diagnosticEvidence(detail.evidence, null);
+  const sourceFailureCode = job.error ?? currentAttempt?.failureCode ?? null;
+  const knownFailureGuidance = failureGuidance(sourceFailureCode);
+  const guidanceMarkup = knownFailureGuidance
+    ? `<aside class="desktop-known-failure-guidance" role="note"><strong>Failure guidance · <code>${escapeHtml(sourceFailureCode!)}</code></strong><p>${escapeHtml(knownFailureGuidance)}</p></aside>`
+    : "";
   const failure = job.state === "failed" ?
     `<section class="desktop-section desktop-failure-detail" aria-labelledby="desktop-build-incident"><p class="desktop-eyebrow">FAILURE DETAIL</p>` +
     `<h2 id="desktop-build-incident">Recorded stage and reason</h2>` +
     `<dl class="desktop-failure-facts"><div><dt>Failure stage</dt><dd>${escapeHtml(stage)}</dd></div>` +
     `<div><dt>Recorded reason</dt><dd>${escapeHtml(currentAttempt?.diagnostic ? humanize(currentAttempt.diagnostic.reason) : "No current attempt-specific reason was recorded.")}</dd></div></dl>` +
     `<p class="desktop-section-intro">The failure summary describes the recorded category. It does not establish a root cause.</p>` +
-    currentPageNote + currentEvidence +
+    currentPageNote + currentEvidence + guidanceMarkup +
     `</section>` : "";
   const retry = job.state === "failed" ?
     `<section class="desktop-section desktop-recovery" aria-label="Source build recovery"><p class="desktop-eyebrow">SAFE NEXT ACTION</p>` +
@@ -474,7 +484,7 @@ function buildDetail(model: ConsoleViewModel): string {
     `<h1>${escapeHtml(sourceName(job.sourceId))} / ${escapeHtml(job.tag)}</h1><p>Published release ${escapeHtml(job.tag)} · version ${escapeHtml(job.version)}.</p>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Back to Builds</a> ` +
     `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) +
-    failure + retry +
+    failure + retry + (job.state === "failed" ? "" : guidanceMarkup) +
     `<section class="desktop-job-summary" aria-labelledby="desktop-job-summary-title"><div class="desktop-job-heading">` +
     `<div><p class="desktop-eyebrow">TECHNICAL IDENTIFIERS</p><h2 id="desktop-job-summary-title">Source build record</h2>` +
     `<code>${escapeHtml(job.id)}</code></div></div>` +

@@ -22,6 +22,7 @@ import {
   prepareServiceImages,
   serviceBuildArguments,
   serviceImages,
+  serviceImageRepository,
   verifiedMain,
   withDeploymentLock,
 } from "../../scripts/service-image-publication.mjs";
@@ -73,7 +74,7 @@ function inventory() {
     ],
   });
   for (const image of serviceImages.filter(({ key }) => key !== "coordination"))
-    value.images[image.key] = `ghcr.io/yohn-jp/praetorium/${image.service}@${digest}`;
+    value.images[image.key] = `ghcr.io/${serviceImageRepository(image.service)}@${digest}`;
   value.images.prometheus = `docker.io/prom/prometheus@${digest}`;
   const checked = validateInventory(value);
   assert.deepEqual(checked.errors, []);
@@ -138,7 +139,7 @@ function fixture(t, fault) {
           metadata,
           JSON.stringify({ "containerimage.digest": fault === "bad-metadata" ? "latest" : digest }),
         );
-        published.add(`yohn-jp/praetorium/${service}`);
+        published.add(serviceImageRepository(service));
       },
     });
   return { directory, value, inventoryPath, original, calls, prepare, registry, published };
@@ -148,7 +149,7 @@ test("CI image adoption uses the workflow-bound digest without rebuilding", asyn
   const f = fixture(t);
   const published = {};
   for (const { service } of serviceImages) {
-    const repository = `yohn-jp/praetorium/${service}`;
+    const repository = serviceImageRepository(service);
     f.published.add(repository);
     published[service] = { schema: "praetorium.ci-service-image/v1",
       revision, ciRunId: source.ciRunId, service, repository, digest };
@@ -159,6 +160,8 @@ test("CI image adoption uses the workflow-bound digest without rebuilding", asyn
   });
   const prepared = await prepare(published);
   assert.equal(prepared.receipt.complete, true);
+  assert.equal(prepared.inventory.images.observer,
+    `ghcr.io/yohn-jp/praetorium/management-observer@${digest}`);
   assert.deepEqual(f.calls, []);
   for (const patch of [{ revision: "c".repeat(40) }, { ciRunId: 99 },
     { repository: "other/repository" }, { digest: "latest" }]) {
@@ -167,10 +170,13 @@ test("CI image adoption uses the workflow-bound digest without rebuilding", asyn
     }), /CI service image receipt/u);
   }
   await assert.rejects(prepare({}), /CI service image receipt/u);
+  await assert.rejects(prepare({ ...published, observer: {
+    ...published.observer, repository: "yohn-jp/praetorium/observer",
+  } }), /CI service image receipt/u);
   assert.deepEqual(readFileSync(f.inventoryPath), f.original);
 });
 
-test("four published images and final preflight admit one inventory while retaining exact rollback bytes", async (t) => {
+test("five published images and final preflight admit one inventory while retaining exact rollback bytes", async (t) => {
   const f = fixture(t);
   const prepared = await f.prepare();
   assert.deepEqual(
@@ -193,7 +199,7 @@ test("four published images and final preflight admit one inventory while retain
   assert.deepEqual(JSON.parse(readFileSync(f.inventoryPath)), prepared.inventory);
   assert.equal(statSync(f.inventoryPath).mode & 0o777, 0o600);
   assert.equal(prepared.receipt.complete, true);
-  assert.equal(Object.keys(prepared.receipt.images).length, 4);
+  assert.equal(Object.keys(prepared.receipt.images).length, 5);
   assert.equal(prepared.inventory.images.prometheus, f.value.images.prometheus);
   assert.ok(prepared.inventory.images.coordination.endsWith(digest));
 });
@@ -276,7 +282,6 @@ test("verified-main gate rejects stale main, failed/missing CI and unexpected jo
     "source-stable-fixture",
     "kubernetes-admission",
     ...serviceImages.map(({ service }) => `publish-images (${service}, package, dockerfile)`),
-    "publish-images (observer, package, dockerfile)",
   ].map((name) => ({ name, conclusion: "success" }));
   const execute = (fault) => (_command, args) => {
     if (args[0] === "rev-parse") return revision;
@@ -361,6 +366,14 @@ test("Coordination digest is optional and immutable when supplied", () => {
   assert.ok(validateInventory(value).errors.some((e) => e.includes("images.coordination")));
   value.images.coordination = `ghcr.io/yohn-jp/praetorium/coordination@${digest}`;
   assert.deepEqual(validateInventory(value).errors, []);
+});
+
+test("Observer image remains optional in old inventories and rejects mutable references", () => {
+  const value = inventory();
+  delete value.images.observer;
+  assert.deepEqual(validateInventory(value).errors, []);
+  value.images.observer = "ghcr.io/yohn-jp/praetorium/management-observer:latest";
+  assert.ok(validateInventory(value).errors.some((error) => error.includes("images.observer")));
 });
 
 test("deployment lock excludes another apply through rollout and is released on failure", async (t) => {

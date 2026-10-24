@@ -36,7 +36,7 @@ type RawVertex = {
 };
 
 type RawLog = { vertex?: string; stream?: number; data?: string };
-type RawProgress = { vertexes?: RawVertex[]; logs?: RawLog[] };
+type RawProgress = { vertexes?: RawVertex[]; logs?: RawLog[]; error?: string };
 
 type ParsedProgressLine = {
   readonly value: RawProgress;
@@ -59,6 +59,7 @@ function parseProgressLine(line: string): ParsedProgressLine | null {
   const value: RawProgress = {
     ...(vertexes ? { vertexes } : {}),
     ...(logs ? { logs } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
   if (!vertexes || vertexes.length === 0) return { value, progress: null };
   let completed = 0;
@@ -208,20 +209,24 @@ function decodeLog(data: string): string | undefined {
 }
 
 class BuildKitDiagnosticCapture {
-  private readonly logEntries: { vertex:string; text:string; bytes:number }[] = [];
-  private readonly errorEntries: { vertex:string|null; text:string; bytes:number }[] = [];
+  private readonly logEntries: { vertex:string|null; text:string; bytes:number; sequence:number }[] = [];
+  private readonly errorEntries: { vertex:string|null; text:string; bytes:number; sequence:number }[] = [];
+  private readonly stderrEntries: { text:string; bytes:number; sequence:number }[] = [];
   private readonly pending = new Map<string,string>();
   private pendingBytes = 0;
   private diagnosticBytes = 0;
   private readonly privateKeyVertices = new Set<string>();
   private readonly failedVertices:string[]=[];
   private dropLogDiagnostics=false;
+  private stderrPrivateKey=false;
   private truncated = false;
+  private sequence = 0;
 
-  private addSafeLog(vertex:string,text:string):void{
+  private addSafeLog(vertex:string|null,text:string):void{
     if(this.dropLogDiagnostics)return;
     const normalized=text.trim();
     if(!normalized)return;
+    const vertexKey=vertex??"";
     if(/-----BEGIN .*PRIVATE KEY-----/u.test(normalized)){
       this.truncated=true;
       if(!/-----END .*PRIVATE KEY-----/u.test(normalized)){
@@ -230,26 +235,23 @@ class BuildKitDiagnosticCapture {
           this.dropLogDiagnostics=true;
           return;
         }
-        this.privateKeyVertices.add(vertex);
+        this.privateKeyVertices.add(vertexKey);
       }
       return;
     }
-    if(this.privateKeyVertices.has(vertex)){
+    if(this.privateKeyVertices.has(vertexKey)){
       this.truncated=true;
-      if(/-----END .*PRIVATE KEY-----/u.test(normalized))this.privateKeyVertices.delete(vertex);
+      if(/-----END .*PRIVATE KEY-----/u.test(normalized))this.privateKeyVertices.delete(vertexKey);
       return;
     }
     const safe=sanitizeBuildKitDiagnostic(normalized,MAX_DIAGNOSTIC_BYTES);
     if(!safe)return;
     const bytes=Buffer.byteLength(safe.text,"utf8");
     if(bytes===0)return;
-    this.logEntries.push({vertex,text:safe.text,bytes});
+    this.logEntries.push({vertex,text:safe.text,bytes,sequence:this.sequence++});
     this.diagnosticBytes+=bytes;
     this.truncated=this.truncated||safe.truncated;
-    while((this.diagnosticBytes>MAX_DIAGNOSTIC_RAW_BYTES||this.logEntries.length>MAX_DIAGNOSTIC_LINES)&&this.logEntries.length>0){
-      this.diagnosticBytes-=this.logEntries.shift()!.bytes;
-      this.truncated=true;
-    }
+    this.trimEntries();
   }
 
   private setPending(vertex:string,text:string):void{
@@ -273,23 +275,52 @@ class BuildKitDiagnosticCapture {
     const safe=sanitizeBuildKitDiagnostic(text,MAX_DIAGNOSTIC_BYTES);
     if(!safe)return;
     const bytes=Buffer.byteLength(safe.text,"utf8");
-    this.errorEntries.push({vertex,text:safe.text,bytes});
+    this.errorEntries.push({vertex,text:safe.text,bytes,sequence:this.sequence++});
     this.diagnosticBytes+=bytes;
     this.truncated=this.truncated||safe.truncated;
-    while((this.diagnosticBytes>MAX_DIAGNOSTIC_RAW_BYTES||this.errorEntries.length+this.logEntries.length>MAX_DIAGNOSTIC_LINES)&&
-      (this.errorEntries.length>0||this.logEntries.length>0)){
+    this.trimEntries();
+  }
+
+  private addStderr(text:string):void{
+    const normalized=text.trim();
+    if(this.stderrPrivateKey){
+      this.truncated=true;
+      if(/-----END .*PRIVATE KEY-----/u.test(normalized))this.stderrPrivateKey=false;
+      return;
+    }
+    if(/-----BEGIN .*PRIVATE KEY-----/u.test(normalized)){
+      this.stderrPrivateKey=true;
+      this.truncated=true;
+      return;
+    }
+    const safe=sanitizeBuildKitDiagnostic(text,MAX_DIAGNOSTIC_BYTES);
+    if(!safe)return;
+    const bytes=Buffer.byteLength(safe.text,"utf8");
+    this.stderrEntries.push({text:safe.text,bytes,sequence:this.sequence++});
+    this.diagnosticBytes+=bytes;
+    this.truncated=this.truncated||safe.truncated;
+    this.trimEntries();
+  }
+
+  private trimEntries():void{
+    const count=()=>this.logEntries.length+this.errorEntries.length+this.stderrEntries.length;
+    while(this.diagnosticBytes>MAX_DIAGNOSTIC_RAW_BYTES||count()>MAX_DIAGNOSTIC_LINES){
       const log=this.logEntries[0];
       const error=this.errorEntries[0];
-      if(log&&(!error||log.bytes>=error.bytes)){
-        this.diagnosticBytes-=this.logEntries.shift()!.bytes;
-      }else if(error){
-        this.diagnosticBytes-=this.errorEntries.shift()!.bytes;
-      }
+      const stderr=this.stderrEntries[0];
+      const oldest=Math.min(log?.sequence??Infinity,error?.sequence??Infinity,stderr?.sequence??Infinity);
+      let removedBytes:number;
+      if(log&&log.sequence===oldest){this.logEntries.shift();removedBytes=log.bytes;}
+      else if(error&&error.sequence===oldest){this.errorEntries.shift();removedBytes=error.bytes;}
+      else if(stderr&&stderr.sequence===oldest){this.stderrEntries.shift();removedBytes=stderr.bytes;}
+      else break;
+      this.diagnosticBytes-=removedBytes;
       this.truncated=true;
     }
   }
 
   consume(value: RawProgress): void {
+    if(typeof value.error==="string"&&value.error.trim())this.addError(null,value.error);
     for (const vertex of value.vertexes ?? []) {
       if (typeof vertex.error === "string" && vertex.error.trim()) {
         if(vertex.digest){
@@ -303,33 +334,48 @@ class BuildKitDiagnosticCapture {
       }
     }
     for(const log of value.logs??[]){
-      if(!log.vertex||typeof log.data!=="string"||
+      if(typeof log.data!=="string"||
         (log.stream!==undefined&&log.stream!==1&&log.stream!==2))continue;
       const text=decodeLog(log.data);
       if(text===undefined)continue;
-      const combined=(this.pending.get(log.vertex)??"")+text.replace(/\r\n?/gu,"\n");
+      const vertex=log.vertex||null;
+      const vertexKey=vertex??"";
+      const combined=(this.pending.get(vertexKey)??"")+text.replace(/\r\n?/gu,"\n");
       const lines=combined.split("\n");
       const trailing=lines.pop()??"";
-      for(const line of lines)this.addSafeLog(log.vertex,line);
-      this.setPending(log.vertex,trailing);
+      for(const line of lines)this.addSafeLog(vertex,line);
+      this.setPending(vertexKey,trailing);
     }
+  }
+
+  consumeUnstructuredStderr(line:string):void{
+    this.addStderr(line);
   }
 
   read(): BuildKitDiagnosticExcerpt | undefined {
     const failedVertex=[...this.failedVertices].reverse().find((vertex)=>
       this.logEntries.some((log)=>log.vertex===vertex))??
       [...this.failedVertices].reverse()[0]??null;
-    if(failedVertex!==null){
-      const pending=this.pending.get(failedVertex);
-      if(pending)this.addSafeLog(failedVertex,pending);
+    const pendingVertices=failedVertex===null
+      ?[...this.pending.keys()]
+      :[...new Set([failedVertex,...(this.pending.has("")?[""] : [])])];
+    for(const vertex of pendingVertices){
+      const pending=this.pending.get(vertex);
+      if(pending)this.addSafeLog(vertex||null,pending);
     }
     const entries=failedVertex===null
-      ?this.errorEntries
+      ?[...this.logEntries,...this.errorEntries]
       :[
-        ...this.logEntries.filter((item)=>item.vertex===failedVertex),
-        ...this.errorEntries.filter((item)=>item.vertex===failedVertex),
+        ...this.logEntries.filter((item)=>item.vertex===failedVertex||item.vertex===null),
+        ...this.errorEntries.filter((item)=>item.vertex===failedVertex||item.vertex===null),
       ];
-    const safe=sanitizeBuildKitDiagnostic(entries.map((item)=>item.text).join("\n"));
+    entries.sort((left,right)=>left.sequence-right.sequence);
+    const primary=entries.map((item)=>item.text).join("\n");
+    const stderr=this.stderrEntries.map((item)=>item.text).join("\n");
+    const captured=failedVertex===null
+      ?[primary,stderr].filter(Boolean).join("\n")
+      :primary||stderr;
+    const safe=sanitizeBuildKitDiagnostic(captured);
     if(!safe)return undefined;
     return {text:safe.text,truncated:this.truncated||safe.truncated};
   }
@@ -361,8 +407,8 @@ export function createBuildctlRunner(
       });
 
       let totalBytes = 0;
-      // buildctl writes rawjson progress to stderr; retain separate framing so
-      // stdout bytes cannot be joined into a diagnostic event from stderr.
+      // Keep rawjson and text framing separate. Only non-JSON stderr becomes
+      // bounded sanitized fallback evidence; arbitrary stdout stays private.
       const buffers = { stdout: "", stderr: "" };
       const decoders = { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") };
       type OutputStream = keyof typeof buffers;
@@ -388,7 +434,7 @@ export function createBuildctlRunner(
       const timeoutTimer = setTimeout(() => terminate("timeout"), options.buildTimeoutMs);
       timeoutTimer.unref();
 
-      const consumeLine = (line: string): void => {
+      const consumeLine = (line: string, stream:OutputStream): void => {
         if (Buffer.byteLength(line, "utf8") > 64 * 1024) {
           terminate("output-limit");
           return;
@@ -397,6 +443,8 @@ export function createBuildctlRunner(
         if (parsed) {
           diagnostics.consume(parsed.value);
           if (parsed.progress) options.onProgress(parsed.progress);
+        }else if(stream==="stderr"){
+          diagnostics.consumeUnstructuredStderr(line);
         }
       };
       const consume = (chunk: Buffer, stream: OutputStream): void => {
@@ -410,7 +458,7 @@ export function createBuildctlRunner(
         while (newline >= 0) {
           const line = buffers[stream].slice(0, newline);
           buffers[stream] = buffers[stream].slice(newline + 1);
-          consumeLine(line);
+          consumeLine(line,stream);
           if (terminalReason !== null) return;
           newline = buffers[stream].indexOf("\n");
         }
@@ -432,7 +480,7 @@ export function createBuildctlRunner(
         if (settled) return;
         for (const stream of ["stdout", "stderr"] as const) {
           buffers[stream] += decoders[stream].end();
-          if (buffers[stream]) consumeLine(buffers[stream]);
+          if (buffers[stream]) consumeLine(buffers[stream],stream);
         }
         if (terminalReason === "timeout") {
           failOnce(new BuildKitAttemptError("BUILD_TIMEOUT", true, diagnostics.read()));

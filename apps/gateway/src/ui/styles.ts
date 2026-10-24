@@ -90,10 +90,22 @@ summary { color:var(--brand-dark); cursor:pointer; min-height:44px; display:list
 select { appearance:none; background-image:linear-gradient(45deg,transparent 50%,#596f66 50%),linear-gradient(135deg,#596f66 50%,transparent 50%); background-position:calc(100% - 17px) 50%,calc(100% - 12px) 50%; background-size:5px 5px; background-repeat:no-repeat; display:block; overflow:hidden; min-width:0; max-width:100%; width:100%; min-height:44px; padding:10px 32px 10px 12px; border:1px solid #c9dacd; border-radius:6px; background-color:#fff; color:var(--ink); font:inherit; font-size:16px; }
 .module-options { grid-column:1/-1; min-width:0; margin:0; padding:16px 0; border:0; }
 .module-options legend { padding:0; font-weight:600; }
-.module-option { display:flex; align-items:center; gap:12px; min-height:48px; padding:8px; border-bottom:1px solid var(--line); cursor:pointer; }
-.module-option input { flex:0 0 auto; width:20px; height:20px; accent-color:var(--brand); }
+.module-option { display:flex; align-items:flex-start; gap:12px; min-height:48px; padding:12px 8px; border-bottom:1px solid var(--line); cursor:pointer; }
+.module-option input { flex:0 0 auto; width:20px; height:20px; margin-top:3px; accent-color:var(--brand); }
 .module-option span { overflow-wrap:anywhere; }
 .module-option .field-help { display:block; }
+.module-option-copy { display:grid; flex:1; min-width:0; gap:4px; }
+.module-option-copy > strong { color:var(--ink); }
+.module-description { color:var(--muted); font-size:14px; font-weight:400; }
+.module-activation { padding-top:2px; }
+.module-catalog-guidance { display:block; margin-top:10px; }
+.mcp-guide { display:grid; gap:10px; margin-top:24px; padding:16px; border-top:1px solid var(--line); background:var(--surface-soft); }
+.mcp-guide h3 { margin:0; }
+.mcp-guide p { margin:0; overflow-wrap:anywhere; }
+.mcp-guide .form-field { width:100%; }
+.mcp-endpoint { display:block; min-width:0; width:100%; min-height:44px; padding:10px 12px; border:1px solid #c9dacd; border-radius:6px; background:#fff; color:var(--ink); font:inherit; font-size:16px; }
+.mcp-guide ol { margin:0; padding-left:24px; }
+.mcp-guide li { padding:4px 0; overflow-wrap:anywhere; }
 [data-configuration-status] { min-height:3em; }
 .repository-search { display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin-block:20px 0; }
 .repository-search label { flex:1; min-width:160px; }
@@ -134,8 +146,8 @@ body[data-ui="mobile"] .form-grid { grid-template-columns:1fr; }
 `;
 
 export const PORTAL_STYLE_HASHES = {
-  desktop: "cRR5Ml9FVMQ0dmuZYzvd2R/NZxJRp5t5s4uv0CBW7VA=",
-  mobile: "f8OS9Q7awm0sXSKhLBC8iSAMVGwmqB10sEEj8b71GAc=",
+  desktop: "HCEi7Z1xCT74EgoZfJSzhSxVNFnHa1rPpTrJ8vxcwhc=",
+  mobile: "myKmzTyQTVOpINFx2I5zzVwfpoahe4sTcvi4fnWQ+nE=",
 } as const;
 export function portalStyles(mode: PortalUiMode): string {
   return PORTAL_STYLES + (mode === "mobile" ? MOBILE_STYLES : DESKTOP_STYLES) + EVIDENCE_LEDGER_STYLES + EVIDENCE_LEDGER_LIST_STYLES + ADMIN_STYLES +

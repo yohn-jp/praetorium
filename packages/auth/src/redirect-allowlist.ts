@@ -51,13 +51,15 @@ export function adminReturnPath(target: string | null | undefined): string {
   const path = url.pathname;
   const buildDetail = /^\/builds\/sr_[0-9a-f-]{36}$/u.test(path);
   const releaseDetail = /^\/releases\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(path);
+  const sourceReleaseExecution = /^\/source-release-builds\/[a-z][a-z0-9-]{0,31}\/[1-9][0-9]{0,15}$/u.test(path);
   const infrastructure = /^\/infrastructure(?:\/hosts\/[a-z][a-z0-9-]{0,63}|\/dependencies)?$/u.test(path);
   const operation = /^\/operations\/op_[A-Za-z0-9_.:-]{1,124}$/u.test(path);
   if (!["/", "/builds", "/releases", "/audit"].includes(path) &&
-      !buildDetail && !releaseDetail && !infrastructure && !operation) return "/";
+      !buildDetail && !releaseDetail && !sourceReleaseExecution && !infrastructure && !operation) return "/";
   const permitted = path === "/builds" ? ["ui", "sort", "state", "cursor"] :
     path === "/audit" ? ["ui", "q", "cursor"] :
-    path === "/releases" || buildDetail ? ["ui", "cursor"] : ["ui"];
+    path === "/releases" || buildDetail ? ["ui", "cursor"] :
+    operation ? ["ui", "release"] : ["ui"];
   const normalized = new URLSearchParams();
   const entries = [...url.searchParams.entries()];
   if (entries.length > permitted.length) return "/";
@@ -68,6 +70,7 @@ export function adminReturnPath(target: string | null | undefined): string {
     if (key === "state" && !["queued", "building", "produced", "admitted", "failed"].includes(value)) return "/";
     if (key === "q" && (value.length > 100 ||
         [...value].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127))) return "/";
+    if (key === "release" && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(value)) return "/";
     if (key === "cursor" && (value.length < 1 || value.length > 512 ||
         !/^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(value))) return "/";
     normalized.append(key, value);

@@ -408,6 +408,29 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   }
 
   if (request.method !== "GET") return response(405, "Method not allowed");
+  const sourceReleaseExecutionMatch = /^\/source-release-builds\/([a-z][a-z0-9-]{0,31})\/([1-9][0-9]{0,15})$/u.exec(url.pathname);
+  if (sourceReleaseExecutionMatch) {
+    const sourceId = sourceReleaseExecutionMatch[1]!;
+    const releaseId = Number(sourceReleaseExecutionMatch[2]);
+    if (!Number.isSafeInteger(releaseId)) return response(400, "Invalid GitHub Release ID");
+    try {
+      const result = await controlPlane(context, session.actor.userId, "GET",
+        "/v1/operator/source-builds/by-release/" + encodeURIComponent(sourceId) + "/" + releaseId);
+      const body = objectValue(result.data);
+      if (result.status !== 200 || !body ||
+          !(body.job === null || SourceBuildSummarySchema.safeParse(body.job).success))
+        return response(result.status === 404 ? 404 : 503, "Source release execution status unavailable");
+      const job = body.job === null ? null : SourceBuildSummarySchema.parse(body.job);
+      if (job && (job.sourceId !== sourceId || job.releaseId !== releaseId))
+        return response(503, "Source release execution identity unavailable");
+      if (!job)
+        return localRedirect("/releases?ui=" + mode + "&notice=" + encodeURIComponent(
+          "No Praetorium Source Build is recorded for this published release."));
+      return localRedirect(buildHref(job.id, mode));
+    } catch {
+      return response(503, "Source release execution status unavailable");
+    }
+  }
   const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
   const operationMatch = /^\/operations\/(op_[A-Za-z0-9_.:-]{1,124})$/u.exec(url.pathname);
@@ -433,6 +456,10 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   const selectedBuildId = detailMatch?.[1] ?? null;
   const selectedReleaseId = releaseMatch?.[1] ?? null;
   const selectedOperationId = operationMatch?.[1] ?? null;
+  const relatedReleaseValues = selectedOperationId ? url.searchParams.getAll("release") : [];
+  if (relatedReleaseValues.length > 1 || relatedReleaseValues.some(value => !RELEASE_ID.test(value)))
+    return response(400, "Invalid operation return context");
+  const relatedReleaseId = relatedReleaseValues[0] ?? null;
   const sourceParams = new URLSearchParams();
   if (sort !== "recent") sourceParams.set("sort", sort);
   if (state) sourceParams.set("state", state);
@@ -505,7 +532,7 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
     }) : null;
   const model: ConsoleViewModel = {
     section, mode, csrf: session.csrfToken, notice: url.searchParams.get("notice")?.slice(0, 200) ?? null,
-    catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, selectedOperationId, operationDetail, releaseDetail, buildStateFilter: state,
+    catalog, audit, builds, sourceViews, detail, selectedBuildId, selectedReleaseId, selectedOperationId, relatedReleaseId, operationDetail, releaseDetail, buildStateFilter: state,
     buildSort: sort as "recent" | "source" | "state" | "attempt", auditQuery, pageCursor: cursor,
     infrastructure, selectedHostId, hostDetail, hostServices, dependenciesSelected, dependencies,
   };

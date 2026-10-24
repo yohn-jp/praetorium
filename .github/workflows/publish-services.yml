@@ -48,7 +48,14 @@ jobs:
           PRAETORIUM_OPERATOR_EVIDENCE_DIR: ${{ runner.temp }}/operator-console-diagnostics
         run: node --test tests/e2e/operator-console-diagnostics.test.mjs
       - name: Exercise independent Admin Worker browser and protected infrastructure API
+        env:
+          PRAETORIUM_UI_EVIDENCE_DIR: ${{ runner.temp }}/operator-console-diagnostics/independent-admin
         run: node --test tests/e2e/independent-admin.test.mjs
+      - name: Verify Gateway module discovery and MCP guidance in Chromium
+        env:
+          PRAETORIUM_UI_BROWSERS: chromium
+          PRAETORIUM_UI_EVIDENCE_DIR: ${{ runner.temp }}/operator-console-diagnostics/gateway
+        run: node tests/e2e/commercial-ui.test.mjs
       - name: Upload synthetic operator console browser evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -80,7 +87,7 @@ jobs:
           corepack pnpm@11.18.0 build
       - name: Verify built fixture imports
         run: node scripts/ci/source-stable-fixture.mjs --check-imports
-      - name: Exercise Source queue, BuildKit producer, OCI verification and Stable CAS
+      - name: Exercise v0.3.5 Metadata, real BuildKit failure evidence, guarded Retry and Stable CAS
         env:
           NODE_ENV: test
           PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR: ${{ runner.temp }}/praetorium-source-stable-evidence

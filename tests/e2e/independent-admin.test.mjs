@@ -23,21 +23,66 @@ const HOSTS = [
     freshness:"absent", cpu:{usedPercent:null}, memory:{usedBytes:null,totalBytes:null},
     disk:{usedBytes:null,totalBytes:null}, reasons:["metrics_unavailable"], schemaVersion:1 },
 ];
+async function renderedTextContrast(page, selectors) {
+  return page.evaluate(items => {
+    const rgba = color => {
+      const channels = color.match(/[\d.]+/gu)?.map(Number);
+      if (!channels || channels.length < 3) return null;
+      return [channels[0],channels[1],channels[2],channels.length > 3 ? channels[3] : 1];
+    };
+    const background = element => {
+      const layers=[];
+      for (let node=element;node;node=node.parentElement) {
+        const layer=rgba(getComputedStyle(node).backgroundColor);
+        if (layer && layer[3]>0) layers.push(layer);
+      }
+      let result=[255,255,255];
+      for (let index=layers.length-1;index>=0;index--) {
+        const [red,green,blue,alpha]=layers[index];
+        result=[red*alpha+result[0]*(1-alpha),green*alpha+result[1]*(1-alpha),blue*alpha+result[2]*(1-alpha)];
+      }
+      return result;
+    };
+    const luminance=channels=>channels.map(channel=>channel/255).map(channel=>
+      channel<=.04045?channel/12.92:((channel+.055)/1.055)**2.4)
+      .reduce((sum,channel,index)=>sum+channel*[.2126,.7152,.0722][index],0);
+    const results=[];
+    for (const selector of items) for (const element of document.querySelectorAll(selector)) {
+      if (!element.getClientRects().length || !element.textContent.trim()) continue;
+      const foreground=rgba(getComputedStyle(element).color);
+      const canvas=background(element);
+      if (!foreground) continue;
+      const front=luminance(foreground.slice(0,3)),back=luminance(canvas);
+      results.push({selector,text:element.textContent.trim().slice(0,80),ratio:Number(((Math.max(front,back)+.05)/(Math.min(front,back)+.05)).toFixed(2))});
+    }
+    return results;
+  },selectors);
+}
 function fixture() {
   let buildState = "empty";
+  let evidenceMode = "detailed";
+  let retryAccepted = false;
   const jobId = "sr_00000000-0000-4000-a000-000000000001";
   const sourceDetail = () => SourceBuildDetailSchema.parse({
     job:{id:jobId,sourceId:"scriptorium",releaseId:101,tag:"v1.2.0",version:"1.2.0",commit:"b".repeat(40),
-      state:buildState,attempt:buildState==="queued"?0:1,revision:buildState==="failed"?0:1,
+      state:buildState==="retryQueued"?"queued":buildState==="retryBuilding"?"building":buildState,attempt:buildState==="queued"?0:buildState==="failed"?2:buildState==="retryQueued"||buildState==="retryBuilding"||retryAccepted&&buildState==="admitted"?3:1,revision:buildState==="failed"?0:1,
       error:buildState==="failed"?"SOURCE_BUILD_FAILED":null,admittedReleaseId:buildState==="admitted"?"rel_owned":null,
       retryable:buildState==="failed"},
     attempts:[{id:"owned-failed-attempt",attempt:1,revision:0,leaseEpoch:1,state:"failed",stage:"buildkit",
       startedAt:1792820000000,finishedAt:1792820001000,failureCode:"SOURCE_BUILD_FAILED",evidence:"expired",expiresAt:null,diagnostic:null},
-      ...(buildState==="building"||buildState==="admitted"?[{id:"owned-later-attempt",attempt:1,revision:1,leaseEpoch:2,
+      ...(buildState==="failed"||retryAccepted?[{id:"owned-detailed-attempt-"+"a".repeat(128),attempt:2,revision:0,leaseEpoch:2,
+        state:"failed",stage:"metadata",startedAt:1792820010000,finishedAt:1792820020000,
+        failureCode:"SOURCE_BUILD_FAILED",evidence:evidenceMode === "detailed" || evidenceMode === "summary" || evidenceMode === "unavailable" ? "available" : evidenceMode,expiresAt:evidenceMode === "expired" ? 1790000000000 : 1795412020000,
+        diagnostic:evidenceMode === "not_recorded" || evidenceMode === "expired" || evidenceMode === "unavailable" ? null : {stage:"metadata",reason:"build_failed",
+          summary:"BuildKit reported a build failure. Inspect the sanitized excerpt when available.",
+          excerpt:evidenceMode === "summary" ? "" : "git rev-parse HEAD failed\n" + "long-source-path/".repeat(40) + "診断.ts:42 compiler error",truncated:false}}]:[]),
+      ...(buildState==="building"||buildState==="admitted"&&!retryAccepted?[{id:"owned-later-attempt",attempt:1,revision:1,leaseEpoch:2,
         state:buildState==="building"?"building":"produced",stage:buildState==="building"?"buildkit":"admission",
         startedAt:1792820010000,finishedAt:buildState==="building"?null:1792820020000,
-        failureCode:null,evidence:"not_recorded",expiresAt:null,diagnostic:null}]:[])],
-    nextCursor:null,evidence:"expired",
+        failureCode:null,evidence:"not_recorded",expiresAt:null,diagnostic:null}]:[]),
+      ...(buildState==="retryBuilding"||retryAccepted&&buildState==="admitted"?[{id:"owned-retry-attempt",attempt:3,revision:1,leaseEpoch:3,state:buildState==="retryBuilding"?"building":"produced",stage:buildState==="retryBuilding"?"source_checkout":"admission",
+        startedAt:1792820030000,finishedAt:null,failureCode:null,evidence:"not_recorded",expiresAt:null,diagnostic:null}]:[])],
+    nextCursor:null,evidence:buildState==="failed"?evidenceMode === "summary" || evidenceMode === "detailed" || evidenceMode === "unavailable" ? "available" : evidenceMode : "expired",
   });
   const calls = { identity:0, control:0, observer:0 };
   const env = {
@@ -47,23 +92,50 @@ function fixture() {
       redeemAdminHandoff: async () => ({kind:"expired"}),
       verifyAdminSession: async id => {
         calls.identity++;
-        return id === AUTH ? { actorId:OPERATOR, csrfToken:"csrf-valid" } : null;
+        return id === AUTH ? { actorId:OPERATOR, csrfToken:"signed-csrf-token" } : null;
       },
       revokeAdminSession: async () => true,
       listApprovedSourceReleases: async () => [],
       resolvePublishedRelease: async () => ({kind:"unavailable"}),
-      revalidateRetrySource: async () => ({kind:"unavailable"}),
+      revalidateRetrySource: async (_id, job) => ({kind:"matched",sourceId:job.sourceId,githubReleaseId:job.releaseId,
+        sourceTag:job.tag,sourceRevision:job.commit,releaseVersion:job.version}),
     },
-    CONTROL_PLANE: {fetch: async request => {
+    CONTROL_PLANE: {fetch: async (input, init) => {
       calls.control++;
-      const pathname = new URL(typeof request === "string" ? request : request.url).pathname;
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      const pathname = url.pathname;
+      const method = request.method;
+      if (method === "POST" && pathname === "/v1/operator/source-builds/"+jobId+"/retry") {
+        const payload = await request.json();
+        assert.equal(payload.sourceId,"scriptorium");
+        assert.equal(payload.githubReleaseId,101);
+        assert.equal(payload.sourceRevision,"b".repeat(40));
+        assert.equal(payload.expectedRevision,0);
+        buildState = "retryQueued";
+        evidenceMode = "detailed";
+        retryAccepted = true;
+        return Response.json({accepted:true},{status:202});
+      }
       if (buildState !== "empty" && pathname === "/v1/operator/source-builds/"+jobId)
         return Response.json(sourceDetail());
       if (buildState !== "empty" && pathname === "/v1/operator/source-builds")
         return Response.json({items:[sourceDetail().job],nextCursor:null});
-      return Response.json(pathname === "/v1/operator/releases"
-        ? {items:[],stableChannel:{currentReleaseId:null,revision:0}}
-        : {items:[]});
+      if (pathname === "/v1/operator/releases/rel_owned")
+        return Response.json({release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),status:"available"},
+          workflow:{state:"stable",revision:4,failureCode:null,attempts:2,nextAttemptAt:null,
+            canaryBuildKey:"composition-owned",canaryOperationId:"op_owned"},
+          build:{id:"composition-owned",status:"available",attemptCount:1,failure:null}});
+      if (pathname === "/v1/operations/op_owned/evidence")
+        return Response.json({operation:{id:"op_owned",instanceId:"runtime-owned",generation:2,runtimeEpoch:5,
+          kind:"deploy",status:"succeeded",phase:"stable",attempt:1,createdAt:1792820000000,updatedAt:1792820001000},
+          readinessEvidence:{ready:true},rollbackCompatibilityEvidence:null,rollbackCompatible:true});
+      if (pathname === "/v1/operator/releases")
+        return Response.json(buildState === "admitted"
+          ? {items:[{release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),
+              status:"available",createdAt:"2026-10-24T00:00:00.000Z"},workflow:null}],stableChannel:{currentReleaseId:"rel_owned",revision:4}}
+          : {items:[],stableChannel:{currentReleaseId:null,revision:0}});
+      return Response.json({items:[],stableChannel:{currentReleaseId:null,revision:0}});
     }},
     INFRASTRUCTURE: {fetch: async (input, init) => {
       calls.observer++;
@@ -82,11 +154,13 @@ function fixture() {
         Response.json({error:"not_found"},{status:404});
     }},
   };
-  return {env,calls,setBuildState:value=>{buildState=value;},jobId};
+  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},jobId};
 }
 async function listen(env) {
   const server = createServer(async (req,res) => {
     try {
+      const chunks=[];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const headers = new Headers();
       for (const [k,v] of Object.entries(req.headers)) {
         if (typeof v==="string") headers.set(k,v);
@@ -94,8 +168,12 @@ async function listen(env) {
       }
       // Browser fixture models an already-authorized HTTPS Admin session.
       // Real host-only Secure cookies are exercised by the Worker/session tests.
-      headers.set("Cookie","__Host-praetorium_session="+AUTH);
-      const request = new Request(ADMIN+(req.url??"/"),{method:req.method??"GET",headers});
+      headers.set("Origin",ADMIN);
+      headers.set("Cookie","__Host-praetorium_session="+AUTH+"; __Host-praetorium_csrf=signed-csrf-token");
+      const method=req.method??"GET";
+      const request = new Request(ADMIN+(req.url??"/"),{
+        method,headers,...(method==="GET"||method==="HEAD"?{}:{body:Buffer.concat(chunks)}),
+      });
       const response = await worker.fetch(request,env);
       res.writeHead(response.status,Object.fromEntries(response.headers.entries()));
       res.end(Buffer.from(await response.arrayBuffer()));
@@ -136,6 +214,8 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
   t.after(()=>browser.close());
   const context=await browser.newContext();
   const page=await context.newPage();
+  page.setDefaultTimeout(5000);
+  page.setDefaultNavigationTimeout(5000);
   const errors=[];
   page.on("pageerror",error=>errors.push(String(error)));
   for (const [mode,width] of [["mobile",320],["mobile",375],["mobile",390],["mobile",430],["desktop",1440],["desktop",1920],["desktop",640]]) {
@@ -181,20 +261,137 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
   }
 
   for (const mode of ["desktop","mobile"]) {
-    await page.setViewportSize({width:mode==="desktop"?1440:390,height:900});
-    for (const state of ["failed","queued","building","admitted"]) {
-      setBuildState(state);
+    const widths = mode === "desktop" ? [1440,1920] : [320,375,390,430];
+    for (const width of widths) {
+      await page.setViewportSize({width,height:900});
+      for (const state of ["failed","queued","building","admitted"]) {
+        setBuildState(state);
+        await page.goto(origin+"/builds/"+jobId+"?ui="+mode);
+        const text=await page.locator("main").innerText();
+        assert.ok(text.includes("owned-failed-attempt"),"prior failure remains immutable history");
+        assert.ok(text.toLowerCase().includes("expired"),"expired evidence is not a successful empty log");
+        if(state==="failed") {
+          assert.equal(await page.locator('input[name="expectedRevision"]').inputValue(),"0");
+          assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),1);
+          await page.keyboard.press("Tab");
+          const keyboardFocus=await page.evaluate(()=>({
+            label:document.activeElement?.textContent?.trim(),
+            outline:getComputedStyle(document.activeElement).outlineWidth,
+          }));
+          assert.match(keyboardFocus.label??"",/Skip to main content/i);
+          assert.equal(keyboardFocus.outline,"3px","the keyboard focus indicator must be visible");
+          const requiredOrder = mode === "desktop"
+            ? ["AUTHORITATIVE CURRENT STATE","FAILURE DETAIL","Sanitized excerpt","SAFE NEXT ACTION","TECHNICAL IDENTIFIERS","Attempt history"]
+            : ["failed","AFFECTED SOURCE","RECORDED FAILURE","Sanitized excerpt","Retry is permitted","TECHNICAL IDENTIFIERS","Attempt history"];
+          const positions = requiredOrder.map(label=>text.indexOf(label));
+          assert.ok(positions.every(position=>position>=0),mode+" failure detail missing: "+requiredOrder);
+          assert.deepEqual(positions,[...positions].sort((left,right)=>left-right),mode+" failure detail order");
+          assert.match(text,/metadata/iu,"the recorded stage is shown");
+          assert.match(text,/build failed/iu,"the recorded reason is shown");
+          assert.ok(text.includes("may not identify the root cause"),"a failure summary must not be presented as a diagnosis");
+          const contrastSelectors=mode==="desktop"
+            ? [".desktop-context-label",".desktop-eyebrow",".desktop-muted",".desktop-section-intro",".desktop-facts dt",".desktop-job-heading>div>code"]
+            : [".admin-kicker",".admin-mobile-detail-heading p:not(.admin-mobile-source-name)",".admin-mobile-detail-facts dt",".admin-mobile-evidence-state",".admin-mobile-tabs a:not([aria-current])",".admin-mobile-footer"];
+          const contrast=await renderedTextContrast(page,contrastSelectors);
+          assert.ok(contrast.length>0,mode+" contrast audit must inspect rendered operator labels");
+          assert.deepEqual(contrast.filter(item=>item.ratio<4.5),[],mode+" rendered text contrast must meet 4.5:1: "+JSON.stringify(contrast));
+          if(mode==="mobile") {
+            const recoveryFlow=await page.evaluate(()=>({
+              position:getComputedStyle(document.querySelector(".admin-mobile-action-region")).position,
+              actionTop:document.querySelector(".admin-mobile-action-region").getBoundingClientRect().top,
+              evidenceBottom:document.querySelector(".admin-mobile-failure-detail").getBoundingClientRect().bottom,
+            }));
+            assert.equal(recoveryFlow.position,"static","retry action stays in the document flow on build detail");
+            assert.ok(recoveryFlow.actionTop>=recoveryFlow.evidenceBottom,"retry action follows the failure evidence");
+          }
+          const identifier = await page.evaluate(()=>{
+            const candidate=document.querySelector(".desktop-job-facts .desktop-fact-wide dd,.admin-mobile-detail-facts>div:first-child dd");
+            const attempt=document.querySelector(".desktop-attempt-id code,.admin-mobile-attempt-heading>code");
+            return candidate && attempt
+              ? candidate.scrollWidth<=candidate.clientWidth+1 && attempt.scrollWidth<=attempt.clientWidth+1
+              : false;
+          });
+          assert.equal(identifier,true,"long immutable identifiers must fit or wrap within the detail field");
+          await page.locator(".desktop-failure-detail details summary,.admin-mobile-failure-detail details summary").click();
+          assert.ok(await page.locator(".desktop-failure-detail pre,.admin-mobile-failure-detail pre").isVisible(),
+            "the long diagnostic excerpt must actually be expanded for the overflow check");
+          assert.ok((await page.locator(".desktop-failure-detail pre,.admin-mobile-failure-detail pre").innerText()).length > 600);
+          const dimensions=await page.evaluate(()=>({
+            document:document.documentElement.scrollWidth,
+            viewport:innerWidth,
+            excerpts:[...document.querySelectorAll(".desktop-diagnostic pre,.admin-mobile-diagnostic pre")]
+              .every(pre=>pre.scrollWidth<=pre.clientWidth+1),
+          }));
+          assert.ok(dimensions.document<=width+1,mode+" failure-detail horizontal overflow: "+JSON.stringify(dimensions));
+          assert.equal(dimensions.excerpts,true,"diagnostic excerpts must fit their detail surface");
+        } else assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),0);
+        if(process.env.PRAETORIUM_UI_EVIDENCE_DIR && state==="failed") {
+          await mkdir(process.env.PRAETORIUM_UI_EVIDENCE_DIR, {recursive:true});
+          await page.screenshot({path:process.env.PRAETORIUM_UI_EVIDENCE_DIR+"/admin-"+mode+"-source-"+state+"-"+width+".png",fullPage:true});
+        }
+      }
+    }
+  }
+  for (const mode of ["desktop","mobile"]) {
+    const width=mode==="desktop"?1440:320;
+    await page.setViewportSize({width,height:900});
+    for (const [evidence,label] of [["summary","Summary only"],["not_recorded","was not recorded"],
+      ["expired","expired"],["unavailable","details are unavailable"]]) {
+      setBuildState("failed",evidence);
       await page.goto(origin+"/builds/"+jobId+"?ui="+mode);
       const text=await page.locator("main").innerText();
-      assert.ok(text.includes("owned-failed-attempt"),"prior failure remains immutable history");
-      assert.ok(text.toLowerCase().includes("expired"),"expired evidence is not a successful empty log");
-      if(state==="failed") {
-        assert.equal(await page.locator('input[name="expectedRevision"]').inputValue(),"0");
-        assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),1);
-      } else assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),0);
-      if(process.env.PRAETORIUM_UI_EVIDENCE_DIR)
-        await page.screenshot({path:process.env.PRAETORIUM_UI_EVIDENCE_DIR+"/admin-"+mode+"-source-"+state+".png",fullPage:true});
+      assert.ok(text.includes(label),mode+" must explain "+evidence+" diagnostic evidence");
+      assert.match(text,/root cause/iu,mode+" must avoid claiming that a summary establishes the root cause");
+      if(evidence==="summary") {
+        assert.ok(text.includes("No detailed diagnostic excerpt was recorded."));
+        assert.ok(!text.includes("View sanitized diagnostic excerpt"));
+      }
     }
+  }
+  // Exercise the guarded Source retry from the rendered failure page, then
+  // follow the new attempt into canonical Admission, Composition, Operation,
+  // and Stable read models. The fixture validates the submitted identity and
+  // revision; separate BuildKit/Control Plane integration tests prove service behavior.
+  for (const mode of ["desktop","mobile"]) {
+    const width=mode==="desktop"?1440:320;
+    await page.setViewportSize({width,height:900});
+    setBuildState("failed");
+    await page.goto(origin+"/builds/"+jobId+"?ui="+mode);
+    await page.getByRole("button",{name:"Retry Source build",exact:true}).click();
+    assert.match(page.url(),new RegExp("/builds/"+jobId),await page.locator("body").innerText());
+    let journey=await page.locator("main").innerText();
+    assert.ok(journey.includes("Source retry accepted"),page.url()+"\n"+journey);
+    assert.ok(journey.toLowerCase().includes("queued"),journey);
+    assert.match(journey,/current attempt/iu);
+    assert.match(journey,/current attempt\s+3/iu,"accepted retry advances the authoritative attempt counter");
+    assert.equal(await page.getByRole("button",{name:"Retry Source build",exact:true}).count(),0);
+
+    setBuildState("retryBuilding");
+    await page.reload({waitUntil:"networkidle"});
+    journey=await page.locator("main").innerText();
+    assert.ok(journey.includes("owned-retry-attempt"),"the worker claim must record the new attempt");
+    assert.match(journey,/source checkout/iu);
+    setBuildState("admitted");
+    await page.reload({waitUntil:"networkidle"});
+    journey=await page.locator("main").innerText();
+    assert.match(journey,/admitted release/iu);
+    assert.ok(journey.includes("owned-detailed-attempt"),"the failed attempt remains in history after admission");
+    await page.locator('a[href="/releases/rel_owned?ui='+mode+'#composition-build"]').first().click();
+    assert.equal(new URL(page.url()).pathname,"/releases/rel_owned");
+    assert.equal(new URL(page.url()).hash,"#composition-build");
+    assert.ok((await page.locator("main").innerText()).includes("composition-owned"));
+    await page.getByRole("link",{name:"op_owned",exact:true}).click();
+    journey=await page.locator("main").innerText();
+    assert.match(journey,/succeeded/iu,journey);
+    await page.getByRole("link",{name:"Back to related release rel_owned",exact:true}).click();
+    await page.getByRole("link",{name:"Back to Releases",exact:true}).click();
+    const stableLabelContrast=await renderedTextContrast(page,mode==="desktop"?[".desktop-stable-digest span"]:[".admin-mobile-stable-panel strong"]);
+    assert.ok(stableLabelContrast.length>0,mode+" Stable status label must be audited");
+    assert.deepEqual(stableLabelContrast.filter(item=>item.ratio<4.5),[],mode+" Stable status label contrast must meet 4.5:1");
+    await page.getByRole("link",{name:/Open .*Stable release details/}).click();
+    journey=await page.locator("main").innerText();
+    assert.match(journey,/stable/iu);
+    assert.ok(journey.includes("composition-owned"));
   }
   setBuildState("empty");
   // The first touch visit starts as Desktop by policy, then offers a

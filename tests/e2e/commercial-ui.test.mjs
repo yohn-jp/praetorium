@@ -62,11 +62,15 @@ function repository(id = "123456789") {
             : null,
       },
     },
-    current,
-    desired,
+    current: scenario === "mcp-ready" ? { ...current, requestedModules: ["editor", "mcp"], includedModules: ["editor", "search", "mcp"] } : current,
+    desired: scenario === "mcp-ready" ? { ...desired, requestedModules: ["editor", "mcp"], includedModules: ["editor", "search", "mcp"] } : desired,
+    modules: scenario.startsWith("mcp-") ? [...dashboard.modules, {
+      moduleId: "mcp", label: "MCP connections", description: "Connect an authorized client to writing tools.",
+      version: "0.1.0", artifactDigest: fullDigest, requires: ["search"],
+    }] : dashboard.modules,
     approvedReleases: scenario === "no-release" || scenario === "no-catalog" ? [] : dashboard.approvedReleases,
     resourceProfiles: scenario === "no-profile" || scenario === "no-catalog" ? [] : dashboard.resourceProfiles,
-    preview: blocked ? null : dashboard.preview,
+    preview: blocked ? null : scenario === "mcp-ready" ? { ...dashboard.preview, requestedModules: ["editor", "mcp"], includedModules: ["editor", "search", "mcp"] } : dashboard.preview,
     canConfigure: !readonly,
     build: blocked
       ? null
@@ -425,6 +429,35 @@ try {
             fullPage: true,
           });
         }
+        // Synthetic approved catalog/runtime state through the actual portal
+        // handler. This proves rendering and copy interaction, not MCP auth.
+        for (const width of mode === "mobile" ? [320, 375, 390, 430] : [1440, 1920]) {
+          await visit("/repositories/123456789", mode, "mcp-ready", width);
+          if (mode === "mobile") await page.getByRole("link", { name:"Configuration", exact:true }).click();
+          await page.getByRole("heading", {name:"Connect an MCP client"}).waitFor();
+          assert.match(await page.locator(".mcp-guide").innerText(), /Included as a selected module[\s\S]*Ready[\s\S]*has not tested an MCP connection/u);
+          assert.match(await page.locator(".module-option").filter({hasText:"MCP connections"}).innerText(), /Connect an authorized client[\s\S]*Requires: Search/u);
+          const endpoint = page.locator("#mcp-endpoint");
+          assert.equal(await endpoint.inputValue(), "https://123456789.scriptorium.yohn.jp/mcp");
+          await page.getByText("OAuth and client setup", {exact:true}).click();
+          assert.match(await page.locator(".mcp-guide").innerText(), /PKCE S256[\s\S]*CIMD/u);
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+          await page.getByRole("button", {name:"Copy endpoint", exact:true}).focus();
+          await page.keyboard.press("Enter");
+          await page.waitForFunction(() => document.querySelector("#mcp-copy-status").textContent.length > 0);
+          const copyResult = await page.locator("#mcp-copy-status").innerText();
+          assert.match(copyResult, /MCP endpoint copied|Automatic copy is unavailable/u);
+          if (copyResult.includes("copied")) {
+            if (name === "chromium") await context.grantPermissions(["clipboard-read"], {origin});
+            assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await endpoint.inputValue());
+          } else {
+            assert.equal(await endpoint.evaluate(element => element === document.activeElement), true);
+          }
+          await page.screenshot({path:`${output}/${name}-${mode}-mcp-${width}.png`, fullPage:true});
+        }
+        await visit("/repositories/123456789", mode, "mcp-inactive");
+        if (mode === "mobile") await page.getByRole("link", {name:"Configuration",exact:true}).click();
+        assert.match(await page.locator(".mcp-guide").innerText(), /Current configuration: Not included/u);
         await visit("/repositories/123456789", mode);
         if (mode === "mobile") await page.getByRole("link", { name:"Configuration", exact:true }).click();
         const form = page.locator("[data-configuration-form]");
@@ -625,7 +658,7 @@ try {
         screenshots: "See evidence directory; count is not an acceptance claim",
         contrast: Object.fromEntries(contrast),
         assertions:
-          "layouts, CSP enforcement, fields, dirty navigation, polling, preview/error/configure, stop/redeploy/retry/enter, mode/cookie/section/back-forward, keyboard, no-JS",
+          "layouts, CSP enforcement, fields, dirty navigation, polling, preview/error/configure, stop/redeploy/retry/enter, mode/cookie/section/back-forward, keyboard, no-JS, module metadata, MCP activation/OAuth guidance/endpoint copy at required viewports",
       });
     } finally {
       await browser.close();

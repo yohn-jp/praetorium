@@ -49,19 +49,50 @@ describe("remote buildctl execution", () => {
   it("kills a solve that exceeds its deadline", async () => {
     const options = await makeOptions({ buildTimeoutMs: 1000 });
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });
-    await expect(
-      runner(["-e", "setInterval(() => undefined, 1000)"], options),
-    ).rejects.toMatchObject({ code: "BUILD_TIMEOUT" });
+    const raw = [
+      "BuildKit stage timeout",
+      "Authorization: Bearer timeout-secret-token",
+      "NPM_TOKEN=timeout-env-secret",
+    ].join(String.fromCharCode(10));
+    const script = `process.stderr.write(${JSON.stringify(raw)}); setInterval(() => undefined, 1000)`;
+    let failure: unknown;
+    try {
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "BUILD_TIMEOUT",
+      diagnostic: { text: expect.stringContaining("BuildKit stage timeout") },
+    });
+    const excerpt = (failure as { diagnostic?: { text?: string } }).diagnostic?.text ?? "";
+    expect(excerpt).not.toMatch(/timeout-secret-token|timeout-env-secret/u);
   });
 
   it("terminates the child when the attempt is canceled", async () => {
     const controller = new AbortController();
     const options = await makeOptions({ signal: controller.signal });
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });
-    const run = runner(["-e", "setInterval(() => undefined, 1000)"], options);
-    const timer = setTimeout(() => controller.abort(), 30);
-    await expect(run).rejects.toMatchObject({ code: "BUILD_CANCELED" });
-    clearTimeout(timer);
+    const raw = [
+      "compiler error TS5100: invalid option",
+      "Authorization: Bearer cancel-secret-token",
+      "NPM_TOKEN=cancel-env-secret",
+      JSON.stringify({ vertexes: [{ completed: "now" }] }),
+    ].join(String.fromCharCode(10));
+    const script = `process.stderr.write(${JSON.stringify(raw + String.fromCharCode(10))}); setInterval(() => undefined, 1000)`;
+    let progressObserved=false;
+    const run = runner(["-e", script], {
+      ...options,
+      onProgress:()=>{progressObserved=true;controller.abort();},
+    });
+    const failure = await run.catch((error:unknown)=>error);
+    expect(progressObserved).toBe(true);
+    expect(failure).toMatchObject({
+      code: "BUILD_CANCELED",
+      diagnostic: { text: expect.stringContaining("compiler error TS5100") },
+    });
+    expect((failure as {diagnostic?:{text?:string}}).diagnostic?.text ?? "")
+      .not.toMatch(/cancel-secret-token|cancel-env-secret/u);
   });
 
   it("terminates a child that exceeds aggregate progress bytes", async () => {
@@ -158,5 +189,157 @@ describe("remote buildctl execution", () => {
     });
     const excerpt=(failure as {diagnostic?:{text?:string}}).diagnostic?.text??"";
     expect(Buffer.byteLength(excerpt,"utf8")).toBeLessThanOrEqual(4096);
+  });
+
+  it("keeps compiler logs when the solve has no failed Vertex or log vertex identity", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    const progress = JSON.stringify({
+      logs: [{
+        stream: 2,
+        data: Buffer.from("src/build.ts:9 - error TS2307: Cannot find module 'missing-package'\n").toString("base64"),
+      }],
+    });
+    let failure: unknown;
+    try {
+      const script = `process.stderr.write(${JSON.stringify(progress + String.fromCharCode(10))});process.exitCode=1;`;
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "BUILD_FAILED",
+      diagnostic: { text: expect.stringContaining("error TS2307") },
+    });
+    expect((failure as { diagnostic?: { text?: string } }).diagnostic?.text)
+      .toContain("Cannot find module");
+  });
+
+  it("keeps plain stderr failure evidence alongside raw-json logs when no failed Vertex is present", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    const progress = JSON.stringify({
+      logs: [{
+        vertex: "sha256:cached",
+        stream: 2,
+        data: Buffer.from("BuildKit cache: optional cache entry not found\n").toString("base64"),
+      }],
+    });
+    const stderr = "BuildKit compiler error TS5042: required module missing";
+    const script = `process.stderr.write(${JSON.stringify(progress + String.fromCharCode(10) + stderr + String.fromCharCode(10))});process.exitCode=1;`;
+    let failure: unknown;
+    try {
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    const excerpt = (failure as {diagnostic?:{text?:string}}).diagnostic?.text ?? "";
+    expect(excerpt).toContain("optional cache entry not found");
+    expect(excerpt).toContain("compiler error TS5042");
+  });
+
+  it("keeps BuildKit errors without a failed Vertex and filters null-identity errors alongside a failed Vertex", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    const withoutVertex = JSON.stringify({ error: "failed to solve: source metadata compiler error TS5042" });
+    let failure: unknown;
+    try {
+      await runner(["-e", `process.stderr.write(${JSON.stringify(withoutVertex + "\n")});process.exitCode=1;`], options);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "BUILD_FAILED",
+      diagnostic: { text: expect.stringContaining("compiler error TS5042") },
+    });
+
+    const withVertex = [
+      JSON.stringify({ vertexes: [{ digest: "sha256:failed", error: "failed to solve" }] }),
+      JSON.stringify({ error: "compiler error TS5042 without vertex identity" }),
+    ].join(String.fromCharCode(10));
+    failure = undefined;
+    try {
+      const script = `process.stderr.write(${JSON.stringify(withVertex + String.fromCharCode(10))});process.exitCode=1;`;
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as { diagnostic?: { text?: string } }).diagnostic?.text)
+      .toContain("compiler error TS5042 without vertex identity");
+  });
+
+  it("uses sanitized plain stderr when BuildKit emits no raw-json diagnostic", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    let failure: unknown;
+    try {
+      const raw = [
+        "Authorization: Bearer bearer-secret-value",
+        "NPM_TOKEN=hidden-value",
+        "BuildKit failed with compiler error TS5042 while connecting to https://user:password@builder.example/v1?token=secret",
+      ].join(String.fromCharCode(10));
+      const script = `process.stderr.write(${JSON.stringify(raw)});process.exitCode=1`;
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    const excerpt = (failure as { diagnostic?: { text?: string } }).diagnostic?.text ?? "";
+    expect(excerpt).toContain("[url redacted]");
+    expect(excerpt).toContain("compiler error TS5042");
+    expect(excerpt).not.toMatch(/password|token=secret|bearer-secret-value|hidden-value/u);
+    expect(Buffer.byteLength(excerpt, "utf8")).toBeLessThanOrEqual(4096);
+  });
+
+  it("redacts a PEM block split across stderr chunks and retains safe evidence after it", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    const chunks = [
+      "BuildKit output: -----BEGIN PRIVATE KEY-----\n",
+      "compiler error TS5099: base64body-should-not-leak\n",
+      "BuildKit output: -----END PRIVATE KEY-----\n",
+      "compiler error TS5042: module resolution failed\n",
+    ];
+    const script = `const chunks=${JSON.stringify(chunks)};let index=0;const next=()=>{if(index===chunks.length){process.exitCode=1;return;}process.stderr.write(chunks[index++]);setTimeout(next,10)};next()`;
+    let failure: unknown;
+    try {
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    const excerpt = (failure as { diagnostic?: { text?: string } }).diagnostic?.text ?? "";
+    expect(excerpt).toContain("compiler error TS5042");
+    expect(excerpt).not.toContain("base64body-should-not-leak");
+  });
+
+  it("flushes a trailing log without vertex identity when another failed vertex exists", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    const events = [
+      JSON.stringify({
+        logs: [{
+          stream: 2,
+          data: Buffer.from("compiler error TS2307: Cannot find module 'missing-package'").toString("base64"),
+        }],
+      }),
+      JSON.stringify({ vertexes: [{ digest: "sha256:failed", error: "failed to solve" }] }),
+    ].join(String.fromCharCode(10));
+    const script = `process.stderr.write(${JSON.stringify(events + String.fromCharCode(10))});process.exitCode=1;`;
+    let failure: unknown;
+    try {
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as { diagnostic?: { text?: string } }).diagnostic?.text)
+      .toContain("error TS2307");
+  });
+
+  it("omits empty diagnostic output instead of manufacturing an excerpt", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    await expect(runner(["-e", "process.exitCode=1"], options)).rejects.toMatchObject({
+      code: "BUILD_FAILED",
+      diagnostic: undefined,
+    });
   });
 });

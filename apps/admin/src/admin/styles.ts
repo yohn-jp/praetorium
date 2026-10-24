@@ -14,7 +14,7 @@ body:has(.admin-console) .page-shell{padding:0;max-width:none;min-height:100vh}
 .admin-bar button{min-height:36px;font-size:12px;padding:7px 12px}
 .admin-main{max-width:1320px;margin:0 auto;padding:44px 24px 80px}
 .admin-heading{padding-bottom:26px;border-bottom:1px solid #d6e1da}
-.admin-kicker{font:700 11px ui-monospace,SFMono-Regular,monospace;letter-spacing:.11em;color:#668676}
+.admin-kicker{font:700 11px ui-monospace,SFMono-Regular,monospace;letter-spacing:.11em;color:#52695b}
 .admin-heading h1{font-size:clamp(29px,4vw,52px);font-weight:690;letter-spacing:-.055em;color:#173f30;margin:14px 0 8px}
 .admin-heading p{color:#647c6c;font-size:14px;margin:0}
 .admin-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin-top:24px;border:1px solid #d6e1da;background:#d6e1da}

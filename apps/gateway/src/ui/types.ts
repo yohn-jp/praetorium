@@ -113,6 +113,8 @@ export interface PortalModuleOption {
   readonly conflicts?: readonly string[];
   readonly moduleId: string;
   readonly label: string;
+  /** Absent only in historical signed catalogs that predate display metadata. */
+  readonly description?: string;
   readonly version: string;
   readonly artifactDigest: string;
 }

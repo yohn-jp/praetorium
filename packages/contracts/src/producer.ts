@@ -33,6 +33,9 @@ const WorkerLimitsSchema = z.record(
 
 const BuildModuleSchema = z.strictObject({
   id: ModuleIdSchema,
+  /** Human-facing metadata is optional for compatibility with published catalogs. */
+  name: z.string().min(1).max(120).refine((value) => value.trim().length > 0).optional(),
+  description: z.string().min(1).max(512).refine((value) => value.trim().length > 0).optional(),
   version: NonEmptyStringSchema,
   artifactDigest: Sha256DigestSchema,
   requires: UniqueModuleIdsSchema,

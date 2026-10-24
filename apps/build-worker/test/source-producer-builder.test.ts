@@ -94,9 +94,12 @@ it("keeps complete Git provenance outside the exact pinned image exclusions", as
   expect(ignore.toString("utf8").split("\n")).toEqual(expect.arrayContaining([
     ".git", ".github", "docs", ".env.*", ".gitconfig",
   ]));
-  // The metadata context is a private, verified Git checkout; ignore no files
-  // there so the producer's clean-tree check sees every tracked source file.
-  expect(sourceMetadataDockerfileIgnore()).toHaveLength(0);
+  // The metadata context is a private, verified Git checkout. The Dockerfile-
+  // specific override must parse to no exclusions while remaining non-empty,
+  // so the frontend cannot fall back to the producer's `.dockerignore`.
+  const metadataIgnore = sourceMetadataDockerfileIgnore().toString("utf8");
+  expect(metadataIgnore.trim()).toMatch(/^#.*\.git\.$/u);
+  expect(metadataIgnore.split("\n").filter((line) => line.trim() && !line.trim().startsWith("#"))).toEqual([]);
 });
 
 it("rejects a BuildKit metadata path that is a symbolic link", async () => {

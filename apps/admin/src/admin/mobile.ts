@@ -1,6 +1,6 @@
 import { generateToken } from "@praetorium/auth";
 import { canaryWaitSkipForm } from "./canary-wait-action.js";
-import { activeReleaseFailures, prioritySourceBuild } from "./incident-status.js";
+import { activeReleaseFailures, currentSourceBuildAttempt, prioritySourceBuild } from "./incident-status.js";
 import type {
   SourceBuildAttempt,
   SourceBuildDetail,
@@ -8,9 +8,13 @@ import type {
 } from "@praetorium/contracts";
 import { escapeHtml } from "../presentation.js";
 import {
+  admittedReleaseHref,
   buildHref,
+  compositionBuildHref,
   operationHref,
   consoleHref,
+  sourceReleaseExecutionHref,
+  stableReleaseHref,
   viewHref,
   type ConsoleDependency,
   type ConsoleRelease,
@@ -235,6 +239,9 @@ function overview(model: ConsoleViewModel): string {
 
   const channel = model.catalog.value?.stableChannel;
   const stable = channel ? channel.currentReleaseId ?? "No release promoted yet" : "Status unavailable";
+  const stableLink = channel?.currentReleaseId
+    ? '<a class="admin-mobile-stable-link" href="' + value(stableReleaseHref(channel.currentReleaseId, "mobile")) + '">Open current Stable release</a>'
+    : '<a href="' + value(consoleHref("releases", "mobile")) + '">View release ledger</a>';
   const blockedReleases =
     activeReleaseFailures(model.catalog.value?.items ?? []).slice(0, 3) ??
     [];
@@ -269,7 +276,7 @@ function overview(model: ConsoleViewModel): string {
     '">View releases</a></div>' +
     '<p class="admin-mobile-stable">' +
     value(stable) +
-    "</p></section>" +
+    "</p>" + stableLink + "</section>" +
     '<section class="admin-mobile-section"><div class="admin-mobile-section-heading">' +
     '<h2>Blocked releases</h2><a href="' +
     value(consoleHref("releases", "mobile")) +
@@ -305,7 +312,7 @@ function sourceReleaseCard(
       "</p>"
     : "";
   const selectedHref = build?.state === "admitted" && build.admittedReleaseId
-    ? "/releases/" + encodeURIComponent(build.admittedReleaseId) + "?ui=mobile"
+    ? admittedReleaseHref(build.admittedReleaseId, "mobile")
     : build ? buildHref(build.id, "mobile") : null;
   const action = build && selectedHref
     ? '<a class="button button-secondary" href="' + value(selectedHref) + '">' +
@@ -345,6 +352,7 @@ function sourceReleaseCard(
     progress +
     '<div class="admin-mobile-card-action">' +
     action +
+    '<a class="admin-mobile-source-execution" href="' + value(sourceReleaseExecutionHref(sourceId, release.id, "mobile")) + '">Open Source build execution history</a>' +
     "</div></article>"
   );
 }
@@ -463,6 +471,9 @@ function releases(model: ConsoleViewModel): string {
         : '<p class="admin-mobile-empty-inline">No admitted platform releases yet.</p>';
   const channel = model.catalog.value?.stableChannel;
   const stable = channel ? channel.currentReleaseId ?? "No release promoted yet" : "Status unavailable";
+  const stableLink = channel?.currentReleaseId
+    ? '<a class="admin-mobile-stable-link" href="' + value(stableReleaseHref(channel.currentReleaseId, "mobile")) + '">Open current Stable release details</a>'
+    : "";
   return (
     pageHeading(
       "Releases",
@@ -471,7 +482,7 @@ function releases(model: ConsoleViewModel): string {
     '<section class="admin-mobile-stable-panel"><span class="admin-kicker">CURRENT STABLE CHANNEL</span>' +
     "<strong>" +
     value(stable) +
-    "</strong></section>" +
+    "</strong>" + stableLink + "</section>" +
     sourceContent +
     '<section class="admin-mobile-section" aria-labelledby="platform-release-ledger">' +
     '<div class="admin-mobile-section-heading"><div><span class="admin-kicker">ADMISSION / PROMOTION</span>' +
@@ -537,21 +548,23 @@ function builds(model: ConsoleViewModel): string {
 }
 
 function evidence(attempt: SourceBuildAttempt): string {
-  if (attempt.evidence !== "available" || !attempt.diagnostic) {
+  if (attempt.evidence !== "available") {
     const label =
       attempt.evidence === "expired"
         ? "Diagnostic evidence expired."
-        : attempt.evidence === "not_recorded"
-          ? "Diagnostic evidence was not recorded for this attempt."
-          : "Diagnostic details are not available for this attempt.";
+        : "Diagnostic evidence was not recorded for this attempt.";
     return '<p class="admin-mobile-evidence-unavailable" role="status">' + value(label) + "</p>";
   }
+  if (!attempt.diagnostic)
+    return '<p class="admin-mobile-evidence-unavailable" role="status">Diagnostic evidence is marked available, but its details are unavailable in this response.</p>';
   const diagnostic = attempt.diagnostic;
+  const kind = diagnostic.excerpt ? "Sanitized excerpt" : "Summary only";
   return (
-    '<section class="admin-mobile-diagnostic"><h4>Recorded diagnostic</h4>' +
+    '<section class="admin-mobile-diagnostic"><h4>Diagnostic evidence · ' + kind + '</h4>' +
     "<p>" +
-    value(diagnostic.summary || "No failure summary was recorded.") +
+    "Recorded summary: " + value(diagnostic.summary || "No failure summary was recorded.") +
     "</p>" +
+    '<p class="admin-mobile-diagnostic-caveat">This summary describes a failure category and may not identify the root cause.</p>' +
     "<dl><div><dt>Reason</dt><dd>" +
     value(diagnostic.reason.replaceAll("_", " ")) +
     "</dd></div><div><dt>Diagnostic stage</dt><dd>" +
@@ -565,12 +578,16 @@ function evidence(attempt: SourceBuildAttempt): string {
       ? "<details><summary>Show sanitized diagnostic excerpt</summary><pre>" +
         value(diagnostic.excerpt) +
         "</pre></details>"
-      : "") +
+      : '<p class="admin-mobile-evidence-unavailable">No detailed diagnostic excerpt was recorded.</p>') +
     (diagnostic.truncated
       ? '<p class="admin-mobile-evidence-unavailable">The stored excerpt was truncated at its size limit.</p>'
       : "") +
     "</section>"
   );
+}
+
+function sourceName(sourceId: string): string {
+  return sourceId === "scriptorium" ? "Scriptorium" : sourceId;
 }
 
 function attemptCard(attempt: SourceBuildAttempt): string {
@@ -722,9 +739,12 @@ function releaseDetail(model: ConsoleViewModel): string {
     value(status.workflow.revision) +
     "</dd></div><div><dt>Workflow attempts</dt><dd>" +
     value(status.workflow.attempts) +
-    "</dd></div><div><dt>Canary build state</dt><dd>" +
-    (build ? badge(build.status) : "Not started") +
-    "</dd></div><div><dt>Canary build attempts</dt><dd>" +
+    "</dd></div><div id=\"composition-build\"><dt>Composition build</dt><dd>" +
+    (build
+      ? '<a href="' + value(compositionBuildHref(status.release.id, "mobile") + "#composition-build") + '">' +
+        value(build.id) + "</a> · " + badge(build.status)
+      : "Not started") +
+    "</dd></div><div><dt>Composition build attempts</dt><dd>" +
     value(build?.attemptCount ?? 0) +
     "</dd></div><div><dt>Next retry time</dt><dd>" +
     timeElement(status.workflow.nextAttemptAt) +
@@ -735,7 +755,7 @@ function releaseDetail(model: ConsoleViewModel): string {
         "</code></dd></div>"
       : "") +
     (status.workflow.canaryOperationId
-      ? '<div><dt>Canary operation</dt><dd><a href="' + value(operationHref(status.workflow.canaryOperationId, "mobile")) + '">' +
+      ? '<div><dt>Canary operation</dt><dd><a href="' + value(operationHref(status.workflow.canaryOperationId, "mobile", status.release.id)) + '">' +
         value(status.workflow.canaryOperationId) +
         "</a></dd></div>"
       : "") +
@@ -748,6 +768,11 @@ function releaseDetail(model: ConsoleViewModel): string {
     (stopBlocked ? '<p class="admin-mobile-error-code">Canary stop is blocked by producer durability. Preserve unpublished local work and confirm writer absence before Stable promotion; Source admission alone is not Stable.</p>' : "") +
     '</section><section class="admin-mobile-action-region" aria-label="Canary recovery action">' +
     releaseDetailRetry(status, model.csrf) + canaryWaitSkipForm(status, model.csrf, "mobile") +
+    "</section>" +
+    '<section class="admin-mobile-section" aria-label="Stable release status">' +
+    (model.catalog.value?.stableChannel?.currentReleaseId
+      ? '<a class="button button-secondary" href="' + value(stableReleaseHref(model.catalog.value.stableChannel.currentReleaseId, "mobile")) + '">Open current Stable release ' + value(model.catalog.value.stableChannel.currentReleaseId) + '</a>'
+      : '<p class="admin-mobile-empty-inline">' + (!model.catalog.value || model.catalog.value.stableChannel === undefined ? "Current Stable status is unavailable." : "A current Stable release is not recorded.") + "</p>") +
     "</section>"
   );
 }
@@ -794,34 +819,59 @@ function buildDetail(model: ConsoleViewModel): string {
         ? "No retained attempt history is available. Diagnostic evidence may have expired."
         : "No attempt history is available.";
   const admission = job.admittedReleaseId
-    ? '<a href="/releases/' +
-      value(encodeURIComponent(job.admittedReleaseId)) +
-      '?ui=mobile">' +
-      value(job.admittedReleaseId) +
+    ? '<a href="' +
+      value(compositionBuildHref(job.admittedReleaseId, "mobile") + "#composition-build") + '">' +
+      "Open release and Composition Build " + value(job.admittedReleaseId) +
       "</a>"
     : "Not admitted";
+  const currentAttempt = currentSourceBuildAttempt(detail);
+  const currentPageNote = !currentAttempt && model.pageCursor
+    ? '<p class="admin-mobile-evidence-unavailable" role="status">The current attempt is not included on this history page. <a href="' +
+      value(buildHref(job.id, "mobile")) + '">Open the latest Source build detail</a> to inspect its stage and diagnostic evidence.</p>'
+    : "";
+  const currentEvidence = currentAttempt
+    ? evidence(currentAttempt)
+    : model.pageCursor
+      ? ""
+      : '<p class="admin-mobile-evidence-unavailable" role="status">' +
+        value(detail.evidence === "expired" ? "Diagnostic evidence expired." :
+          detail.evidence === "available" ? "Diagnostic evidence is marked available, but current attempt details are unavailable in this response." :
+            "Diagnostic evidence was not recorded for the current attempt.") + '</p>';
+  const failureDetail = job.state === "failed"
+    ? '<section class="admin-mobile-section admin-mobile-failure-detail" aria-labelledby="admin-mobile-failure-title">' +
+      '<span class="admin-kicker">RECORDED FAILURE</span><h2 id="admin-mobile-failure-title">Stage and reason</h2>' +
+      '<dl class="admin-mobile-failure-facts"><div><dt>Failure stage</dt><dd>' +
+      value(currentAttempt?.stage && currentAttempt.stage !== "unknown"
+        ? currentAttempt.stage.replaceAll("_", " ")
+        : currentAttempt?.diagnostic?.stage && currentAttempt.diagnostic.stage !== "unknown"
+          ? currentAttempt.diagnostic.stage.replaceAll("_", " ") : "Not recorded") +
+      '</dd></div><div><dt>Recorded reason</dt><dd>' +
+      value(currentAttempt?.diagnostic?.reason.replaceAll("_", " ") ?? "No current attempt-specific reason was recorded.") +
+      '</dd></div></dl>' +
+      '<p class="admin-mobile-diagnostic-caveat">The failure summary describes the recorded category. It does not establish a root cause.</p>' +
+      currentPageNote + currentEvidence +
+      '</section>'
+    : "";
   return (
     '<a class="admin-mobile-back" href="' +
     value(consoleHref("builds", "mobile")) +
     '">Back to Builds</a>' +
     '<section class="admin-mobile-build-detail" aria-labelledby="admin-mobile-build-title">' +
-    '<header class="admin-mobile-detail-heading"><span class="admin-kicker">SOURCE BUILD / ' +
-    value(job.sourceId) +
-    "</span>" +
+    '<header class="admin-mobile-detail-heading">' +
     badge(job.state, job.state === "queued" ? "Queued" : job.state.replaceAll("_", " ")) +
+    '<span class="admin-kicker">AFFECTED SOURCE</span><p class="admin-mobile-source-name">' +
+    value(sourceName(job.sourceId)) + ' <span>(' + value(job.sourceId) + ')</span></p>' +
     '<h1 id="admin-mobile-build-title">' +
     value(job.tag) +
     "</h1><p>" +
     value(job.version) +
-    '</p><code class="admin-mobile-job-id">' +
-    value(job.id) +
-    '</code><a class="button button-secondary" href="' + value(buildHref(job.id, "mobile")) + '">Refresh status</a></header>' +
-    (job.state === "failed"
-      ? '<section class="admin-mobile-diagnostic" role="status"><h2>Investigate failure</h2><p>' +
-        value(attempts[0]?.diagnostic?.summary ??
-          "No diagnostic evidence was recorded. Confirm Worker delivery before retrying.") +
-        '</p><p>Failure code: ' + value(job.error ?? "Unknown") +
-        ' · Last reported stage: ' + value(attempts[0]?.stage ?? "unknown") + '</p></section>' : "") +
+    '</p><a class="button button-secondary admin-mobile-refresh" href="' + value(buildHref(job.id, "mobile")) + '">Refresh status</a></header>' +
+    failureDetail +
+    '<section class="admin-mobile-action-region" aria-label="Build recovery action">' +
+    retryAction(job, model.csrf) +
+    "</section>" +
+    '<section class="admin-mobile-section admin-mobile-technical" aria-labelledby="admin-mobile-technical-title"><span class="admin-kicker">TECHNICAL IDENTIFIERS</span><h2 id="admin-mobile-technical-title">Source build record</h2>' +
+    '<code class="admin-mobile-job-id">' + value(job.id) + '</code>' +
     '<dl class="admin-mobile-detail-facts"><div><dt>Immutable source commit</dt><dd><code>' +
     value(job.commit) +
     "</code></dd></div><div><dt>Current attempt</dt><dd>" +
@@ -832,7 +882,9 @@ function buildDetail(model: ConsoleViewModel): string {
     (job.retryable ? "Retry permitted" : "Retry unavailable") +
     "</dd></div><div><dt>Admitted release</dt><dd>" +
     admission +
-    "</dd></div></dl>" +
+    "</dd></div><div><dt>GitHub Release ID</dt><dd>" + value(job.releaseId) +
+    "</dd></div><div><dt>Canonical failure code</dt><dd><code>" + value(job.error ?? "None recorded") +
+    "</code></dd></div></dl></section>" +
     (job.error
       ? '<p class="admin-mobile-error-code">Failure code: <code>' + value(job.error) + "</code></p>"
       : "") +
@@ -846,9 +898,7 @@ function buildDetail(model: ConsoleViewModel): string {
       ? '<ol class="admin-mobile-attempt-list">' + attempts.map(attemptCard).join("") + "</ol>"
       : '<p class="admin-mobile-empty">' + value(noAttempts) + "</p>") +
     olderAttempts +
-    '</section><section class="admin-mobile-action-region" aria-label="Build recovery action">' +
-    retryAction(job, model.csrf) +
-    "</section></section>"
+    '</section></section>'
   );
 }
 
@@ -916,7 +966,9 @@ function operationDetail(model: ConsoleViewModel): string {
   if(detail.operation.id!==model.selectedOperationId)
     return '<p class="admin-mobile-unavailable">Operation identity mismatch.</p>';
   const op=detail.operation;
-  return '<a class="admin-mobile-back" href="' + value(consoleHref("releases","mobile")) + '">Back to Releases</a>' +
+  return (model.relatedReleaseId
+    ? '<a class="admin-mobile-back" href="' + value(admittedReleaseHref(model.relatedReleaseId, "mobile")) + '">Back to related release ' + value(model.relatedReleaseId) + '</a>'
+    : '<a class="admin-mobile-back" href="' + value(consoleHref("releases","mobile")) + '">Back to Releases</a>') +
     pageHeading("Canary / runtime operation", op.id) +
     '<section class="admin-mobile-section"><h2>' + value(op.status) + " · " + value(op.phase) + "</h2>" +
     '<dl class="admin-mobile-detail-facts"><div><dt>Instance</dt><dd>' + value(op.instanceId) + "</dd></div>" +

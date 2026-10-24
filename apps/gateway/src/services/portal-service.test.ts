@@ -105,6 +105,8 @@ const catalog = {
     },
     {
       id: "search",
+      name: "Search and terminology",
+      description: "Search manuscript text and link terminology to references.",
       version: "1.4.0",
       artifactDigest: digest,
       requires: [],
@@ -320,7 +322,13 @@ describe("PortalService Control Plane projection", () => {
       approvedReleases: [{ releaseId: "release-1", label: "1.2.0", imageDigest: digest }],
       modules: [
         { moduleId: "editor", label: "editor", version: "2.0.0", artifactDigest: digest },
-        { moduleId: "search", label: "search", version: "1.4.0", artifactDigest: digest },
+        {
+          moduleId: "search",
+          label: "Search and terminology",
+          description: "Search manuscript text and link terminology to references.",
+          version: "1.4.0",
+          artifactDigest: digest,
+        },
       ],
       resourceProfiles: [{ profileId: "balanced", resources: { cpuMilli: 1000, memoryMiB: 2048, ephemeralStorageMiB: 1024 } }],
       resourceLimits: { cpuMilli: 4000, memoryMiB: 8192, ephemeralStorageMiB: 8192 },

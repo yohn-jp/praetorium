@@ -42,7 +42,9 @@ import {
   readBuildServiceToken,
 } from "../../apps/build-worker/dist/http-client.js";
 import { SourceReleaseBuildWorker } from "../../apps/build-worker/dist/source-release-worker.js";
-import { buildSourceRelease } from "../../apps/build-worker/dist/source-producer-builder.js";
+import { BuildKitAttemptError, createBuildctlRunner } from "../../plugins/buildkit/dist/index.js";
+import { sanitizeSourceDiagnostic } from "../../packages/contracts/dist/index.js";
+import { buildSourceRelease, SourceBuildFailureError } from "../../apps/build-worker/dist/source-producer-builder.js";
 import { createBuildWorker } from "../../apps/build-worker/dist/main.js";
 import { readBuildWorkerConfig } from "../../apps/build-worker/dist/config.js";
 import { composeBuildServices } from "../../apps/control-plane/dist/build-composition.js";
@@ -64,10 +66,10 @@ const BUILDKIT_SHA256 = "14813b1fb2a40082114e6d386c6fc5e7dd5298176ce7ee1a18bc33e
 const REGISTRY_IMAGE =
   "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e";
 const RELEASE = Object.freeze({
-  releaseId: 420823049,
-  sourceTag: "v0.3.1",
-  sourceRevision: "fecdaf8fce7f406f94220cb32974bfdb3dedfe19",
-  releaseVersion: "0.3.1",
+  releaseId: 422598853,
+  sourceTag: "v0.3.5",
+  sourceRevision: "9fd0f386a816ee2f02b7a3aff58a50c363e9a625",
+  releaseVersion: "0.3.5",
 });
 const INSTANCE_ID = "ins_01J9A2M4K8B7C6D5E4F3G2H1A0";
 const REPOSITORY_ID = 1938475621;
@@ -733,15 +735,84 @@ async function runSourceToStable(root, kit) {
     leaseSeconds: fixture.sourceConfig.leaseSeconds,
     fetch: fixture.fetch,
   });
+  // Exercise failure evidence at the real daemon boundary before rebuilding the
+  // same immutable Source through the canonical guarded Retry. Credentials and
+  // compiler output here are synthetic; no production resource is addressed.
+  const failureContext = path.join(root, "diagnostic-failure-context");
+  await mkdir(failureContext, { mode: 0o700 });
+  await writeFile(path.join(failureContext, "Dockerfile"), [
+    "FROM docker.io/library/node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5",
+    "RUN printf 'fixture compiler error: metadata check failed\\nAuthorization: Bearer fixture-secret-do-not-retain\\n' >&2; exit 19",
+    "",
+  ].join("\n"));
+  const failureWorker = new SourceReleaseBuildWorker(
+    fixture.sourceConfig, sourceClient,
+    async (_job, config, signal) => {
+      const kit = config.buildKit;
+      try {
+        await createBuildctlRunner(kit)([
+          "--addr", kit.address, "--tlsservername", kit.tlsServerName,
+          "--tlscacert", kit.tlsCaFile, "--tlscert", kit.tlsCertFile,
+          "--tlskey", kit.tlsKeyFile, "build", "--progress=rawjson",
+          "--frontend", "dockerfile.v0", "--local", "context=" + failureContext,
+          "--local", "dockerfile=" + failureContext,
+        ], {
+          cwd: failureContext, dockerConfigDirectory: kit.dockerConfigDirectory,
+          temporaryDirectory: root, safePath: kit.safePath,
+          buildTimeoutMs: 120_000, maxProgressBytes: kit.maxProgressBytes,
+          signal, onProgress: () => undefined,
+        });
+      } catch (error) {
+        assert.ok(error instanceof BuildKitAttemptError);
+        assert.match(error.diagnostic?.text ?? "", /fixture compiler error/u);
+        throw new SourceBuildFailureError("SOURCE_BUILD_FAILED", sanitizeSourceDiagnostic({
+          stage: "buildkit", reason: "build_failed", summary: "",
+          excerpt: error.diagnostic.text, truncated: error.diagnostic.truncated,
+        }));
+      }
+      throw new Error("real BuildKit negative fixture unexpectedly succeeded");
+    },
+  );
+  assert.equal(await failureWorker.runOnce(), true);
+  const operatorHeaders = {
+    "X-Control-Plane-Gateway-Auth": "source-stable-fixture-gateway-secret-0123456789",
+    "X-Praetorium-Admin-Actor": "71",
+  };
+  const detailResponse = await fixture.fetch(
+    new URL(`/v1/operator/source-builds/${jobId}`, "https://control.praetorium.fixture"),
+    { headers: operatorHeaders },
+  );
+  assert.equal(detailResponse.status, 200);
+  const failedDetail = await detailResponse.json();
+  assert.equal(failedDetail.job.state, "failed");
+  assert.equal(failedDetail.job.retryable, true);
+  assert.equal(failedDetail.attempts[0].stage, "buildkit");
+  assert.equal(failedDetail.attempts[0].evidence, "available");
+  assert.match(failedDetail.attempts[0].diagnostic.excerpt, /fixture compiler error/u);
+  assert.doesNotMatch(JSON.stringify(failedDetail), /fixture-secret-do-not-retain/u);
+  const storedEvidence = fixture.db.database.prepare(
+    "SELECT diagnostic_json FROM source_release_build_attempts WHERE job_id=? AND lease_epoch=1",
+  ).get(jobId);
+  assert.match(storedEvidence.diagnostic_json, /fixture compiler error/u);
+  assert.doesNotMatch(storedEvidence.diagnostic_json, /fixture-secret-do-not-retain/u);
+  const retryResponse = await fixture.fetch(
+    new URL(`/v1/operator/source-builds/${jobId}/retry`, "https://control.praetorium.fixture"),
+    { method: "POST", headers: { ...operatorHeaders, "content-type": "application/json" },
+      body: JSON.stringify({ sourceId: "scriptorium", githubReleaseId: RELEASE.releaseId,
+        sourceTag: RELEASE.sourceTag, sourceRevision: RELEASE.sourceRevision,
+        releaseVersion: RELEASE.releaseVersion, expectedRevision: failedDetail.job.revision,
+        idempotencyKey: "real-buildkit-diagnostic-recovery" }) },
+  );
+  assert.equal(retryResponse.status, 202, "canonical Source retry accepts the recorded eligible failure");
   let sourceResult;
   let sourceFailure = null;
   const sourceWorker = new SourceReleaseBuildWorker(
     fixture.sourceConfig,
     sourceClient,
-    async (job, config, signal) => {
+    async (job, config, signal, onStage) => {
       try {
         const result = await buildSourceRelease(job, config, signal, {
-          isolatedRegistry: fixture.sourceIdentity,
+          isolatedRegistry: fixture.sourceIdentity, onStage,
         });
         sourceResult = result;
         return result;
@@ -750,7 +821,7 @@ async function runSourceToStable(root, kit) {
         // production Worker deliberately returns a bounded public error code;
         // preserve its safe failure phase here without leaking subprocess I/O.
         sourceFailure = sanitizeFixtureDiagnostic(
-          error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+          error instanceof Error ? `${error.name}: ${error.message}${error.diagnostic ? "\n" + JSON.stringify(sanitizeSourceDiagnostic(error.diagnostic)) : ""}` : String(error),
           512,
         );
         throw error;
@@ -769,6 +840,13 @@ async function runSourceToStable(root, kit) {
     `Source queue did not reach canonical Admission (${admittedJob?.failure_code ?? admittedJob?.state}); producer: ${sourceFailure ?? "no captured failure"}`,
   );
   assert.ok(admittedJob.admitted_release_id);
+  const recoveredDetail = await fixture.sourceQueue.detail(jobId);
+  assert.equal(recoveredDetail.attempts.length, 2, "retry preserves failed attempt history");
+  assert.equal(recoveredDetail.attempts[0].leaseEpoch, 2);
+  assert.equal(recoveredDetail.attempts[1].state, "failed");
+  assert.match(recoveredDetail.attempts[1].diagnostic.excerpt, /fixture compiler error/u);
+  assert.equal(sourceResult.catalog.producerRevision, RELEASE.sourceRevision);
+  assert.equal(sourceResult.resolver.producerRevision, RELEASE.sourceRevision);
   const admittedCandidate = fixture.db.database
     .prepare("SELECT release_id, status FROM release_candidates WHERE release_id=?")
     .get(admittedJob.admitted_release_id);
@@ -895,6 +973,12 @@ async function runSourceToStable(root, kit) {
       runtimeMetadataDigest: sourceResult.statement.runtimeMetadataDigest,
       resolverDigest: sourceResult.statement.resolverDigest,
       resolverProvenanceDigest: sourceResult.resolver.provenanceDigest,
+    },
+    failureRecovery: {
+      diagnosticOrigin: "REAL_BUILDKIT_SYNTHETIC_FAILED_RUN",
+      persistence: "WORKER_HTTP_CONTROL_PLANE_SQLITE_D1_OPERATOR_READBACK",
+      sanitized: true, failedLeaseEpoch: 1, recoveredLeaseEpoch: 2,
+      retry: "CANONICAL_AUTHORIZED_ROUTE", historyPreserved: true,
     },
     canonicalAdmission: { releaseId, status: admittedCandidate.status },
     composition: {

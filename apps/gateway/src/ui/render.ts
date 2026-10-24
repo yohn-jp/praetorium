@@ -74,6 +74,7 @@ function artifactSection(
   const required = artifact.includedModules.filter((id) => !artifact.requestedModules.includes(id));
   return (
     `<article class="release-card"><h3>${title}</h3>` +
+    `${artifact.generation !== undefined ? `<p>Generation ${artifact.generation}</p>` : ""}` +
     `${artifact.composedImageDigest === null ? '<p class="muted">Not built</p>' : ""}` +
     `<p><strong>Base release</strong><br>${escapeHtml(artifact.releaseLabel ?? "Unavailable")} ` +
     `</p>` +
@@ -81,7 +82,7 @@ function artifactSection(
     `<p><strong>Included modules:</strong><br>${moduleNames(artifact.includedModules, dashboard)}</p>` +
     `<p><strong>Required dependencies:</strong><br>${moduleNames(required, dashboard)}</p>` +
     `<h4>Resource allocation</h4>${resources(artifact.resources)}` +
-    `<details><summary>Exact artifact identifiers</summary><p>Release <code class="digest">${escapeHtml(artifact.releaseId ?? "Unavailable")}</code></p><p>Base image <code class="digest">${escapeHtml(artifact.baseImageDigest ?? "Unavailable")}</code></p><p>Composed image <code class="digest">${image(artifact.composedImageDigest)}</code></p></details></article>`
+    `<details><summary>Exact artifact identifiers</summary>${artifact.revisionId ? `<p>Revision <code>${escapeHtml(artifact.revisionId)}</code></p>` : ""}<p>Release <code class="digest">${escapeHtml(artifact.releaseId ?? "Unavailable")}</code></p><p>Base image <code class="digest">${escapeHtml(artifact.baseImageDigest ?? "Unavailable")}</code></p><p>Composed image <code class="digest">${image(artifact.composedImageDigest)}</code></p></details></article>`
   );
 }
 
@@ -147,10 +148,12 @@ export function renderRepositoryList(
   presentation: PortalPresentation = { mode: "desktop" },
 ): Response {
   const appInstalled = list.githubApp.installationState === "active";
-  const rows = list.repositories.map((repository) =>
+  const query = presentation.repositoryQuery ?? "";
+  const matches = query ? list.repositories.filter(repository => repository.fullName.toLocaleLowerCase().includes(query.toLocaleLowerCase())) : list.repositories;
+  const rows = matches.map((repository) =>
     summaryItem(repository, csrfToken, appInstalled, presentation),
   );
-  const empty = `<div class="empty-state"><h2>No repositories available</h2><p>There are no repositories available to this GitHub account through the installed Praetorium App.</p></div>`;
+  const empty = query && list.repositories.length ? `<div class="empty-state"><h2>No matching repositories</h2><p>No accessible repository matches <strong>${escapeHtml(query)}</strong>. Your GitHub connection has not changed.</p><a href="${localUrl("/", presentation.mode)}">Clear search</a></div>` : `<div class="empty-state"><h2>No repositories available</h2><p>No accessible repositories were returned. This does not confirm whether the GitHub App is installed or suspended. A repository administrator can check App installation and repository access on GitHub. Refresh status to check again.</p><a href="${localUrl("/", presentation.mode)}">Refresh repositories</a></div>`;
   const retry =
     list.githubApp.installationState === "suspended" ||
     list.githubApp.installationState === "pending" ||
@@ -161,7 +164,7 @@ export function renderRepositoryList(
     "Repositories",
     repositoryListView(
       {
-        heading: `<div class="page-heading"><div><h1>Repositories <span class="muted">${list.repositories.length}</span></h1><p>Your applications, configurations and runtime state.</p></div>${logoutForm(csrfToken)}</div>`,
+        heading: `<div class="page-heading"><div><h1>Repositories <span class="muted">${matches.length}</span></h1><p>Your applications, configurations and runtime state.</p></div>${logoutForm(csrfToken)}</div><form class="repository-search" role="search" method="get" action="/"><input type="hidden" name="ui" value="${presentation.mode}"><label for="repository-query">Find a repository<input id="repository-query" type="search" name="q" maxlength="256" value="${escapeHtml(query)}"></label><button type="submit" class="button">Search repositories</button></form>`,
         connection: `<section class="status-panel" aria-labelledby="github-installation"><div><h2 id="github-installation">GitHub connection</h2><p>${escapeHtml(list.githubApp.message)}</p>${retry}</div>${statusBadge(installationLabel(list.githubApp.installationState), list.githubApp.installationState)}</section>`,
         rows,
         empty,
@@ -176,6 +179,34 @@ function logoutForm(csrfToken: string): string {
   return `<form class="inline-form" method="post" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><button class="button button-secondary" type="submit">Sign out</button></form>`;
 }
 
+/** These are independent canonical catalog prerequisites, never inferred approval. */
+function configurationBlockers(dashboard: PortalRepositoryDashboard): string {
+  return `<div class="configuration-blockers" role="status">` +
+    (!dashboard.approvedReleases.length
+      ? `<p><strong>No approved release.</strong> A platform operator must complete Source Build, Admission and Canary before a release is available here.</p>` : "") +
+    (!dashboard.resourceProfiles.length
+      ? `<p><strong>No resource profile.</strong> A platform operator must provide an approved release catalog with an allowed resource allocation.</p>` : "") +
+    (dashboard.operatorReleaseUrl ? `<p><a href="${escapeHtml(dashboard.operatorReleaseUrl)}">Open independent operator Releases</a> to inspect Source Build, Admission and Canary.</p>` : "") +
+    `<p>Your current work remains separate from these configuration prerequisites. Refresh status after the operator has resolved them.</p></div>`;
+}
+
+export function renderAcceptedCommand(
+  repositoryId: string,
+  presentation: PortalPresentation,
+  identifiers: readonly string[],
+  nonce: string,
+  accepted = true,
+): Response {
+  const requestId = identifiers.at(-1) ?? "";
+  const response = page("Request status", `<section data-request-id="${escapeHtml(requestId)}" aria-labelledby="accepted-command"><h1 id="accepted-command">${accepted ? "Request accepted; result unknown" : "Request status unavailable"}</h1>` +
+    `<p role="status">${accepted ? "The request was accepted, but current status could not be read. Acceptance does not mean completion." : "Current status could not be read. This is not evidence that the request failed."} Check this existing request before retrying.</p>` +
+    `<ul>${identifiers.map(id => `<li><code>${escapeHtml(id)}</code></li>`).join("")}</ul>` +
+    `<a class="button" href="${localUrl(`/repositories/${encodeURIComponent(repositoryId)}`, presentation.mode)}&amp;requestId=${encodeURIComponent(requestId)}#activity">Check existing request</a>` +
+    `<p><a href="${localUrl("/", presentation.mode)}">Back to repositories</a></p></section>`,
+    { presentation, scriptNonce: nonce });
+  return new Response(response.body, { status: accepted ? 202 : 503, headers: response.headers });
+}
+
 export function renderRepositoryDashboard(
   dashboard: PortalRepositoryDashboard,
   options: {
@@ -185,8 +216,10 @@ export function renderRepositoryDashboard(
     readonly selection?: ConfigurationSelection;
     readonly preview?: PortalModulePreview;
     readonly notice?: PortalOperation;
+    readonly acceptedConfiguration?: { readonly revisionId: string; readonly buildId: string };
     readonly errorMessage?: string;
     readonly pollCount?: number;
+    readonly requestId?: string;
     readonly scriptNonce?: string;
   },
 ): Response {
@@ -196,6 +229,12 @@ export function renderRepositoryDashboard(
     repositoryId: dashboard.repository.repositoryId,
   };
   const actionPath = localUrl(`/repositories/${repositoryId}/actions`, presentation.mode);
+  const trackedRequest = options.requestId ?? options.notice?.operationId ?? options.acceptedConfiguration?.buildId;
+  const requestOperation = trackedRequest ? dashboard.operations.find(item => item.operationId === trackedRequest) : undefined;
+  const requestState = requestOperation ? operationStateLabel(requestOperation.state)
+    : trackedRequest && dashboard.build?.buildId === trackedRequest ? dashboard.build.status : null;
+  const tracking = trackedRequest ? `<p class="request-tracking" role="status" data-request-id="${escapeHtml(trackedRequest)}">Checking request <code>${escapeHtml(trackedRequest)}</code>: ${requestState ? escapeHtml(requestState) : "not included in the current status response; no completion is inferred"}.</p>` : "";
+
   const access =
     `<div class="status-grid">` +
     `<article class="status-card"><h3>GitHub App</h3>${statusBadge(installationLabel(dashboard.repository.installation), dashboard.repository.installation)}</article>` +
@@ -240,11 +279,11 @@ export function renderRepositoryDashboard(
       ? canConfigure && canSelectConfiguration
         ? `<p class="muted" role="status">Configuration is required before this application can start. <a href="#configuration">Choose an approved configuration below</a>, then save it to build and start the application.</p>`
         : canConfigure
-          ? `<p class="muted" role="status">Configuration is required before this application can start. No approved release and resource profile are currently available.</p>`
+          ? `<p class="muted" role="status">Configuration is required before this application can start. Review the separate configuration prerequisites below. <a href="#configuration">Review configuration</a>.</p>`
           : `<p class="muted" role="status">Configuration is required before this application can start. Ask a repository maintainer or administrator to choose an approved release and resource profile.</p>`
       : `<p>Application status: ${escapeHtml(instanceStateLabel(instanceState))}</p>` +
         `<p>Wait for the application to become ready, then refresh status.</p>`;
-  const refresh = `<a class="button button-secondary" href="${localUrl(`/repositories/${repositoryId}`, presentation.mode)}">Refresh status</a>`;
+  const refresh = `<a class="button button-secondary" href="${localUrl(`/repositories/${repositoryId}`, presentation.mode)}${trackedRequest ? `&amp;requestId=${encodeURIComponent(trackedRequest)}` : ""}">Refresh status</a>`;
   const stop = canStopDashboard(dashboard)
     ? mutationForm(
         actionPath,
@@ -298,7 +337,7 @@ export function renderRepositoryDashboard(
         )
       : canConfigure
         ? `<section class="configuration-panel"><p class="eyebrow">Configuration</p><h2>Desired configuration</h2>` +
-          `<p class="alert" role="status">No approved release and resource profile are currently available. Once they are approved, choose them here to configure and start the application.</p></section>`
+          `${configurationBlockers(dashboard)}</section>`
         : `<section class="configuration-panel"><p class="eyebrow">Configuration</p><h2>Desired configuration</h2>` +
           `<p class="muted">Changes require current repository maintain or admin access. You can review the approved configuration and runtime status above.</p></section>`;
   const sameImage =
@@ -330,7 +369,7 @@ export function renderRepositoryDashboard(
     repositoryView(
       {
         heading: `<div class="page-heading"><div><p class="breadcrumb"><a href="${localUrl("/", presentation.mode)}">Repositories</a> / ${escapeHtml(dashboard.repository.fullName)}</p><h1>${escapeHtml(dashboard.repository.fullName)}</h1></div>${logoutForm(options.csrfToken)}</div>${options.errorMessage && !options.selection ? `<p class="alert" role="alert">${escapeHtml(options.errorMessage)}</p>` : ""}`,
-        runtime: `<section class="entry-panel" aria-labelledby="entry" data-runtime-state="${instanceState}"><h2 id="entry">Application status</h2>${statusBadge(instanceStateLabel(instanceState), instanceState)}${reason}<div class="entry-actions">${enter}${stop}${refresh}</div></section>`,
+        runtime: `<section class="entry-panel" aria-labelledby="entry" data-runtime-state="${instanceState}"><h2 id="entry">Application status</h2>${statusBadge(instanceStateLabel(instanceState), instanceState)}${reason}${instanceState === "ready" ? `<p class="muted">Runtime reports Ready. Opening the application checks current access; browser connectivity has not been verified.</p>` : ""}<div class="entry-actions">${enter}${refresh}${stop}</div></section>`,
         access,
         current,
         desired,
@@ -341,16 +380,16 @@ export function renderRepositoryDashboard(
           return '<div class="evidence-incident"><span class="evidence-incident-label">LATEST OPERATION · ' +
             escapeHtml(recent.kind) + '</span>' +
             statusBadge(operationStateLabel(recent.state), recent.state) +
-            '<p>' + escapeHtml(summary) + '</p></div>';
+            '<p>' + escapeHtml(summary) + '</p><a href="#activity">Review operation and build evidence</a></div>';
         })(),
         policy: statusBadge(
           dashboard.releasePolicy.kind === "stable" ? "Follow stable" : "Pinned release",
           dashboard.releasePolicy.kind,
         ),
-        configuration: `${options.errorMessage && options.selection ? `<p class="alert" role="alert">${escapeHtml(options.errorMessage)}</p>` : ""}${configure}`,
+        configuration: `${options.acceptedConfiguration ? `<p role="status" data-request-id="${escapeHtml(options.acceptedConfiguration.buildId)}">Configuration accepted, completion not yet confirmed. Revision <code>${escapeHtml(options.acceptedConfiguration.revisionId)}</code> · Build <code>${escapeHtml(options.acceptedConfiguration.buildId)}</code>. <a href="#activity">Check build and operation progress</a>.</p>` : ""}${options.errorMessage && options.selection ? `<p class="alert" role="alert">${escapeHtml(options.errorMessage)}</p>` : ""}${configure}`,
         limits: limits(dashboard),
         preview: selectedPreview,
-        operations: `<section aria-labelledby="operations"><div class="panel-heading"><h2 id="operations">Build and operation progress</h2>${activeOperation ? statusBadge("In progress", "running") : ""}</div>${automaticStatus}${buildStatus(dashboard.build)}<div class="operation-list">${operationContent}</div></section>`,
+        operations: `${tracking}${options.notice ? `<p role="status" data-request-id="${escapeHtml(options.notice.operationId)}">Request accepted. Check the recorded operation state below; acceptance does not mean completion.</p>` : ""}<section aria-labelledby="operations"><div class="panel-heading"><h2 id="operations">Build and operation progress</h2>${activeOperation ? statusBadge("In progress", "running") : ""}</div>${automaticStatus}${buildStatus(dashboard.build)}<div class="operation-list">${operationContent}</div></section>`,
         redeploy,
       },
       presentation.mode,

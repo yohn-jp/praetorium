@@ -53,11 +53,19 @@ export function mutationForm(
   body: string,
   label: string,
 ): string {
+  const impact = label === "Stop application"
+    ? "This repository application will become unavailable until started again. Stop waits for quiesce and confirmed checkpoints; an unconfirmed writer cannot be replaced."
+    : label === "Retry operation"
+      ? "Retry requests a new attempt of this operation. Its result may affect availability. The service checks the current generation and writer safety before proceeding."
+      : "Recreate this repository runtime from the desired configuration. Work may be unavailable during replacement. Quiesce, unpublished checkpoints, writer absence and compatibility checks must permit replacement.";
   return (
-    `<form class="inline-form" method="post" action="${action}">` +
+    `<form class="inline-form mutation-form" method="post" action="${action}">` +
+    `<details class="mutation-impact"><summary>Review impact: ${escapeHtml(label)}</summary><p>${impact}</p>` +
+    `<label><input type="checkbox" required> I understand the impact on this repository</label>` +
+    `<button class="button button-secondary" type="submit">${label}</button></details>` +
     `<input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}">` +
     `<input type="hidden" name="idempotencyKey" value="${escapeHtml(idempotencyKey)}">` +
-    `${body}<button class="button button-secondary" type="submit">${label}</button></form>`
+    `${body}</form>`
   );
 }
 
@@ -108,7 +116,7 @@ export function pollingScript(nonce: string, pollCount: number): string {
         `const n=${safeCount};const u=new URL(location.href);` +
         `if(u.pathname.endsWith('/actions'))u.pathname=u.pathname.slice(0,-8);` +
         `u.searchParams.set('poll',String(n+1));` +
-        `setTimeout(()=>{if(document.querySelector('[data-configuration-form]')?.dataset.dirty==='true')return;u.hash=location.hash;location.replace(u.toString());},Math.min(16000,1000*2**n));` +
+        `setTimeout(()=>{if(document.visibilityState==='hidden')return;if(document.querySelector('[data-configuration-form]')?.dataset.dirty==='true')return;u.hash=location.hash;location.replace(u.toString());},Math.min(16000,1000*2**n));` +
         `</script>`;
   return `<div data-portal-active-operation="true">${pollMarkup}</div>${script}`;
 }

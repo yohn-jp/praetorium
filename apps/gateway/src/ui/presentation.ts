@@ -11,6 +11,7 @@ export type PortalUiMode = "desktop" | "mobile";
 export interface PortalPresentation {
   readonly mode: PortalUiMode;
   readonly repositoryId?: string;
+  readonly repositoryQuery?: string;
   /** Offer a choice only when the visitor has not selected either presentation. */
   readonly offerModeChoice?: boolean;
 }
@@ -227,4 +228,4 @@ export function moduleNames(ids: readonly string[], dashboard: PortalRepositoryD
     .join(", ");
 }
 
-export type ConfigurationSelection = Omit<Extract<PortalCommand, { kind: "preview" }>, "kind">;
+export type ConfigurationSelection = Omit<Extract<PortalCommand, { kind: "preview" }>, "kind"> & { readonly idempotencyKey?: string };

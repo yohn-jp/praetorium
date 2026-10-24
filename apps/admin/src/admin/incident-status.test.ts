@@ -22,10 +22,10 @@ function candidate(version: string, state: string, failureCode: string | null = 
 }
 
 describe("active incidents are distinct from immutable failure history", () => {
-  it("suppresses older failed Source builds after a newer admitted build of the same source", () => {
+  it("keeps failures for different immutable targets when a newer version is admitted", () => {
     const jobs=[job("v0.3.3","failed"),job("v0.3.2","failed"),job("v0.3.4","admitted")];
-    expect(activeSourceFailures(jobs)).toEqual([]);
-    expect(prioritySourceBuild(jobs)?.tag).toBe("v0.3.4");
+    expect(activeSourceFailures(jobs)).toEqual(jobs.slice(0, 2));
+    expect(prioritySourceBuild(jobs)?.tag).toBe("v0.3.3");
   });
 
   it("does not hide an actual failure when a newer build is only queued or failed", () => {
@@ -38,14 +38,14 @@ describe("active incidents are distinct from immutable failure history", () => {
   it("does not mistake Source admission for platform Stable availability", () => {
     const releases=[candidate("0.1.0-hosted.20261018","blocked","legacy_discarded"),
       candidate("0.3.4","canary_cleanup")];
-    expect(activeReleaseFailures(releases)).toEqual([]);
+    expect(activeReleaseFailures(releases)).toEqual([releases[0]]);
     expect(releases[1]?.release.status).toBe("candidate");
   });
 
   it("keeps a current blocked or diagnosably stuck Canary release visible", () => {
     const releases=[candidate("0.1.0-hosted.20261018","blocked","legacy_discarded"),
       candidate("0.3.4","canary_cleanup","canary_stop_blocked")];
-    expect(activeReleaseFailures(releases)).toEqual([releases[1]]);
+    expect(activeReleaseFailures(releases)).toEqual(releases);
     expect(activeReleaseFailures([candidate("0.3.4","blocked","canary_build_failed")])).toHaveLength(1);
   });
 
@@ -54,4 +54,18 @@ describe("active incidents are distinct from immutable failure history", () => {
     expect(activeSourceFailures(bad)).toHaveLength(1);
     expect(activeSourceFailures([job("v0.3.4","failed"),job("v0.3.3","admitted")])).toHaveLength(1);
   });
+  it("resolves only the same immutable Source target after a later successful revision", () => {
+    const failed = job("v0.3.3", "failed");
+    const admitted = { ...failed, state: "admitted" as const, revision: 1, error: null };
+    const unrelated = { ...failed, sourceId: "other" };
+    expect(activeSourceFailures([failed, admitted, unrelated])).toEqual([unrelated]);
+    expect(activeSourceFailures([failed, { ...admitted, commit: "b".repeat(40) }])).toEqual([failed]);
+  });
+
+  it("removes canonical superseded workflows while retaining independent blocked releases", () => {
+    const history = candidate("0.3.3", "superseded", "newer_release_is_stable");
+    const blocked = candidate("0.3.2", "blocked", "writer_absence_required");
+    expect(activeReleaseFailures([history, blocked, candidate("0.3.4", "complete")])).toEqual([blocked]);
+  });
+
 });

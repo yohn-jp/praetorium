@@ -1,5 +1,5 @@
 import {
-  buildSessionCookie, createSession, generateToken, keyedDigest, revokeSession,
+  adminReturnPath, buildSessionCookie, createSession, generateToken, keyedDigest, revokeSession,
 } from "@praetorium/auth";
 import type { GatewayContext } from "../context.js";
 import { SESSION_CONCURRENCY_LIMIT } from "../constants.js";
@@ -18,20 +18,7 @@ type Handoff = {
   readonly audience: string;
   readonly returnTo?: string;
 };
-/** Allow only known read-only Admin pages, never off-origin or mutation destinations. */
-export function adminReturnPath(value: string | null | undefined): string {
-  if (!value || value.length > 480 || !value.startsWith("/") ||
-      value.startsWith("//") || value.includes("\\") || value.includes("#")) return "/";
-  try {
-    const url = new URL(value, "https://admin.invalid");
-    if (url.origin !== "https://admin.invalid" ||
-        !/^\/(?:builds(?:\/sr_[0-9a-f-]{36})?|releases(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127})?|operations\/op_[A-Za-z0-9_.:-]{1,124}|audit|infrastructure(?:\/hosts\/[a-z][a-z0-9-]{0,63}|\/dependencies)?)?$/u.test(url.pathname)) return "/";
-    const keys = [...url.searchParams.keys()];
-    if (keys.some(key => key !== "ui") || url.searchParams.getAll("ui").length > 1) return "/";
-    const ui = url.searchParams.get("ui");
-    if (ui !== null && ui !== "desktop" && ui !== "mobile") return "/";
-    return url.pathname + (ui === null ? "" : "?ui=" + ui);
-  } catch { return "/"; }
+export { adminReturnPath } from "@praetorium/auth";
 }
 
 const HANDOFF_TTL_MS = 60_000;

@@ -49,26 +49,45 @@ describe("remote buildctl execution", () => {
   it("kills a solve that exceeds its deadline", async () => {
     const options = await makeOptions({ buildTimeoutMs: 1000 });
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });
-    const script = `process.stderr.write(${JSON.stringify("BuildKit stage timeout")}); setInterval(() => undefined, 1000)`;
-    await expect(
-      runner(["-e", script], options),
-    ).rejects.toMatchObject({
+    const raw = [
+      "BuildKit stage timeout",
+      "Authorization: Bearer timeout-secret-token",
+      "NPM_TOKEN=timeout-env-secret",
+    ].join(String.fromCharCode(10));
+    const script = `process.stderr.write(${JSON.stringify(raw)}); setInterval(() => undefined, 1000)`;
+    let failure: unknown;
+    try {
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
       code: "BUILD_TIMEOUT",
-      diagnostic: { text: "BuildKit stage timeout" },
+      diagnostic: { text: expect.stringContaining("BuildKit stage timeout") },
     });
+    const excerpt = (failure as { diagnostic?: { text?: string } }).diagnostic?.text ?? "";
+    expect(excerpt).not.toMatch(/timeout-secret-token|timeout-env-secret/u);
   });
 
   it("terminates the child when the attempt is canceled", async () => {
     const controller = new AbortController();
     const options = await makeOptions({ signal: controller.signal });
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });
-    const script = `process.stderr.write(${JSON.stringify("compiler error TS5100: invalid option")}); setInterval(() => undefined, 1000)`;
+    const raw = [
+      "compiler error TS5100: invalid option",
+      "Authorization: Bearer cancel-secret-token",
+      "NPM_TOKEN=cancel-env-secret",
+    ].join(String.fromCharCode(10));
+    const script = `process.stderr.write(${JSON.stringify(raw)}); setInterval(() => undefined, 1000)`;
     const run = runner(["-e", script], options);
     const timer = setTimeout(() => controller.abort(), 30);
-    await expect(run).rejects.toMatchObject({
+    const failure = await run.catch((error:unknown)=>error);
+    expect(failure).toMatchObject({
       code: "BUILD_CANCELED",
       diagnostic: { text: expect.stringContaining("compiler error TS5100") },
     });
+    expect((failure as {diagnostic?:{text?:string}}).diagnostic?.text ?? "")
+      .not.toMatch(/cancel-secret-token|cancel-env-secret/u);
     clearTimeout(timer);
   });
 
@@ -248,9 +267,9 @@ describe("remote buildctl execution", () => {
     const options = await makeOptions();
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });
     const chunks = [
-      "-----BEGIN PRIVATE KEY-----\n",
+      "BuildKit output: -----BEGIN PRIVATE KEY-----\n",
       "compiler error TS5099: base64body-should-not-leak\n",
-      "-----END PRIVATE KEY-----\n",
+      "BuildKit output: -----END PRIVATE KEY-----\n",
       "compiler error TS5042: module resolution failed\n",
     ];
     const script = `const chunks=${JSON.stringify(chunks)};let index=0;const next=()=>{if(index===chunks.length){process.exitCode=1;return;}process.stderr.write(chunks[index++]);setTimeout(next,10)};next()`;

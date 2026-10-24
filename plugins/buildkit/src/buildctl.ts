@@ -285,10 +285,10 @@ class BuildKitDiagnosticCapture {
     const normalized=text.trim();
     if(this.stderrPrivateKey){
       this.truncated=true;
-      if(PRIVATE_KEY_END_LINE.test(normalized))this.stderrPrivateKey=false;
+      if(/-----END .*PRIVATE KEY-----/u.test(normalized))this.stderrPrivateKey=false;
       return;
     }
-    if(PRIVATE_KEY_LINE.test(normalized)){
+    if(/-----BEGIN .*PRIVATE KEY-----/u.test(normalized)){
       this.stderrPrivateKey=true;
       this.truncated=true;
       return;

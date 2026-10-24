@@ -98,12 +98,12 @@ test("Observer apply waits for private readiness and requires its rootless Podma
   const required = task("Require the Podman healthcheck to report Observer healthy");
   assert.match(required, /observer_podman_healthcheck\.rc == 0/);
   assert.match(required, /when: not ansible_check_mode/);
-  assert.ok(
-    taskNames.indexOf("Wait for Observer readiness on the private loopback listener") <
-      taskNames.indexOf("Run the configured Podman healthcheck for Observer"),
-  );
-  assert.ok(
-    taskNames.indexOf("Run the configured Podman healthcheck for Observer") <
-      taskNames.indexOf("Require the Podman healthcheck to report Observer healthy"),
-  );
+  const order = [
+    "Start or restart independent Observer only after configuration is valid",
+    "Wait for Observer readiness on the private loopback listener",
+    "Run the configured Podman healthcheck for Observer",
+    "Require the Podman healthcheck to report Observer healthy",
+  ].map((name) => taskNames.indexOf(name));
+  assert.ok(order.every((index) => index >= 0));
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
 });

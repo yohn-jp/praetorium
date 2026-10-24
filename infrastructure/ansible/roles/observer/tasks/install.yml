@@ -220,6 +220,17 @@
     XDG_RUNTIME_DIR: "/run/user/{{ observer_service_uid }}"
   when: not ansible_check_mode
 
+- name: Start or restart independent Observer only after configuration is valid
+  ansible.builtin.systemd_service:
+    scope: user
+    name: praetorium-observer.service
+    enabled: true
+    state: "{{ 'restarted' if (observer_token_changed.changed or observer_inventory_changed.changed or observer_unit_changed.changed) else 'started' }}"
+  become_user: "{{ observer_service_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ observer_service_uid }}"
+  when: not ansible_check_mode
+
 - name: Wait for Observer readiness on the private loopback listener
   ansible.builtin.uri:
     url: http://127.0.0.1:8791/readyz
@@ -260,15 +271,4 @@
     that:
       - observer_podman_healthcheck.rc == 0
     fail_msg: "The Observer endpoint answered, but its configured Podman healthcheck did not pass."
-  when: not ansible_check_mode
-
-- name: Start or restart independent Observer only after configuration is valid
-  ansible.builtin.systemd_service:
-    scope: user
-    name: praetorium-observer.service
-    enabled: true
-    state: "{{ 'restarted' if (observer_token_changed.changed or observer_inventory_changed.changed or observer_unit_changed.changed) else 'started' }}"
-  become_user: "{{ observer_service_user }}"
-  environment:
-    XDG_RUNTIME_DIR: "/run/user/{{ observer_service_uid }}"
   when: not ansible_check_mode

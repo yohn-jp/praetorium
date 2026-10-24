@@ -366,6 +366,7 @@ test("provider verbs and API paths remain covered by the RBAC graph", () => {
       "IngressRoute",
       "LimitRange",
       "NetworkPolicy",
+      "PersistentVolumeClaim",
       "ResourceQuota",
       "Secret",
       "Service",

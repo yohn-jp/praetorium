@@ -616,6 +616,16 @@ test("the canonical Kind job runs real server-side history admission scenarios",
   assert.ok(runner.includes(`JSON.stringify(binding.spec?.validationActions) !== '["Deny"]'`));
   assert.match(runner, /status\?\.hard/u);
   assert.doesNotMatch(runner, /waitForAdmissionGuards/u);
+  assert.match(runner, /DEFAULT_KUBECTL_TIMEOUT_MS = 60_000/u);
+  assert.equal((runner.match(/spawnSync\("kubectl"/gu) ?? []).length, 1);
+  assert.match(runner, /--request-timeout=\$\{timeoutMs\}ms/u);
+  assert.match(runner, /timeout: timeoutMs/u);
+  assert.match(runner, /readiness deadline expired before kubectl request/u);
+  assert.match(
+    runner,
+    /readJsonResource\("validatingadmissionpolicy", name, undefined, deadline\)/u,
+  );
+  assert.match(runner, /quota\.metadata\.namespace,\s*deadline/u);
   const negativePvcCreates = [
     runner.indexOf("createObject(wrongOwnerPvc"),
     runner.indexOf("createObject(wrongClassPvc"),

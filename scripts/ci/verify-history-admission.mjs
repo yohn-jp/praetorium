@@ -14,6 +14,7 @@ const yaml = require(resolve(root, "node_modules/.pnpm/node_modules/js-yaml"));
 const [runtimePath] = process.argv.slice(2);
 const clusterId = "ci-owned-cluster";
 const provisioner = "system:serviceaccount:praetorium-system:praetorium-provisioner";
+const DEFAULT_KUBECTL_TIMEOUT_MS = 60_000;
 
 if (!runtimePath) throw new Error("usage: verify-history-admission.mjs RUNTIME_RENDER.json");
 
@@ -51,20 +52,44 @@ function safeStderr(stderr) {
 
 function kubectl(
   args,
-  { input, expectedPolicy, expectedError, expectedErrors, label, object, namespace, name } = {},
+  {
+    input,
+    expectedPolicy,
+    expectedError,
+    expectedErrors,
+    label,
+    object,
+    namespace,
+    name,
+    deadline,
+  } = {},
 ) {
-  const result = spawnSync("kubectl", args, {
+  const context = requestContext(args, { label, object, namespace, name });
+  let timeoutMs = DEFAULT_KUBECTL_TIMEOUT_MS;
+  if (deadline !== undefined) {
+    if (!Number.isFinite(deadline)) {
+      throw new Error(`${context}: readiness deadline is not finite`);
+    }
+    timeoutMs = Math.floor(deadline - Date.now());
+    if (timeoutMs <= 0) {
+      throw new Error(`${context}: readiness deadline expired before kubectl request`);
+    }
+  }
+  const result = spawnSync("kubectl", [`--request-timeout=${timeoutMs}ms`, ...args], {
     cwd: root,
     encoding: "utf8",
     input,
     maxBuffer: 8 * 1024 * 1024,
+    timeout: timeoutMs,
   });
-  const context = requestContext(args, { label, object, namespace, name });
   const stderr = safeStderr(result.stderr);
   const reject = (message) => {
     throw new Error(`${context}: ${message}; kubectl stderr: ${stderr || "<empty>"}`);
   };
-  if (result.error) reject(`kubectl failed to start (${result.error.code ?? "unknown"})`);
+  if (result.error) {
+    if (result.error.code === "ETIMEDOUT") reject(`kubectl timed out after ${timeoutMs}ms`);
+    reject(`kubectl failed to start (${result.error.code ?? "unknown"})`);
+  }
   if (expectedPolicy) {
     if (result.status === 0) reject(`expected admission rejection by ${expectedPolicy}`);
     if (!stderr.includes(expectedPolicy))
@@ -126,7 +151,7 @@ function createObject(
   });
 }
 
-function readJsonResource(resource, name, namespace) {
+function readJsonResource(resource, name, namespace, deadline) {
   const args = ["get", resource, name, "-o", "json"];
   if (namespace) args.push("-n", namespace);
   return JSON.parse(
@@ -134,6 +159,7 @@ function readJsonResource(resource, name, namespace) {
       label: `readiness-${resource}`,
       name,
       namespace: namespace ?? "-",
+      deadline,
     }),
   );
 }
@@ -147,10 +173,10 @@ function waitForPolicyGeneration(name, deadline) {
       `--timeout=${timeoutMs}ms`,
       `validatingadmissionpolicy/${name}`,
     ],
-    { label: "wait-policy-observed-generation", name, namespace: "-" },
+    { label: "wait-policy-observed-generation", name, namespace: "-", deadline },
   );
 
-  const policy = readJsonResource("validatingadmissionpolicy", name);
+  const policy = readJsonResource("validatingadmissionpolicy", name, undefined, deadline);
   const identity = `policy/${name}`;
   if (policy.metadata?.generation !== 1 || policy.status?.observedGeneration !== 1) {
     throw new Error(
@@ -184,7 +210,12 @@ function waitForPolicyGeneration(name, deadline) {
 function waitForNamespaceQuota(quota, deadline) {
   let lastObserved;
   while (Date.now() < deadline) {
-    lastObserved = readJsonResource("resourcequota", quota.metadata.name, quota.metadata.namespace);
+    lastObserved = readJsonResource(
+      "resourcequota",
+      quota.metadata.name,
+      quota.metadata.namespace,
+      deadline,
+    );
     if (
       JSON.stringify(
         Object.entries(lastObserved.status?.hard ?? {}).sort(([a], [b]) => a.localeCompare(b)),
@@ -214,7 +245,7 @@ function waitForHistoryAdmissionReadiness(quota) {
   ];
   for (const name of policies) waitForPolicyGeneration(name, deadline);
   for (const name of policies) {
-    const binding = readJsonResource("validatingadmissionpolicybinding", name);
+    const binding = readJsonResource("validatingadmissionpolicybinding", name, undefined, deadline);
     if (
       binding.spec?.policyName !== name ||
       JSON.stringify(binding.spec?.validationActions) !== '["Deny"]'

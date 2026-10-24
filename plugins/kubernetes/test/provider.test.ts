@@ -178,6 +178,7 @@ class FakeKubernetesApi implements KubernetesApi {
   readonly deletes: KubernetesResourceReference[] = [];
   readonly historySnapshotCalls: Array<{ readonly podName: string; readonly sourcePodUid: string }> = [];
   readonly historyEvents: string[] = [];
+  historySnapshotPaths: readonly (readonly string[])[] = [];
   readonly deletePreconditions: Array<{
     readonly reference: KubernetesResourceReference;
     readonly preconditions: KubernetesObjectPreconditions;
@@ -275,7 +276,16 @@ class FakeKubernetesApi implements KubernetesApi {
   }): Promise<string> {
     this.historySnapshotCalls.push(input);
     this.historyEvents.push("snapshot");
-    const manifest = { schemaVersion: 1, sourcePodUid: input.sourcePodUid, files: [] };
+    const paths = this.historySnapshotPaths[this.historySnapshotCalls.length - 1] ?? [];
+    const files = [...paths].sort().map((path) => {
+      const content = Buffer.from("private history fixture");
+      return {
+        path,
+        contentBase64: content.toString("base64"),
+        sha256: createHash("sha256").update(content).digest("hex"),
+      };
+    });
+    const manifest = { schemaVersion: 1, sourcePodUid: input.sourcePodUid, files };
     const manifestSha256 = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
     return JSON.stringify({ ...manifest, manifestSha256 });
   }
@@ -623,6 +633,73 @@ describe("Kubernetes runtime provider", () => {
     const seed = record(api.objects.get(key("Secret", NAMESPACE, `${DEPLOYMENT}-history-seed`)));
     expect(seed.immutable).toBe(true);
     expect(seed.metadata.labels).toMatchObject({ "app.kubernetes.io/name": "scriptorium" });
+  });
+
+  it("retains the supported legacy recent-activity cursor", async () => {
+    const api = new FakeKubernetesApi();
+    addLegacyWriter(api);
+    api.historySnapshotPaths = [
+      ["recent-activity/recent-activity-state.json"],
+      ["recent-activity/recent-activity-state.json"],
+    ];
+
+    await provider(api).preserveHistoryBeforeStop(
+      hostedSpec(),
+      new AbortController().signal,
+      async () => undefined,
+      async () => undefined,
+    );
+
+    expect(api.historySnapshotCalls).toHaveLength(2);
+    expect(api.objects.has(key("Secret", NAMESPACE, `${DEPLOYMENT}-history-seed`))).toBe(true);
+  });
+
+  it.each([
+    ["unknown file", ["recent-activity/unknown.json"]],
+    ["job state", ["recent-activity/jobs-state.json"]],
+    ["legacy archive", ["legacy-archive.json"]],
+    ["extra file", ["legacy-archive.json", "recent-activity/recent-activity-state.json"]],
+  ])("blocks a legacy stop when the snapshot contains a %s", async (_name, paths) => {
+    const api = new FakeKubernetesApi();
+    addLegacyWriter(api);
+    api.historySnapshotPaths = [paths as string[]];
+
+    await expect(
+      provider(api).preserveHistoryBeforeStop(
+        hostedSpec(),
+        new AbortController().signal,
+        async () => undefined,
+        async () => undefined,
+      ),
+    ).rejects.toThrow("legacy private history contains unsupported files");
+
+    expect(api.historySnapshotCalls).toHaveLength(1);
+    expect(api.objects.has(key("Secret", NAMESPACE, `${DEPLOYMENT}-history-seed`))).toBe(false);
+    expect(api.writes).toHaveLength(0);
+    expect(api.deletes).toHaveLength(0);
+  });
+
+  it("revalidates legacy file allowlist on the second snapshot before creating a seed", async () => {
+    const api = new FakeKubernetesApi();
+    addLegacyWriter(api);
+    api.historySnapshotPaths = [
+      ["recent-activity/recent-activity-state.json"],
+      ["legacy-archive.json"],
+    ];
+
+    await expect(
+      provider(api).preserveHistoryBeforeStop(
+        hostedSpec(),
+        new AbortController().signal,
+        async () => undefined,
+        async () => undefined,
+      ),
+    ).rejects.toThrow("legacy private history contains unsupported files");
+
+    expect(api.historySnapshotCalls).toHaveLength(2);
+    expect(api.objects.has(key("Secret", NAMESPACE, `${DEPLOYMENT}-history-seed`))).toBe(false);
+    expect(api.writes).toHaveLength(0);
+    expect(api.deletes).toHaveLength(0);
   });
 
   it("transfers fields only for an owned exact-epoch stop using resourceVersion and a live effect guard", async () => {

@@ -98,6 +98,7 @@ const PROVISIONER_TENANT_ROLE = "praetorium-provisioner-tenant-runtime";
 const MAX_LIST_PAGES = 1_000;
 const MAX_TENANT_PODS = 10_000;
 const HISTORY_ANNOTATION = "praetorium.io/history-contract";
+const LEGACY_HISTORY_CURSOR_PATH = "recent-activity/recent-activity-state.json";
 const HISTORY_STORAGE_CLASS = "local-path";
 
 export interface KubernetesRuntimeProviderOptions {
@@ -1032,6 +1033,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       }),
       firstWriter.uid,
     );
+    assertSupportedLegacyHistory(firstSnapshot);
     const secondCensus = await this.inspect(spec, signal);
     const secondWriter = secondCensus.writerCensus.pods[0];
     if (
@@ -1072,6 +1074,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       }),
       firstWriter.uid,
     );
+    assertSupportedLegacyHistory(secondSnapshot);
     if (secondSnapshot.manifestSha256 !== firstSnapshot.manifestSha256)
       throw new RuntimeProviderError(
         "conflict",
@@ -2931,6 +2934,19 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
         count += 1;
     }
     return count;
+  }
+}
+
+function assertSupportedLegacyHistory(snapshot: HistorySnapshot): void {
+  if (
+    snapshot.files.length > 1 ||
+    (snapshot.files.length === 1 && snapshot.files[0]?.path !== LEGACY_HISTORY_CURSOR_PATH)
+  ) {
+    throw new RuntimeProviderError(
+      "conflict",
+      "legacy private history contains unsupported files; stopping is blocked to preserve its data",
+      "terminal",
+    );
   }
 }
 

@@ -5,7 +5,6 @@ import { constants as fsConstants } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { chromium } from "@playwright/test";
 
@@ -14,10 +13,6 @@ const INVENTORY_ENV = "PRAETORIUM_T14_INVENTORY_PATH";
 const CATEGORY_ENV = "PRAETORIUM_T14_CATEGORY";
 const RESULT_ENV = "PRAETORIUM_T14_RESULT_PATH";
 const RESULT_FILENAME = "runner-result.json";
-const PRODUCER_STATUS_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../docs/migration/PRODUCER-STATUS.json",
-);
 const REQUIRED_CATEGORIES = [
   "workers-d1-do",
   "github-access",
@@ -41,6 +36,7 @@ const BLOCKED_CODES = new Set([
   "OWNER_INPUT_MISSING",
   "OWNED_ENVIRONMENT_UNAVAILABLE",
   "PRODUCER_CONTRACT_MISSING",
+  "PRODUCER_ADMISSION_UNAVAILABLE",
   "RUNTIME_UNAVAILABLE",
   "BROWSER_UNAVAILABLE",
   "INSUFFICIENT_LIFETIME",
@@ -198,6 +194,251 @@ async function readJsonFile(filePath, maximumBytes, privateFile = false) {
   }
 }
 
+async function readPrivateCredential(filePath) {
+  if (!safeAbsolutePath(filePath)) block("OWNER_INPUT_MISSING");
+  const linkInfo = await lstat(filePath).catch(() => null);
+  if (!linkInfo?.isFile() || linkInfo.isSymbolicLink()) block("OWNER_INPUT_MISSING");
+  const actualPath = await realpath(filePath).catch(() => null);
+  const fileInfo = actualPath ? await stat(actualPath).catch(() => null) : null;
+  if (
+    !actualPath ||
+    actualPath !== path.resolve(filePath) ||
+    !fileInfo?.isFile() ||
+    fileInfo.uid !== process.getuid?.() ||
+    (fileInfo.mode & 0o077) !== 0 ||
+    fileInfo.size < 1 ||
+    fileInfo.size > 4096
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+  const bytes = await readFile(actualPath).catch(() => null);
+  if (!bytes || bytes.byteLength > 4096) block("OWNER_INPUT_MISSING");
+  const credential = bytes.toString("utf8").trimEnd();
+  if (!/^[\x21-\x7e]{32,4096}$/u.test(credential)) block("OWNER_INPUT_MISSING");
+  return credential;
+}
+
+const SOURCE_JOB_ID_PATTERN =
+  /^sr_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const RELEASE_ID_PATTERN =
+  /^rel_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const MAX_ADMISSION_RESPONSE_BYTES = 64 * 1024;
+
+async function readBoundedJsonResponse(response) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_ADMISSION_RESPONSE_BYTES) {
+    block("PRODUCER_ADMISSION_UNAVAILABLE");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) block("PRODUCER_ADMISSION_UNAVAILABLE");
+  const chunks = [];
+  let byteLength = 0;
+  while (true) {
+    const { done, value } = await reader.read().catch(() => ({ done: true, value: null }));
+    if (done) break;
+    byteLength += value.byteLength;
+    if (byteLength > MAX_ADMISSION_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => {});
+      block("PRODUCER_ADMISSION_UNAVAILABLE");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  const bytes = Buffer.concat(chunks, byteLength);
+  try {
+    const value = JSON.parse(bytes.toString("utf8"));
+    if (!isRecord(value)) block("PRODUCER_ADMISSION_UNAVAILABLE");
+    return value;
+  } catch {
+    block("PRODUCER_ADMISSION_UNAVAILABLE");
+  }
+}
+
+async function readAdmissionEndpoint({
+  origin,
+  pathname,
+  actorId,
+  credential,
+  inventory,
+  fetchImpl = fetch,
+}) {
+  const response = await fetchImpl(new URL(pathname, origin), {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Control-Plane-Admin-Auth": credential,
+      "X-Praetorium-Admin-Actor": actorId,
+    },
+    redirect: "manual",
+    signal: ownerBoundSignal(inventory, 15_000),
+  }).catch(() => null);
+  if (Date.parse(inventory.environment.expiresAt) <= Date.now()) {
+    block("INSUFFICIENT_LIFETIME");
+  }
+  if (
+    !response ||
+    response.status !== 200 ||
+    response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !==
+      "application/json"
+  ) {
+    block("PRODUCER_ADMISSION_UNAVAILABLE");
+  }
+  return readBoundedJsonResponse(response);
+}
+
+function validateSourceJobDetail(value, config) {
+  const job = value.job;
+  if (
+    !isRecord(job) ||
+    job.id !== config.producerAdmission.sourceJobId ||
+    job.state !== "admitted" ||
+    job.commit !== config.producer.revision ||
+    job.admittedReleaseId !== config.producerAdmission.releaseId
+  ) {
+    block("PRODUCER_CONTRACT_MISSING");
+  }
+}
+
+function validateAdmittedReleaseStatus(value, config) {
+  const release = value.release;
+  if (
+    !isRecord(release) ||
+    release.id !== config.producerAdmission.releaseId ||
+    release.status !== "available" ||
+    release.imageDigest !== config.producer.runtimeBaseDigest
+  ) {
+    block("PRODUCER_CONTRACT_MISSING");
+  }
+}
+
+async function verifyCurrentProducerAdmission(config, inventory, fetchImpl = fetch) {
+  const credential = await readPrivateCredential(config.producerAdmission.adminCredentialPath);
+  const origin = parseOrigin(config.producerAdmission.controlPlaneOrigin)?.origin;
+  if (!origin) block("OWNER_INPUT_MISSING");
+  const sourceJob = await readAdmissionEndpoint({
+    origin,
+    pathname: `/v1/operator/source-builds/${encodeURIComponent(config.producerAdmission.sourceJobId)}?limit=10`,
+    actorId: config.gateway.expectedUserId,
+    credential,
+    inventory,
+    fetchImpl,
+  });
+  validateSourceJobDetail(sourceJob, config);
+  const releaseStatus = await readAdmissionEndpoint({
+    origin,
+    pathname: `/v1/operator/releases/${encodeURIComponent(config.producerAdmission.releaseId)}`,
+    actorId: config.gateway.expectedUserId,
+    credential,
+    inventory,
+    fetchImpl,
+  });
+  validateAdmittedReleaseStatus(releaseStatus, config);
+}
+
+test("owner admission guard accepts a current tuple independently of the historical ledger", () => {
+  const config = {
+    producer: {
+      revision: "a".repeat(40),
+      runtimeBaseDigest: `sha256:${"b".repeat(64)}`,
+    },
+    producerAdmission: {
+      sourceJobId: "sr_11111111-1111-4111-8111-111111111111",
+      releaseId: "rel_11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const jobDetail = {
+    job: {
+      id: config.producerAdmission.sourceJobId,
+      state: "admitted",
+      commit: config.producer.revision,
+      admittedReleaseId: config.producerAdmission.releaseId,
+    },
+  };
+  const releaseStatus = {
+    release: {
+      id: config.producerAdmission.releaseId,
+      status: "available",
+      imageDigest: config.producer.runtimeBaseDigest,
+    },
+  };
+  assert.doesNotThrow(() => {
+    validateSourceJobDetail(jobDetail, config);
+    validateAdmittedReleaseStatus(releaseStatus, config);
+  });
+});
+
+test("owner admission guard blocks mismatched or unavailable current evidence", async () => {
+  const config = {
+    producer: {
+      revision: "a".repeat(40),
+      runtimeBaseDigest: `sha256:${"b".repeat(64)}`,
+    },
+    producerAdmission: {
+      sourceJobId: "sr_11111111-1111-4111-8111-111111111111",
+      releaseId: "rel_11111111-1111-4111-8111-111111111111",
+    },
+  };
+  assert.throws(
+    () => validateSourceJobDetail({ job: { id: "other", state: "admitted" } }, config),
+    (error) => error instanceof GateBlocked && error.reasonCode === "PRODUCER_CONTRACT_MISSING",
+  );
+  assert.throws(
+    () =>
+      validateSourceJobDetail(
+        {
+          job: {
+            id: config.producerAdmission.sourceJobId,
+            state: "admitted",
+            commit: "c".repeat(40),
+            admittedReleaseId: config.producerAdmission.releaseId,
+          },
+        },
+        config,
+      ),
+    (error) => error instanceof GateBlocked && error.reasonCode === "PRODUCER_CONTRACT_MISSING",
+  );
+  assert.throws(
+    () =>
+      validateAdmittedReleaseStatus(
+        {
+          release: {
+            id: config.producerAdmission.releaseId,
+            status: "candidate",
+            imageDigest: config.producer.runtimeBaseDigest,
+          },
+        },
+        config,
+      ),
+    (error) => error instanceof GateBlocked && error.reasonCode === "PRODUCER_CONTRACT_MISSING",
+  );
+  assert.throws(
+    () =>
+      validateAdmittedReleaseStatus(
+        {
+          release: {
+            id: config.producerAdmission.releaseId,
+            status: "available",
+            imageDigest: `sha256:${"c".repeat(64)}`,
+          },
+        },
+        config,
+      ),
+    (error) => error instanceof GateBlocked && error.reasonCode === "PRODUCER_CONTRACT_MISSING",
+  );
+  await assert.rejects(
+    () =>
+      readAdmissionEndpoint({
+        origin: "https://control.example",
+        pathname: "/v1/operator/source-builds/sr_11111111-1111-4111-8111-111111111111?limit=10",
+        actorId: "213253858",
+        credential: "never-logged-private-credential-value",
+        inventory: { environment: { expiresAt: new Date(Date.now() + 60_000).toISOString() } },
+        fetchImpl: async () => new Response("", { status: 503 }),
+      }),
+    (error) =>
+      error instanceof GateBlocked && error.reasonCode === "PRODUCER_ADMISSION_UNAVAILABLE",
+  );
+});
+
 function validateBrowserState(state) {
   if (
     !exactKeys(state, ["cookies", "origins"]) ||
@@ -301,6 +542,7 @@ function validateConfig(config, inventory) {
       "instance",
       "browser",
       "producer",
+      "producerAdmission",
       "writeProbe",
       "selection",
       "mcp",
@@ -366,10 +608,24 @@ function validateConfig(config, inventory) {
   }
 
   if (
-    !exactKeys(config.producer, ["revision", "tree", "artifactDigest"]) ||
+    !exactKeys(config.producer, ["revision", "runtimeBaseDigest"]) ||
     !REVISION_PATTERN.test(config.producer.revision) ||
-    !REVISION_PATTERN.test(config.producer.tree) ||
-    !DIGEST_PATTERN.test(config.producer.artifactDigest)
+    !DIGEST_PATTERN.test(config.producer.runtimeBaseDigest)
+  ) {
+    block("OWNER_INPUT_MISSING");
+  }
+
+  if (
+    !exactKeys(config.producerAdmission, [
+      "sourceJobId",
+      "releaseId",
+      "controlPlaneOrigin",
+      "adminCredentialPath",
+    ]) ||
+    !SOURCE_JOB_ID_PATTERN.test(config.producerAdmission.sourceJobId) ||
+    !RELEASE_ID_PATTERN.test(config.producerAdmission.releaseId) ||
+    !parseOrigin(config.producerAdmission.controlPlaneOrigin) ||
+    !safeAbsolutePath(config.producerAdmission.adminCredentialPath)
   ) {
     block("OWNER_INPUT_MISSING");
   }
@@ -431,7 +687,11 @@ function validateConfig(config, inventory) {
   }
 
   const writeProbeBody = validateWriteProbe(config.writeProbe);
-  return { gatewayOrigin, instanceOrigin, writeProbeBody };
+  return {
+    gatewayOrigin,
+    instanceOrigin,
+    writeProbeBody,
+  };
 }
 
 async function loadInputs() {
@@ -461,26 +721,7 @@ async function loadInputs() {
   );
   validateBrowserState(storageState);
 
-  const producer = await readJsonFile(PRODUCER_STATUS_PATH, MAX_CONFIG_BYTES);
-  const capabilities = new Map(
-    Array.isArray(producer.capabilities)
-      ? producer.capabilities.filter((item) => isRecord(item)).map((item) => [item.id, item])
-      : [],
-  );
-  const producerReady = ["S01", "S02", "S03", "S04", "S05"].every(
-    (id) => capabilities.get(id)?.status === "available",
-  );
-  if (
-    !producerReady ||
-    !REVISION_PATTERN.test(producer.producerRevision ?? "") ||
-    !REVISION_PATTERN.test(producer.producerTree ?? "") ||
-    !DIGEST_PATTERN.test(producer.artifactDigest ?? "") ||
-    producer.producerRevision !== config.producer.revision ||
-    producer.producerTree !== config.producer.tree ||
-    producer.artifactDigest !== config.producer.artifactDigest
-  ) {
-    block("PRODUCER_CONTRACT_MISSING");
-  }
+  await verifyCurrentProducerAdmission(config, inventory);
   return { inventory, config, storageState, derived, executablePath };
 }
 

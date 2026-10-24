@@ -32,13 +32,19 @@ const liveDatabases: DatabaseSync[] = [];
 
 class SQLiteD1 implements D1Database {
   readonly database = new DatabaseSync(":memory:");
+  beforeFirst: ((query: string) => void) | undefined;
 
   constructor() {
     liveDatabases.push(this.database);
   }
 
   prepare(query: string): D1PreparedStatement {
-    return new SQLiteD1Statement(this.database, query, this.database.prepare(query));
+    return new SQLiteD1Statement(
+      this.database,
+      query,
+      this.database.prepare(query),
+      () => this.beforeFirst?.(query),
+    );
   }
 
   async batch<T = unknown>(
@@ -65,6 +71,7 @@ class SQLiteD1Statement implements D1PreparedStatement {
     private readonly database: DatabaseSync,
     private readonly query: string,
     private readonly statement: StatementSync,
+    private readonly beforeFirst: () => void,
   ) {}
 
   bind(
@@ -81,6 +88,7 @@ class SQLiteD1Statement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(): Promise<T | null> {
+    this.beforeFirst();
     return (this.statement.get(...this.sqlValues()) as T | undefined) ?? null;
   }
 
@@ -345,7 +353,11 @@ async function harness(
     publishRuntimeAuthority: options.publish
       ? (operation, now) => options.publish!(db, operation, now)
       : (operation, now) => publishRuntimeAuthority(db, operation, now),
-    recoverRuntimeAuthority: createRuntimeAuthorityRecovery({ db, operations }),
+    recoverRuntimeAuthority: createRuntimeAuthorityRecovery({
+      db,
+      operations,
+      now: () => clock.value,
+    }),
   });
   app.onError((error, context) => {
     if (error instanceof OperationFenceConflict)
@@ -564,6 +576,39 @@ describe("runtime authority checkpoint recovery", () => {
     expect(h.db.database.prepare(
       "SELECT count(*) AS count FROM audit_events WHERE action = 'runtime.authority.recovery-evidence-admitted'",
     ).get()).toEqual({ count: 1 });
+  });
+
+  it.each([
+    ["lease expiry", 30_000, new Date(NOW).toISOString()],
+    ["census age limit", 29_501, new Date(NOW - 500).toISOString()],
+  ] as const)("does not publish when the %s elapses during durable audit read", async (_label, elapsed, observedAt) => {
+    const h = await harness();
+    await prepareRecoverableOperation(h);
+    h.db.beforeFirst = (query) => {
+      if (query.includes("FROM audit_events WHERE event_id")) {
+        h.db.beforeFirst = undefined;
+        h.clock.value = NOW + elapsed;
+      }
+    };
+    const response = await h.app.request("/runtime-authority/recover", jsonInit({
+      operationId: OPERATION_ID,
+      workerId: WORKER_ID,
+      leaseToken: LEASE_TOKEN,
+      leaseEpoch: 4,
+      expectedCheckpointSequence: 2,
+      evidence: recoveryEvidence({
+        census: {
+          complete: true,
+          providerObservationId: "provider-observation-target-88",
+          observedAt,
+          matchedWriterCount: 1,
+          writers: [{ runtimeEpoch: 5, phase: "running", identities: ["pod-uid-target"] }],
+        },
+      }),
+    }));
+    expect(response.status).toBe(409);
+    expect(await h.reader.getCurrent(REPOSITORY_ID)).toBeNull();
+    expect(await checkpointCount(h.db)).toBe(2);
   });
 
   it("keeps authority absent through failed and partial retirement while a stale registrar races", async () => {

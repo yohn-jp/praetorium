@@ -21,6 +21,7 @@ export interface RuntimeAuthorityRecoveryInput {
 export function createRuntimeAuthorityRecovery(input: {
   readonly db: D1Database;
   readonly operations: OperationService;
+  readonly now: () => number;
 }): (request: RuntimeAuthorityRecoveryInput) => Promise<boolean> {
   return async (request) => {
     const { evidence, now } = request;
@@ -124,8 +125,27 @@ export function createRuntimeAuthorityRecovery(input: {
     ).bind(eventId).first<{ metadata_json: string }>();
     if (audit?.metadata_json !== metadata) return false;
 
+    // Audit persistence is asynchronous, so the request timestamp cannot fence
+    // the side effect: the original lease or provider census may have expired
+    // while it was being written. Reload the exact claim, then use a fresh clock
+    // value for both the final freshness check and the publisher's D1 CAS.
+    const currentOperation = await input.operations.getById(operation.id);
+    const publishNow = input.now();
+    const publishObservedAt = Date.parse(evidence.census.observedAt);
+    if (
+      !currentOperation || currentOperation.workerId !== request.workerId ||
+      currentOperation.leaseToken !== request.leaseToken ||
+      currentOperation.leaseEpoch !== request.leaseEpoch ||
+      currentOperation.checkpointSequence !== request.expectedCheckpointSequence ||
+      currentOperation.status !== "claimed" && currentOperation.status !== "running" ||
+      currentOperation.leaseExpiresAt === null || currentOperation.leaseExpiresAt <= publishNow ||
+      currentOperation.phase !== operation.phase || currentOperation.kind !== operation.kind ||
+      !Number.isFinite(publishObservedAt) || publishObservedAt > publishNow ||
+      publishNow - publishObservedAt > MAX_CENSUS_AGE_MS
+    ) return false;
+
     try {
-      await publishRuntimeAuthority(input.db, operation, now);
+      await publishRuntimeAuthority(input.db, currentOperation, publishNow);
     } catch (error) {
       if (error instanceof OperationFenceConflict) return false;
       throw error;
@@ -137,7 +157,15 @@ export function createRuntimeAuthorityRecovery(input: {
       runtime_authority_reservation_id: string | null;
       runtime_authority_operation_id: string | null;
     }>();
-    return published?.runtime_authority_reservation_id === operation.reservationId &&
+    const responseNow = input.now();
+    const confirmedOperation = await input.operations.getById(operation.id);
+    return confirmedOperation !== null &&
+      confirmedOperation.workerId === request.workerId &&
+      confirmedOperation.leaseToken === request.leaseToken &&
+      confirmedOperation.leaseEpoch === request.leaseEpoch &&
+      confirmedOperation.checkpointSequence === request.expectedCheckpointSequence &&
+      confirmedOperation.leaseExpiresAt !== null && confirmedOperation.leaseExpiresAt > responseNow &&
+      published?.runtime_authority_reservation_id === operation.reservationId &&
       published.runtime_authority_operation_id === operation.id;
   };
 }

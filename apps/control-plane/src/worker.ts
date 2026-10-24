@@ -257,6 +257,7 @@ function composeServices(env: ControlPlaneEnv) {
             recoverRuntimeAuthority: createRuntimeAuthorityRecovery({
               db: env.CONTROL_PLANE_DB,
               operations,
+              now: Date.now,
             }),
             retireCredentials: createCredentialRetirementBarrier({
               db: env.CONTROL_PLANE_DB,

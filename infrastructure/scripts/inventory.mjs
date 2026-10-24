@@ -49,6 +49,13 @@ const workNotificationSecretKeys = [
   "provisionerWorkNotificationToken",
   "buildWorkerWorkNotificationToken",
 ];
+const productionCloudflareResources = Object.freeze({
+  controlPlaneWorker: "praetorium-control-plane",
+  gatewayWorker: "praetorium-gateway",
+  controlPlaneDatabaseName: "praetorium-platform",
+  controlPlaneDatabaseId: "08f29fef-eb9e-4541-82fb-777fa2f4aab0",
+  gatewayKvNamespaceId: "770c4ac60df74b019409c1203f35687d",
+});
 
 function exactKeys(value, expected, name, errors, optional = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -873,11 +880,73 @@ export function validateInventory(value) {
     errors.push("acmeContactEmail must not use a reserved test domain");
   }
 
-  if (value.environment === "disposable-test" && value.cloudflare?.mode !== "local") {
-    errors.push("disposable-test inventory must use local Worker/D1 mode");
+  if (value.environment === "disposable-test" &&
+      !["local", "remote-disposable"].includes(value.cloudflare?.mode)) {
+    errors.push("disposable-test inventory must use local or remote-disposable Worker/D1 mode");
   }
   if (value.environment === "deployment" && value.cloudflare?.mode !== "remote") {
     errors.push("deployment inventory requires a real remote Cloudflare account");
+  }
+  if (value.cloudflare?.mode === "remote-disposable") {
+    if (value.environment !== "disposable-test") {
+      errors.push("remote-disposable Cloudflare mode is restricted to disposable-test inventories");
+    }
+    const clusterName = value.ownership?.clusterName;
+    if (
+      typeof clusterName !== "string" ||
+      !/^praetorium-t14-[a-z0-9](?:[a-z0-9-]{0,32}[a-z0-9])?$/u.test(clusterName)
+    ) {
+      errors.push(
+        "remote-disposable ownership.clusterName must use the bounded praetorium-t14- prefix",
+      );
+    } else {
+      const controlPlaneName = `${clusterName}-control-plane`;
+      const gatewayName = `${clusterName}-gateway`;
+      if (
+        controlPlaneName.length > 63 ||
+        gatewayName.length > 63 ||
+        [productionCloudflareResources.controlPlaneWorker, productionCloudflareResources.gatewayWorker]
+          .includes(controlPlaneName) ||
+        [productionCloudflareResources.controlPlaneWorker, productionCloudflareResources.gatewayWorker]
+          .includes(gatewayName)
+      ) {
+        errors.push("remote-disposable Worker names must be unique test-prefixed names");
+      }
+    }
+    if (
+      value.cloudflare?.controlPlaneDatabaseId ===
+        productionCloudflareResources.controlPlaneDatabaseId ||
+      value.cloudflare?.gatewayKvNamespaceId === productionCloudflareResources.gatewayKvNamespaceId
+    ) {
+      errors.push("remote-disposable Cloudflare resource IDs must not reference production D1 or KV");
+    }
+    if (value.workNotifications?.enabled === true) {
+      errors.push("remote-disposable Workers must use bounded polling without shared work-notification bindings");
+    }
+    if (clusterName) {
+      const workerOrigin = (raw, expectedName, field) => {
+        try {
+          const url = new URL(raw);
+          if (
+            url.protocol !== "https:" || url.origin !== raw || url.pathname !== "/" ||
+            url.username || url.password || url.search || url.hash ||
+            !new RegExp(`^${expectedName}\\.[a-z0-9-]+\\.workers\\.dev$`, "u").test(url.hostname)
+          ) {
+            errors.push(`remote-disposable ${field} must be the matching workers.dev origin`);
+          }
+        } catch {
+          errors.push(`remote-disposable ${field} must be an HTTPS workers.dev origin`);
+        }
+      };
+      workerOrigin(value.domains?.controlPlaneUrl, `${clusterName}-control-plane`, "domains.controlPlaneUrl");
+      workerOrigin(value.domains?.gatewayOrigin, `${clusterName}-gateway`, "domains.gatewayOrigin");
+      if (value.domains?.gatewayServiceUrl !== value.domains?.gatewayOrigin) {
+        errors.push("remote-disposable domains.gatewayServiceUrl must equal the test Gateway origin");
+      }
+      if (value.gateway?.adminOrigin !== null || value.gateway?.adminGithubUserIds?.length) {
+        errors.push("remote-disposable inventories must not configure the production Admin Worker");
+      }
+    }
   }
   return { errors, blockers };
 }

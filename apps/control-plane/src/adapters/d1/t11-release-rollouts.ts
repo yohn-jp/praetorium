@@ -656,7 +656,8 @@ export class D1T11ReleaseRolloutStore
     if (!prior) return null;
     if (
       prior.request_hash !== input.requestHash ||
-      prior.response_kind !== "release-canary-build-retry" ||
+      (prior.response_kind !== "release-canary-build-retry" &&
+        prior.response_kind !== "release-canary-runtime-retry") ||
       prior.response_id !== input.releaseId
     ) {
       return { kind: "conflict", reason: "idempotency_key_reused" };
@@ -883,6 +884,215 @@ export class D1T11ReleaseRolloutStore
       throw error;
     }
 
+    const updated = await this.getReleaseRetryStatus(input.releaseId);
+    return updated
+      ? { kind: "accepted", duplicate: false, status: updated }
+      : { kind: "not_found" };
+  }
+
+  /**
+   * Starts a fresh normal canary build after an operator-confirmed runtime
+   * failure. The old instance is never restarted or edited by this command.
+   */
+  async retryFailedCanaryRuntime(
+    input: ReleaseRetryCommand,
+  ): Promise<ReleaseRetryResult> {
+    const prior = await this.findPreRuntimeCanaryRetry(input);
+    if (prior) return prior;
+    const scope = `release:${input.releaseId}`;
+    const status = await this.getReleaseRetryStatus(input.releaseId);
+    if (!status) return { kind: "not_found" };
+    if (status.workflow.revision !== input.expectedRevision) {
+      return { kind: "conflict", reason: "stale_or_ineligible" };
+    }
+    const updatedAt = input.now;
+    const statements: D1PreparedStatement[] = [
+      this.db.prepare(
+        `UPDATE release_candidate_workflows AS w
+            SET state = 'canary_building', revision = revision + 1, attempts = attempts + 1,
+                next_attempt_at = NULL, lease_owner = NULL, lease_epoch = lease_epoch + 1,
+                lease_expires_at = NULL, canary_build_key = NULL, canary_artifact_digest = NULL,
+                canary_runtime_id = NULL, canary_operation_id = NULL, healthy_since = NULL,
+                last_healthy_at = NULL, last_health_evidence_json = NULL,
+                cleanup_evidence_json = NULL, follower_cursor = NULL,
+                follower_planning_complete = 0, canary_cleanup_complete = 0,
+                cleanup_disposition = NULL, failure_code = NULL, updated_at = ?
+          WHERE w.release_id = ? AND w.revision = ? AND w.state = 'rejected'
+            AND w.failure_code IN ('canary_assignment_superseded', 'canary_operation_failed', 'canary_stop_blocked')
+            AND w.lease_owner IS NULL AND w.lease_expires_at IS NULL
+            AND w.canary_cleanup_complete = 1 AND w.cleanup_disposition = 'reject'
+            AND w.canary_runtime_id IS NOT NULL AND w.canary_operation_id IS NOT NULL
+            AND w.cleanup_evidence_json IS NOT NULL
+            AND w.last_health_evidence_json IS NULL AND w.last_healthy_at IS NULL AND w.healthy_since IS NULL
+            AND EXISTS (
+              SELECT 1 FROM release_candidates c
+               WHERE c.release_id = w.release_id AND c.status = 'candidate'
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM operations started
+                JOIN logical_instances old_i ON old_i.instance_id = started.instance_id
+                  AND old_i.repository_id = started.repository_id
+                JOIN operations stopped ON stopped.operation_id =
+                  json_extract(w.cleanup_evidence_json, '$.operationId')
+                  AND stopped.instance_id = started.instance_id
+                  AND stopped.repository_id = started.repository_id
+                  AND stopped.generation = old_i.generation
+                  AND stopped.runtime_epoch = old_i.runtime_epoch
+                  AND stopped.kind = 'stop' AND stopped.status = 'succeeded'
+               WHERE started.operation_id = w.canary_operation_id
+                 AND started.instance_id = w.canary_runtime_id
+                 AND started.kind IN ('start', 'redeploy', 'update')
+                 AND started.deployment_revision_id IS NOT NULL
+                 AND stopped.generation > started.generation
+                 AND stopped.runtime_epoch >= started.runtime_epoch
+                 AND old_i.desired_state = 'stopped'
+                 AND old_i.observed_state IN ('stopped', 'absent')
+                 AND old_i.observed_generation = old_i.generation
+                 AND old_i.observed_runtime_epoch = old_i.runtime_epoch
+                 AND json_extract(w.cleanup_evidence_json, '$.startedOperationId') = started.operation_id
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.instanceId') = old_i.instance_id
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.repositoryId') = old_i.repository_id
+                 AND json_type(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') = 'integer'
+                 AND COALESCE(json_type(stopped.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch'),
+                              json_type(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.retiredRuntimeEpoch'))
+                     = 'integer'
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') IS
+                     COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.retiredRuntimeEpoch'))
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.retiredEpoch') <= started.runtime_epoch
+                 AND json_type(w.cleanup_evidence_json, '$.writerAbsence.remainingWriters') = 'integer'
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.remainingWriters') = 0
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.source') = 'runtime-provider-census'
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.providerObservationId') =
+                     COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.providerObservationId'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.providerObservationId'))
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.evidenceIdentities') IS
+                     COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.evidenceIdentities'))
+                 AND COALESCE(json_type(stopped.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities'),
+                              json_type(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.evidenceIdentities')) = 'array'
+                 AND length(COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.providerObservationId'),
+                                     json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.providerObservationId'))) > 0
+                 AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.instanceId'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.instanceId')) = old_i.instance_id
+                 AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.repositoryId'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.repositoryId')) = old_i.repository_id
+                 AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.remainingWriters'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.remainingWriters')) = 0
+                 AND COALESCE(json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.source'),
+                              json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.source')) = 'runtime-provider-census'
+                 AND round((julianday(COALESCE(
+                       json_extract(stopped.checkpoint_json, '$.writerAbsenceProof.censusObservedAt'),
+                       json_extract(stopped.checkpoint_json, '$.lifecycle.writerAbsenceProof.censusObservedAt')
+                     )) - 2440587.5) * 86400000) =
+                     json_extract(w.cleanup_evidence_json, '$.writerAbsence.censusObservedAt')
+                 AND json_type(w.cleanup_evidence_json, '$.writerAbsence.censusObservedAt') = 'integer'
+                 AND json_extract(w.cleanup_evidence_json, '$.writerAbsence.censusObservedAt') <=
+                     json_extract(w.cleanup_evidence_json, '$.observedAt')
+                 AND json_extract(w.cleanup_evidence_json, '$.observedAt') <= ?
+                 AND json_extract(w.cleanup_evidence_json, '$.observedAt') -
+                     json_extract(w.cleanup_evidence_json, '$.writerAbsence.censusObservedAt') <= 600000
+                 AND NOT EXISTS (
+                   SELECT 1 FROM operations active
+                    WHERE active.instance_id = old_i.instance_id
+                      AND active.status IN ('pending', 'claimed', 'running')
+                      AND (active.operation_id <> started.operation_id
+                        OR active.lease_expires_at IS NULL OR active.lease_expires_at > ?)
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM runtime_reservations old_reservation
+                    WHERE old_reservation.instance_id = old_i.instance_id
+                      AND old_reservation.status IN ('pending', 'reserved', 'allocated')
+                 )
+            )
+            AND EXISTS (
+              SELECT 1 FROM logical_instances new_i
+              JOIN repository_bindings new_b ON new_b.repository_id = new_i.repository_id
+                AND new_b.instance_id = new_i.instance_id
+               WHERE new_i.repository_id = ? AND new_i.instance_id = ?
+                 AND new_b.binding_epoch = ? AND new_b.authorization_revision = ?
+                 AND new_b.suspended = 0
+                 AND new_i.desired_state = 'stopped'
+                 AND new_i.observed_state IN ('stopped', 'absent')
+                 AND (new_i.observed_runtime_epoch IS NULL OR
+                      new_i.observed_runtime_epoch = new_i.runtime_epoch)
+                 AND new_i.reservation_state IN ('none', 'released')
+                 AND new_i.reservation_id IS NULL
+                 AND NOT EXISTS (
+                   SELECT 1 FROM operations active_new
+                    WHERE active_new.instance_id = new_i.instance_id
+                      AND active_new.generation = new_i.generation
+                      AND active_new.status IN ('pending', 'claimed', 'running')
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM runtime_reservations new_reservation
+                    WHERE new_reservation.instance_id = new_i.instance_id
+                      AND new_reservation.status IN ('pending', 'reserved', 'allocated')
+                 )
+            )`,
+      ).bind(
+        updatedAt,
+        input.releaseId,
+        input.expectedRevision,
+        input.now,
+        input.now,
+        input.canary.repositoryId,
+        input.canary.instanceId,
+        input.canary.bindingEpoch,
+        input.canary.authorizationRevision,
+      ),
+      this.assertOneChange(),
+      this.db.prepare(
+        `INSERT INTO idempotency_records
+           (scope, idempotency_key, request_hash, response_kind, response_id, created_at)
+         VALUES (?, ?, ?, 'release-canary-runtime-retry', ?, ?)`,
+      ).bind(scope, input.idempotencyKey, input.requestHash, input.releaseId, input.now),
+      this.assertOneChange(),
+      this.db.prepare(
+        `INSERT INTO audit_events
+           (event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
+            action, outcome, request_id, metadata_json, occurred_at)
+         VALUES (?, ?, ?, NULL, ?, 'operator', 'release.canary-runtime.retried',
+                 'accepted', ?, ?, ?)`,
+      ).bind(
+        `aud_canary_runtime_retry_${crypto.randomUUID()}`,
+        input.canary.repositoryId,
+        input.canary.instanceId,
+        input.actorId,
+        input.requestId,
+        JSON.stringify({
+          releaseId: input.releaseId,
+          previousWorkflowRevision: input.expectedRevision,
+          workflowRevision: input.expectedRevision + 1,
+          previousCanaryOperationId: status.workflow.canaryOperationId,
+        }),
+        input.now,
+      ),
+      this.assertOneChange(),
+    ];
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      if (isTransactionAssertion(error)) {
+        return { kind: "conflict", reason: "stale_or_ineligible" };
+      }
+      if (isConstraintError(error)) {
+        const raced = await this.readRetryIdempotency(scope, input.idempotencyKey);
+        if (raced) {
+          if (
+            raced.request_hash !== input.requestHash ||
+            raced.response_kind !== "release-canary-runtime-retry" ||
+            raced.response_id !== input.releaseId
+          ) return { kind: "conflict", reason: "idempotency_key_reused" };
+          const duplicateStatus = await this.getReleaseRetryStatus(input.releaseId);
+          return duplicateStatus
+            ? { kind: "accepted", duplicate: true, status: duplicateStatus }
+            : { kind: "not_found" };
+        }
+      }
+      throw error;
+    }
     const updated = await this.getReleaseRetryStatus(input.releaseId);
     return updated
       ? { kind: "accepted", duplicate: false, status: updated }

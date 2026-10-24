@@ -11,6 +11,7 @@ import {
   compareMigrationNames,
   orderedMigrationFiles,
   parseAppliedMigrationReadback,
+  parseD1TableReadback,
 } from "../../scripts/deployment-migrations.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -51,6 +52,30 @@ test("Wrangler JSON readback accepts complete historical receipts with duplicate
   const applied = parseAppliedMigrationReadback(output);
   assert.deepEqual(applied, historicReceipts);
   assert.equal(assertMigrationReadback(expected, applied), true);
+});
+
+test("fresh disposable D1 schema readback distinguishes an empty database from unknown tables", () => {
+  assert.deepEqual(
+    parseD1TableReadback(JSON.stringify([{ success: true, results: [] }])),
+    [],
+  );
+  assert.deepEqual(
+    parseD1TableReadback(JSON.stringify([{ success: true, results: [{ name: "d1_migrations" }] }])),
+    ["d1_migrations"],
+  );
+  assert.throws(() => parseD1TableReadback("not JSON"), /invalid JSON/u);
+  assert.throws(
+    () => parseD1TableReadback(JSON.stringify([{ success: false, results: [] }])),
+    /successful query/u,
+  );
+  assert.throws(
+    () => parseD1TableReadback(JSON.stringify([{ success: true, results: [{ name: "table;DROP" }] }])),
+    /invalid table name/u,
+  );
+  assert.throws(
+    () => parseD1TableReadback(JSON.stringify([{ success: true, results: [{ name: "items" }, { name: "items" }] }])),
+    /duplicate table/u,
+  );
 });
 
 test("migration readback rejects missing, extra, duplicate, malformed and prerequisite-breaking history", () => {

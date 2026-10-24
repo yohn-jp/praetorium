@@ -64,6 +64,9 @@ function fixture() {
   let retryAccepted = false;
   let catalogUnavailable = false;
   let canaryConfigurationConflict = false;
+  let canaryRecoveryFailure = null;
+  let canaryRecoveryResponse = "accepted";
+  let canaryOperationId = "op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ";
   const jobId = "sr_00000000-0000-4000-a000-000000000001";
   const sourceDetail = () => SourceBuildDetailSchema.parse({
     job:{id:jobId,sourceId:"scriptorium",releaseId:101,tag:"v1.2.0",version:"1.2.0",commit:"b".repeat(40),
@@ -86,7 +89,7 @@ function fixture() {
         startedAt:1792820030000,finishedAt:null,failureCode:null,evidence:"not_recorded",expiresAt:null,diagnostic:null}]:[])],
     nextCursor:null,evidence:buildState==="failed"?evidenceMode === "summary" || evidenceMode === "detailed" || evidenceMode === "unavailable" ? "available" : evidenceMode : "expired",
   });
-  const calls = { identity:0, control:0, observer:0 };
+  const calls = { identity:0, control:0, observer:0, recoveryPosts:[] };
   const env = {
     ADMIN_ORIGIN: ADMIN, GATEWAY_ORIGIN: GATEWAY,
     ADMIN_CONTROL_PLANE_AUTH: TOKEN, ADMIN_OBSERVER_AUTH: "d".repeat(48),
@@ -108,6 +111,18 @@ function fixture() {
       const url = new URL(request.url);
       const pathname = url.pathname;
       const method = request.method;
+      if (method === "POST" && pathname === "/v1/operator/releases/rel_owned/retry" && canaryRecoveryFailure) {
+        const payload = await request.json();
+        assert.deepEqual(Object.keys(payload).sort(),["expectedRevision","idempotencyKey"]);
+        assert.equal(payload.expectedRevision,12);
+        assert.match(payload.idempotencyKey,/^action-[A-Za-z0-9_-]{20,}$/u);
+        assert.equal(request.headers.get("X-Praetorium-Admin-Actor"),OPERATOR);
+        assert.equal(request.headers.get("X-Control-Plane-Admin-Auth"),TOKEN);
+        calls.recoveryPosts.push(payload);
+        return canaryRecoveryResponse === "conflict"
+          ? Response.json({error:{code:"RELEASE_CONFLICT"}},{status:409})
+          : Response.json({accepted:true},{status:202});
+      }
       if (method === "POST" && pathname === "/v1/operator/source-builds/"+jobId+"/retry") {
         const payload = await request.json();
         assert.equal(payload.sourceId,"scriptorium");
@@ -124,19 +139,29 @@ function fixture() {
       if (buildState !== "empty" && pathname === "/v1/operator/source-builds")
         return Response.json({items:[sourceDetail().job],nextCursor:null});
       if (pathname === "/v1/operator/releases/rel_owned")
-        return Response.json({release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),status:"available"},
-          workflow:{state:canaryConfigurationConflict?"canary_building":"stable",revision:4,
-            failureCode:canaryConfigurationConflict?"canary_configuration_conflict":null,attempts:2,nextAttemptAt:null,
-            canaryBuildKey:"composition-owned",canaryOperationId:canaryConfigurationConflict?null:"op_owned"},
-          build:{id:"composition-owned",status:canaryConfigurationConflict?"building":"available",attemptCount:1,failure:null}});
-      if (pathname === "/v1/operations/op_owned/evidence")
-        return Response.json({operation:{id:"op_owned",instanceId:"runtime-owned",generation:2,runtimeEpoch:5,
+        return Response.json({release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),
+            status:canaryRecoveryFailure?"rejected":"available"},
+          workflow:{state:canaryRecoveryFailure?"rejected":canaryConfigurationConflict?"canary_building":"stable",
+            revision:canaryRecoveryFailure?12:4,
+            failureCode:canaryRecoveryFailure??(canaryConfigurationConflict?"canary_configuration_conflict":null),
+            attempts:canaryRecoveryFailure?3:2,nextAttemptAt:null,
+            canaryBuildKey:"composition-owned",canaryOperationId:canaryConfigurationConflict?null:canaryOperationId},
+          build:canaryRecoveryFailure?null:{id:"composition-owned",status:canaryConfigurationConflict?"building":"available",attemptCount:1,failure:null}});
+      if (/^\/v1\/operations\/(?:op_[0-9A-HJKMNP-TV-Z]{26}|operation_[0-9a-f-]{36})\/evidence$/iu.test(pathname)) {
+        const operationId = pathname.split("/")[3];
+        return Response.json({operation:{id:operationId,instanceId:"runtime-owned",generation:2,runtimeEpoch:5,
           kind:"deploy",status:"succeeded",phase:"stable",attempt:1,createdAt:1792820000000,updatedAt:1792820001000},
           readinessEvidence:{ready:true},rollbackCompatibilityEvidence:null,rollbackCompatible:true});
+      }
       if (pathname === "/v1/operator/releases" && catalogUnavailable)
         return Response.json({error:{code:"OPERATOR_UNAVAILABLE"}},{status:503});
       if (pathname === "/v1/operator/releases")
-        return Response.json(buildState === "admitted"
+        return Response.json(canaryRecoveryFailure
+          ? {items:[{release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),
+              status:"rejected",createdAt:"2026-10-24T00:00:00.000Z"},workflow:{workflow:{state:"rejected",
+              revision:12,failureCode:canaryRecoveryFailure,attempts:3,nextAttemptAt:null},build:null}}],
+              stableChannel:{currentReleaseId:"rel_stable",revision:8}}
+          : buildState === "admitted"
           ? {items:[{release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),
               status:"available",createdAt:"2026-10-24T00:00:00.000Z"},workflow:null}],stableChannel:{currentReleaseId:"rel_owned",revision:4}}
           : {items:[],stableChannel:{currentReleaseId:null,revision:0}});
@@ -159,7 +184,7 @@ function fixture() {
         Response.json({error:"not_found"},{status:404});
     }},
   };
-  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},setCatalogUnavailable:value=>{catalogUnavailable=value;},setCanaryConfigurationConflict:value=>{canaryConfigurationConflict=value;},jobId};
+  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},setCatalogUnavailable:value=>{catalogUnavailable=value;},setCanaryConfigurationConflict:value=>{canaryConfigurationConflict=value;},setCanaryOperationId:value=>{canaryOperationId=value;},setCanaryRecovery:(failure,response="accepted")=>{canaryRecoveryFailure=failure;canaryRecoveryResponse=response;},jobId};
 }
 async function listen(env) {
   const server = createServer(async (req,res) => {
@@ -192,7 +217,7 @@ async function listen(env) {
   return {server,origin:"http://127.0.0.1:"+address.port};
 }
 test("dedicated Admin Worker protects host telemetry and renders distinct responsive UI", async t=>{
-  const {env,calls,setBuildState,setCatalogUnavailable,setCanaryConfigurationConflict,jobId}=fixture();
+  const {env,calls,setBuildState,setCatalogUnavailable,setCanaryConfigurationConflict,setCanaryOperationId,setCanaryRecovery,jobId}=fixture();
   const noAuth=await worker.fetch(new Request(ADMIN+"/api/admin/v1/infrastructure/hosts"),env);
   assert.equal(noAuth.status,403);
   assert.equal(calls.observer,0);
@@ -394,10 +419,19 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.doesNotMatch(unavailableStable,/Stable release is not recorded/i);
     setCatalogUnavailable(false);
     await page.reload({waitUntil:"networkidle"});
-    await page.getByRole("link",{name:"op_owned",exact:true}).click();
+    await page.getByRole("link",{name:"op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ",exact:true}).click();
     journey=await page.locator("main").innerText();
     assert.match(journey,/succeeded/iu,journey);
+    assert.match(journey,/Canary \/ runtime operation/iu);
     await page.getByRole("link",{name:"Back to related release rel_owned",exact:true}).click();
+    setCanaryOperationId("operation_7e53e854-11d8-4722-b8d5-278a796a47d4");
+    await page.reload({waitUntil:"networkidle"});
+    await page.getByRole("link",{name:"operation_7e53e854-11d8-4722-b8d5-278a796a47d4",exact:true}).click();
+    journey=await page.locator("main").innerText();
+    assert.match(journey,/succeeded/iu,journey);
+    assert.match(journey,/operation_7e53e854-11d8-4722-b8d5-278a796a47d4/iu);
+    await page.getByRole("link",{name:"Back to related release rel_owned",exact:true}).click();
+    setCanaryOperationId("op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ");
     await page.getByRole("link",{name:"Back to Releases",exact:true}).click();
     const stableLabelContrast=await renderedTextContrast(page,mode==="desktop"?[".desktop-stable-digest span"]:[".admin-mobile-stable-panel strong"]);
     assert.ok(stableLabelContrast.length>0,mode+" Stable status label must be audited");
@@ -407,6 +441,86 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.match(journey,/stable/iu);
     assert.ok(journey.includes("composition-owned"));
   }
+  // Rejected workflow recovery is an operator request with a server-side CAS.
+  // Exercise both list/detail UI layouts at every supported target width, and
+  // submit only to the isolated Control Plane fixture below.
+  setCanaryRecovery("canary_operation_failed");
+  const recoveryViewports = [
+    {mode:"desktop",width:1440},{mode:"desktop",width:1920},
+    {mode:"mobile",width:320},{mode:"mobile",width:375},
+    {mode:"mobile",width:390},{mode:"mobile",width:430},
+  ];
+  let recoverySubmissions=0;
+  for (const {mode,width} of recoveryViewports) {
+    await page.setViewportSize({width,height:900});
+    await page.goto(origin+"/releases?ui="+mode,{waitUntil:"networkidle"});
+    assert.equal(await page.locator("body").getAttribute("data-ui"),mode);
+    assert.equal(await page.getByRole("button",{name:"Request Canary recovery",exact:true}).count(),1,
+      mode+" release list exposes only the bounded recovery request at "+width+"px");
+    let dimensions=await page.evaluate(()=>({document:document.documentElement.scrollWidth,viewport:innerWidth}));
+    assert.ok(dimensions.document<=width+1,mode+" rejected release list overflow at "+width+"px: "+JSON.stringify(dimensions));
+    await page.getByRole("link",{name:"1.2.0",exact:true}).click();
+    assert.equal(new URL(page.url()).pathname,"/releases/rel_owned");
+    assert.equal(new URL(page.url()).searchParams.get("ui"),mode);
+    assert.equal(await page.getByRole("button",{name:"Request Canary recovery",exact:true}).count(),1,
+      mode+" release detail exposes the bounded recovery request at "+width+"px");
+    const recoveryForm=page.locator('form[action="/releases/rel_owned/retry?ui='+mode+'"]');
+    assert.equal(await recoveryForm.locator('[name="csrfToken"]').inputValue(),"signed-csrf-token");
+    assert.equal(await recoveryForm.locator('[name="expectedRevision"]').inputValue(),"12");
+    const key=await recoveryForm.locator('[name="idempotencyKey"]').inputValue();
+    assert.match(key,/^action-[A-Za-z0-9_-]{20,}$/u);
+    assert.equal(await recoveryForm.locator('[name="recoveryRequest"]').inputValue(),"canary-recovery");
+    assert.match(await page.locator("main").innerText(),/Acceptance does not mean Canary success or Stable promotion/iu);
+    dimensions=await page.evaluate(()=>({document:document.documentElement.scrollWidth,viewport:innerWidth}));
+    assert.ok(dimensions.document<=width+1,mode+" rejected release detail overflow at "+width+"px: "+JSON.stringify(dimensions));
+
+    const acceptedCase=(mode==="desktop"&&width===1440)||(mode==="mobile"&&width===320);
+    const conflictCase=(mode==="desktop"&&width===1920)||(mode==="mobile"&&width===375);
+    if (acceptedCase) {
+      setCanaryRecovery("canary_operation_failed","accepted");
+      await recoveryForm.getByRole("button",{name:"Request Canary recovery",exact:true}).click();
+      recoverySubmissions++;
+      assert.equal(calls.recoveryPosts.length,recoverySubmissions,
+        "the Admin handler submits exactly one guarded command for an accepted request");
+      assert.equal(new URL(page.url()).pathname,"/releases/rel_owned");
+      assert.equal(new URL(page.url()).searchParams.get("ui"),mode);
+      let text=await page.locator("main").innerText();
+      assert.match(text,/Canary recovery request accepted/iu);
+      assert.match(text,/acceptance is not Canary success or Stable promotion/iu);
+      assert.match(text,/rejected/iu,"fixture keeps workflow rejected after accepting the operator request");
+      assert.equal(await page.getByRole("link",{name:"Open current Stable release rel_stable",exact:true}).count(),1);
+      assert.equal(await page.getByRole("link",{name:"Open current Stable release rel_owned",exact:true}).count(),0,
+        "accepted recovery request must not move the Stable pointer");
+      const posted=calls.recoveryPosts.at(-1);
+      assert.equal(posted.expectedRevision,12);
+      assert.equal(posted.idempotencyKey,key);
+    } else if (conflictCase) {
+      setCanaryRecovery("canary_operation_failed","conflict");
+      await recoveryForm.getByRole("button",{name:"Request Canary recovery",exact:true}).click();
+      recoverySubmissions++;
+      assert.equal(calls.recoveryPosts.length,recoverySubmissions,
+        "the Admin handler submits exactly one guarded command for a stale request");
+      assert.equal(new URL(page.url()).pathname,"/releases/rel_owned/retry");
+      assert.equal(new URL(page.url()).searchParams.get("ui"),mode);
+      const conflict=await page.locator("main").innerText();
+      assert.match(conflict,/workflow changed or its verified stopped target and Stop proof are no longer current/iu);
+      assert.match(conflict,/Request was not confirmed/iu);
+      dimensions=await page.evaluate(()=>({document:document.documentElement.scrollWidth,viewport:innerWidth}));
+      assert.ok(dimensions.document<=width+1,mode+" recovery conflict overflow at "+width+"px: "+JSON.stringify(dimensions));
+      await page.getByRole("link",{name:"Return to the affected record",exact:true}).click();
+      assert.equal(new URL(page.url()).pathname,"/releases/rel_owned");
+      assert.equal(new URL(page.url()).searchParams.get("ui"),mode);
+      const returnedDetail=await page.locator("main").innerText();
+      assert.ok(returnedDetail.includes("1.2.0")&&returnedDetail.includes("rel_owned"),
+        "the conflict return link restores the same canonical Release detail");
+      assert.equal(await page.getByRole("button",{name:"Request Canary recovery",exact:true}).count(),1);
+      await page.getByRole("link",{name:"Refresh status",exact:true}).click();
+      assert.equal(new URL(page.url()).pathname,"/releases/rel_owned");
+      assert.equal(new URL(page.url()).searchParams.get("ui"),mode,
+        "refresh after conflict stays on the same Release and layout");
+    }
+  }
+  setCanaryRecovery(null);
   // The mapped canonical conflict is actionable in both layouts without
   // inventing an operation link when the Control Plane supplied none.
   setCanaryConfigurationConflict(true);

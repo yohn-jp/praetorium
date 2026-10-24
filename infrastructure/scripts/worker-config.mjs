@@ -1,5 +1,51 @@
 // Shared canonical Worker environment projection for local and K3s deployments.
+import { createHash } from "node:crypto";
 import { workNotificationEndpoints, workNotificationsEnabled } from "./work-notifications.mjs";
+
+const productionRateLimitNamespaces = new Set([761101, 761102, 761103, 761104, 761105, 761106]);
+const rateLimitBindingNames = [
+  "LOGIN_RATE_LIMIT",
+  "MCP_SOURCE_RATE_LIMIT",
+  "MCP_CREDENTIAL_RATE_LIMIT",
+  "RUNTIME_GIT_RATE_LIMIT",
+  "WAKE_RATE_LIMIT",
+  "MUTATION_RECEIPT_RATE_LIMIT",
+];
+
+export function remoteDisposableWorkerNames(inventory) {
+  if (inventory.cloudflare?.mode !== "remote-disposable") {
+    throw new TypeError("remote disposable Worker names require remote-disposable Cloudflare mode");
+  }
+  const prefix = inventory.ownership?.clusterName;
+  if (typeof prefix !== "string" || !/^praetorium-t14-[a-z0-9](?:[a-z0-9-]{0,32}[a-z0-9])?$/u.test(prefix)) {
+    throw new TypeError("remote disposable Worker names require the bounded praetorium-t14 cluster prefix");
+  }
+  return Object.freeze({
+    controlPlane: `${prefix}-control-plane`,
+    gateway: `${prefix}-gateway`,
+    database: `${prefix}-control-plane`,
+    kvNamespace: `${prefix}-gateway`,
+  });
+}
+
+export function remoteDisposableRateLimitNamespaces(inventory) {
+  const { clusterName } = inventory.ownership ?? {};
+  if (inventory.cloudflare?.mode !== "remote-disposable" ||
+      typeof clusterName !== "string" ||
+      !/^praetorium-t14-[a-z0-9](?:[a-z0-9-]{0,32}[a-z0-9])?$/u.test(clusterName)) {
+    throw new TypeError("remote disposable rate limits require the bounded T14 inventory");
+  }
+  const used = new Set();
+  return Object.freeze(Object.fromEntries(rateLimitBindingNames.map((binding) => {
+    const hash = createHash("sha256").update(`${clusterName}:rate-limit:${binding}`).digest();
+    let id = (hash.readUInt32BE(0) & 0x7fffffff) % 2_000_000_000 + 1;
+    while (used.has(id) || productionRateLimitNamespaces.has(id)) {
+      id = id === 2_000_000_000 ? 1 : id + 1;
+    }
+    used.add(id);
+    return [binding, id];
+  })));
+}
 
 export function buildPolicy(inventory) {
   const repository = inventory.buildkit.outputRepository;
@@ -85,6 +131,17 @@ export function renderWorkerTemplate(template, inventory, worker) {
   const config = JSON.parse(template);
   if (!["control-plane", "gateway", "admin"].includes(worker))
     throw new TypeError("Unknown Worker projection role");
+  const remoteDisposable = inventory.cloudflare?.mode === "remote-disposable";
+  if (remoteDisposable && worker === "admin") {
+    throw new TypeError("remote-disposable deploys only the isolated Control Plane and Gateway Workers");
+  }
+  if (remoteDisposable) {
+    const names = remoteDisposableWorkerNames(inventory);
+    config.name = worker === "control-plane" ? names.controlPlane : names.gateway;
+    config.workers_dev = true;
+    delete config.routes;
+    delete config.vpc_services;
+  }
   if (worker === "admin") {
     if (!inventory.gateway.adminOrigin)
       throw new TypeError("Admin origin is required by the independent Worker");
@@ -139,6 +196,15 @@ export function renderWorkerTemplate(template, inventory, worker) {
     const releases = releasePolicy(inventory);
     if (releases) variables.RELEASE_POLICY_JSON = JSON.stringify(releases);
     config.vars = variables;
+    if (remoteDisposable) {
+      const names = remoteDisposableWorkerNames(inventory);
+      const database = config.d1_databases?.find((binding) => binding.binding === "CONTROL_PLANE_DB");
+      if (!database) throw new TypeError("Control Plane template is missing CONTROL_PLANE_DB");
+      database.database_name = names.database;
+      const gateway = config.services?.find((binding) => binding.binding === "GATEWAY_SERVICE");
+      if (!gateway) throw new TypeError("Control Plane template is missing GATEWAY_SERVICE");
+      gateway.service = names.gateway;
+    }
   } else {
     config.vars = {
       GATEWAY_ENVIRONMENT: inventory.environment === "deployment" ? "production" : "test",
@@ -165,17 +231,37 @@ export function renderWorkerTemplate(template, inventory, worker) {
       ),
     };
   }
-  const origins = worker === "control-plane"
-    ? [inventory.domains.controlPlaneUrl]
-    : [inventory.domains.gatewayOrigin];
-  config.routes = origins.filter(Boolean).map(origin => ({
-    pattern: new URL(origin).hostname, custom_domain: true,
-  }));
+  if (!remoteDisposable) {
+    const origins = worker === "control-plane"
+      ? [inventory.domains.controlPlaneUrl]
+      : [inventory.domains.gatewayOrigin];
+    config.routes = origins.filter(Boolean).map(origin => ({
+      pattern: new URL(origin).hostname, custom_domain: true,
+    }));
+  }
   if (worker === "control-plane") {
     config.d1_databases[0].database_id = inventory.cloudflare.controlPlaneDatabaseId;
   } else {
     config.kv_namespaces[0].id = inventory.cloudflare.gatewayKvNamespaceId;
     config.kv_namespaces[0].preview_id = inventory.cloudflare.gatewayKvNamespaceId;
+  }
+  if (remoteDisposable) {
+    const names = remoteDisposableWorkerNames(inventory);
+    if (worker === "gateway") {
+      const limitNamespaces = remoteDisposableRateLimitNamespaces(inventory);
+      if (!Array.isArray(config.ratelimits) ||
+          config.ratelimits.length !== rateLimitBindingNames.length ||
+          config.ratelimits.some((limit) => !Object.hasOwn(limitNamespaces, limit.name))) {
+        throw new TypeError("Gateway template is missing the exact disposable rate-limit bindings");
+      }
+      config.ratelimits = config.ratelimits.map((limit) => ({
+        ...limit,
+        namespace_id: limitNamespaces[limit.name],
+      }));
+      const controlPlane = config.services?.find((binding) => binding.binding === "CONTROL_PLANE");
+      if (!controlPlane) throw new TypeError("Gateway template is missing CONTROL_PLANE");
+      controlPlane.service = names.controlPlane;
+    }
   }
   return `${JSON.stringify(config, null, 2)}\n`;
 }

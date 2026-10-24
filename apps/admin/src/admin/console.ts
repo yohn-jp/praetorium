@@ -4,7 +4,7 @@ import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDeta
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
 import { readInfrastructure, type InfraDependencies, type InfraHosts, type InfraServices, type HostObservation } from "../infrastructure.js";
-import { buildHref, viewHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
+import { buildHref, isOperationId, viewHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
 import { page } from "../page.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
@@ -391,17 +391,25 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
       const id = retryMatch![1]!;
       const revision = form.getAll("expectedRevision");
       const idempotencyKey = form.getAll("idempotencyKey");
+      const recoveryRequest = form.getAll("recoveryRequest");
+      const isRecoveryRequest = recoveryRequest.length === 1 && recoveryRequest[0] === "canary-recovery";
       if (revision.length !== 1 || !/^(0|[1-9][0-9]*)$/.test(revision[0]!) ||
           idempotencyKey.length !== 1 || !RELEASE_ID.test(idempotencyKey[0]!) ||
-          [...form.keys()].some(key => !["csrfToken", "expectedRevision", "idempotencyKey"].includes(key)))
+          recoveryRequest.length > 1 || (recoveryRequest.length === 1 && !isRecoveryRequest) ||
+          [...form.keys()].some(key => !["csrfToken", "expectedRevision", "idempotencyKey", "recoveryRequest"].includes(key)))
         return response(400, "Invalid retry command");
       const accepted = await controlPlane(context, session.actor.userId, "POST",
         "/v1/operator/releases/" + encodeURIComponent(id) + "/retry", {
           expectedRevision: Number(revision[0]), idempotencyKey: idempotencyKey[0],
         });
+      if (isRecoveryRequest && accepted.status === 409)
+        return actionError("Canary recovery was not accepted because the workflow changed or its verified stopped target and Stop proof are no longer current. Refresh this Release and review the current operation and Stop evidence before requesting recovery again.", 409);
       if (![200, 202].includes(accepted.status))
         return actionError(errorCode(accepted.data), accepted.status);
-      return localRedirect("/releases/" + encodeURIComponent(id) + "?ui=" + mode + "&notice=" + encodeURIComponent("Retry accepted for " + id));
+      const notice = isRecoveryRequest
+        ? "Canary recovery request accepted for " + id + ". Refresh the authoritative workflow; acceptance is not Canary success or Stable promotion."
+        : "Retry accepted for " + id;
+      return localRedirect("/releases/" + encodeURIComponent(id) + "?ui=" + mode + "&notice=" + encodeURIComponent(notice));
     } catch {
       return actionError("Control Plane unavailable", 503);
     }
@@ -433,7 +441,10 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   }
   const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
-  const operationMatch = /^\/operations\/(op_[A-Za-z0-9_.:-]{1,124})$/u.exec(url.pathname);
+  const operationPath = /^\/operations\/([^/]{1,128})$/u.exec(url.pathname);
+  const selectedOperationPathId = operationPath?.[1] ?? null;
+  const operationMatch = selectedOperationPathId && isOperationId(selectedOperationPathId)
+    ? operationPath : null;
   const infraHostMatch = /^\/infrastructure\/hosts\/([a-z][a-z0-9-]{0,63})$/u.exec(url.pathname);
   const dependenciesSelected = url.pathname === "/infrastructure/dependencies";
   const selectedHostId = infraHostMatch?.[1] ?? null;

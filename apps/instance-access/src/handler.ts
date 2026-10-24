@@ -247,6 +247,7 @@ async function postGateway(
   path: string,
   body: unknown,
   fetcher: Fetch,
+  options: { readonly preserveRefreshFailure: boolean } = { preserveRefreshFailure: false },
 ): Promise<Response> {
   const destination = config.gatewayUrl ? new URL(path, config.gatewayUrl) : new URL(`https://gateway.internal${path}`);
   const request = new Request(destination, {
@@ -267,8 +268,58 @@ async function postGateway(
   } catch {
     return problem(503, "GATEWAY_UNAVAILABLE");
   }
-  if (!upstream.ok) return problem(upstream.status === 401 ? 401 : 503, "GATEWAY_REJECTED_REQUEST");
+  if (!upstream.ok) {
+    if (options.preserveRefreshFailure) {
+      const code = await readGatewayErrorCode(upstream);
+      if (upstream.status === 401 && code === "REFRESH_CREDENTIAL_REJECTED")
+        return problem(401, "UNAUTHENTICATED");
+      if (upstream.status === 403 && code === "FORBIDDEN")
+        return problem(403, "FORBIDDEN");
+      if (
+        upstream.status === 503 &&
+        (code === "UPSTREAM_UNAVAILABLE" || code === "INSTANCE_STARTING")
+      )
+        return problem(503, code, true);
+      return problem(503, "GATEWAY_UNAVAILABLE", true);
+    }
+    return problem(upstream.status === 401 ? 401 : 503, "GATEWAY_REJECTED_REQUEST");
+  }
   return upstream;
+}
+
+async function readGatewayErrorCode(response: Response): Promise<string | null> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return null;
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      totalBytes += result.value.byteLength;
+      if (totalBytes > 4_096) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(result.value);
+    }
+    const bytes = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const payload: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+    const error = (payload as { readonly error?: unknown }).error;
+    if (typeof error !== "object" || error === null || Array.isArray(error)) return null;
+    const code = (error as { readonly code?: unknown }).code;
+    return typeof code === "string" ? code : null;
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 async function singleForm(request: Request): Promise<{ code: string; returnPath: "/" } | null> {
@@ -422,7 +473,13 @@ export function createInstanceAccessHandler(
         refreshCredential,
       });
       if (!input.success) return problem(401, "SESSION_INVALID");
-      const upstream = await postGateway(config, "/internal/instance-access/refresh", input.data, fetcher);
+      const upstream = await postGateway(
+        config,
+        "/internal/instance-access/refresh",
+        input.data,
+        fetcher,
+        { preserveRefreshFailure: true },
+      );
       if (!upstream.ok) return upstream;
       const grant = RefreshAccessResponseSchema.safeParse(await upstream.json().catch(() => null));
       if (!grant.success) return problem(502, "INVALID_GATEWAY_RESPONSE");

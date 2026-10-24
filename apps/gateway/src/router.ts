@@ -791,7 +791,12 @@ function serviceAuthenticated(request: Request, context: GatewayContext): boolea
   return value?.startsWith("Bearer ") === true && constantTimeEqual(value.slice(7), context.config.instanceAccessSecret);
 }
 
-async function instanceAccessBinding(request: Request, context: GatewayContext, allowStopped = false): Promise<{
+async function instanceAccessBinding(
+  request: Request,
+  context: GatewayContext,
+  allowStopped = false,
+  runtimeNotReadyCode: "UNAUTHENTICATED" | "INSTANCE_STARTING" = "UNAUTHENTICATED",
+): Promise<{
   readonly input: ReturnType<typeof RedeemHandoffRequestSchema.parse> | ReturnType<typeof RefreshAccessRequestSchema.parse>;
   readonly snapshot: NonNullable<Awaited<ReturnType<GatewayContext["controlPlane"]["getByInstanceId"]>>>;
   readonly origin: string;
@@ -819,7 +824,12 @@ async function instanceAccessBinding(request: Request, context: GatewayContext, 
       (snapshot.binding.appIdentity ?? "scriptorium") !== input.appIdentity) {
     return errorResponse(request, "NOT_FOUND", "application not found", context.requestId);
   }
-  if (!allowStopped && !hasReadyCurrentRuntime(snapshot.instance)) return errorResponse(request, "UNAUTHENTICATED", "application runtime is not ready", context.requestId);
+  if (!allowStopped && !hasReadyCurrentRuntime(snapshot.instance)) {
+    if (runtimeNotReadyCode === "INSTANCE_STARTING") {
+      return errorResponse(request, "INSTANCE_STARTING", "application runtime is not ready", context.requestId);
+    }
+    return errorResponse(request, "UNAUTHENTICATED", "application runtime is not ready", context.requestId);
+  }
   return { input, snapshot, origin: expectedOrigin };
 }
 
@@ -873,7 +883,7 @@ async function handleInstanceAccessHandoff(request: Request, context: GatewayCon
 }
 
 async function handleInstanceAccessRefresh(request: Request, context: GatewayContext, now: string): Promise<Response> {
-  const bound = await instanceAccessBinding(request, context);
+  const bound = await instanceAccessBinding(request, context, false, "INSTANCE_STARTING");
   if (bound instanceof Response) return bound;
   if (!("refreshCredential" in bound.input)) return errorResponse(request, "INVALID_REQUEST", "refresh request is invalid", context.requestId);
   const refreshed = await refreshAccessGrant({
@@ -897,7 +907,13 @@ async function handleInstanceAccessRefresh(request: Request, context: GatewayCon
       event: "instance_access_refresh_rejected",
       reason: refreshed.error.code,
     }));
-    return errorResponse(request, "UNAUTHENTICATED", "refresh credential is invalid or access has changed", context.requestId);
+    if (refreshed.error.code === "INVALID_CREDENTIAL" || refreshed.error.code === "SESSION_INVALID") {
+      return errorResponse(request, "REFRESH_CREDENTIAL_REJECTED", "refresh credential is invalid or expired", context.requestId, 401);
+    }
+    if (refreshed.error.code === "INSTANCE_BLOCKED") {
+      return errorResponse(request, "FORBIDDEN", "current repository access is required", context.requestId);
+    }
+    return unavailable(request, context);
   }
   return json({ contractVersion: "instance-access/v2", ...refreshed.value });
 }

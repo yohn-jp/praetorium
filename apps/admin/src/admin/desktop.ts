@@ -7,7 +7,7 @@ import type {
 } from "@praetorium/contracts";
 import { escapeHtml } from "../presentation.js";
 import {
-  admittedReleaseHref, buildHref, compositionBuildHref, consoleHref, operationHref,
+  admittedReleaseHref, buildHref, canRequestCanaryRecovery, compositionBuildHref, consoleHref, isOperationId, operationHref,
   sourceReleaseExecutionHref, stableReleaseHref, viewHref, type ConsoleDependency,
   type ConsoleRelease, type ConsoleSection, type ConsoleViewModel,
 } from "./view-model.js";
@@ -162,6 +162,21 @@ function canaryRetryForm(item: ConsoleRelease, csrf: string, mode: ConsoleViewMo
     `<button class="desktop-button desktop-button-secondary" type="submit">Retry Canary build</button></form>`;
 }
 
+function canaryRecoveryForm(releaseId: string, workflow: {
+  workflow: { state: string; revision: number; failureCode: string | null };
+} | null | undefined,
+  csrf: string, mode: ConsoleViewModel["mode"]): string {
+  const status = workflow?.workflow;
+  if (!status || !canRequestCanaryRecovery(status)) return "";
+  return `<form method="post" action="/releases/${encodeURIComponent(releaseId)}/retry?ui=${mode}" class="desktop-recovery-form">` +
+    `<input type="hidden" name="csrfToken" value="${escapeHtml(csrf)}">` +
+    `<input type="hidden" name="expectedRevision" value="${status.revision}">` +
+    `<input type="hidden" name="idempotencyKey" value="${escapeHtml("action-" + generateToken(128))}">` +
+    `<input type="hidden" name="recoveryRequest" value="canary-recovery">` +
+    `<p>Requests Canary recovery from the rejected workflow. The Control Plane rechecks the configured stopped target and current Stop proof. Acceptance does not mean Canary success or Stable promotion.</p>` +
+    `<button class="desktop-button desktop-button-secondary" type="submit">Request Canary recovery</button></form>`;
+}
+
 function releaseRow(item: ConsoleRelease, csrf: string, mode: ConsoleViewModel["mode"]): string {
   const release = item.release;
   const workflow = item.workflow?.workflow;
@@ -172,7 +187,7 @@ function releaseRow(item: ConsoleRelease, csrf: string, mode: ConsoleViewModel["
     `<code>${escapeHtml(release.id)}</code></div><div><span class="desktop-field-label">State</span>${badge(humanize(state), state)}` +
     (issue ? `<p class="desktop-incident-code">${escapeHtml(issue)}</p>` : "") + `</div>` +
     `<div><span class="desktop-field-label">Immutable OCI digest</span><code class="desktop-digest">${escapeHtml(release.imageDigest)}</code></div>` +
-    `<div class="desktop-release-actions">${canaryRetryForm(item, csrf, mode)}</div></article>`;
+    `<div class="desktop-release-actions">${canaryRetryForm(item, csrf, mode)}${canaryRecoveryForm(release.id, item.workflow, csrf, mode)}</div></article>`;
 }
 
 function priorBuildForRelease(builds: readonly SourceBuildSummary[], sourceId: string, releaseId: number): SourceBuildSummary | undefined {
@@ -268,6 +283,7 @@ function releaseDetail(model: ConsoleViewModel): string {
       `<p>The Control Plane rechecks the current workflow revision and retry policy.</p></form>`
     : workflow.state === "blocked" || workflow.state === "failed"
       ? `<p class="desktop-muted">Retry is unavailable under the current canonical workflow policy.</p>` : "";
+  const recovery = canaryRecoveryForm(value.release.id, { workflow }, model.csrf, model.mode);
   const failureCode = workflow.failureCode ?? build?.failure?.code ?? null;
   const knownFailureGuidance = failureGuidance(failureCode);
   const stopBlocked = workflow.state === "canary_cleanup" && workflow.failureCode === "canary_stop_blocked";
@@ -276,7 +292,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     notice(model.notice) +
     `<section class="desktop-job-summary" aria-labelledby="desktop-release-summary-title"><div class="desktop-job-heading">` +
     `<div><p class="desktop-eyebrow">AUTHORITATIVE WORKFLOW</p><h2 id="desktop-release-summary-title">${badge(humanize(workflow.state), workflow.state)}</h2>` +
-    `<code>${escapeHtml(value.release.id)}</code></div><div>${retry}${canaryWaitSkipForm(value, model.csrf, model.mode)}</div></div>` +
+    `<code>${escapeHtml(value.release.id)}</code></div><div>${retry}${recovery}${canaryWaitSkipForm(value, model.csrf, model.mode)}</div></div>` +
     `<dl class="desktop-facts desktop-job-facts"><div><dt>Release status</dt><dd>${badge(humanize(value.release.status), value.release.status)}</dd></div>` +
     `<div><dt>Workflow revision</dt><dd>${workflow.revision}</dd></div><div><dt>Workflow attempts</dt><dd>${workflow.attempts}</dd></div>` +
     `<div class="desktop-fact-wide"><dt>Immutable OCI digest</dt><dd><code>${escapeHtml(value.release.imageDigest)}</code></dd></div>` +
@@ -290,7 +306,7 @@ function releaseDetail(model: ConsoleViewModel): string {
       ? `${badge(humanize(build.status), build.status)} <a class="desktop-text-link" href="${escapeHtml(compositionBuildHref(value.release.id, model.mode) + "#composition-build")}">${escapeHtml(build.id)}</a> · ${build.attemptCount} attempts`
       : "No Canary build is attached"}</dd></div>` +
     `<div><dt>Canary build key</dt><dd>${escapeHtml(workflow.canaryBuildKey ?? "Not recorded")}</dd></div>` +
-    `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(workflow.canaryOperationId)
+    `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId && isOperationId(workflow.canaryOperationId)
   ? `<a href="${escapeHtml(operationHref(workflow.canaryOperationId, model.mode, value.release.id))}">${escapeHtml(workflow.canaryOperationId)}</a>`
   : escapeHtml(workflow.canaryOperationId ?? "Not recorded")}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-release-followthrough-title"><div class="desktop-section-heading">` +
@@ -512,7 +528,7 @@ function audit(model: ConsoleViewModel): string {
     const targets = [
       event.jobId ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>` : null,
       event.releaseId ? `<a href="/releases/${encodeURIComponent(event.releaseId)}?ui=${model.mode}">${escapeHtml(event.releaseId)}</a>` : null,
-      event.operationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(event.operationId)
+      event.operationId && isOperationId(event.operationId)
         ? `<a href="${escapeHtml(operationHref(event.operationId, model.mode))}">${escapeHtml(event.operationId)}</a>`
         : event.operationId ? `<code>${escapeHtml(event.operationId)}</code>` : null,
     ].filter((value): value is string => value !== null);

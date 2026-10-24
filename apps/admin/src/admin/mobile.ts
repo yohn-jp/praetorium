@@ -11,8 +11,10 @@ import { escapeHtml } from "../presentation.js";
 import {
   admittedReleaseHref,
   buildHref,
+  canRequestCanaryRecovery,
   compositionBuildHref,
   operationHref,
+  isOperationId,
   consoleHref,
   sourceReleaseExecutionHref,
   stableReleaseHref,
@@ -423,6 +425,24 @@ function releaseRetryForm(release: ConsoleRelease, csrf: string): string {
   );
 }
 
+function releaseRecoveryForm(release: ConsoleRelease, csrf: string): string {
+  const workflow = release.workflow?.workflow;
+  if (!workflow || !canRequestCanaryRecovery(workflow)) return "";
+  return (
+    '<div class="admin-mobile-action-copy"><strong>Request Canary recovery</strong>' +
+    "<span>Requests recovery from the rejected workflow. Control Plane rechecks the configured stopped target and current Stop proof. Acceptance does not mean Canary success or Stable promotion.</span></div>" +
+    '<form method="post" action="/releases/' +
+    value(encodeURIComponent(release.release.id)) +
+    '/retry?ui=mobile"><input type="hidden" name="csrfToken" value="' +
+    value(csrf) +
+    '"><input type="hidden" name="expectedRevision" value="' +
+    value(workflow.revision) +
+    '"><input type="hidden" name="idempotencyKey" value="' +
+    value("action-" + generateToken(128)) +
+    '"><input type="hidden" name="recoveryRequest" value="canary-recovery"><button class="button button-secondary" type="submit">Request Canary recovery</button></form>'
+  );
+}
+
 function platformRelease(release: ConsoleRelease, csrf: string): string {
   const workflow = release.workflow?.workflow;
   const state = workflow?.state ?? release.release.status;
@@ -448,6 +468,7 @@ function platformRelease(release: ConsoleRelease, csrf: string): string {
     "</code></div>" +
     '<div class="admin-mobile-card-action">' +
     releaseRetryForm(release, csrf) +
+    releaseRecoveryForm(release, csrf) +
     "</div></article>"
   );
 }
@@ -658,6 +679,7 @@ function releaseDetailRetry(status: ConsoleReleaseStatus, csrf: string): string 
   const preRuntimeFailure =
     (workflow.state === "blocked" && workflow.failureCode === "canary_build_failed") ||
     (workflow.state === "canary_building" && workflow.failureCode === null);
+  if (canRequestCanaryRecovery(workflow)) return "";
   if (
     !Number.isSafeInteger(workflow.revision) ||
     workflow.revision < 0 ||
@@ -678,6 +700,24 @@ function releaseDetailRetry(status: ConsoleReleaseStatus, csrf: string): string 
     '"><input type="hidden" name="idempotencyKey" value="' +
     value("action-" + generateToken(128)) +
     '"><button type="submit">Retry Canary build</button></form>'
+  );
+}
+
+function releaseDetailRecovery(status: ConsoleReleaseStatus, csrf: string): string {
+  const workflow = status.workflow;
+  if (!canRequestCanaryRecovery(workflow)) return "";
+  return (
+    '<div class="admin-mobile-action-copy"><strong>Request Canary recovery</strong>' +
+    "<span>Requests recovery from the rejected workflow. Control Plane rechecks the configured stopped target and current Stop proof. Acceptance does not mean Canary success or Stable promotion.</span></div>" +
+    '<form method="post" action="/releases/' +
+    value(encodeURIComponent(status.release.id)) +
+    '/retry?ui=mobile"><input type="hidden" name="csrfToken" value="' +
+    value(csrf) +
+    '"><input type="hidden" name="expectedRevision" value="' +
+    value(workflow.revision) +
+    '"><input type="hidden" name="idempotencyKey" value="' +
+    value("action-" + generateToken(128)) +
+    '"><input type="hidden" name="recoveryRequest" value="canary-recovery"><button type="submit">Request Canary recovery</button></form>'
   );
 }
 
@@ -756,7 +796,7 @@ function releaseDetail(model: ConsoleViewModel): string {
         value(status.workflow.canaryBuildKey) +
         "</code></dd></div>"
       : "") +
-    (status.workflow.canaryOperationId
+    (status.workflow.canaryOperationId && isOperationId(status.workflow.canaryOperationId)
       ? '<div><dt>Canary operation</dt><dd><a href="' + value(operationHref(status.workflow.canaryOperationId, "mobile", status.release.id)) + '">' +
         value(status.workflow.canaryOperationId) +
         "</a></dd></div>"
@@ -773,7 +813,7 @@ function releaseDetail(model: ConsoleViewModel): string {
       : "") +
     (stopBlocked ? '<p class="admin-mobile-error-code">Canary stop is blocked by producer durability. Preserve unpublished local work and confirm writer absence before Stable promotion; Source admission alone is not Stable.</p>' : "") +
     '</section><section class="admin-mobile-action-region" aria-label="Canary recovery action">' +
-    releaseDetailRetry(status, model.csrf) + canaryWaitSkipForm(status, model.csrf, "mobile") +
+    releaseDetailRetry(status, model.csrf) + releaseDetailRecovery(status, model.csrf) + canaryWaitSkipForm(status, model.csrf, "mobile") +
     "</section>" +
     '<section class="admin-mobile-section" aria-label="Stable release status">' +
     (model.catalog.value?.stableChannel?.currentReleaseId
@@ -935,7 +975,7 @@ function audit(model: ConsoleViewModel): string {
             "</h2>" +
             (event.jobId ? '<p><a href="' + value(buildHref(event.jobId, "mobile")) + '">Build ' + value(event.jobId) + "</a></p>" : "") +
             (event.releaseId ? '<p><a href="/releases/' + value(encodeURIComponent(event.releaseId)) + '?ui=mobile">Release ' + value(event.releaseId) + "</a></p>" : "") +
-            (event.operationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(event.operationId)
+            (event.operationId && isOperationId(event.operationId)
               ? '<p><a href="' + value(operationHref(event.operationId, "mobile")) +
                 '">Operation ' + value(event.operationId) + '</a></p>' : "") +
             (event.failureCode ? "<p>Failure code: " + value(event.failureCode) + "</p>" : "") +

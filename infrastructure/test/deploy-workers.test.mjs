@@ -6,7 +6,12 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { validateInventory } from "../scripts/inventory.mjs";
-import { buildPolicy } from "../scripts/worker-config.mjs";
+import {
+  buildPolicy,
+  remoteDisposableRateLimitNamespaces,
+  remoteDisposableWorkerNames,
+  renderWorkerTemplate,
+} from "../scripts/worker-config.mjs";
 import { orderedMigrationFiles } from "../../scripts/deployment-migrations.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -31,6 +36,25 @@ function planForInventory(value) {
 
 const cacheRetentionFields = ["maxBytes", "maxEntries", "minAgeMs", "maxEvictions"];
 
+function remoteDisposableInventory() {
+  const value = structuredClone(inventory);
+  value.ownership.clusterName = "praetorium-t14-canary";
+  value.ownership.context = "kind-praetorium-t14-canary";
+  value.ownership.confirmation = value.ownership.clusterName;
+  value.cloudflare = {
+    mode: "remote-disposable",
+    accountId: "a".repeat(32),
+    controlPlaneDatabaseId: "11111111-1111-4111-8111-111111111111",
+    gatewayKvNamespaceId: "b".repeat(32),
+  };
+  value.domains.controlPlaneUrl =
+    "https://praetorium-t14-canary-control-plane.testaccount.workers.dev";
+  value.domains.gatewayOrigin =
+    "https://praetorium-t14-canary-gateway.testaccount.workers.dev";
+  value.domains.gatewayServiceUrl = value.domains.gatewayOrigin;
+  return value;
+}
+
 test("checked-in disposable inventory leaves T11 canary policy disabled without fake evidence", () => {
   const result = validateInventory(inventory);
   assert.deepEqual(result.errors, []);
@@ -40,6 +64,89 @@ test("checked-in disposable inventory leaves T11 canary policy disabled without 
   assert.equal(inventory.releasePolicy.canary.disposable, true);
   assert.equal(inventory.releasePolicy.canary.production, false);
   assert.equal(inventory.releasePolicy.canary.requestedModules, null);
+});
+
+test("remote-disposable mode accepts only isolated T14 Worker, D1, KV, and workers.dev targets", () => {
+  const isolated = remoteDisposableInventory();
+  assert.deepEqual(validateInventory(isolated).errors, []);
+  assert.deepEqual(remoteDisposableWorkerNames(isolated), {
+    controlPlane: "praetorium-t14-canary-control-plane",
+    gateway: "praetorium-t14-canary-gateway",
+    database: "praetorium-t14-canary-control-plane",
+    kvNamespace: "praetorium-t14-canary-gateway",
+  });
+  const rateLimitNamespaces = Object.values(remoteDisposableRateLimitNamespaces(isolated));
+  assert.equal(new Set(rateLimitNamespaces).size, 6);
+  assert.ok(rateLimitNamespaces.every((id) => ![761101, 761102, 761103, 761104, 761105, 761106].includes(id)));
+
+  const productionD1 = structuredClone(isolated);
+  productionD1.cloudflare.controlPlaneDatabaseId = "08f29fef-eb9e-4541-82fb-777fa2f4aab0";
+  assert.match(validateInventory(productionD1).errors.join("\n"), /must not reference production D1 or KV/u);
+
+  const productionKv = structuredClone(isolated);
+  productionKv.cloudflare.gatewayKvNamespaceId = "770c4ac60df74b019409c1203f35687d";
+  assert.match(validateInventory(productionKv).errors.join("\n"), /must not reference production D1 or KV/u);
+
+  const wrongOrigin = structuredClone(isolated);
+  wrongOrigin.domains.gatewayOrigin = "https://praetorium.yohn.jp";
+  wrongOrigin.domains.gatewayServiceUrl = wrongOrigin.domains.gatewayOrigin;
+  assert.match(validateInventory(wrongOrigin).errors.join("\n"), /matching workers.dev origin/u);
+
+  const wrongPrefix = structuredClone(isolated);
+  wrongPrefix.ownership.clusterName = "shared-control-plane";
+  assert.match(validateInventory(wrongPrefix).errors.join("\n"), /bounded praetorium-t14- prefix/u);
+
+  const sharedCoordination = structuredClone(isolated);
+  sharedCoordination.workNotifications = {
+    enabled: true,
+    coordinationVpcServiceId: "01a158fc-ef0d-7d11-8976-af6247908574",
+  };
+  assert.match(validateInventory(sharedCoordination).errors.join("\n"), /bounded polling/u);
+});
+
+test("remote-disposable projection uses only prefixed workers.dev Workers and their isolated bindings", () => {
+  const isolated = remoteDisposableInventory();
+  const controlTemplate = readFileSync(
+    path.join(repoRoot, "infrastructure/workers/control-plane.template.json"),
+    "utf8",
+  );
+  const gatewayTemplate = readFileSync(
+    path.join(repoRoot, "infrastructure/workers/gateway.template.json"),
+    "utf8",
+  );
+  const control = JSON.parse(renderWorkerTemplate(controlTemplate, isolated, "control-plane"));
+  const gateway = JSON.parse(renderWorkerTemplate(gatewayTemplate, isolated, "gateway"));
+
+  assert.equal(control.name, "praetorium-t14-canary-control-plane");
+  assert.equal(gateway.name, "praetorium-t14-canary-gateway");
+  assert.equal(control.workers_dev, true);
+  assert.equal(gateway.workers_dev, true);
+  assert.equal(control.routes, undefined);
+  assert.equal(gateway.routes, undefined);
+  assert.equal(control.vpc_services, undefined);
+  assert.equal(gateway.vpc_services, undefined);
+  assert.deepEqual(control.services, [{ binding: "GATEWAY_SERVICE", service: gateway.name }]);
+  assert.deepEqual(gateway.services, [{ binding: "CONTROL_PLANE", service: control.name }]);
+  assert.equal(control.d1_databases[0].database_name, "praetorium-t14-canary-control-plane");
+  assert.equal(control.d1_databases[0].database_id, isolated.cloudflare.controlPlaneDatabaseId);
+  assert.equal(gateway.kv_namespaces[0].id, isolated.cloudflare.gatewayKvNamespaceId);
+  assert.deepEqual(
+    gateway.ratelimits.map(({ name, namespace_id }) => [name, namespace_id]),
+    Object.entries(remoteDisposableRateLimitNamespaces(isolated)),
+  );
+  assert.ok(gateway.ratelimits.every((limit) => ![761101, 761102, 761103, 761104, 761105, 761106].includes(limit.namespace_id)));
+  assert.equal(gateway.vars.GATEWAY_ENVIRONMENT, "test");
+  // Durable Object namespaces are scoped to the Worker script name. Preserve the
+  // class/migration contract while giving the test Worker its own namespace.
+  assert.deepEqual(control.durable_objects, JSON.parse(controlTemplate).durable_objects);
+  assert.deepEqual(control.migrations, JSON.parse(controlTemplate).migrations);
+  assert.deepEqual(gateway.durable_objects, JSON.parse(gatewayTemplate).durable_objects);
+  assert.deepEqual(gateway.migrations, JSON.parse(gatewayTemplate).migrations);
+  assert.throws(() => renderWorkerTemplate(gatewayTemplate, isolated, "admin"), /only the isolated/u);
+
+  const productionMode = structuredClone(isolated);
+  productionMode.environment = "deployment";
+  assert.match(validateInventory(productionMode).errors.join("\n"), /requires a real remote Cloudflare account/u);
 });
 
 test("cache retention requires four bounded operator inputs without guessed values", () => {

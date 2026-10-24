@@ -498,6 +498,11 @@ export class D1PlatformStore implements OperationStore {
            WHERE instance_id = ? AND repository_id = ? AND generation = ?
              AND runtime_epoch = ? AND desired_state = ? AND policy = ?
              AND desired_revision_id IS ? AND reservation_id IS ? AND observed_runtime_epoch IS ?
+             AND NOT EXISTS (
+               SELECT 1 FROM operations prior
+               WHERE prior.instance_id = logical_instances.instance_id
+                 AND prior.status IN ('pending', 'claimed', 'running')
+             )
              AND (? IS NULL OR EXISTS (
                SELECT 1 FROM runtime_reservations current_reservation
                WHERE current_reservation.instance_id = logical_instances.instance_id
@@ -922,7 +927,10 @@ export class D1PlatformStore implements OperationStore {
                    AND o.generation = i.generation
                    AND (
                      (o.kind = 'stop' AND o.phase IN ('old-writer-absent', 'complete')
-                       AND o.runtime_epoch = runtime_reservations.runtime_epoch)
+                       AND o.runtime_epoch = i.runtime_epoch
+                       AND i.observed_generation = runtime_reservations.generation
+                       AND i.observed_runtime_epoch = runtime_reservations.runtime_epoch
+                       AND i.reservation_id = runtime_reservations.reservation_id)
                      OR (o.kind <> 'stop' AND o.phase IN ('route-activated', 'complete')
                        AND o.runtime_epoch = i.runtime_epoch AND i.observed_runtime_epoch = o.runtime_epoch
                        AND i.observed_revision_id = o.deployment_revision_id
@@ -1200,7 +1208,11 @@ export class D1PlatformStore implements OperationStore {
     readonly leaseSeconds: number;
   }): Promise<{ readonly operation: OperationRecord; readonly leaseExpiresAt: number } | null> {
     const current = await this.db
-      .prepare("SELECT * FROM operations WHERE operation_id = ?")
+      .prepare(
+        `SELECT o.* FROM operations o JOIN logical_instances i ON i.instance_id = o.instance_id
+         WHERE o.operation_id = ? AND i.generation = o.generation AND i.runtime_epoch = o.runtime_epoch
+           AND o.status IN ('claimed', 'running')`,
+      )
       .bind(input.operationId)
       .first<OperationRow>();
     if (
@@ -1226,6 +1238,8 @@ export class D1PlatformStore implements OperationStore {
         `UPDATE operations SET status = 'running', report_sequence = ?, lease_expires_at = ?, updated_at = ?
          WHERE operation_id = ? AND worker_id = ? AND lease_token = ? AND lease_epoch = ?
            AND status IN ('claimed', 'running') AND lease_expires_at > ? AND report_sequence = ?
+           AND EXISTS (SELECT 1 FROM logical_instances i WHERE i.instance_id = operations.instance_id
+                       AND i.generation = operations.generation AND i.runtime_epoch = operations.runtime_epoch)
          RETURNING *`,
       )
       .bind(
@@ -1254,6 +1268,8 @@ export class D1PlatformStore implements OperationStore {
           `UPDATE operations SET phase = ?, checkpoint_sequence = ?, checkpoint_json = ?, updated_at = ?
            WHERE operation_id = ? AND worker_id = ? AND lease_token = ? AND lease_epoch = ?
              AND status IN ('claimed', 'running') AND lease_expires_at > ? AND checkpoint_sequence = ?
+             AND EXISTS (SELECT 1 FROM logical_instances i WHERE i.instance_id = operations.instance_id
+                         AND i.generation = operations.generation AND i.runtime_epoch = operations.runtime_epoch)
              AND (NOT EXISTS (
                SELECT 1 FROM logical_instances i WHERE i.runtime_authority_operation_id = operations.operation_id
              ) OR ? NOT IN ('starting-target', 'target-ready', 'route-activated', 'complete') OR (
@@ -1508,10 +1524,59 @@ export class D1PlatformStore implements OperationStore {
                      WHERE old_writer_absent.operation_id = operations.operation_id
                        AND old_writer_absent.phase = 'old-writer-absent'
                        AND old_writer_absent.runtime_epoch = operations.runtime_epoch
+                       AND json_extract(old_writer_absent.checkpoint_json, '$.writerAbsenceProof.instanceId')
+                           IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.instanceId')
+                       AND json_extract(old_writer_absent.checkpoint_json, '$.writerAbsenceProof.repositoryId')
+                           IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId')
+                       AND json_extract(old_writer_absent.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch')
+                           IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch')
+                       AND json_extract(old_writer_absent.checkpoint_json, '$.writerAbsenceProof.providerObservationId')
+                           IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.providerObservationId')
+                       AND json_extract(old_writer_absent.checkpoint_json, '$.writerAbsenceProof.censusObservedAt')
+                           IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.censusObservedAt')
+                       AND json_extract(old_writer_absent.checkpoint_json, '$.writerAbsenceProof.remainingWriters')
+                           IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.remainingWriters')
+                       AND json_extract(old_writer_absent.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities')
+                           IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities')
+                       AND json_extract(old_writer_absent.checkpoint_json, '$.writerAbsenceProof.source')
+                           IS json_extract(operations.checkpoint_json, '$.writerAbsenceProof.source')
                    )
+                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.instanceId') = 'text'
                    AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.instanceId') = operations.instance_id
-                   AND CAST(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') AS INTEGER) = operations.repository_id
-                   AND CAST(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') AS INTEGER) = operations.runtime_epoch)
+                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') = 'integer'
+                   AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.repositoryId') = operations.repository_id
+                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'integer'
+                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.providerObservationId') = 'text'
+                   AND length(trim(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.providerObservationId'))) > 0
+                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.censusObservedAt') = 'text'
+                   AND length(trim(json_extract(operations.checkpoint_json, '$.writerAbsenceProof.censusObservedAt'))) > 0
+                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.remainingWriters') = 'integer'
+                   AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.remainingWriters') = 0
+                   AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.evidenceIdentities') = 'array'
+                   AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.source') = 'runtime-provider-census'
+                   AND EXISTS (
+                     SELECT 1 FROM logical_instances stopped_instance
+                      WHERE stopped_instance.instance_id = operations.instance_id
+                        AND stopped_instance.generation = operations.generation
+                        AND stopped_instance.runtime_epoch = operations.runtime_epoch
+                        AND NOT EXISTS (
+                          SELECT 1 FROM runtime_reservations prior_reservation
+                           WHERE prior_reservation.instance_id = operations.instance_id
+                             AND prior_reservation.repository_id = operations.repository_id
+                             AND prior_reservation.runtime_epoch < operations.runtime_epoch
+                             AND prior_reservation.status IN ('reserved', 'allocated')
+                        )
+                        AND (
+                          (stopped_instance.observed_runtime_epoch IS NOT NULL
+                           AND json_type(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch') = 'integer'
+                           AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch')
+                             = stopped_instance.observed_runtime_epoch)
+                          OR (stopped_instance.observed_runtime_epoch IS NULL
+                           AND stopped_instance.observed_state IN ('absent', 'stopped')
+                           AND json_extract(operations.checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch')
+                             = operations.runtime_epoch)
+                        )
+                   ))
                  OR (operations.kind <> 'stop' AND operations.phase = 'complete' AND ? = 'ready' AND EXISTS (
                  SELECT 1 FROM operation_checkpoints route_activated
                  WHERE route_activated.operation_id = operations.operation_id

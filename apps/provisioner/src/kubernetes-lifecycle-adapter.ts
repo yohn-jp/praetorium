@@ -392,7 +392,15 @@ export class KubernetesLifecycleRuntimeAdapter
     beforeEffect: () => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const spec = runtimeSpec(assignment);
+    // Stop only needs the canonical, non-secret Hosted metadata to recognize
+    // and preserve private history. It must not issue a new identity proof
+    // after retirement has begun; start() continues to require a real proof.
+    const hostedAssignment = this.identityTransport?.canonicalAssignment(assignment);
+    const baseSpec = runtimeSpec(assignment);
+    const spec =
+      hostedAssignment === undefined
+        ? baseSpec
+        : { ...baseSpec, scriptoriumAssignment: hostedAssignment };
     const deadline = this.now() + this.convergenceTimeoutMs;
     await beforeEffect();
     await this.provider.preserveHistoryBeforeStop(

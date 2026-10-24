@@ -22,7 +22,8 @@ export function errorResponse(
 
 function statusFor(code: string): number {
   switch (code) {
-    case "UNAUTHENTICATED": return 401;
+    case "UNAUTHENTICATED":
+    case "REFRESH_CREDENTIAL_REJECTED": return 401;
     case "UNAUTHORIZED":
     case "FORBIDDEN": return 403;
     case "NOT_FOUND": return 404;

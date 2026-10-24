@@ -123,6 +123,51 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     configurations: canaryConfigurations,
     operations: {
       getById: (id) => deps.operations.getById(id),
+      async findByIdempotency(input) {
+        const row = await deps.db.prepare(
+          `SELECT operation_id FROM operations
+            WHERE idempotency_scope = ? AND idempotency_key = ? LIMIT 1`,
+        ).bind(`repository:${input.repositoryId}`, input.idempotencyKey)
+          .first<{ operation_id: string }>();
+        return row ? deps.operations.getById(row.operation_id) : null;
+      },
+      async findCurrentSucceededStop(input) {
+        const row = await deps.db.prepare(
+          `SELECT stop.operation_id
+             FROM logical_instances i
+             JOIN repository_bindings b ON b.repository_id = i.repository_id
+             JOIN operations stop ON stop.instance_id = i.instance_id
+               AND stop.repository_id = i.repository_id
+               AND stop.generation = i.generation
+               AND stop.runtime_epoch = i.runtime_epoch
+               AND stop.kind = 'stop' AND stop.status = 'succeeded'
+           WHERE i.instance_id = ? AND i.repository_id = ?
+             AND i.desired_state = 'stopped'
+             AND i.observed_state IN ('stopped', 'absent')
+             AND i.observed_generation = i.generation
+             AND i.observed_runtime_epoch = i.runtime_epoch
+             AND b.suspended = 0
+             AND b.authorization_revision = (
+               SELECT started.authorization_revision FROM operations started
+                WHERE started.operation_id = ? AND started.instance_id = i.instance_id
+                  AND started.repository_id = i.repository_id
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM operations active
+                WHERE active.instance_id = i.instance_id
+                  AND active.generation = i.generation
+                  AND active.status IN ('pending', 'claimed', 'running')
+             )
+           ORDER BY stop.updated_at DESC, stop.operation_id DESC LIMIT 1`,
+        ).bind(input.instanceId, input.repositoryId, input.startedOperationId)
+          .first<{ operation_id: string }>();
+        if (!row) return null;
+        const operation = await deps.operations.getById(row.operation_id);
+        return operation?.instanceId === input.instanceId &&
+          operation.repositoryId === input.repositoryId
+          ? operation
+          : null;
+      },
       async findSucceededStop(input) {
         const row = await deps.db.prepare(
           `SELECT operation_id FROM operations WHERE instance_id = ? AND repository_id = ?
@@ -216,7 +261,10 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
       status: (releaseId) => releases.getReleaseRetryStatus(releaseId),
       replay: (command) => releases.findPreRuntimeCanaryRetry(command),
       execute: async (command) => {
-        const result = await releases.retryPreRuntimeCanaryBuild({ ...command, canary: deps.canaryBinding });
+        const retryStatus = await releases.getReleaseRetryStatus(command.releaseId);
+        const result = retryStatus?.workflow.state === "rejected"
+          ? await releases.retryFailedCanaryRuntime({ ...command, canary: deps.canaryBinding })
+          : await releases.retryPreRuntimeCanaryBuild({ ...command, canary: deps.canaryBinding });
         if (result.kind === "accepted" && !result.duplicate) await notifyWork("build");
         return result;
       },

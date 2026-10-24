@@ -105,7 +105,22 @@ export function stableReleaseHref(releaseId:string,mode:ConsoleMode):string {
   return admittedReleaseHref(releaseId,mode);
 }
 
+/** Preserve existing bounded op_ IDs while accepting the canonical system operation UUID. */
+export function isOperationId(id: string): boolean {
+  return /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(id) ||
+    /^operation_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(id);
+}
+
+export function canRequestCanaryRecovery(workflow: {
+  state: string; failureCode: string | null; revision: number;
+} | null | undefined): boolean {
+  return !!workflow && workflow.state === "rejected" && Number.isSafeInteger(workflow.revision) &&
+    workflow.revision >= 0 && ["canary_assignment_superseded", "canary_operation_failed", "canary_stop_blocked"]
+      .includes(workflow.failureCode ?? "");
+}
+
 export function operationHref(id:string, mode:ConsoleMode, relatedReleaseId?:string|null):string {
+  if (!isOperationId(id)) return consoleHref("releases", mode);
   const params=new URLSearchParams({ui:mode});
   if(relatedReleaseId&&RELEASE_ID.test(relatedReleaseId))params.set("release",relatedReleaseId);
   return "/operations/" + encodeURIComponent(id) + "?" + params.toString();

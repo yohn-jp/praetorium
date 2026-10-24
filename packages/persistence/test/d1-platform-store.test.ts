@@ -10,6 +10,11 @@ import {
   OperationFenceConflict,
   OperationService,
 } from "../../application/src/operations/index.js";
+import { LifecycleService } from "../../application/src/lifecycle/index.js";
+import type {
+  LifecycleDependencies,
+  LifecycleOperation,
+} from "../../application/src/lifecycle/index.js";
 import {
   RepositoryNotFound,
   RepositoryStateConflict,
@@ -132,6 +137,130 @@ describe("D1PlatformStore with SQLite transactions", () => {
     await expect(
       operations.claimNext({ workerId: "provisioner-1", clusterId: "cluster-a", now: 101 }),
     ).resolves.toBeNull();
+  });
+
+  it("rejects a concurrent desired-state mutation while a claimed operation is still active", async () => {
+    const { database, registry, instances, operations } = createPlatform();
+    const resolved = await registry.resolveOrCreate(registryInput("instance-active-fence", "request-active-fence"));
+    seedDeployment(database, resolved.binding.instanceId);
+    const startInput = {
+      repositoryId: resolved.binding.repositoryId,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "running" as const,
+      actorId: "user-1",
+      idempotencyKey: "active-start",
+      requestId: "active-start-request",
+      now: 100,
+    };
+    const started = await instances.requestDesiredState(startInput);
+    if (!started.operation) throw new Error("expected start operation");
+    const claimed = await operations.claimNext({
+      workerId: "provisioner-active-fence",
+      clusterId: "cluster-a",
+      now: 101,
+    });
+    if (!claimed) throw new Error("expected claimed start operation");
+
+    const secondController = new InstanceService(
+      new D1PlatformStore(new SqliteD1Database(database)),
+      () => "competing-stop-operation",
+    );
+    await expect(secondController.requestDesiredState({
+      repositoryId: resolved.binding.repositoryId,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "stopped",
+      expectedGeneration: started.instance.generation,
+      actorId: "user-2",
+      idempotencyKey: "active-stop",
+      requestId: "active-stop-request",
+      now: 102,
+    })).rejects.toBeInstanceOf(RepositoryStateConflict);
+
+    // A replay of the original request remains idempotent while its operation is active.
+    await expect(instances.requestDesiredState(startInput)).resolves.toMatchObject({
+      replayed: true,
+      operation: { id: started.operation.id, status: "claimed" },
+    });
+    expect(await instances.getByInstanceId(resolved.binding.instanceId)).toMatchObject({
+      instance: { desiredState: "running", generation: started.instance.generation },
+    });
+    expect(database.prepare("SELECT count(*) AS n FROM operations WHERE instance_id = ?")
+      .get(resolved.binding.instanceId)).toMatchObject({ n: 1 });
+    expect(await operations.getById(started.operation.id)).toMatchObject({ status: "claimed" });
+  });
+
+  it("fences stale worker heartbeat and checkpoint after legacy supersession and treats expired work as active", async () => {
+    const { database, registry, instances, operations } = createPlatform();
+    const resolved = await registry.resolveOrCreate(registryInput("instance-superseded-fence", "request-superseded-fence"));
+    seedDeployment(database, resolved.binding.instanceId);
+    const started = await instances.requestDesiredState({
+      repositoryId: resolved.binding.repositoryId,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "running",
+      actorId: "user-1",
+      idempotencyKey: "superseded-start",
+      requestId: "superseded-start-request",
+      now: 100,
+    });
+    if (!started.operation) throw new Error("expected start operation");
+    const claimed = await operations.claimNext({
+      workerId: "provisioner-superseded-fence",
+      clusterId: "cluster-a",
+      now: 101,
+    });
+    if (!claimed) throw new Error("expected claimed start operation");
+    const lease = {
+      operationId: claimed.operation.id,
+      workerId: claimed.operation.workerId!,
+      leaseToken: claimed.operation.leaseToken!,
+      leaseEpoch: claimed.operation.leaseEpoch,
+    };
+
+    // Recreate the persisted state left by a previously superseded worker.
+    database.prepare(
+      `UPDATE logical_instances SET generation = generation + 1, runtime_epoch = runtime_epoch + 1,
+         desired_state = 'stopped' WHERE instance_id = ?`,
+    ).run(resolved.binding.instanceId);
+    await expect(operations.heartbeat({ ...lease, sequence: 1, now: 102 })).rejects
+      .toBeInstanceOf(OperationFenceConflict);
+    await expect(operations.heartbeat({ ...lease, sequence: 0, now: 102 })).rejects
+      .toBeInstanceOf(OperationFenceConflict);
+    await expect(operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 0,
+      phase: "starting-target",
+      checkpoint: {},
+      now: 102,
+    })).rejects.toBeInstanceOf(OperationFenceConflict);
+
+    // Expired claimed/running rows still block new mutation; expiry is not proof that
+    // the old provider side effect stopped.
+    database.prepare("UPDATE operations SET lease_expires_at = 101 WHERE operation_id = ?")
+      .run(claimed.operation.id);
+    const snapshot = await instances.getByInstanceId(resolved.binding.instanceId);
+    if (!snapshot) throw new Error("expected current instance");
+    const secondController = new InstanceService(
+      new D1PlatformStore(new SqliteD1Database(database)),
+      () => "after-expired-stale-start",
+    );
+    await expect(secondController.requestDesiredState({
+      repositoryId: resolved.binding.repositoryId,
+      bindingEpoch: resolved.binding.bindingEpoch,
+      authorizationRevision: resolved.binding.authorizationRevision,
+      desiredState: "running",
+      expectedGeneration: snapshot.instance.generation,
+      actorId: "user-2",
+      idempotencyKey: "after-expired-stale-start",
+      requestId: "after-expired-stale-start-request",
+      now: 200,
+    })).rejects.toBeInstanceOf(RepositoryStateConflict);
+    expect(await instances.getByInstanceId(resolved.binding.instanceId)).toMatchObject({
+      instance: { desiredState: "stopped", generation: snapshot.instance.generation },
+    });
+    expect(await operations.getById(claimed.operation.id)).toMatchObject({ status: "claimed" });
   });
 
   it("rejects forceNewRuntime for an empty stopped instance", async () => {
@@ -786,6 +915,281 @@ describe("D1PlatformStore with SQLite transactions", () => {
     ).rejects.toBeInstanceOf(OperationFenceConflict);
   });
 
+  it("releases the exact retained observed reservation for a newer-epoch stop operation", async () => {
+    const fixture = await prepareRetainedStopReservationRelease();
+    await checkpointRetainedStopAbsence(fixture, 7);
+
+    await fixture.operations.releaseRuntime({
+      ...fixture.lease,
+      reservationId: fixture.reservationId,
+      expectedReservationRuntimeEpoch: 7,
+      now: 103,
+    });
+    expect(fixture.database.prepare(
+      "SELECT status FROM runtime_reservations WHERE reservation_id = ?",
+    ).get(fixture.reservationId)).toMatchObject({ status: "released" });
+    expect(fixture.database.prepare(
+      "SELECT reservation_id, reservation_state FROM logical_instances WHERE instance_id = ?",
+    ).get(fixture.binding.instanceId)).toMatchObject({ reservation_id: null, reservation_state: "released" });
+  });
+
+  it("reports a retained-writer stop against the exact prior observed epoch, not the stop target epoch", async () => {
+    const fixture = await prepareRetainedStopReservationRelease();
+    const proof = {
+      instanceId: fixture.binding.instanceId,
+      repositoryId: fixture.binding.repositoryId,
+      retiredRuntimeEpoch: 7,
+      providerObservationId: "retained-writer-absence-observation",
+      censusObservedAt: "2026-10-25T00:00:00.000Z",
+      remainingWriters: 0,
+      evidenceIdentities: ["retained-writer-pod-uid-17"],
+      source: "runtime-provider-census",
+    } as const;
+    await checkpointRetainedStopAbsence(fixture, 7);
+    await fixture.operations.releaseRuntime({
+      ...fixture.lease,
+      reservationId: fixture.reservationId,
+      expectedReservationRuntimeEpoch: 7,
+      now: 103,
+    });
+    await fixture.operations.checkpoint({
+      ...fixture.lease,
+      expectedCheckpointSequence: 1,
+      phase: "complete",
+      checkpoint: { writerAbsenceProof: proof },
+      now: 104,
+    });
+
+    await fixture.operations.report({
+      ...fixture.lease,
+      sequence: 1,
+      now: 105,
+      terminal: "succeeded",
+      observation: stoppedObservation(
+        fixture.binding.instanceId,
+        fixture.binding.repositoryId,
+        20,
+        9,
+        8,
+      ),
+    });
+    expect(await fixture.operations.getById(fixture.operation.id)).toMatchObject({
+      status: "succeeded",
+      runtimeEpoch: 9,
+      checkpoint: { writerAbsenceProof: { retiredRuntimeEpoch: 7 } },
+    });
+    expect(await fixture.instances.getByInstanceId(fixture.binding.instanceId)).toMatchObject({
+      instance: { generation: 20, runtimeEpoch: 9, observedGeneration: 20, observedRuntimeEpoch: 9, observedState: "stopped" },
+    });
+  });
+
+  it("reports an epoch-zero stop with the lifecycle fallback epoch when no writer was observed", async () => {
+    const { database, registry, instances, operations } = createPlatform();
+    const { binding } = await registry.resolveOrCreate(registryInput("instance-no-history", "request-no-history"));
+    database.prepare("UPDATE logical_instances SET desired_state = 'running' WHERE instance_id = ?")
+      .run(binding.instanceId);
+    const requested = await instances.requestDesiredState({
+      repositoryId: binding.repositoryId,
+      bindingEpoch: binding.bindingEpoch,
+      authorizationRevision: binding.authorizationRevision,
+      desiredState: "stopped",
+      expectedGeneration: 0,
+      actorId: "user-1",
+      idempotencyKey: "stop-no-history",
+      requestId: "stop-no-history-request",
+      now: 100,
+    });
+    expect(requested.operation).toMatchObject({ kind: "stop", generation: 1, runtimeEpoch: 0 });
+    const claimed = await operations.claimNext({ workerId: "provisioner-no-history", clusterId: "cluster-a", now: 101 });
+    if (!claimed) throw new Error("expected epoch-zero stop claim");
+    const lease = {
+      operationId: claimed.operation.id,
+      workerId: claimed.operation.workerId!,
+      leaseToken: claimed.operation.leaseToken!,
+      leaseEpoch: claimed.operation.leaseEpoch,
+    };
+    let lifecycleOperation: LifecycleOperation = {
+      id: claimed.operation.id,
+      version: 0,
+      instanceId: binding.instanceId,
+      repositoryId: binding.repositoryId,
+      clusterId: "cluster-a",
+      generation: 1,
+      kind: "stop",
+      reason: "user",
+      phase: "accepted",
+      runtimeEpoch: 0,
+      targetRevisionId: null,
+      current: null,
+      target: null,
+      targetEpoch: null,
+      targetReservationId: null,
+      rollbackEpoch: null,
+      quiesceRequest: null,
+      quiesceReceipt: null,
+      writerAbsenceProof: null,
+      readinessEvidence: null,
+      rollbackCompatibilityEvidence: null,
+      rollbackCompatible: null,
+      buildId: null,
+      failureCode: null,
+      failureReason: null,
+      lastAuthenticatedActivityAt: null,
+    };
+    const observedAt = new Date().toISOString();
+    const lifecycle = new LifecycleService({
+      journal: {
+        async load(id) { return id === lifecycleOperation.id ? lifecycleOperation : null; },
+        async advance(id, version, patch) {
+          if (id !== lifecycleOperation.id || version !== lifecycleOperation.version) return null;
+          lifecycleOperation = { ...lifecycleOperation, ...patch, version: version + 1 };
+          return lifecycleOperation;
+        },
+        async allocateRollbackEpoch() { throw new Error("stop does not allocate rollback epochs"); },
+      },
+      builds: {
+        async resolveOrBuild() { throw new Error("stop does not resolve builds"); },
+        async isRollbackCompatible() { throw new Error("stop does not verify rollback compatibility"); },
+      },
+      capacity: {
+        async reserve() { throw new Error("stop does not reserve capacity"); },
+        async release() { throw new Error("no prior reservation exists"); },
+      },
+      producer: {
+        async status() { throw new Error("no producer assignment exists"); },
+        async quiesce() { throw new Error("no producer assignment exists"); },
+        async resume() { throw new Error("no producer assignment exists"); },
+      },
+      authProbe: { async verify() { throw new Error("no producer assignment exists"); } },
+      runtime: {
+        async censusWriters() {
+          return {
+            complete: true,
+            providerObservationId: "lifecycle-no-writer-census",
+            observedAt,
+            matchedWriterCount: 0,
+            writers: [],
+          };
+        },
+        async stop() { throw new Error("no writer exists to stop"); },
+        async start() { throw new Error("stop does not start a writer"); },
+        async readiness() { throw new Error("stop has no readiness target"); },
+      },
+      routes: {
+        async activate() { throw new Error("stop does not activate routes"); },
+        async deactivate() {},
+      },
+      now: () => Date.parse(observedAt),
+    } satisfies LifecycleDependencies);
+    await expect(lifecycle.execute(claimed.operation.id, {
+      signal: new AbortController().signal,
+      async assertLease() {},
+    })).resolves.toEqual({ status: "complete", observed: null });
+    const proof = lifecycleOperation.writerAbsenceProof;
+    expect(proof).toMatchObject({ retiredRuntimeEpoch: claimed.operation.runtimeEpoch, remainingWriters: 0 });
+    if (!proof) throw new Error("expected actual lifecycle writer-absence proof");
+    await operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 0,
+      phase: "old-writer-absent",
+      checkpoint: { writerAbsenceProof: proof },
+      now: 102,
+    });
+    await operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 1,
+      phase: "complete",
+      checkpoint: { writerAbsenceProof: proof },
+      now: 103,
+    });
+    await operations.report({
+      ...lease,
+      sequence: 1,
+      now: 104,
+      terminal: "succeeded",
+      observation: stoppedObservation(binding.instanceId, binding.repositoryId, 1, 0, 1),
+    });
+    expect(await operations.getById(claimed.operation.id)).toMatchObject({
+      status: "succeeded",
+      runtimeEpoch: 0,
+      checkpoint: { writerAbsenceProof: { retiredRuntimeEpoch: 0, remainingWriters: 0 } },
+    });
+  });
+
+  it.each([
+    { cause: "wrong retired epoch", retiredEpoch: 8, override: {} },
+    { cause: "missing retired epoch", retiredEpoch: null, override: {} },
+    { cause: "invalid provider proof", retiredEpoch: 7, override: { source: "operator-assertion" } },
+    { cause: "newer desired generation", retiredEpoch: 7, override: {}, generation: 21 },
+    { cause: "expired worker lease", retiredEpoch: 7, override: {}, expireLease: true },
+  ])("rejects a retained-writer stop report with $cause", async ({ retiredEpoch, override, generation, expireLease }) => {
+    const fixture = await prepareRetainedStopReservationRelease();
+    await checkpointRetainedStopAbsence(fixture, retiredEpoch, override);
+    const current = await fixture.operations.getById(fixture.operation.id);
+    if (!current) throw new Error("expected stop operation");
+    await fixture.operations.checkpoint({
+      ...fixture.lease,
+      expectedCheckpointSequence: 1,
+      phase: "complete",
+      checkpoint: current.checkpoint,
+      now: 104,
+    });
+    fixture.database.prepare(
+      "UPDATE runtime_reservations SET status = 'released' WHERE reservation_id = ?",
+    ).run(fixture.reservationId);
+    fixture.database.prepare(
+      `UPDATE logical_instances SET reservation_id = NULL, reservation_state = 'released',
+         runtime_authority_reservation_id = NULL, runtime_authority_operation_id = NULL,
+         generation = COALESCE(?, generation) WHERE instance_id = ?`,
+    ).run(generation ?? null, fixture.binding.instanceId);
+
+    await expect(fixture.operations.report({
+      ...fixture.lease,
+      sequence: 1,
+      now: expireLease ? fixture.leaseExpiresAt : 105,
+      terminal: "succeeded",
+      observation: stoppedObservation(
+        fixture.binding.instanceId,
+        fixture.binding.repositoryId,
+        20,
+        9,
+        8,
+      ),
+    })).rejects.toBeInstanceOf(OperationFenceConflict);
+    expect(await fixture.operations.getById(fixture.operation.id)).toMatchObject({
+      status: "claimed",
+      reportSequence: 0,
+    });
+  });
+
+  it.each([
+    { cause: "missing absence proof", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => checkpointRetainedStopAbsence(f, null) },
+    { cause: "wrong retired epoch", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => checkpointRetainedStopAbsence(f, 6) },
+    { cause: "wrong old reservation generation", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => {
+      await checkpointRetainedStopAbsence(f, 7);
+      f.database.prepare("UPDATE runtime_reservations SET generation = 16 WHERE reservation_id = ?").run(f.reservationId);
+    } },
+    { cause: "newer desired generation", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => {
+      await checkpointRetainedStopAbsence(f, 7);
+      f.database.prepare("UPDATE logical_instances SET generation = 21 WHERE instance_id = ?").run(f.binding.instanceId);
+    } },
+    { cause: "expired stop lease", mutate: async (f: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>) => {
+      await checkpointRetainedStopAbsence(f, 7);
+    }, expireLease: true },
+  ])("does not release a retained reservation with $cause", async ({ mutate, expireLease }) => {
+    const fixture = await prepareRetainedStopReservationRelease();
+    await mutate(fixture);
+    await expect(fixture.operations.releaseRuntime({
+      ...fixture.lease,
+      reservationId: fixture.reservationId,
+      expectedReservationRuntimeEpoch: 7,
+      now: expireLease ? fixture.leaseExpiresAt : 103,
+    })).rejects.toBeInstanceOf(OperationFenceConflict);
+    expect(fixture.database.prepare(
+      "SELECT status FROM runtime_reservations WHERE reservation_id = ?",
+    ).get(fixture.reservationId)).toMatchObject({ status: "allocated" });
+  });
+
   it("cannot create writer authority by reporting ready before credential retirement admission", async () => {
     const { database, operations, binding, operation, lease } = await prepareTargetRedeploy();
     database.prepare(`UPDATE logical_instances SET runtime_authority_reservation_id = NULL,
@@ -1096,6 +1500,11 @@ describe("D1PlatformStore with SQLite transactions", () => {
           instanceId: binding.instanceId,
           repositoryId: 71,
           retiredRuntimeEpoch: reservation!.runtimeEpoch,
+          providerObservationId: "complete-stop-census",
+          censusObservedAt: "2026-10-25T00:00:00.000Z",
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid"],
+          source: "runtime-provider-census",
         },
       },
       now: 107,
@@ -1118,6 +1527,11 @@ describe("D1PlatformStore with SQLite transactions", () => {
           instanceId: binding.instanceId,
           repositoryId: 71,
           retiredRuntimeEpoch: reservation!.runtimeEpoch,
+          providerObservationId: "complete-stop-census",
+          censusObservedAt: "2026-10-25T00:00:00.000Z",
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid"],
+          source: "runtime-provider-census",
         },
       },
       now: 108,
@@ -1289,6 +1703,92 @@ type TargetCheckpointOptions = {
   readonly includeWriterAbsenceProof?: boolean;
   readonly retiredRuntimeEpoch?: number | null;
 };
+
+async function prepareRetainedStopReservationRelease() {
+  const platform = createPlatform();
+  const { database, registry, instances, operations } = platform;
+  const resolved = await registry.resolveOrCreate(registryInput("instance-retained-stop", "request-retained-stop"));
+  const { binding } = resolved;
+  seedDeployment(database, binding.instanceId);
+  seedCurrentReadyRuntime(database, binding.instanceId);
+  const reservationId = "retained-writer-epoch-7";
+  database.prepare(`INSERT INTO runtime_reservations (
+    reservation_id, instance_id, repository_id, runtime_epoch, generation, cluster_id, status,
+    capacity_snapshot_epoch, cpu_milli, memory_mib, ephemeral_storage_mib, created_at, updated_at
+  ) VALUES (?, ?, 71, 7, 17, 'cluster-a', 'allocated', 1, 400, 256, 128, 10, 10)`)
+    .run(reservationId, binding.instanceId);
+  database.prepare(`INSERT INTO operations (
+    operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase,
+    attempt, lease_epoch, report_sequence, checkpoint_sequence, cluster_id, reservation_id,
+    deployment_revision_id, idempotency_scope, idempotency_key, request_hash, actor_id,
+    authorization_revision, created_at, updated_at
+  ) VALUES ('retained-writer-op', ?, 71, 17, 7, 'update', 'succeeded', 'complete',
+    1, 1, 1, 0, 'cluster-a', ?, 'revision-1', 'repository:71', 'retained-writer',
+    'retained-writer-hash', 'user-1', 3, 10, 10)`)
+    .run(binding.instanceId, reservationId);
+  database.prepare(`UPDATE logical_instances SET generation = 19, runtime_epoch = 9,
+    desired_state = 'running', observed_generation = 17, observed_runtime_epoch = 7,
+    observed_state = 'ready', observed_revision_id = 'revision-1',
+    reservation_state = 'allocated', reservation_id = ?,
+    runtime_authority_reservation_id = ?, runtime_authority_operation_id = 'retained-writer-op'
+    WHERE instance_id = ?`)
+    .run(reservationId, reservationId, binding.instanceId);
+
+  const requested = await instances.requestDesiredState({
+    repositoryId: binding.repositoryId,
+    bindingEpoch: binding.bindingEpoch,
+    authorizationRevision: binding.authorizationRevision,
+    desiredState: "stopped",
+    expectedGeneration: 19,
+    actorId: "system:stable-release-canary",
+    idempotencyKey: "stable-canary-stop:release-v038",
+    requestId: "t11-canary-stop:operation-v038",
+    now: 100,
+  });
+  if (!requested.operation) throw new Error("expected a retained-writer stop operation");
+  expect(requested.operation).toMatchObject({ generation: 20, runtimeEpoch: 9, kind: "stop" });
+  const claimed = await operations.claimNext({ workerId: "provisioner-stop", clusterId: "cluster-a", now: 101 });
+  if (!claimed) throw new Error("expected retained-writer stop claim");
+  return {
+    ...platform,
+    binding,
+    reservationId,
+    operation: claimed.operation,
+    leaseExpiresAt: claimed.operation.leaseExpiresAt!,
+    lease: {
+      operationId: claimed.operation.id,
+      workerId: claimed.operation.workerId!,
+      leaseToken: claimed.operation.leaseToken!,
+      leaseEpoch: claimed.operation.leaseEpoch,
+    },
+  };
+}
+
+async function checkpointRetainedStopAbsence(
+  fixture: Awaited<ReturnType<typeof prepareRetainedStopReservationRelease>>,
+  retiredEpoch: number | null,
+  proofOverride: Readonly<Record<string, unknown>> = {},
+) {
+  await fixture.operations.checkpoint({
+    ...fixture.lease,
+    expectedCheckpointSequence: 0,
+    phase: "old-writer-absent",
+    checkpoint: retiredEpoch === null ? {} : {
+      writerAbsenceProof: {
+        instanceId: fixture.binding.instanceId,
+        repositoryId: fixture.binding.repositoryId,
+        retiredRuntimeEpoch: retiredEpoch,
+        providerObservationId: "retained-writer-absence-observation",
+        censusObservedAt: "2026-10-25T00:00:00.000Z",
+        remainingWriters: 0,
+        evidenceIdentities: ["retained-writer-pod-uid-17"],
+        source: "runtime-provider-census",
+        ...proofOverride,
+      },
+    },
+    now: 102,
+  });
+}
 
 async function prepareTargetRedeploy(options: TargetCheckpointOptions = {}) {
   const platform = createPlatform();

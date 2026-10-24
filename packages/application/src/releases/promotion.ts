@@ -44,6 +44,8 @@ export interface CanaryRuntimeProvider {
     readonly runtimeId: string;
     readonly startedOperationId: string;
     readonly idempotencyKey: string;
+    /** A failed/no-evidence canary may acknowledge an independently completed whole-instance stop. */
+    readonly allowExistingStopRecovery?: boolean;
   }): Promise<
     { readonly kind: "pending" } | { readonly kind: "blocked" } | { readonly kind: "stopped"; readonly evidence: unknown }
   >;
@@ -356,6 +358,10 @@ async function advanceCandidate(
       runtimeId: workflow.canaryRuntimeId,
       startedOperationId: workflow.canaryOperationId,
       idempotencyKey: `stable-canary-stop:${candidate.id}`,
+      allowExistingStopRecovery:
+        workflow.cleanupDisposition === "reject" &&
+        workflow.lastHealthEvidence === null &&
+        workflow.healthySince === null,
     });
     if (stopped.kind === "blocked") {
       return (await save(deps, lease, {

@@ -396,7 +396,7 @@ describe("mobile operator console", () => {
         attempts: 2,
         nextAttemptAt: null,
         canaryBuildKey: "build-key-123",
-        canaryOperationId: "op-canary-123",
+        canaryOperationId: "operation_7e53e854-11d8-4722-b8d5-278a796a47d4",
       },
       build: {
         id: "build-canary-123",
@@ -429,6 +429,35 @@ describe("mobile operator console", () => {
     expect(html).toContain("sha256:" + "d".repeat(64));
     expect(html).toContain('action="/releases/release-detail/retry?ui=mobile"');
     expect(html).toContain('name="expectedRevision" value="7"');
+  });
+
+  it("shows bounded rejected Canary recovery requests in the Release list and detail", () => {
+    const release = {
+      release: { id: "rel_recovery", version: "2.3.6", imageDigest: "sha256:" + "e".repeat(64),
+        status: "rejected", createdAt: "2026-10-25T00:00:00Z" },
+      workflow: { workflow: { state: "rejected", revision: 12, failureCode: "canary_stop_blocked",
+        attempts: 3, nextAttemptAt: null }, build: null },
+    };
+    const list = renderMobileConsole(model({ section: "releases", catalog: dependency({
+      items: [release], stableChannel: { currentReleaseId: null, revision: 0 },
+    }, "GET /v1/operator/releases") }));
+    const detail = renderMobileConsole(model({ section: "releases", selectedReleaseId: "rel_recovery",
+      releaseDetail: dependency({ release: release.release,
+        workflow: { ...release.workflow.workflow, canaryBuildKey: "build-key", canaryOperationId: null },
+        build: null }, "GET /v1/operator/releases/rel_recovery") }));
+    for (const html of [list, detail]) {
+      expect(html).toContain("Request Canary recovery");
+      expect(html).toContain('name="expectedRevision" value="12"');
+      expect(html).toContain('name="recoveryRequest" value="canary-recovery"');
+      expect(html).toContain("Acceptance does not mean Canary success or Stable promotion");
+      expect(html).not.toContain(">Retry Canary build</button>");
+      expect(html).not.toContain("No retry is currently permitted by the Canary queue.");
+    }
+    const ineligible = renderMobileConsole(model({ section: "releases", selectedReleaseId: "rel_recovery",
+      releaseDetail: dependency({ release: release.release,
+        workflow: { ...release.workflow.workflow, state: "canary_cleanup", canaryBuildKey: null, canaryOperationId: null },
+        build: null }, "GET /v1/operator/releases/rel_recovery") }));
+    expect(ineligible).not.toContain("Request Canary recovery");
   });
 
   it("explains a known Canary configuration conflict on Source and Release detail without inventing operation links", () => {
@@ -561,9 +590,9 @@ it("links Canary operation evidence from the mobile audit trail", () => {
   const html=renderMobileConsole(model({section:"audit",
     audit:dependency({events:[{eventId:"aud_1",action:"release.canary-wait.skipped",
       outcome:"accepted",actorId:"213253858",occurredAt:1792000000000,
-      operationId:"op_123",jobId:null,releaseId:null,failureCode:null}],nextCursor:null},"audit"),
+      operationId:"op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ",jobId:null,releaseId:null,failureCode:null}],nextCursor:null},"audit"),
   }));
-  expect(html).toContain('href="/operations/op_123?ui=mobile"');
+  expect(html).toContain('href="/operations/op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ?ui=mobile"');
 });
 
 

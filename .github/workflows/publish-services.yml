@@ -32,6 +32,8 @@ jobs:
           node --test tests/deployment/reproducibility.test.mjs
           node --test tests/deployment/headlamp-admin.test.mjs
           node --test tests/deployment/deployment-order.test.mjs tests/deployment/migrations.test.mjs tests/deployment/worker-projection.test.mjs
+          node --test tests/deployment/cloudflare-workers-dev.test.mjs tests/deployment/remote-disposable-cloudflare.test.mjs
+          node --test infrastructure/test/*.test.mjs
           node --test tests/deployment/service-image-publication.test.mjs
           node --test tests/deployment/observer-rollout.test.mjs
           node --test tests/infra/*.test.mjs

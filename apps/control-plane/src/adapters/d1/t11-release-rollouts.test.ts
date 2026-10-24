@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
-import { ReleaseCandidateSchema, type ReleaseCandidate } from "@praetorium/application/releases";
+import { advanceStablePromotions, ReleaseCandidateSchema, type ReleaseCandidate } from "@praetorium/application/releases";
 import type { StableFollower } from "@praetorium/application/rollouts";
 import type { InstanceService } from "@praetorium/application/instances";
 import type { OperationService } from "@praetorium/application/operations";
@@ -469,6 +469,373 @@ function follower(instanceId: string, clusterId = "cluster-1"): StableFollower {
 }
 
 describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
+  it("operator-retries a failed runtime only after exact stop proof and a fresh configured binding", async () => {
+    const makeFixture = async () => {
+      const db = new SQLiteD1();
+      installSchema(db);
+      const release = candidate("release-runtime-retry", "0.3.9");
+      const releases = store(db);
+      await releases.createCandidate(release);
+      const cleanupEvidence = {
+        operationId: "operation-stop20",
+        startedOperationId: "operation-v039",
+        observedAt: NOW,
+        writerAbsence: {
+          instanceId: "old-canary-instance",
+          repositoryId: 101,
+          retiredEpoch: 7,
+          providerObservationId: "whole-instance-stop-census",
+          censusObservedAt: NOW - 1_000,
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
+          source: "runtime-provider-census",
+        },
+      };
+      db.database.prepare(
+        `UPDATE release_candidate_workflows
+            SET state = 'rejected', revision = 5, attempts = 2,
+                canary_artifact_digest = ?, canary_runtime_id = 'old-canary-instance',
+                canary_operation_id = 'operation-v039', canary_cleanup_complete = 1,
+                cleanup_disposition = 'reject', cleanup_evidence_json = ?,
+                failure_code = 'canary_assignment_superseded', updated_at = ?
+          WHERE release_id = ?`,
+      ).run(DIGEST, JSON.stringify(cleanupEvidence), NOW, release.id);
+      db.database.exec(`
+        INSERT INTO logical_instances (
+          instance_id, repository_id, generation, runtime_epoch, desired_state, policy,
+          observed_generation, observed_runtime_epoch, observed_sequence, observed_state,
+          desired_revision_id, observed_revision_id, desired_artifact_digest,
+          reservation_state, reservation_id, created_at, updated_at
+        ) VALUES ('old-canary-instance', 101, 20, 9, 'stopped', 'pinned', 20, 9, 4, 'stopped',
+          'revision-v039', 'revision-v039', '${DIGEST}', 'released', NULL, ${NOW}, ${NOW});
+        INSERT INTO repository_bindings (
+          repository_id, instance_id, installation_id, owner, name, authorization_revision,
+          binding_epoch, suspended, created_at, updated_at
+        ) VALUES (101, 'old-canary-instance', 201, 'owner', 'repo', 3, 3, 0, ${NOW}, ${NOW});
+        INSERT INTO logical_instances (
+          instance_id, repository_id, generation, runtime_epoch, desired_state, policy,
+          observed_generation, observed_runtime_epoch, observed_sequence, observed_state,
+          reservation_state, reservation_id, created_at, updated_at
+        ) VALUES ('retry-canary-instance', 901, 0, 0, 'stopped', 'pinned', NULL, NULL, 0, 'absent',
+          'none', NULL, ${NOW}, ${NOW});
+        INSERT INTO repository_bindings (
+          repository_id, instance_id, installation_id, owner, name, authorization_revision,
+          binding_epoch, suspended, created_at, updated_at
+        ) VALUES (901, 'retry-canary-instance', 202, 'owner', 'canary', 7, 4, 0, ${NOW}, ${NOW});
+        INSERT INTO builds (build_id, build_key, build_input_json, status, created_at, updated_at)
+          VALUES ('old-canary-build', 'old-canary-build-key', '{}', 'succeeded', ${NOW}, ${NOW});
+        INSERT INTO deployment_revisions (
+          revision_id, instance_id, repository_id, generation, build_key, build_id,
+          selection_json, resource_requirements_json, runtime_metadata_json,
+          status, actor_id, created_at
+        ) VALUES ('revision-v039', 'old-canary-instance', 101, 19, 'old-canary-build-key',
+          'old-canary-build', '{}', '{}', '{}', 'admitted', 'operator-user', ${NOW});
+        INSERT INTO operations (
+          operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status,
+          phase, lease_expires_at, idempotency_scope, idempotency_key, request_hash, actor_id,
+          authorization_revision, deployment_revision_id, created_at, updated_at
+        ) VALUES
+          ('operation-v039', 'old-canary-instance', 101, 19, 9, 'update', 'running',
+           'waiting-for-capacity', ${NOW - 1_000}, 'repository:101', 'old-start', 'old-hash',
+           'system:stable-release-canary', 3, 'revision-v039', ${NOW - 60_000}, ${NOW}),
+          ('operation-stop20', 'old-canary-instance', 101, 20, 9, 'stop', 'succeeded',
+           'complete', NULL, 'repository:101', 'old-stop', 'stop-hash',
+           'operator-user', 3, NULL, ${NOW - 30_000}, ${NOW});
+      `);
+      db.database.prepare("UPDATE operations SET checkpoint_json = ? WHERE operation_id = 'operation-stop20'")
+        .run(JSON.stringify({
+          schemaVersion: 1,
+          writerAbsenceProof: {
+            instanceId: "old-canary-instance",
+            repositoryId: 101,
+            retiredRuntimeEpoch: 7,
+            providerObservationId: "whole-instance-stop-census",
+            censusObservedAt: new Date(NOW - 1_000).toISOString(),
+            remainingWriters: 0,
+            evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
+            source: "runtime-provider-census",
+          },
+        }));
+      return {
+        db,
+        releases,
+        command: {
+          releaseId: release.id,
+          expectedRevision: 5,
+          idempotencyKey: "operator-runtime-retry-1",
+          requestHash: `sha256:${"9".repeat(64)}`,
+          actorId: "operator-test",
+          requestId: "operator-runtime-request-1",
+          now: NOW,
+          canary: retryBinding,
+        },
+      };
+    };
+
+    const valid = await makeFixture();
+    const accepted = await valid.releases.retryFailedCanaryRuntime(valid.command);
+    expect(accepted).toMatchObject({ kind: "accepted", duplicate: false });
+    expect(accepted.kind === "accepted" ? accepted.status.workflow : null).toMatchObject({
+      state: "canary_building",
+      revision: 6,
+      attempts: 3,
+      canaryBuildKey: null,
+      canaryOperationId: null,
+      failureCode: null,
+    });
+    expect(valid.db.database.prepare(
+      "SELECT action, actor_kind, outcome FROM audit_events WHERE action = 'release.canary-runtime.retried'",
+    ).get()).toEqual({ action: "release.canary-runtime.retried", actor_kind: "operator", outcome: "accepted" });
+    expect(await valid.releases.retryFailedCanaryRuntime(valid.command)).toMatchObject({
+      kind: "accepted",
+      duplicate: true,
+    });
+
+    const noHistory = await makeFixture();
+    noHistory.db.database.prepare(
+      `UPDATE release_candidate_workflows
+          SET cleanup_evidence_json = json_set(cleanup_evidence_json,
+            '$.writerAbsence.retiredEpoch', 9) WHERE release_id = ?`,
+    ).run(noHistory.command.releaseId);
+    noHistory.db.database.prepare(
+      `UPDATE operations SET checkpoint_json = json_set(checkpoint_json,
+        '$.writerAbsenceProof.retiredRuntimeEpoch', 9) WHERE operation_id = 'operation-stop20'`,
+    ).run();
+    expect(await noHistory.releases.retryFailedCanaryRuntime(noHistory.command)).toMatchObject({
+      kind: "accepted",
+      duplicate: false,
+    });
+
+    const invalidCases = ["stale-revision", "missing-cleanup", "healthy-evidence", "active-old-work", "wrong-new-binding", "missing-stop-proof", "wrong-retired-epoch"] as const;
+    for (const invalidCase of invalidCases) {
+      const fixture = await makeFixture();
+      if (invalidCase === "missing-cleanup") fixture.db.database.prepare(
+        "UPDATE release_candidate_workflows SET canary_cleanup_complete = 0 WHERE release_id = ?",
+      ).run(fixture.command.releaseId);
+      if (invalidCase === "healthy-evidence") fixture.db.database.prepare(
+        "UPDATE release_candidate_workflows SET last_health_evidence_json = '{}' WHERE release_id = ?",
+      ).run(fixture.command.releaseId);
+      if (invalidCase === "active-old-work") fixture.db.database.prepare(
+        `INSERT INTO operations (
+           operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status,
+           phase, lease_expires_at, idempotency_scope, idempotency_key, request_hash, actor_id,
+           authorization_revision, created_at, updated_at
+         ) VALUES ('other-active-old', 'old-canary-instance', 101, 20, 9, 'update', 'running',
+           'starting-target', ?, 'repository:101', 'other-active', 'active-hash', 'worker', 3, ?, ?)`,
+      ).run(NOW + 60_000, NOW, NOW);
+      if (invalidCase === "wrong-new-binding") fixture.db.database.prepare(
+        "UPDATE repository_bindings SET authorization_revision = 8 WHERE repository_id = ?",
+      ).run(retryBinding.repositoryId);
+      if (invalidCase === "missing-stop-proof") fixture.db.database.prepare(
+        "UPDATE operations SET checkpoint_json = NULL WHERE operation_id = 'operation-stop20'",
+      ).run();
+      if (invalidCase === "wrong-retired-epoch") fixture.db.database.prepare(
+        "UPDATE operations SET checkpoint_json = json_set(checkpoint_json, '$.writerAbsenceProof.retiredRuntimeEpoch', 9) WHERE operation_id = 'operation-stop20'",
+      ).run();
+      const command = invalidCase === "stale-revision"
+        ? { ...fixture.command, expectedRevision: fixture.command.expectedRevision - 1 }
+        : fixture.command;
+      await expect(fixture.releases.retryFailedCanaryRuntime(command), invalidCase).resolves.toMatchObject({
+        kind: "conflict",
+      });
+      expect(fixture.db.database.prepare(
+        "SELECT state, revision FROM release_candidate_workflows WHERE release_id = ?",
+      ).get(fixture.command.releaseId)).toMatchObject({ state: "rejected", revision: 5 });
+    }
+  });
+
+  it("acknowledges old v0.3.8 cleanup from current successful stop20 proof without stopping repointed v0.3.9", async () => {
+    const db = new SQLiteD1();
+    installSchema(db);
+    const release = candidate("release-v038", "0.3.8");
+    await store(db).createCandidate(release);
+    db.database.prepare(
+      `UPDATE release_candidate_workflows
+          SET state = 'canary_cleanup', revision = 1, next_attempt_at = ?,
+              canary_artifact_digest = ?, canary_runtime_id = 'old-canary-instance',
+              canary_operation_id = 'operation-v038', cleanup_disposition = 'reject',
+              failure_code = 'canary_assignment_superseded', updated_at = ?
+        WHERE release_id = ?`,
+    ).run(NOW, DIGEST, NOW, release.id);
+    db.database.exec(`
+      INSERT INTO logical_instances (
+        instance_id, repository_id, generation, runtime_epoch, desired_state, policy,
+        observed_generation, observed_runtime_epoch, observed_sequence, observed_state,
+        desired_revision_id, observed_revision_id, desired_artifact_digest,
+        reservation_state, reservation_id, created_at, updated_at
+      ) VALUES ('old-canary-instance', 101, 20, 9, 'stopped', 'pinned', 20, 9, 3, 'stopped',
+        'revision-v039', 'revision-v039', '${DIGEST}', 'released', NULL, ${NOW}, ${NOW});
+      INSERT INTO repository_bindings (
+        repository_id, instance_id, installation_id, owner, name, authorization_revision,
+        binding_epoch, suspended, created_at, updated_at
+      ) VALUES (101, 'old-canary-instance', 201, 'owner', 'repo', 3, 4, 0, ${NOW}, ${NOW});
+      INSERT INTO operations (
+        operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status,
+        phase, idempotency_scope, idempotency_key, request_hash, actor_id,
+        authorization_revision, created_at, updated_at
+      ) VALUES
+        ('operation-v038', 'old-canary-instance', 101, 19, 9, 'update', 'running',
+         'starting-target', 'repo:101', 'start-v038', 'hash-start', 'system:stable-release-canary', 3, ${NOW}, ${NOW}),
+        ('operation-stop20', 'old-canary-instance', 101, 20, 9, 'stop', 'succeeded',
+         'complete', 'repo:101', 'user-stop20', 'hash-stop', 'operator-user', 3, ${NOW}, ${NOW});
+    `);
+    db.database.prepare("UPDATE operations SET checkpoint_json = ? WHERE operation_id = 'operation-stop20'")
+      .run(JSON.stringify({
+        schemaVersion: 1,
+        writerAbsenceProof: {
+          instanceId: "old-canary-instance",
+          repositoryId: 101,
+          retiredRuntimeEpoch: 7,
+          providerObservationId: "stop20-complete-census",
+          censusObservedAt: new Date(NOW - 1_000).toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
+          source: "runtime-provider-census",
+        },
+      }));
+
+    const startedOperation = {
+      id: "operation-v038",
+      instanceId: "old-canary-instance",
+      repositoryId: 101,
+      generation: 19,
+      runtimeEpoch: 9,
+      kind: "update" as const,
+      status: "running" as const,
+      deploymentRevisionId: "revision-v038",
+      result: null,
+    };
+    const stopOperation = {
+      id: "operation-stop20",
+      instanceId: "old-canary-instance",
+      repositoryId: 101,
+      generation: 20,
+      runtimeEpoch: 9,
+      kind: "stop" as const,
+      status: "succeeded" as const,
+      deploymentRevisionId: "revision-v039",
+      checkpoint: {
+        writerAbsenceProof: {
+          instanceId: "old-canary-instance",
+          repositoryId: 101,
+          retiredRuntimeEpoch: 7,
+          providerObservationId: "stop20-complete-census",
+          censusObservedAt: new Date(NOW - 1_000).toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
+          source: "runtime-provider-census",
+        },
+      },
+      result: null,
+    };
+    let desiredStateWrites = 0;
+    const composition = createT11RolloutComposition({
+      db,
+      configurations: {
+        stage: async () => { throw new Error("not needed for failed canary cleanup"); },
+        findStageByIdempotency: async () => null,
+        activateStageUnderClusterFence: async () => null,
+      },
+      canaryConfigurations: {
+        plan: async () => { throw new Error("not needed for cleanup"); },
+        findByIdempotency: async () => null,
+      },
+      instances: {
+        async getByRepositoryId() { throw new Error("read-only old cleanup must not use the new binding"); },
+        async requestDesiredState() {
+          desiredStateWrites += 1;
+          throw new Error("read-only cleanup must not mutate desired state");
+        },
+      } as unknown as InstanceService,
+      operations: {
+        async getById(operationId: string) {
+          if (operationId === startedOperation.id) return startedOperation;
+          if (operationId === stopOperation.id) {
+            const row = db.database.prepare("SELECT checkpoint_json FROM operations WHERE operation_id = ?")
+              .get(operationId) as { readonly checkpoint_json: string | null };
+            return {
+              ...stopOperation,
+              checkpoint: row.checkpoint_json ? JSON.parse(row.checkpoint_json) as Record<string, unknown> : null,
+            };
+          }
+          return null;
+        },
+      } as unknown as OperationService,
+      canaryBinding: {
+        repositoryId: 101,
+        instanceId: "new-canary-instance",
+        bindingEpoch: 4,
+        authorizationRevision: 3,
+        requestedModules: [],
+        resourceProfileId: "small",
+      },
+      canaryObservations: {
+        latestHealth: async () => null,
+        writerAbsence: async (input) => ({
+          instanceId: input.instanceId,
+          repositoryId: input.repositoryId,
+          retiredEpoch: input.retiredEpoch,
+          providerObservationId: "stop20-complete-census",
+          censusObservedAt: NOW - 1_000,
+          remainingWriters: 0 as const,
+          evidenceIdentities: ["old-pod-uid-gen17-epoch7"],
+          source: "runtime-provider-census" as const,
+        }),
+      },
+      defaultClusterId: "cluster-canary",
+      clock: { now: () => TIME, nowMs: () => NOW },
+      ids: { newReleaseId: () => "unused-release" },
+      workerId: "canary-cleanup-test",
+      authorizeOperator: async () => null,
+      registry: { async verifyImage(repository, manifestDigest, platform) { return { repository, manifestDigest, platform }; } },
+      provenance: { async verify() { return { verified: true, evidence: [] }; } },
+      producerMetadata: { async verify() { return { kind: "verified", evidence: [] }; } },
+    });
+
+    const recoverExistingStop = () => composition.scheduled.promotions.canaryRuntime.stop({
+      runtimeId: "old-canary-instance",
+      startedOperationId: startedOperation.id,
+      idempotencyKey: `stable-canary-stop:${release.id}`,
+      allowExistingStopRecovery: true,
+    });
+    db.database.prepare(
+      "INSERT INTO operations (operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase, idempotency_scope, idempotency_key, request_hash, actor_id, authorization_revision, created_at, updated_at) VALUES ('active-conflict', 'old-canary-instance', 101, 20, 9, 'update', 'running', 'starting-target', 'repo:101', 'active-conflict', 'hash-active', 'worker', 3, ?, ?)",
+    ).run(NOW, NOW);
+    expect((await recoverExistingStop()).kind).toBe("blocked");
+    db.database.prepare("DELETE FROM operations WHERE operation_id = 'active-conflict'").run();
+
+    db.database.prepare("UPDATE repository_bindings SET suspended = 1 WHERE repository_id = 101").run();
+    expect((await recoverExistingStop()).kind).toBe("blocked");
+    db.database.prepare("UPDATE repository_bindings SET suspended = 0 WHERE repository_id = 101").run();
+
+    db.database.prepare("UPDATE repository_bindings SET authorization_revision = 4 WHERE repository_id = 101").run();
+    expect((await recoverExistingStop()).kind).toBe("blocked");
+    db.database.prepare("UPDATE repository_bindings SET authorization_revision = 3 WHERE repository_id = 101").run();
+
+    db.database.prepare("UPDATE logical_instances SET generation = 21, observed_generation = 21 WHERE instance_id = 'old-canary-instance'").run();
+    expect((await recoverExistingStop()).kind).toBe("blocked");
+    db.database.prepare("UPDATE logical_instances SET generation = 20, observed_generation = 20 WHERE instance_id = 'old-canary-instance'").run();
+
+    const directCleanup = await recoverExistingStop();
+    expect(directCleanup.kind).toBe("stopped");
+
+    const result = await advanceStablePromotions(composition.scheduled.promotions, {
+      releaseId: release.id,
+      limit: 1,
+    });
+    expect(result).toEqual({ claimed: 1, advanced: 0, retried: 0, terminal: 1 });
+    expect(desiredStateWrites).toBe(0);
+    expect(
+      db.database.prepare(
+        "SELECT state, canary_cleanup_complete, cleanup_evidence_json FROM release_candidate_workflows WHERE release_id = ?",
+      ).get(release.id),
+    ).toMatchObject({
+      state: "rejected",
+      canary_cleanup_complete: 1,
+      cleanup_evidence_json: expect.stringContaining("operation-stop20"),
+    });
+  });
+
   it("wakes only the configured admitted canary whose build just succeeded", async () => {
     const db = new SQLiteD1();
     installSchema(db);
@@ -1163,7 +1530,7 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
            operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status,
            phase, idempotency_scope, idempotency_key, request_hash, actor_id,
            authorization_revision, created_at, updated_at
-         ) VALUES ('canary-stop-operation', 'canary-instance', 101, 7, 4, 'stop', 'pending',
+         ) VALUES ('canary-stop-operation', 'canary-instance', 101, 8, 4, 'stop', 'pending',
                    'accepted', 'canary-test', ?, 'hash', 'system:stable-release-canary', 3, ?, ?)`,
       )
       .run(`stable-canary-stop:${release.id}`, NOW, NOW);
@@ -1175,11 +1542,23 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       idempotencyKey: `stable-canary-stop:${release.id}`,
       instanceId: "canary-instance",
       repositoryId: 101,
-      generation: 7,
+      generation: 8,
       runtimeEpoch: 4,
       kind: "stop" as const,
       status: stopStatus,
       deploymentRevisionId: "canary-revision",
+      checkpoint: {
+        writerAbsenceProof: {
+          instanceId: "canary-instance",
+          repositoryId: 101,
+          retiredRuntimeEpoch: 4,
+          providerObservationId: "writer-census-zero",
+          censusObservedAt: new Date(currentTime - 1_000).toISOString(),
+          remainingWriters: 0,
+          evidenceIdentities: ["census:canary-instance:4"],
+          source: "runtime-provider-census",
+        },
+      },
       result: null,
     });
     const startOperation = {
@@ -1203,6 +1582,29 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
       evidenceIdentities: ["census:canary-instance:4"],
       source: "runtime-provider-census" as const,
     };
+    let canaryInstance: {
+      instanceId: string;
+      repositoryId: number;
+      generation: number;
+      runtimeEpoch: number;
+      desiredState: "running" | "stopped";
+      observedState: "ready" | "stopped";
+      desiredRevisionId: string;
+      desiredArtifactDigest: string;
+      observedRevisionId: string;
+      observedRuntimeEpoch: number;
+    } = {
+      instanceId: "canary-instance",
+      repositoryId: 101,
+      generation: 7,
+      runtimeEpoch: 4,
+      desiredState: "running" as const,
+      observedState: "ready" as const,
+      desiredRevisionId: "canary-revision",
+      desiredArtifactDigest: DIGEST,
+      observedRevisionId: "canary-revision",
+      observedRuntimeEpoch: 4,
+    };
     const composition = createT11RolloutComposition({
       db,
       configurations: {
@@ -1224,20 +1626,18 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
               authorizationRevision: 3,
               suspended: false,
             },
-            instance: { instanceId: "canary-instance", repositoryId: 101 },
+            instance: canaryInstance,
           };
         },
         async requestDesiredState() {
+          canaryInstance = {
+            ...canaryInstance,
+            generation: 8,
+            desiredState: "stopped",
+            observedState: "stopped",
+          };
           return {
-            instance: {
-              instanceId: "canary-instance",
-              repositoryId: 101,
-              generation: 8,
-              runtimeEpoch: 4,
-              desiredState: "stopped" as const,
-              observedState: "stopped" as const,
-              observedRuntimeEpoch: 4,
-            },
+            instance: canaryInstance,
             operation: stopOperation(),
           };
         },

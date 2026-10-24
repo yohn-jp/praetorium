@@ -593,6 +593,11 @@ function seedOtherBinding(db: SQLiteD1): void {
 }
 
 function seedRunningOperation(db: SQLiteD1, runtimeEpoch = 4): void {
+  // The operation owns the desired epoch; credentials still belong to the
+  // separately retained observed epoch 4 during a redeploy.
+  db.database
+    .prepare("UPDATE logical_instances SET runtime_epoch = ? WHERE instance_id = ?")
+    .run(runtimeEpoch, "ins_repo-7001");
   db.database
     .prepare(
       `INSERT INTO operations (

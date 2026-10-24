@@ -556,11 +556,159 @@ async function createRuntimeFixture(root, kit) {
   });
   let simulatedNow = Date.now();
   let healthNumber = 0;
+  const simulatedLease = (operation) => ({
+    operationId: operation.id,
+    workerId: operation.workerId,
+    leaseToken: operation.leaseToken,
+    leaseEpoch: operation.leaseEpoch,
+  });
+  async function claimSimulatedOperation(operationId) {
+    const claimed = await operations.claimNext({
+      workerId: releasePolicy.workerId,
+      clusterId: releasePolicy.clusterId,
+      now: simulatedNow,
+    });
+    assert.equal(
+      claimed?.operation.id,
+      operationId,
+      "simulated provisioner claimed the expected current operation",
+    );
+    return claimed.operation;
+  }
+  async function finishSimulatedCanaryStart(operationId) {
+    const current = await operations.getById(operationId);
+    assert.ok(current, "simulated canary start exists");
+    if (current.status === "succeeded") return current;
+    assert.equal(current.status, "pending", "simulated canary start is not already leased");
+    const instance = await instances.getByInstanceId(current.instanceId);
+    assert.ok(instance, "simulated canary instance exists");
+    const artifactDigest = instance.instance.desiredArtifactDigest;
+    const revisionId = instance.instance.desiredRevisionId;
+    assert.ok(artifactDigest && revisionId, "simulated canary targets the admitted artifact");
+    const observation = {
+      instanceId: current.instanceId,
+      repositoryId: current.repositoryId,
+      generation: current.generation,
+      runtimeEpoch: current.runtimeEpoch,
+      sequence: 1,
+      observedState: "ready",
+      observedArtifactDigest: artifactDigest,
+      observedRevisionId: revisionId,
+      reportedAt: simulatedNow,
+    };
+    // No provider is provisioned in this disposable fixture. Persist the
+    // explicitly simulated provisioner completion on the exact current tuple,
+    // with the route/complete checkpoint history consumed by T11.
+    const database = db.database;
+    const resultJson = JSON.stringify({ observation, terminal: "succeeded" });
+    const checkpointJson = JSON.stringify({});
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const updated = database.prepare(
+        `UPDATE operations SET status='succeeded', phase='complete', report_sequence=1,
+            checkpoint_sequence=2, checkpoint_json=?, result_json=?, updated_at=?
+          WHERE operation_id=? AND instance_id=? AND repository_id=? AND generation=?
+            AND runtime_epoch=? AND status='pending'
+            AND EXISTS (SELECT 1 FROM logical_instances i WHERE i.instance_id=operations.instance_id
+              AND i.repository_id=operations.repository_id AND i.generation=operations.generation
+              AND i.runtime_epoch=operations.runtime_epoch AND i.observed_state='ready'
+              AND i.observed_generation=operations.generation
+              AND i.observed_runtime_epoch=operations.runtime_epoch
+              AND i.observed_revision_id=operations.deployment_revision_id
+              AND i.current_artifact_digest=?)`,
+      ).run(
+        checkpointJson,
+        resultJson,
+        simulatedNow,
+        current.id,
+        current.instanceId,
+        current.repositoryId,
+        current.generation,
+        current.runtimeEpoch,
+        artifactDigest,
+      );
+      assert.equal(Number(updated.changes), 1, "simulated start finishes only its exact ready tuple");
+      for (const [sequence, phase] of [[1, "route-activated"], [2, "complete"]]) {
+        database.prepare(
+          `INSERT INTO operation_checkpoints
+            (operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(current.id, sequence, phase, current.runtimeEpoch, checkpointJson,
+          releasePolicy.workerId, simulatedNow);
+      }
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    return operations.getById(operationId);
+  }
+  async function finishSimulatedCanaryStop(operationId) {
+    const current = await operations.getById(operationId);
+    assert.ok(current, "simulated canary stop exists");
+    if (current.status === "succeeded") return current;
+    assert.equal(current.status, "pending", "simulated canary stop is not already leased");
+    const operation = await claimSimulatedOperation(operationId);
+    const lease = simulatedLease(operation);
+    const prior = await instances.getByInstanceId(operation.instanceId);
+    assert.ok(prior, "simulated canary stop has a current instance row");
+    assert.equal(prior.instance.observedState, "ready", "simulated zero census retires the ready writer");
+    assert.equal(prior.instance.observedRuntimeEpoch, operation.runtimeEpoch,
+      "simulated stop proof names the exact observed writer epoch");
+    // This is an explicitly simulated zero-writer provider census. It is
+    // persisted as the operation's real checkpoint/result so CI exercises the
+    // same consumer fences without claiming hosted runtime evidence.
+    const writerAbsenceProof = {
+      instanceId: operation.instanceId,
+      repositoryId: operation.repositoryId,
+      retiredRuntimeEpoch: prior.instance.observedRuntimeEpoch,
+      providerObservationId: `fixture-writer-census-${operation.id}`,
+      censusObservedAt: new Date(simulatedNow).toISOString(),
+      remainingWriters: 0,
+      evidenceIdentities: [],
+      source: "runtime-provider-census",
+    };
+    await operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 0,
+      phase: "old-writer-absent",
+      checkpoint: { writerAbsenceProof },
+      now: simulatedNow,
+    });
+    await operations.checkpoint({
+      ...lease,
+      expectedCheckpointSequence: 1,
+      phase: "complete",
+      checkpoint: { writerAbsenceProof },
+      now: simulatedNow,
+    });
+    await operations.report({
+      ...lease,
+      sequence: 1,
+      now: simulatedNow,
+      terminal: "succeeded",
+      observation: {
+        instanceId: operation.instanceId,
+        repositoryId: operation.repositoryId,
+        generation: operation.generation,
+        runtimeEpoch: operation.runtimeEpoch,
+        sequence: 1,
+        observedState: "stopped",
+        observedArtifactDigest: null,
+        observedRevisionId: null,
+        reportedAt: simulatedNow,
+      },
+    });
+    return operations.getById(operationId);
+  }
   const simulatedOperations = {
     async getById(operationId) {
       const operation = await operations.getById(operationId);
       if (!operation) return null;
-      return { ...operation, status: "succeeded" };
+      if (operation.kind === "stop" && operation.status === "pending") {
+        return finishSimulatedCanaryStop(operationId);
+      }
+      return operation;
     },
   };
   const provenance = {
@@ -684,6 +832,7 @@ async function createRuntimeFixture(root, kit) {
     sourceIdentity: { host: registryHost, repositoryPath: producerRepository.slice("ghcr.io/".length) },
     workerEnvironment: workerEnv,
     simulatedNow: () => simulatedNow,
+    finishSimulatedCanaryStart,
     advanceClock: (milliseconds) => {
       simulatedNow += milliseconds;
     },
@@ -926,6 +1075,7 @@ async function runSourceToStable(root, kit) {
       WHERE instance_id=?`,
     )
     .run(fixture.simulatedNow(), INSTANCE_ID);
+  await fixture.finishSimulatedCanaryStart(canaryOperation.operation_id);
 
   const promotionDependencies = { ...fixture.t11.scheduled.promotions, healthWindowMs: 0 };
   // This disposable test has no provisioner event callback. Advance the

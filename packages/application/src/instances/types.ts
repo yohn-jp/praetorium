@@ -99,6 +99,8 @@ export type DesiredStateMutationInput = {
   readonly now: number;
   readonly expectedGeneration?: number;
   readonly forceNewRuntime?: boolean;
+  /** Explicitly obtain a fresh stop census for an already stopped current epoch. */
+  readonly verifyStopped?: true;
 };
 
 export type DesiredStateMutationResult = {

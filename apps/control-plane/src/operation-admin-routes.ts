@@ -27,6 +27,7 @@ const RetryRequestSchema = z.strictObject({
   authorizationRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   expectedGeneration: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   idempotencyKey: z.string().min(1).max(128).refine(noControlCharacters),
+  reverifyStopped: z.literal(true).optional(),
 });
 const CursorSchema = z.strictObject({
   occurredAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -196,7 +197,10 @@ export function createOperationAdminRoutes(deps: OperationAdminDependencies) {
     }
     if (
       oldOperation.generation !== input.expectedGeneration ||
-      (oldOperation.status !== "failed" && oldOperation.status !== "blocked")
+      (input.reverifyStopped
+        ? oldOperation.status !== "succeeded" || oldOperation.kind !== "stop" ||
+          snapshot.instance.desiredState !== "stopped" || snapshot.instance.runtimeEpoch !== oldOperation.runtimeEpoch
+        : oldOperation.status !== "failed" && oldOperation.status !== "blocked")
     ) {
       return c.json({ error: { code: "OPERATION_RETRY_CONFLICT" } }, 409);
     }
@@ -214,6 +218,7 @@ export function createOperationAdminRoutes(deps: OperationAdminDependencies) {
       now: (deps.now ?? Date.now)(),
       expectedGeneration: input.expectedGeneration,
       ...(desiredState === "running" ? { forceNewRuntime: true } : {}),
+      ...(input.reverifyStopped ? { verifyStopped: true as const } : {}),
     } as const;
 
     // Check the service's durable idempotency record first. After an accepted retry, the

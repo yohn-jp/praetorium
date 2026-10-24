@@ -665,6 +665,36 @@ describe("stable release candidate application", () => {
     expect(store.channel.currentReleaseId).toBeNull();
   });
 
+  it.each(["fresh", "future", "stale"] as const)("validates %s cleanup evidence after the asynchronous stop completes", async (timing) => {
+    const store = new MemoryReleaseStore();
+    const clock = new MutableClock();
+    const item = candidate();
+    store.candidates.set(item.id, item);
+    store.workflows.set(item.id, {
+      ...queuedWorkflow(item.id), state:"canary_cleanup", canaryRuntimeId:"canary-1",
+      canaryOperationId:"canary-op-1", cleanupDisposition:"promote",
+    });
+    const deps = promotionDeps(store, clock, {canaryRuntime:{
+      ensureRunning:async()=>({runtimeId:"canary-1",operationId:"canary-op-1"}),
+      observe:async()=>({kind:"unknown"}),
+      stop:async()=>{
+        clock.value += 25;
+        const observedAt = clock.nowMs() + (timing === "future" ? 1 : 0);
+        return {kind:"stopped", evidence:{
+          operationId:"stop-1",startedOperationId:"canary-op-1",observedAt,
+          writerAbsence:{instanceId:"canary-1",repositoryId:900,retiredEpoch:3,
+            providerObservationId:"census-1",remainingWriters:0,evidenceIdentities:[],
+            censusObservedAt:clock.nowMs() - (timing === "stale" ? 600_001 : 0),
+            source:"runtime-provider-census"},
+        }};
+      },
+    }});
+    await advanceOnce(store, deps);
+    expect(store.workflows.get(item.id)?.state).toBe(timing === "fresh" ? "promoting" : "canary_cleanup");
+    expect(store.workflows.get(item.id)?.canaryCleanupComplete).toBe(timing === "fresh");
+    expect(store.channel.currentReleaseId).toBeNull();
+  });
+
   it("records a guarded canary stop blocker without fabricating cleanup or Stable", async () => {
     const store = new MemoryReleaseStore();
     const clock = new MutableClock();

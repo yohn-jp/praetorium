@@ -368,19 +368,20 @@ async function advanceCandidate(
         : "stale";
     }
     const parsedCleanup = CanaryCleanupEvidenceSchema.safeParse(stopped.evidence);
+    const cleanupNowMs = deps.clock.nowMs();
     const maxCleanupEvidenceAge = deps.maxHealthGapMs ?? 2 * 5 * 60 * 1_000;
     if (
       !parsedCleanup.success ||
       parsedCleanup.data.operationId.length === 0 ||
       parsedCleanup.data.startedOperationId !== workflow.canaryOperationId ||
       parsedCleanup.data.writerAbsence.instanceId !== workflow.canaryRuntimeId ||
-      parsedCleanup.data.observedAt > nowMs ||
-      nowMs - parsedCleanup.data.observedAt > maxCleanupEvidenceAge ||
+      parsedCleanup.data.observedAt > cleanupNowMs ||
+      cleanupNowMs - parsedCleanup.data.observedAt > maxCleanupEvidenceAge ||
       parsedCleanup.data.writerAbsence.censusObservedAt > parsedCleanup.data.observedAt ||
       (workflow.lastHealthEvidence !== null &&
         parsedCleanup.data.writerAbsence.retiredEpoch !==
           workflow.lastHealthEvidence.runtimeEpoch) ||
-      nowMs - parsedCleanup.data.writerAbsence.censusObservedAt > maxCleanupEvidenceAge
+      cleanupNowMs - parsedCleanup.data.writerAbsence.censusObservedAt > maxCleanupEvidenceAge
     ) {
       return (await save(deps, lease, { nextAttemptAt: nowMs + Math.min(retryMs, 5 * 60 * 1_000) }))
         ? "retried"

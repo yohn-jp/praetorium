@@ -247,6 +247,7 @@ async function postGateway(
   path: string,
   body: unknown,
   fetcher: Fetch,
+  options: { readonly preserveRefreshFailure: boolean } = { preserveRefreshFailure: false },
 ): Promise<Response> {
   const destination = config.gatewayUrl ? new URL(path, config.gatewayUrl) : new URL(`https://gateway.internal${path}`);
   const request = new Request(destination, {
@@ -267,7 +268,19 @@ async function postGateway(
   } catch {
     return problem(503, "GATEWAY_UNAVAILABLE");
   }
-  if (!upstream.ok) return problem(upstream.status === 401 ? 401 : 503, "GATEWAY_REJECTED_REQUEST");
+  if (!upstream.ok) {
+    if (options.preserveRefreshFailure) {
+      const refreshFailureCodes: Readonly<Record<number, string>> = {
+        401: "UNAUTHENTICATED",
+        403: "FORBIDDEN",
+        503: "UPSTREAM_UNAVAILABLE",
+      };
+      const code = refreshFailureCodes[upstream.status];
+      if (code !== undefined)
+        return problem(upstream.status, code, upstream.status === 503);
+    }
+    return problem(upstream.status === 401 ? 401 : 503, "GATEWAY_REJECTED_REQUEST");
+  }
   return upstream;
 }
 
@@ -422,7 +435,13 @@ export function createInstanceAccessHandler(
         refreshCredential,
       });
       if (!input.success) return problem(401, "SESSION_INVALID");
-      const upstream = await postGateway(config, "/internal/instance-access/refresh", input.data, fetcher);
+      const upstream = await postGateway(
+        config,
+        "/internal/instance-access/refresh",
+        input.data,
+        fetcher,
+        { preserveRefreshFailure: true },
+      );
       if (!upstream.ok) return upstream;
       const grant = RefreshAccessResponseSchema.safeParse(await upstream.json().catch(() => null));
       if (!grant.success) return problem(502, "INVALID_GATEWAY_RESPONSE");

@@ -428,7 +428,10 @@ function baseResources(
           "requests.ephemeral-storage": memory(profile.ephemeralStorageMiB),
           ...(spec.scriptoriumAssignment === undefined
             ? {}
-            : { "requests.storage": memory(HISTORY_STORAGE_MIB) }),
+            : {
+                "requests.storage": memory(HISTORY_STORAGE_MIB),
+                persistentvolumeclaims: "1",
+              }),
           "limits.cpu": cpu(limits.cpuMilli),
           "limits.memory": memory(limits.memoryMiB),
           "limits.ephemeral-storage": memory(limits.ephemeralStorageMiB),

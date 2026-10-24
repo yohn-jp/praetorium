@@ -686,6 +686,7 @@ describe("Kubernetes runtime provider", () => {
     const quota = record(api.objects.get(key("ResourceQuota", NAMESPACE, `${DEPLOYMENT}-quota`)));
     expect(record(quota.spec).hard).toMatchObject({
       "requests.storage": "512Mi",
+      persistentvolumeclaims: "1",
       "requests.ephemeral-storage": "8192Mi",
     });
     const deployment = record(api.objects.get(key("Deployment", NAMESPACE, DEPLOYMENT)));
@@ -705,6 +706,7 @@ describe("Kubernetes runtime provider", () => {
     const loweredQuota = record(api.objects.get(key("ResourceQuota", NAMESPACE, `${DEPLOYMENT}-quota`)));
     expect(record(loweredQuota.spec).hard).toMatchObject({
       "requests.storage": "512Mi",
+      persistentvolumeclaims: "1",
       "requests.ephemeral-storage": "1024Mi",
     });
   });

@@ -218,6 +218,7 @@ class BuildKitDiagnosticCapture {
   private readonly privateKeyVertices = new Set<string>();
   private readonly failedVertices:string[]=[];
   private dropLogDiagnostics=false;
+  private stderrPrivateKey=false;
   private truncated = false;
   private sequence = 0;
 
@@ -281,6 +282,17 @@ class BuildKitDiagnosticCapture {
   }
 
   private addStderr(text:string):void{
+    const normalized=text.trim();
+    if(this.stderrPrivateKey){
+      this.truncated=true;
+      if(PRIVATE_KEY_END_LINE.test(normalized))this.stderrPrivateKey=false;
+      return;
+    }
+    if(PRIVATE_KEY_LINE.test(normalized)){
+      this.stderrPrivateKey=true;
+      this.truncated=true;
+      return;
+    }
     const safe=sanitizeBuildKitDiagnostic(text,MAX_DIAGNOSTIC_BYTES);
     if(!safe)return;
     const bytes=Buffer.byteLength(safe.text,"utf8");
@@ -344,7 +356,9 @@ class BuildKitDiagnosticCapture {
     const failedVertex=[...this.failedVertices].reverse().find((vertex)=>
       this.logEntries.some((log)=>log.vertex===vertex))??
       [...this.failedVertices].reverse()[0]??null;
-    const pendingVertices=failedVertex===null?[...this.pending.keys()]:[failedVertex];
+    const pendingVertices=failedVertex===null
+      ?[...this.pending.keys()]
+      :[...new Set([failedVertex,...(this.pending.has("")?[""] : [])])];
     for(const vertex of pendingVertices){
       const pending=this.pending.get(vertex);
       if(pending)this.addSafeLog(vertex||null,pending);

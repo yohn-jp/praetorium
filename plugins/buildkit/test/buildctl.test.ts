@@ -244,6 +244,50 @@ describe("remote buildctl execution", () => {
     expect(Buffer.byteLength(excerpt, "utf8")).toBeLessThanOrEqual(4096);
   });
 
+  it("redacts a PEM block split across stderr chunks and retains safe evidence after it", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    const chunks = [
+      "-----BEGIN PRIVATE KEY-----\n",
+      "compiler error TS5099: base64body-should-not-leak\n",
+      "-----END PRIVATE KEY-----\n",
+      "compiler error TS5042: module resolution failed\n",
+    ];
+    const script = `const chunks=${JSON.stringify(chunks)};let index=0;const next=()=>{if(index===chunks.length){process.exitCode=1;return;}process.stderr.write(chunks[index++]);setTimeout(next,10)};next()`;
+    let failure: unknown;
+    try {
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    const excerpt = (failure as { diagnostic?: { text?: string } }).diagnostic?.text ?? "";
+    expect(excerpt).toContain("compiler error TS5042");
+    expect(excerpt).not.toContain("base64body-should-not-leak");
+  });
+
+  it("flushes a trailing log without vertex identity when another failed vertex exists", async () => {
+    const options = await makeOptions();
+    const runner = createBuildctlRunner({ buildctlPath: process.execPath });
+    const events = [
+      JSON.stringify({
+        logs: [{
+          stream: 2,
+          data: Buffer.from("compiler error TS2307: Cannot find module 'missing-package'").toString("base64"),
+        }],
+      }),
+      JSON.stringify({ vertexes: [{ digest: "sha256:failed", error: "failed to solve" }] }),
+    ].join(String.fromCharCode(10));
+    const script = `process.stderr.write(${JSON.stringify(events + String.fromCharCode(10))});process.exitCode=1;`;
+    let failure: unknown;
+    try {
+      await runner(["-e", script], options);
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as { diagnostic?: { text?: string } }).diagnostic?.text)
+      .toContain("error TS2307");
+  });
+
   it("omits empty diagnostic output instead of manufacturing an excerpt", async () => {
     const options = await makeOptions();
     const runner = createBuildctlRunner({ buildctlPath: process.execPath });

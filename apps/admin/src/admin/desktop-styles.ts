@@ -117,6 +117,9 @@ body:has(.desktop-operator-console) .page-shell{padding:0;max-width:none;min-hei
 .desktop-failure-facts>div{min-width:0}
 .desktop-failure-facts dt{margin-bottom:4px;color:#52695b;font-size:12px;font-weight:700}
 .desktop-failure-facts dd{margin:0;color:#263e31;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.desktop-known-failure-guidance{padding:12px 14px;border:1px solid #d6c093;border-left:4px solid #8b6424;border-radius:5px;background:#fff8e8;color:#3d3322;overflow-wrap:anywhere}
+.desktop-known-failure-guidance p{margin:5px 0 0;line-height:1.55}
+.desktop-known-failure-guidance code{overflow-wrap:anywhere}
 .desktop-recovery>p:not(.desktop-eyebrow){max-width:760px;color:#344f3e;font-size:14px;line-height:1.6}
 .desktop-recovery .desktop-retry-form{margin-top:13px}
 .desktop-job-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;padding-bottom:16px;border-bottom:1px solid #e4e6dc}

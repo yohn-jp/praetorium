@@ -99,6 +99,9 @@ body:has(.admin-mobile-console) .page-shell{padding:0;max-width:none;min-height:
 .admin-mobile-diagnostic h4{margin:0 0 5px;font-size:14px}
 .admin-mobile-diagnostic p{overflow-wrap:anywhere}
 .admin-mobile-diagnostic-caveat{margin:8px 0;color:#52695b;font-size:13px;line-height:1.55}
+.admin-mobile-known-failure-guidance{margin:12px 0;padding:11px 12px;border:1px solid #d6c093;border-left:4px solid #8b6424;border-radius:7px;background:#fff8e8;color:#3d3322;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+.admin-mobile-known-failure-guidance p{margin:5px 0 0}
+.admin-mobile-known-failure-guidance code{overflow-wrap:anywhere}
 .admin-mobile-diagnostic dl{display:grid;gap:7px}
 .admin-mobile-diagnostic details{margin-top:12px}
 .admin-mobile-diagnostic summary{min-height:48px;padding:10px 0}

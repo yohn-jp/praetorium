@@ -1,6 +1,7 @@
 import { generateToken } from "@praetorium/auth";
 import { canaryWaitSkipForm } from "./canary-wait-action.js";
 import { activeReleaseFailures, currentSourceBuildAttempt, prioritySourceBuild } from "./incident-status.js";
+import { failureGuidance } from "./failure-guidance.js";
 import type {
   SourceBuildAttempt,
   SourceBuildDetail,
@@ -712,6 +713,7 @@ function releaseDetail(model: ConsoleViewModel): string {
   }
   const build = status.build;
   const failureCode = status.workflow.failureCode ?? build?.failure?.code ?? null;
+  const knownFailureGuidance = failureGuidance(failureCode);
   const stopBlocked = status.workflow.state === "canary_cleanup" && status.workflow.failureCode === "canary_stop_blocked";
   const refresh = "/releases/" + encodeURIComponent(status.release.id) + "?ui=mobile";
   return (
@@ -765,6 +767,10 @@ function releaseDetail(model: ConsoleViewModel): string {
         value(failureCode) +
         "</code></p>"
       : '<p class="admin-mobile-empty-inline">No workflow failure code is recorded.</p>') +
+    (knownFailureGuidance
+      ? '<aside class="admin-mobile-known-failure-guidance" role="note"><strong>Failure guidance · <code>' +
+        value(failureCode) + "</code></strong><p>" + value(knownFailureGuidance) + "</p></aside>"
+      : "") +
     (stopBlocked ? '<p class="admin-mobile-error-code">Canary stop is blocked by producer durability. Preserve unpublished local work and confirm writer absence before Stable promotion; Source admission alone is not Stable.</p>' : "") +
     '</section><section class="admin-mobile-action-region" aria-label="Canary recovery action">' +
     releaseDetailRetry(status, model.csrf) + canaryWaitSkipForm(status, model.csrf, "mobile") +
@@ -837,6 +843,12 @@ function buildDetail(model: ConsoleViewModel): string {
         value(detail.evidence === "expired" ? "Diagnostic evidence expired." :
           detail.evidence === "available" ? "Diagnostic evidence is marked available, but current attempt details are unavailable in this response." :
             "Diagnostic evidence was not recorded for the current attempt.") + '</p>';
+  const sourceFailureCode = job.error ?? currentAttempt?.failureCode ?? null;
+  const knownFailureGuidance = failureGuidance(sourceFailureCode);
+  const guidanceMarkup = knownFailureGuidance
+    ? '<aside class="admin-mobile-known-failure-guidance" role="note"><strong>Failure guidance · <code>' +
+      value(sourceFailureCode) + "</code></strong><p>" + value(knownFailureGuidance) + "</p></aside>"
+    : "";
   const failureDetail = job.state === "failed"
     ? '<section class="admin-mobile-section admin-mobile-failure-detail" aria-labelledby="admin-mobile-failure-title">' +
       '<span class="admin-kicker">RECORDED FAILURE</span><h2 id="admin-mobile-failure-title">Stage and reason</h2>' +
@@ -849,7 +861,7 @@ function buildDetail(model: ConsoleViewModel): string {
       value(currentAttempt?.diagnostic?.reason.replaceAll("_", " ") ?? "No current attempt-specific reason was recorded.") +
       '</dd></div></dl>' +
       '<p class="admin-mobile-diagnostic-caveat">The failure summary describes the recorded category. It does not establish a root cause.</p>' +
-      currentPageNote + currentEvidence +
+      currentPageNote + currentEvidence + guidanceMarkup +
       '</section>'
     : "";
   return (
@@ -867,6 +879,7 @@ function buildDetail(model: ConsoleViewModel): string {
     value(job.version) +
     '</p><a class="button button-secondary admin-mobile-refresh" href="' + value(buildHref(job.id, "mobile")) + '">Refresh status</a></header>' +
     failureDetail +
+    (job.state === "failed" ? "" : guidanceMarkup) +
     '<section class="admin-mobile-action-region" aria-label="Build recovery action">' +
     retryAction(job, model.csrf) +
     "</section>" +

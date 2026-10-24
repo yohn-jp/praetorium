@@ -287,6 +287,11 @@ export async function authorizeOAuth(
     if (!fresh || fresh.snapshot.binding.repositoryId !== resource.repositoryId)
       return oauthError("access_denied", 403);
     if (request.method === "GET") {
+      // Chromium applies form-action to the POST's redirect chain too. Permit only
+      // this validated client's callback origin, without weakening CSRF checks.
+      const callbackOrigin = new URL(input.redirectUri).origin;
+      if (!/^https?:\/\/(?:[a-z0-9_.-]+|\[[a-f0-9:]+\])(?::\d+)?$/i.test(callbackOrigin))
+        return oauthError("invalid_request");
       const hidden: Record<string, string> = {
         client_id: input.clientId, redirect_uri: input.redirectUri,
         resource: input.resource, state: input.state,
@@ -296,7 +301,7 @@ export async function authorizeOAuth(
       const fields = Object.entries(hidden).map(([key, value]) =>
         '<input type="hidden" name="' + key + '" value="' + htmlEscape(value) + '">').join("");
       return new Response('<!doctype html><html lang="en"><meta charset="utf-8">' +
-        '<meta name="referrer" content="no-referrer"><title>MCP access approval</title>' +
+        '<meta name="referrer" content="same-origin"><title>MCP access approval</title>' +
         '<main><h1>Allow MCP access?</h1><p>' + htmlEscape(input.clientName) +
         ' requests ' + htmlEscape(input.permissions.join(", ")) + ' access to ' +
         htmlEscape(input.resource) + '.</p><form method="post" action="/oauth/authorize">' +
@@ -305,8 +310,8 @@ export async function authorizeOAuth(
         '<button type="submit" name="decision" value="approve">Allow</button>' +
         '<button type="submit" name="decision" value="deny">Deny</button></form></main></html>', {
           headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
-            "Referrer-Policy": "no-referrer", "Content-Security-Policy":
-              "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; style-src 'none'" },
+            "Referrer-Policy": "same-origin", "Content-Security-Policy":
+              "default-src 'none'; form-action 'self' " + callbackOrigin + "; base-uri 'none'; frame-ancestors 'none'; style-src 'none'" },
         });
     }
     const csrfForm = new FormData();

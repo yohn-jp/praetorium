@@ -39,7 +39,7 @@ spec:
         object.metadata.labels["arcadia.io/instance-id"] == namespaceObject.metadata.labels["arcadia.io/instance-id"] &&
         object.metadata.labels["praetorium.io/repository-id"] == namespaceObject.metadata.labels["praetorium.io/repository-id"] &&
         object.metadata.labels["arcadia.io/ownership-version"] == namespaceObject.metadata.labels["arcadia.io/ownership-version"] &&
-        object.metadata.labels["praetorium.io/runtime-cluster-id"] == namespaceObject.metadata.labels["praetorium.io/runtime-cluster-id"] &&
+        object.metadata.labels["arcadia.io/runtime-cluster-id"] == namespaceObject.metadata.labels["arcadia.io/runtime-cluster-id"] &&
         object.metadata.labels["app.kubernetes.io/name"] == "scriptorium" &&
         !("praetorium.io/runtime-epoch" in object.metadata.labels) &&
         !("arcadia.io/generation" in object.metadata.labels) &&
@@ -65,7 +65,7 @@ spec:
           oldObject.metadata.labels["arcadia.io/instance-id"] == object.metadata.labels["arcadia.io/instance-id"] &&
           oldObject.metadata.labels["praetorium.io/repository-id"] == object.metadata.labels["praetorium.io/repository-id"] &&
           oldObject.metadata.labels["arcadia.io/ownership-version"] == object.metadata.labels["arcadia.io/ownership-version"] &&
-          oldObject.metadata.labels["praetorium.io/runtime-cluster-id"] == object.metadata.labels["praetorium.io/runtime-cluster-id"] &&
+          oldObject.metadata.labels["arcadia.io/runtime-cluster-id"] == object.metadata.labels["arcadia.io/runtime-cluster-id"] &&
           oldObject.metadata.annotations["praetorium.io/history-contract"] == "v1" &&
           object.metadata.annotations["praetorium.io/history-contract"] == "v1" &&
           dyn(oldObject).spec.storageClassName == dyn(object).spec.storageClassName &&

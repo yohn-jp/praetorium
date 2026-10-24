@@ -7,7 +7,10 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { quotaStatusMatchesLiveSpec } from "./history-admission-readiness.mjs";
+import {
+  quotaStatusMatchesLiveSpec,
+  renderTestManifestDocuments,
+} from "./history-admission-readiness.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(resolve(root, "package.json"));
@@ -112,6 +115,10 @@ function kubectl(
 
 function loadYaml(path) {
   return yaml.loadAll(readFileSync(resolve(root, path), "utf8"));
+}
+
+function loadRenderedTestYaml(path) {
+  return renderTestManifestDocuments(loadYaml(path), { CLUSTER_ID: clusterId });
 }
 
 function applyObjects(objects) {
@@ -341,7 +348,7 @@ kubectl([
 kubectl(["create", "namespace", "praetorium-system"]);
 kubectl(["create", "serviceaccount", "praetorium-provisioner", "-n", "praetorium-system"]);
 applyObjects([quota]);
-applyObjects(loadYaml("infrastructure/kubernetes/policies/provisioner-rbac.yaml"));
+applyObjects(loadRenderedTestYaml("infrastructure/kubernetes/policies/provisioner-rbac.yaml"));
 
 const binding = {
   apiVersion: "rbac.authorization.k8s.io/v1",
@@ -358,8 +365,8 @@ const binding = {
 };
 applyObjects([binding]);
 
-const ownerPolicies = loadYaml("infrastructure/kubernetes/policies/provisioner-boundary.yaml").map(
-  (document) => JSON.parse(JSON.stringify(document).replaceAll("@@CLUSTER_ID@@", clusterId)),
+const ownerPolicies = loadRenderedTestYaml(
+  "infrastructure/kubernetes/policies/provisioner-boundary.yaml",
 );
 const relevantOwnerPolicies = ownerPolicies.filter((document) =>
   [
@@ -368,8 +375,10 @@ const relevantOwnerPolicies = ownerPolicies.filter((document) =>
   ].includes(document.metadata?.name),
 );
 applyObjects(relevantOwnerPolicies);
-applyObjects(loadYaml("infrastructure/kubernetes/policies/provisioner-history-pvc.yaml"));
-applyObjects(loadYaml("infrastructure/kubernetes/policies/tenant-pod-policy.yaml"));
+applyObjects(
+  loadRenderedTestYaml("infrastructure/kubernetes/policies/provisioner-history-pvc.yaml"),
+);
+applyObjects(loadRenderedTestYaml("infrastructure/kubernetes/policies/tenant-pod-policy.yaml"));
 waitForHistoryAdmissionReadiness(quota);
 
 // Exercise valid admission first, but keep the PVC absent until every negative

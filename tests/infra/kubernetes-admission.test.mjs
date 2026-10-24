@@ -4,7 +4,10 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { quotaStatusMatchesLiveSpec } from "../../scripts/ci/history-admission-readiness.mjs";
+import {
+  quotaStatusMatchesLiveSpec,
+  renderTestManifestDocuments,
+} from "../../scripts/ci/history-admission-readiness.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const require = createRequire(resolve(repositoryRoot, "package.json"));
@@ -56,6 +59,26 @@ test("quota readiness compares API-canonicalized live spec and status quantities
   );
   assert.equal(quotaStatusMatchesLiveSpec({ spec: liveQuota.spec }), false);
   assert.equal(quotaStatusMatchesLiveSpec({ spec: { hard: {} }, status: { hard: {} } }), false);
+});
+
+test("CI admission manifest rendering substitutes cluster IDs and rejects unresolved placeholders", () => {
+  const clusterId = "ci-owned-cluster";
+  const render = (path) =>
+    renderTestManifestDocuments(parseYamlDocuments(path), { CLUSTER_ID: clusterId });
+  const boundary = render("infrastructure/kubernetes/policies/provisioner-boundary.yaml");
+  const history = render("infrastructure/kubernetes/policies/provisioner-history-pvc.yaml");
+  const tenant = render("infrastructure/kubernetes/policies/tenant-pod-policy.yaml");
+  const rbac = render("infrastructure/kubernetes/policies/provisioner-rbac.yaml");
+  assert.match(JSON.stringify(boundary), /ci-owned-cluster/u);
+  assert.match(JSON.stringify(history), /ci-owned-cluster/u);
+  assert.doesNotMatch(
+    JSON.stringify([...boundary, ...history, ...tenant, ...rbac]),
+    /@@[A-Z0-9_]+@@/u,
+  );
+  assert.throws(
+    () => renderTestManifestDocuments([{ value: "@@UNKNOWN_CLUSTER_TOKEN@@" }], {}),
+    /unresolved admission test placeholders: @@UNKNOWN_CLUSTER_TOKEN@@/u,
+  );
 });
 const roleBindingPolicy = roleBindingDocuments.find(
   (document) => document.kind === "ValidatingAdmissionPolicy",
@@ -121,6 +144,11 @@ test("history PVC admission is bound to one stable, owned local-path claim", () 
     /namespaceObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\] == "@@CLUSTER_ID@@"/u,
   );
   assert.match(expressions[1], /-history"/u);
+  assert.match(
+    expressions[1],
+    /object\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\] == namespaceObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\]/u,
+  );
+  assert.doesNotMatch(expressions[1], /praetorium\.io\/runtime-cluster-id/u);
   assert.match(expressions[1], /praetorium\.io\/history-contract/u);
   assert.match(expressions[1], /!\("praetorium\.io\/runtime-epoch" in object\.metadata\.labels\)/u);
   assert.match(expressions[1], /!\("arcadia\.io\/generation" in object\.metadata\.labels\)/u);
@@ -129,6 +157,10 @@ test("history PVC admission is bound to one stable, owned local-path claim", () 
   assert.match(expressions[2], /accessModes == \["ReadWriteOnce"\]/u);
   assert.match(expressions[2], /dataSourceRef/u);
   assert.match(expressions[3], /request\.operation != "UPDATE"/u);
+  assert.match(
+    expressions[3],
+    /oldObject\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\] == object\.metadata\.labels\["arcadia\.io\/runtime-cluster-id"\]/u,
+  );
   assert.match(expressions[3], /requests\["storage"\]/u);
 });
 
@@ -520,6 +552,7 @@ test("policy identity matches the provider principal and emitted ownership contr
     ...roleBindingPolicy.spec.validations.map(({ expression }) => expression),
     ...runtimeResourcePolicy.spec.validations.map(({ expression }) => expression),
     ...runtimeResourceDeletePolicy.spec.validations.map(({ expression }) => expression),
+    ...historyPvcPolicy.spec.validations.map(({ expression }) => expression),
   ].join("\n");
   for (const key of sourceLabelKeys) {
     assert.ok(expressions.includes(key), `admission policies do not cover provider label ${key}`);
@@ -602,6 +635,21 @@ test("the canonical Kind job runs real server-side history admission scenarios",
   );
   assert.match(runner, /kind-praetorium-ci/u);
   assert.match(runner, /--dry-run=server/u);
+  assert.match(runner, /function loadRenderedTestYaml\(path\)/u);
+  for (const path of [
+    "provisioner-rbac.yaml",
+    "provisioner-history-pvc.yaml",
+    "tenant-pod-policy.yaml",
+  ])
+    assert.ok(
+      runner.includes(`loadRenderedTestYaml("infrastructure/kubernetes/policies/${path}")`),
+      `Kind policy apply bypasses CI template rendering for ${path}`,
+    );
+  assert.match(
+    runner,
+    /const ownerPolicies\s*=\s*loadRenderedTestYaml\([\s\S]*?provisioner-boundary\.yaml/u,
+  );
+  assert.doesNotMatch(runner, /applyObjects\(loadYaml\(/u);
   for (const expectedPolicy of [
     "praetorium-provisioner-history-pvc",
     "praetorium-provisioner-runtime-resources",

@@ -155,3 +155,18 @@ it("fetches only an operation's current evidence on its detail page", async () =
   const request=vi.mocked(cp.fetch).mock.calls[0]?.[0];
   expect(new URL(String(request)).pathname).toBe("/v1/operations/op_123/evidence");
 });
+
+
+it("offers the canonical one-time mobile choice without changing Desktop defaults or signed-in authority", async () => {
+  const {context}=fixture();
+  const initial=await handleAdminHost(sessionRequest(ADMIN+"/builds"),context);
+  expect(initial.status).toBe(200);
+  const html=await initial.text();
+  expect(html).toContain('class="mode-choice"');
+  expect(html).toContain('href="/builds?ui=mobile"');
+  expect(html).toContain('href="/builds?ui=desktop"');
+  expect(html).toContain('body data-ui="desktop"');
+  const decided=await handleAdminHost(sessionRequest(ADMIN+"/builds?ui=mobile"),context);
+  expect((await decided.text())).not.toContain('class="mode-choice"');
+  expect(decided.headers.get("Set-Cookie")).toContain("praetorium_ui=mobile");
+});

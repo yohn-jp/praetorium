@@ -11,6 +11,7 @@ import {
   createBuilderJournal,
   createOwnerMarker,
   createT14ChildEnvironment,
+  kindCliVersion,
   kubectlClientGitVersion,
   ownerSubidMappingStatus,
   renderMountUnit,
@@ -41,7 +42,7 @@ test("remote Builder helper is syntax-valid and offers only explicit bounded act
 test("remote Builder helper isolates state and leaves production BuildKit protected", () => {
   assert.match(source, /podman version 5\.7\.0/u);
   assert.match(source, /need fuse-overlayfs/u);
-  assert.match(source, /kind v0\.31\.0/u);
+  assert.match(source, /kind --version \| node "\$STATE_MODULE" kind-version/u);
   assert.match(source, /v1\.35\.0/u);
   assert.match(source, /graphroot = "\$MOUNT\/podman\/graphroot/u);
   assert.match(source, /systemctl is-active praetorium-buildkit\.service/u);
@@ -67,6 +68,10 @@ test("remote Builder helper isolates state and leaves production BuildKit protec
   assert.match(source, /SetLoginEnvironment=yes/u);
   assert.match(source, /UnsetEnvironment=GITHUB_TOKEN GH_TOKEN CLOUDFLARE_API_TOKEN/u);
   assert.match(source, /--wait --pipe --collect[\s\S]*--property=Type=exec/u);
+  assert.match(source, /--property=KillMode=control-group/u);
+  assert.match(source, /owns the complete one-shot batch/u);
+  assert.match(source, /refusing to adopt it/u);
+  assert.match(source, /one-shot batch left the owned Kind cluster running/u);
   assert.match(source, /Environment=KUBECONFIG=\$MOUNT\/kube\/config/u);
   assert.match(source, /WorkingDirectory=\$MOUNT\/home/u);
   assert.match(source, /"\$STATE_MODULE" exec -- \/bin\/bash/u);
@@ -121,6 +126,21 @@ test("pretty kubectl version JSON is parsed structurally", () => {
   assert.equal(kubectlClientGitVersion('{"clientVersion":{"gitVersion":"v1.34.0"}}'), "v1.34.0");
   assert.throws(() => kubectlClientGitVersion('{"clientVersion": {}}'), /missing or malformed/u);
   assert.throws(() => kubectlClientGitVersion("not json"), /not valid JSON/u);
+});
+
+test("pinned official kind binary --version output parses its exact released format", () => {
+  const observedOutput = "kind version 0.31.0\n";
+  assert.equal(kindCliVersion(observedOutput), "0.31.0");
+  const parsedByCli = spawnSync(
+    process.execPath,
+    [path.join(root, "scripts/remote-disposable-builder-state.mjs"), "kind-version"],
+    { encoding: "utf8", input: observedOutput },
+  );
+  assert.equal(parsedByCli.status, 0, parsedByCli.stderr);
+  assert.equal(parsedByCli.stdout.trim(), "0.31.0");
+  assert.throws(() => kindCliVersion("kind v0.31.0 go1.25.5 linux/amd64\n"), /canonical version/u);
+  assert.equal(kindCliVersion("kind version 0.30.0\n"), "0.30.0");
+  assert.match(source, /\[\[ \$kind_version == 0\.31\.0 \]\]/u);
 });
 
 test("runuser accepts the harmless disposable invocation and env -i removes ambient credentials", (t) => {
@@ -232,6 +252,7 @@ test("systemd-run parses bounded transient-service options without applying a un
       "--unit=praetorium-t14-cli-parse.service",
       "--uid=nobody",
       "--property=Delegate=yes",
+      "--property=KillMode=control-group",
       "--property=Type=exec",
       "--property=SetLoginEnvironment=yes",
       "--property=ProtectSystem=strict",

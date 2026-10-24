@@ -179,6 +179,13 @@ export function kubectlClientGitVersion(output) {
   return version;
 }
 
+export function kindCliVersion(output) {
+  if (typeof output !== "string") throw new Error("kind --version output is not text");
+  const match = /^kind version (\d+\.\d+\.\d+)\s*$/u.exec(output);
+  if (!match) throw new Error("kind --version output is missing its canonical version");
+  return match[1];
+}
+
 export function ownerSubidMappingStatus(contents, username, start, count) {
   if (
     typeof contents !== "string" ||
@@ -416,6 +423,12 @@ async function main(argv) {
     process.stdout.write(`${kubectlClientGitVersion(input)}\n`);
     return;
   }
+  if (action === "kind-version" && argv.length === 1) {
+    let input = "";
+    for await (const chunk of process.stdin) input += chunk.toString("utf8");
+    process.stdout.write(`${kindCliVersion(input)}\n`);
+    return;
+  }
   if (action === "subid-status" && argv.length === 5) {
     const [, filePath, username, start, count] = argv;
     const contents = await readFile(filePath, "utf8").catch((error) => {
@@ -445,7 +458,7 @@ async function main(argv) {
     return;
   }
   throw new Error(
-    "usage: remote-disposable-builder-state.mjs write|validate|journal-init|journal-validate|journal-stage|journal-remove|render-mount|render-slice|cgroup-write|cgroup-validate <path> [fields]",
+    "usage: remote-disposable-builder-state.mjs write|validate|journal-init|journal-validate|journal-stage|journal-remove|render-mount|render-slice|kubectl-version|kind-version|cgroup-write|cgroup-validate <path> [fields]",
   );
 }
 

@@ -88,7 +88,8 @@ check_tools() {
   local required_root_free=${1:-10737418240}
   need systemctl; need systemd-run; need systemd-analyze; need podman; need fuse-overlayfs; need kind; need kubectl; need node; need pnpm; need ss; need newuidmap; need newgidmap; need losetup; need realpath; need useradd; need usermod; need getent; need runuser; need bash; need fallocate; need mkfs.ext4; need blkid; need python3; need "$ENV_BIN"
   [[ $(podman --version) == 'podman version 5.7.0' ]] || fail 'Podman must be the observed apt version 5.7.0'
-  [[ $(kind --version) == 'kind v0.31.0 '* ]] || fail 'Kind must be pinned to v0.31.0'
+  kind_version=$(kind --version | node "$STATE_MODULE" kind-version) || fail 'kind client version output is invalid'
+  [[ $kind_version == 0.31.0 ]] || fail "Kind must be pinned to v0.31.0 (found $kind_version)"
   [[ $(node --version) == v24.* ]] || fail 'Node must be v24'
   [[ $(pnpm --version) == 11.18.0 ]] || fail 'pnpm must be 11.18.0'
   kubectl_version=$(kubectl version --client --output=json | node "$STATE_MODULE" kubectl-version) || fail 'kubectl client version JSON is invalid'
@@ -301,9 +302,12 @@ if [[ $action == run ]]; then
   install -d -o "$OWNER" -g "$OWNER" -m 0700 "/run/user/$test_uid" "/run/user/$test_uid/containers"
   node_bin=$(realpath "$(command -v node)")
   unit="$RUN_UNIT_PREFIX-$(date +%s)-$$.service"
+  # The delegated transient service owns the complete one-shot batch. Kind
+  # nodes must be destroyed before this command returns; systemd kills any
+  # remaining service-cgroup processes on stop.
   exec systemd-run --wait --pipe --collect --slice="$SLICE_UNIT" --unit="$unit" \
     --uid="$OWNER" --property=Type=exec --property=Delegate=yes \
-    --property=SetLoginEnvironment=yes --property=ProtectSystem=strict \
+    --property=SetLoginEnvironment=yes --property=ProtectSystem=strict --property=KillMode=control-group \
     --property="TemporaryFileSystem=/tmp:size=512M" \
     --property="TemporaryFileSystem=/var/tmp:size=128M" \
     --property="ReadWritePaths=$MOUNT /run/user/$test_uid" \
@@ -323,7 +327,22 @@ if [[ $action == run ]]; then
     --property="Environment=PRAETORIUM_T14_GITHUB_ACCESS_CONFIG=$MOUNT/credentials/github-access.json" \
     --property="Environment=PRAETORIUM_SOURCE_FIXTURE_ARTIFACT_DIR=$MOUNT/logs/source-fixture" \
     --property=Environment=KIND_EXPERIMENTAL_PROVIDER=podman \
-    -- "$node_bin" "$STATE_MODULE" exec -- /bin/bash -c 'cd -- "$1" || exit; shift; exec "$@"' praetorium-t14-run "$PWD" "$@"
+    -- "$node_bin" "$STATE_MODULE" exec -- /bin/bash -c '
+      set -Eeuo pipefail
+      repository=$1
+      cluster=$2
+      shift 2
+      clusters=$(kind get clusters) || { echo "BLOCKED: cannot inspect owned Kind clusters" >&2; exit 1; }
+      if grep -Fxq "$cluster" <<<"$clusters"; then echo "BLOCKED: owned Kind cluster already exists; refusing to adopt it" >&2; exit 1; fi
+      cd -- "$repository" || exit
+      set +e
+      "$@"
+      command_status=$?
+      set -e
+      clusters=$(kind get clusters) || { echo "BLOCKED: cannot verify Kind cleanup after batch" >&2; exit 1; }
+      if grep -Fxq "$cluster" <<<"$clusters"; then echo "BLOCKED: one-shot batch left the owned Kind cluster running" >&2; exit 1; fi
+      exit "$command_status"
+    ' praetorium-t14-run "$PWD" "$CLUSTER" "$@"
 fi
 
 if [[ $action == verify-cgroup ]]; then

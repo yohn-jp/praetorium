@@ -59,6 +59,14 @@ PR #65 is already merged; its DCR metadata change is not duplicated here.
    same-origin checks and repository authorization remain enforced. Regression
    assertions cover both the response header and HTML metadata.
 
+4. **CSP blocked the successful consent POST's redirect to ChatGPT.** After
+   the Origin repair, the real POST returned 302 but the owner remained on
+   the consent page. Chromium reproduced the redirect-chain rejection with
+   `form-action 'self'`; adding the exact callback origin permitted navigation.
+   The consent CSP now permits only self and the validated client's callback
+   origin. A delimiter-safe origin check prevents metadata from injecting CSP
+   directives; regression tests cover both policy and unsafe-origin rejection.
+
 ## Backups and deployment readback
 
 - Root-only OPNsense backup:
@@ -83,7 +91,9 @@ PR #65 is already merged; its DCR metadata change is not duplicated here.
   `ed39f9bcc514309e0cc188cbd534d30fd2e274af1140872b31ca8da0193a68e8`
   (deployment `33e719d93d70420e8db0f00cc3ce03dd`). After consent patch:
   `7bb862ff651fb658bc14a4829efca8c609125d1f65fe797857fe6b138c3e5e4e`
-  (deployment `4526385fd3d24418a4e342ecd6b1e0d0`).
+  (deployment `4526385fd3d24418a4e342ecd6b1e0d0`). After the CSP callback fix:
+  `9d1382ce190ec2861d6650b33f6de06e0468e5b894a4dba699df1a598920fc6e`
+  (deployment `665338f1f6d64cb89484b929c7a57b89`).
 - Private local backups and packet captures are under
   `/tmp/praetorium-issue66-private` (directory mode 0700); no credentials,
   sessions, authorization codes or raw request headers are committed here.
@@ -115,7 +125,8 @@ acceptance.
 | DCR | Real disposable public loopback client registered, 201; client ID kept private, no access token created |
 | PKCE | S256 authorize reaches login (302); plain rejected (400); actual code exchange requires browser consent |
 | ChatGPT CIMD | Before patch 503; after patch 302 to login, owner subsequently reached consent |
-| Consent + token exchange + authenticated MCP initialize | Pending owner retry after consent policy fix; NOT_CHECKED until observed |
+| Consent POST | Owner retry at 15:23:08 UTC had correct Origin and 302; subsequent CSP redirect fix pending owner retry |
+| Token exchange + authenticated MCP initialize | Pending owner retry after CSP fix; NOT_CHECKED until observed |
 
 The disposable DCR record grants no repository authority and has no token;
 no unsupported deletion of Durable Object data was attempted.
@@ -136,6 +147,9 @@ no unsupported deletion of Durable Object data was attempted.
   failed waiting 8 seconds for build retry navigation at
   `tests/e2e/operator-console-diagnostics.test.mjs:442`. It is not counted as
   a successful CI run and that unrelated test is not changed in this PR.
+- Updated external probe including real ChatGPT CIMD login redirect: PASS,
+  [run 40106585714](https://github.com/yohn-jp/praetorium/actions/runs/40106585714).
+  The second external Stardomain network also passed the updated probe.
 - Final PR-head CI and owner-authenticated production results will be
   recorded after they finish. Credential-free CI cannot certify a real
   OAuth consent, token exchange or authenticated MCP initialize.

@@ -287,6 +287,11 @@ export async function authorizeOAuth(
     if (!fresh || fresh.snapshot.binding.repositoryId !== resource.repositoryId)
       return oauthError("access_denied", 403);
     if (request.method === "GET") {
+      // Chromium applies form-action to the POST's redirect chain too. Permit only
+      // this validated client's callback origin, without weakening CSRF checks.
+      const callbackOrigin = new URL(input.redirectUri).origin;
+      if (!/^https?:\/\/(?:[a-z0-9_.-]+|\[[a-f0-9:]+\])(?::\d+)?$/i.test(callbackOrigin))
+        return oauthError("invalid_request");
       const hidden: Record<string, string> = {
         client_id: input.clientId, redirect_uri: input.redirectUri,
         resource: input.resource, state: input.state,
@@ -306,7 +311,7 @@ export async function authorizeOAuth(
         '<button type="submit" name="decision" value="deny">Deny</button></form></main></html>', {
           headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
             "Referrer-Policy": "same-origin", "Content-Security-Policy":
-              "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; style-src 'none'" },
+              "default-src 'none'; form-action 'self' " + callbackOrigin + "; base-uri 'none'; frame-ancestors 'none'; style-src 'none'" },
         });
     }
     const csrfForm = new FormData();

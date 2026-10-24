@@ -35,3 +35,29 @@ All six workers start from the pinned integration base. A: apps/control-plane an
 ## Acceptance ledger
 
 G1–G9, F01–F14, R01–R07 and P-A01–P-A12: NOT_CHECKED on the final deployed cut. Component observations above do not close these gates. Real Release → Build → OCI → Admission → Canary → Stable, editor Save/Git readback, OAuth/MCP and recovery remain mandatory.
+
+
+## Integrated candidate and actual operations
+
+PR #68 was independently merged to main at 2026-10-24T15:35:37Z as `ee9aeedebd71c1edbd2f54029f8d217c5f3ee73e` while this campaign was running. Its identical source changes were reconciled without rewriting history. All six worktrees began at `45ade9494138fea6e78a81d1f332d032578a56e8`, which contains the recorded integration base plus this baseline.
+
+| Observed defect | Cause / correction | Integrated commit | Regression / actual result |
+| --- | --- | --- | --- |
+| Canary cannot normally complete a one-minute observation | shared default was ten minutes; D1 sample deadline five minutes | `940fe25`, `64b67c7` | CP 67 focused tests, promotion 14 tests; normal post-write callback, full-minute boundary, outage resets window and cleanup-before-Stable tested; Hosted timed progression NOT_CHECKED |
+| Drifted HTTP route displayed as HTTPS runtime endpoint | inspection accepted Host plus Service without the secure route structure | `2484bd7` | Kubernetes 54 tests; drift from websecure/TLS suppresses endpoint |
+| Admin Release detail contradicts current Stable list | detail skipped canonical catalog read and substituted null Stable pointer | `3369b48` | Admin 74 tests; real pre-fix contradiction reproduced; browser regression covers pointer plus upstream unavailable; deployed correction NOT_CHECKED |
+| Local Gateway security browser runner cannot start / follows stale entry contract | missing Workers test stub, required RateLimit bindings and obsolete entry/login path | `08c2d74` | actual local browser runner PASS, Gateway 311 and Auth 43 tests PASS; fixture only |
+
+At code candidate `021b3f7a46e5c682ffbe92a47aef640a1844729a`, frozen install and full `check` PASS with nested pnpm pinned to 11.18.0 using an existing temporary PATH shim (host bare pnpm is 12.10.1). Independent read-only review of the complete diff against refreshed main found no blocking changed-code defect, but explicitly withheld operational acceptance pending the live startup failure and deployment. No production code rollout has occurred yet.
+
+Shared persistent Playwright was discovered at the operator's configured profile. The actual GitHub session successfully authenticated user 213253858. Separate isolated contexts performed real Admin navigation at desktop 1440/1920 and mobile 320/375/390/430, including keyboard/touch/back/forward and Source/Release/Operation drilldown, with no horizontal overflow and no operator mutations. The failing source, attempt history and guarded retry were visible. These observations precede the final deployed cut and do not close all UX scenarios.
+
+Real authenticated MCP on running instance repository 1289100245: published discovery, public DCR, authorization code + S256 PKCE, read consent, token exchange, initialize (2025-03-26) and tools/list (33 tools) PASS; invalid bearer rejected 401. No tool execution, manuscript read or write was performed. On owned canary repository 1423923158, valid initialize truthfully returned 503 INSTANCE_STARTING / Retry-After 5. External probe from SSH host stardomain independently passed HTTPS, anonymous MCP challenge, resource/issuer discovery and CIMD login redirect. Path-specific protected-resource /mcp metadata remains 404; the canonical advertised root metadata works.
+
+Owned repository 1423923158 was stopped at readback. A real Start through Gateway accepted operation `op_01M5Q9CFZ1CAGVZKG4KVSC2Z1N` at 15:45Z; the resulting Pod failed startup with `A repository-scoped Git credential could not be issued`, exit 1 and CrashLoopBackOff. This is a blocking actual result, not a successful startup. Runtime owner is tracing the identity/broker boundary. Existing user manuscript data is protected.
+
+Current public latest Scriptorium is still v0.3.7 / GitHub Release 422701682, already Stable in the actual Admin. A new eligible published source is required to demonstrate a fresh automatic 60-second promotion without modifying canonical history; the separately coordinated Scriptorium owner has been informed. No release or Stable state was fabricated.
+
+Before pending migration 0009, a fresh remote D1 export was captured in the protected production backup directory, restored into isolated local SQLite (integrity_check ok; two logical instance rows retained), and migration-rehearsed there. Rehearsal preserves the evidence-backed running writer's authority and leaves an unverified canary target without authority. Export and migration checksums were encrypted with the repository artifact tool; authenticated decryption matched the original tar SHA256. This proves a local snapshot/restore rehearsal, not off-host Restic backup or production rollback. Production migration, immutable rollout and actual forward recovery remain NOT_CHECKED.
+
+Observed console errors include Cloudflare-injected analytics scripts rejected by the existing CSP. Both available Cloudflare credentials received 403 when reading account RUM settings. Preserve CSP; exact RUM/edge injection setting and reconciliation remain BLOCKED on the necessary account-settings permission. No app policy was weakened to silence this error. Raw session state, tokens, SQL, settings, traces and manuscript data remain private; only sanitized observations are recorded here.

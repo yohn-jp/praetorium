@@ -14,6 +14,7 @@ export function platformDeploymentSteps(mode, notificationsEnabled) {
     { script: "service-image-publication.mjs", mode: null, stage: "CI-published service image adoption and inventory admission" },
     { script: "deploy-cloudflare.mjs", mode: "--migrate", stage: "D1 migration apply and readback" },
     { script: "coordination", mode: "--apply", stage: "Management Coordination through the existing Ansible role" },
+    { script: "observer", mode: "--apply", stage: "Management Observer through the existing Ansible role" },
     { script: "deploy-k3s.mjs", mode: "--apply", stage: "K3s workloads after verified D1 state" },
     ...(notificationsEnabled
       ? [{ script: "verify-work-notifications.mjs", mode: null, stage: "notification receiver readiness" }]

@@ -823,8 +823,9 @@ export function validateInventory(value) {
     }
   }
 
-  exactKeys(value.images, [...imageKeys, "coordination"], "images", errors, ["coordination"]);
-  for (const name of [...imageKeys, ...(value.images?.coordination == null ? [] : ["coordination"])]) {
+  const optionalImages = ["coordination", "observer"];
+  exactKeys(value.images, [...imageKeys, ...optionalImages], "images", errors, optionalImages);
+  for (const name of [...imageKeys, ...optionalImages.filter((key) => value.images?.[key] != null)]) {
     const image = value.images?.[name];
     if (image === null || image === "") {
       blockers.push(`immutable ${name} image digest is not available`);

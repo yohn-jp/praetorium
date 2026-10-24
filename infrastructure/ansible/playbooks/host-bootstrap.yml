@@ -54,3 +54,5 @@
     - common
     - role: coordination
       tags: [coordination]
+    - role: observer
+      tags: [observer]

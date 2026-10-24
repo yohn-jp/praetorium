@@ -1,5 +1,6 @@
 import { generateToken } from "@praetorium/auth";
 import { canaryWaitSkipForm } from "./canary-wait-action.js";
+import { activeSourceFailures, activeReleaseFailures } from "./incident-status.js";
 import type {
   SourceBuildAttempt, SourceBuildDetail, SourceBuildSummary,
 } from "@praetorium/contracts";
@@ -98,15 +99,14 @@ function stablePanel(model: ConsoleViewModel): string {
 
 function activeIncidents(model: ConsoleViewModel): string {
   const incidents: string[] = [];
-  for (const job of model.builds.value?.items ?? []) {
-    if (job.state !== "failed") continue;
+  for (const job of activeSourceFailures(model.builds.value?.items ?? [])) {
     incidents.push(`<li><div><a href="${escapeHtml(buildHref(job.id, model.mode))}">${escapeHtml(job.sourceId)} ${escapeHtml(job.tag)}</a>` +
       `<span class="desktop-muted"> · ${escapeHtml(job.id)}</span></div><div>${badge("Build failed", "failed")}` +
       `<span class="desktop-incident-code">${escapeHtml(job.error ?? "Failure code unavailable")}</span></div></li>`);
   }
-  for (const item of model.catalog.value?.items ?? []) {
+  for (const item of activeReleaseFailures(model.catalog.value?.items ?? [])) {
     const workflow = item.workflow?.workflow;
-    if (!workflow || !["blocked", "failed"].includes(workflow.state)) continue;
+    if (!workflow) continue;
     const code = workflow.failureCode ?? item.workflow?.build?.failure?.code ?? "Failure code unavailable";
     incidents.push(`<li><div><a href="/releases/${encodeURIComponent(item.release.id)}?ui=${model.mode}">Release ${escapeHtml(item.release.version)}</a>` +
       `<span class="desktop-muted"> · ${escapeHtml(item.release.id)}</span></div><div>${badge(humanize(workflow.state), workflow.state)}` +
@@ -118,7 +118,7 @@ function activeIncidents(model: ConsoleViewModel): string {
   const hasUnavailableSource = !model.builds.value || !model.catalog.value;
   return `<p class="desktop-empty">${hasUnavailableSource
     ? "No incident is visible in the available data. Some status sources are unavailable."
-    : "No active failed builds or blocked releases are reported."}</p>`;
+    : "No unresolved failed builds or blocked releases are reported."}</p>`;
 }
 
 function overview(model: ConsoleViewModel): string {
@@ -128,7 +128,7 @@ function overview(model: ConsoleViewModel): string {
   const activity = activeJobs.length ? `<ul class="desktop-incident-list">${activeJobs.slice(0, 6).map(job =>
     `<li><a href="${escapeHtml(buildHref(job.id, model.mode))}">${escapeHtml(job.sourceId)} ${escapeHtml(job.tag)}</a>${badge(humanize(job.state), job.state)}</li>`).join("")}</ul>` : "";
   const releases = model.catalog.value?.items ?? [];
-  const blocked = releases.filter((item) => ["blocked", "failed"].includes(item.workflow?.workflow.state ?? "")).length;
+  const blocked = activeReleaseFailures(releases).length;
   return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">OPERATOR / CONTROL PLANE</p>` +
     `<h1>Overview</h1><p>See current release health, active work, and actionable failures.</p></section>` +
     notice(model.notice) + infrastructureOverview(model) + stablePanel(model) +
@@ -260,6 +260,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     : workflow.state === "blocked" || workflow.state === "failed"
       ? `<p class="desktop-muted">Retry is unavailable under the current canonical workflow policy.</p>` : "";
   const failureCode = workflow.failureCode ?? build?.failure?.code ?? null;
+  const stopBlocked = workflow.state === "canary_cleanup" && workflow.failureCode === "canary_stop_blocked";
   return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">CANONICAL RELEASE STATUS</p>` +
     `<h1>Release ${escapeHtml(value.release.version)}</h1><p>Admission, Canary execution, and promotion status from the Control Plane.</p>${back}</section>` +
     notice(model.notice) +
@@ -270,6 +271,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     `<div><dt>Workflow revision</dt><dd>${workflow.revision}</dd></div><div><dt>Workflow attempts</dt><dd>${workflow.attempts}</dd></div>` +
     `<div class="desktop-fact-wide"><dt>Immutable OCI digest</dt><dd><code>${escapeHtml(value.release.imageDigest)}</code></dd></div>` +
     `<div><dt>Canonical failure</dt><dd>${escapeHtml(failureCode ?? "None recorded")}</dd></div>` +
+     (stopBlocked ? `<div class="desktop-fact-wide"><dt>Safe recovery</dt><dd>Canary stop is blocked by the producer. Preserve unpublished local work and obtain a new quiesce/Writer-absence proof before Stable promotion. A completed Source build alone is not Stable.</dd></div>` : "") + `` +
     `<div><dt>Next attempt</dt><dd>${workflow.nextAttemptAt === null ? "Not scheduled" : escapeHtml(dateTime(workflow.nextAttemptAt))}</dd></div>` +
     `<div><dt>Canary build</dt><dd>${build
       ? `${badge(humanize(build.status), build.status)} <span>${escapeHtml(build.id)}</span> · ${build.attemptCount} attempts`

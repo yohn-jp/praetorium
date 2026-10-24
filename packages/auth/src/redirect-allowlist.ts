@@ -34,3 +34,43 @@ export function isAllowedInstanceHostname(url: URL, hostnameSuffix: string): boo
     (url.hostname === normalizedSuffix || url.hostname.endsWith(`.${normalizedSuffix}`))
   );
 }
+
+
+/**
+ * OAuth Admin return targets are restricted to read-only pages and their own
+ * bounded navigation state. No POST destination, arbitrary URL, or query key
+ * is ever accepted. The same authority is used by Gateway and Admin.
+ */
+export function adminReturnPath(target: string | null | undefined): string {
+  if (!target || target.length > 768 || !isSafeRelativeRedirect(target) ||
+      target.includes("#")) return "/";
+  let url: URL;
+  try { url = new URL(target, "https://admin.invalid"); }
+  catch { return "/"; }
+  if (url.origin !== "https://admin.invalid") return "/";
+  const path = url.pathname;
+  const buildDetail = /^\/builds\/sr_[0-9a-f-]{36}$/u.test(path);
+  const releaseDetail = /^\/releases\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(path);
+  const infrastructure = /^\/infrastructure(?:\/hosts\/[a-z][a-z0-9-]{0,63}|\/dependencies)?$/u.test(path);
+  const operation = /^\/operations\/op_[A-Za-z0-9_.:-]{1,124}$/u.test(path);
+  if (!["/", "/builds", "/releases", "/audit"].includes(path) &&
+      !buildDetail && !releaseDetail && !infrastructure && !operation) return "/";
+  const permitted = path === "/builds" ? ["ui", "sort", "state", "cursor"] :
+    path === "/audit" ? ["ui", "q", "cursor"] :
+    path === "/releases" || buildDetail ? ["ui", "cursor"] : ["ui"];
+  const normalized = new URLSearchParams();
+  const entries = [...url.searchParams.entries()];
+  if (entries.length > permitted.length) return "/";
+  for (const [key, value] of entries) {
+    if (!permitted.includes(key) || normalized.has(key)) return "/";
+    if (key === "ui" && value !== "desktop" && value !== "mobile") return "/";
+    if (key === "sort" && !["recent", "source", "state", "attempt"].includes(value)) return "/";
+    if (key === "state" && !["queued", "building", "produced", "admitted", "failed"].includes(value)) return "/";
+    if (key === "q" && (value.length > 100 ||
+        [...value].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127))) return "/";
+    if (key === "cursor" && (value.length < 1 || value.length > 512 ||
+        !/^(?:[A-Za-z0-9_.~:-]|%[0-9A-Fa-f]{2})+$/u.test(value))) return "/";
+    normalized.append(key, value);
+  }
+  return path + (normalized.size ? "?" + normalized.toString() : "");
+}

@@ -19,7 +19,6 @@ type Handoff = {
   readonly returnTo?: string;
 };
 export { adminReturnPath } from "@praetorium/auth";
-}
 
 const HANDOFF_TTL_MS = 60_000;
 const ADMIN_SESSION_TTL_SECONDS = 3600;

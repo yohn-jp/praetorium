@@ -1,0 +1,749 @@
+{
+  "scope": "LOCAL_SYNTHETIC_MINIFLARE_D1_ONLY",
+  "cloudflareRemote": false,
+  "sourceIdentity": {
+    "baselineRef": "f03e239",
+    "baselineCommit": "f03e239b9f9430208a0fc3b4f050d48d3b15406d",
+    "baselineFilesSha256": {
+      "apps/control-plane/src/runtime-binding.ts": "e81ad7b11ca569624fbefc8290d5a78d973521a83b9a23f8bb339770e67463ab",
+      "packages/persistence/src/d1/runtime-git-credentials-store.ts": "e59c3caebae57540211fe03ebf3d6d822eb0367eb00c59e3cb37c98e5cb6beb9",
+      "apps/control-plane/src/runtime-git-credential-routes.ts": "32a9f1e489759543a5e73ed5b2db05e3117eb22804a05e76aaf59da89e52b6b7",
+      "apps/gateway/src/adapters/runtime-git-broker.ts": "5a0505cce29b75ae7b134bb1bf70ecf755ea7cd19c04621097b97ce3eb0ed808",
+      "plugins/github/src/credential-broker.ts": "478d72b6c2bdf31850d4f8fd49d57146002d4badf3c07795b6ea129f4d063872"
+    },
+    "currentFiles": {
+      "runtime-authority-source": {
+        "locator": "../praetorium-runtime-authority/packages/persistence/src/d1/runtime-authority.ts",
+        "sha256": "2690bef92d4ad632a98f2f910dc746fb03e278dc6f03ae1eb81e1428d808c4ec"
+      },
+      "credential-store-source": {
+        "locator": "../praetorium-runtime-credential-reuse/packages/persistence/src/d1/runtime-git-credentials-store.ts",
+        "sha256": "941ac9dcb80d665d1297361cf5cc17feb8e8369771ea882352cab16abf7216a2"
+      },
+      "credential-routes-source": {
+        "locator": "../praetorium-runtime-credential-reuse/apps/control-plane/src/runtime-git-credential-routes.ts",
+        "sha256": "7d6dfff7cec63fe65ef44cff7da226295f80ceda4561f024b0ec135802bd2a4f"
+      },
+      "gateway-broker-source": {
+        "locator": "../praetorium-runtime-credential-reuse/apps/gateway/src/adapters/runtime-git-broker.ts",
+        "sha256": "106b743e9bdff145f466d6df7a180c5d4099b52569d2b5abc06a4092f62ae6b7"
+      },
+      "github-broker-source": {
+        "locator": "../praetorium-runtime-credential-reuse/plugins/github/src/credential-broker.ts",
+        "sha256": "ed2567096d747bce82301ea2abed81e3702f8dca321b45f909a021af583055ea"
+      },
+      "authority-migration": {
+        "locator": "../praetorium-runtime-authority/apps/control-plane/migrations/0009_runtime_authority.sql",
+        "sha256": "656dd0bef8d88c27a07cf14f3f79de3abcd16c64fd5cb45eb5272b2bedd58a05"
+      }
+    }
+  },
+  "iterationsPerScenario": 100,
+  "workload": {
+    "measuredBoundary": "Local synthetic D1 authority and credential persistence only",
+    "metricsSource": "Miniflare local D1 metadata; not Cloudflare production analytics",
+    "sameInitialFixtureBeforeAndAfter": true,
+    "exactRuntimeAndPermissionTupleRepeated": true,
+    "afterIsWarmedReuseHitOnly": true,
+    "firstMintAndRenewal": "EXCLUDED",
+    "unchangedRepositoryFetchAccessAndAuthorizationChecksSigningAndGitHubNetwork": "NOT_MEASURED"
+  },
+  "scenarios": [
+    {
+      "fixture": {
+        "bindings": 2,
+        "operations": 13,
+        "checkpoints": 169,
+        "credentials": 354,
+        "historicalOperationsForTarget": 12,
+        "targetCredentialRows": 354,
+        "backgroundCredentialRows": 0
+      },
+      "before": {
+        "label": "production-cardinality-before",
+        "initialFixture": {
+          "fixture": {
+            "bindings": 2,
+            "operations": 13,
+            "checkpoints": 169,
+            "credentials": 354,
+            "historicalOperationsForTarget": 12,
+            "targetCredentialRows": 354,
+            "backgroundCredentialRows": 0
+          },
+          "tableCounts": {
+            "logical_instances": 2,
+            "repository_bindings": 2,
+            "runtime_reservations": 3,
+            "operations": 13,
+            "operation_checkpoints": 169,
+            "runtime_git_credentials": 354
+          },
+          "credentialStatusCounts": {
+            "active": 177,
+            "revoked": 177
+          },
+          "rowCountSnapshotSha256": "3bc14b3c972856d56c27ef6e2b4686f8779fcde368ba2bcbe9ab6552f94256c4"
+        },
+        "localPlans": {
+          "runtimeAuthority": [
+            "CO-ROUTINE candidates",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH b USING INTEGER PRIMARY KEY (rowid=?)",
+            "SEARCH i USING INDEX sqlite_autoindex_logical_instances_1 (instance_id=?)",
+            "SEARCH o USING INDEX idx_operations_repository (repository_id=?)",
+            "SEARCH latest USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence=?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH pending_credential USING INDEX runtime_git_credentials_retirement (repository_id=? AND runtime_epoch=? AND status=? AND expires_at>?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SCAN evidence_identity VIRTUAL TABLE INDEX 3:",
+            "SEARCH r USING INDEX sqlite_autoindex_runtime_reservations_2 (instance_id=? AND runtime_epoch=?)",
+            "SEARCH absence USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence<?)",
+            "CORRELATED SCALAR SUBQUERY 3",
+            "SCAN evidence_identity VIRTUAL TABLE INDEX 3:",
+            "UNION ALL",
+            "SEARCH b USING INTEGER PRIMARY KEY (rowid=?)",
+            "SEARCH i USING INDEX sqlite_autoindex_logical_instances_1 (instance_id=?)",
+            "CORRELATED SCALAR SUBQUERY 7",
+            "SEARCH retirement_operation USING INDEX idx_operations_repository (repository_id=?)",
+            "SEARCH retirement_checkpoint USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=?)",
+            "CORRELATED SCALAR SUBQUERY 6",
+            "SEARCH confirmed_resume USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence>?)",
+            "CORRELATED SCALAR SUBQUERY 5",
+            "SEARCH retried_retirement USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence>?)",
+            "CORRELATED SCALAR SUBQUERY 9",
+            "SEARCH retired USING INDEX idx_operations_repository (repository_id=?)",
+            "SEARCH retired_latest USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence=?)",
+            "CORRELATED SCALAR SUBQUERY 8",
+            "SCAN evidence_identity VIRTUAL TABLE INDEX 3:",
+            "SEARCH retired_absence USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence<?)",
+            "SEARCH r USING INDEX sqlite_autoindex_runtime_reservations_2 (instance_id=? AND runtime_epoch=?)",
+            "SCAN candidates",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "scheduledCredentialPurge": [
+            "SEARCH runtime_git_credentials USING COVERING INDEX sqlite_autoindex_runtime_git_credentials_1 (token_id=?)",
+            "LIST SUBQUERY 1",
+            "SCAN runtime_git_credentials",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "credentialReadback": [
+            "SEARCH runtime_git_credentials USING INDEX sqlite_autoindex_runtime_git_credentials_1 (token_id=?)"
+          ]
+        },
+        "equivalence": {
+          "target": {
+            "authority": "post-absence-target",
+            "repositoryId": 899998001,
+            "installationId": 899998101,
+            "instanceId": "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "physicalInstanceId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_5",
+            "runtimeId": "res_d1-workload-target-5",
+            "runtimeEpoch": 5,
+            "leaseId": "res_d1-workload-target-5",
+            "clusterId": "local-cluster"
+          },
+          "observed": {
+            "authority": "observed-writer",
+            "repositoryId": 899998002,
+            "installationId": 899998102,
+            "instanceId": "ins_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "physicalInstanceId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAW_9",
+            "runtimeId": "res_d1-workload-observed-9",
+            "runtimeEpoch": 9,
+            "leaseId": "res_d1-workload-observed-9",
+            "clusterId": "local-cluster"
+          }
+        },
+        "requestMode": "mint-every-request",
+        "workload": {
+          "calls": 600,
+          "rowsRead": 92244,
+          "rowsWritten": 476,
+          "durationMs": 104,
+          "resultRows": 400,
+          "rowsReadAvailable": true,
+          "rowsWrittenAvailable": true,
+          "byQuery": {
+            "brokerBindingFirst": {
+              "calls": 100,
+              "rowsRead": 22600,
+              "rowsWritten": 0,
+              "durationMs": 21,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "brokerBindingSecond": {
+              "calls": 100,
+              "rowsRead": 22600,
+              "rowsWritten": 0,
+              "durationMs": 23,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialPurge": {
+              "calls": 100,
+              "rowsRead": 24144,
+              "rowsWritten": 176,
+              "durationMs": 17,
+              "resultRows": 0,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialRegister": {
+              "calls": 100,
+              "rowsRead": 200,
+              "rowsWritten": 300,
+              "durationMs": 12,
+              "resultRows": 0,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialReadback": {
+              "calls": 100,
+              "rowsRead": 100,
+              "rowsWritten": 0,
+              "durationMs": 11,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialRegistrationAuthority": {
+              "calls": 100,
+              "rowsRead": 22600,
+              "rowsWritten": 0,
+              "durationMs": 20,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            }
+          },
+          "wallClockMs": 7732.47,
+          "iterations": 100,
+          "credentialRowsCreated": 100,
+          "credentialRowsReturned": 100,
+          "currentAuthorityEvaluations": 300
+        },
+        "scheduledMaintenance": {
+          "calls": 1,
+          "rowsRead": 280,
+          "rowsWritten": 0,
+          "durationMs": 0,
+          "resultRows": 0,
+          "rowsReadAvailable": true,
+          "rowsWrittenAvailable": true,
+          "byQuery": {
+            "scheduledCredentialPurge": {
+              "calls": 1,
+              "rowsRead": 280,
+              "rowsWritten": 0,
+              "durationMs": 0,
+              "resultRows": 0,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            }
+          },
+          "wallClockMs": 0,
+          "deletedRows": 0
+        }
+      },
+      "after": {
+        "label": "production-cardinality-after",
+        "initialFixture": {
+          "fixture": {
+            "bindings": 2,
+            "operations": 13,
+            "checkpoints": 169,
+            "credentials": 354,
+            "historicalOperationsForTarget": 12,
+            "targetCredentialRows": 354,
+            "backgroundCredentialRows": 0
+          },
+          "tableCounts": {
+            "logical_instances": 2,
+            "repository_bindings": 2,
+            "runtime_reservations": 3,
+            "operations": 13,
+            "operation_checkpoints": 169,
+            "runtime_git_credentials": 354
+          },
+          "credentialStatusCounts": {
+            "active": 177,
+            "revoked": 177
+          },
+          "rowCountSnapshotSha256": "3bc14b3c972856d56c27ef6e2b4686f8779fcde368ba2bcbe9ab6552f94256c4"
+        },
+        "localPlans": {
+          "runtimeAuthority": [
+            "SEARCH b USING INTEGER PRIMARY KEY (rowid=?)",
+            "SEARCH i USING INDEX sqlite_autoindex_logical_instances_1 (instance_id=?)",
+            "SEARCH r USING INDEX sqlite_autoindex_runtime_reservations_1 (reservation_id=?)",
+            "SEARCH o USING INDEX sqlite_autoindex_operations_1 (operation_id=?) LEFT-JOIN"
+          ],
+          "scheduledCredentialPurge": [
+            "SEARCH runtime_git_credentials USING COVERING INDEX sqlite_autoindex_runtime_git_credentials_1 (token_id=?)",
+            "LIST SUBQUERY 1",
+            "SCAN runtime_git_credentials",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "credentialReadback": [
+            "SEARCH runtime_git_credentials USING INDEX sqlite_autoindex_runtime_git_credentials_1 (token_id=?)"
+          ],
+          "credentialReuse": [
+            "SEARCH credential USING INDEX runtime_git_credentials_retirement (repository_id=? AND runtime_epoch=? AND status=? AND expires_at>?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "CO-ROUTINE current_authority",
+            "SEARCH b USING INTEGER PRIMARY KEY (rowid=?)",
+            "SEARCH i USING INDEX sqlite_autoindex_logical_instances_1 (instance_id=?)",
+            "SEARCH r USING INDEX sqlite_autoindex_runtime_reservations_1 (reservation_id=?)",
+            "SEARCH o USING INDEX sqlite_autoindex_operations_1 (operation_id=?) LEFT-JOIN",
+            "SCAN authority",
+            "USE TEMP B-TREE FOR LAST 2 TERMS OF ORDER BY"
+          ]
+        },
+        "equivalence": {
+          "target": {
+            "authority": "post-absence-target",
+            "repositoryId": 899998001,
+            "installationId": 899998101,
+            "instanceId": "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "physicalInstanceId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_5",
+            "runtimeId": "res_d1-workload-target-5",
+            "runtimeEpoch": 5,
+            "leaseId": "res_d1-workload-target-5",
+            "clusterId": "local-cluster"
+          },
+          "observed": {
+            "authority": "observed-writer",
+            "repositoryId": 899998002,
+            "installationId": 899998102,
+            "instanceId": "ins_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "physicalInstanceId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAW_9",
+            "runtimeId": "res_d1-workload-observed-9",
+            "runtimeEpoch": 9,
+            "leaseId": "res_d1-workload-observed-9",
+            "clusterId": "local-cluster"
+          }
+        },
+        "requestMode": "reuse-exact-scope",
+        "workload": {
+          "calls": 200,
+          "rowsRead": 1100,
+          "rowsWritten": 0,
+          "durationMs": 22,
+          "resultRows": 200,
+          "rowsReadAvailable": true,
+          "rowsWrittenAvailable": true,
+          "byQuery": {
+            "brokerBindingFirst": {
+              "calls": 100,
+              "rowsRead": 400,
+              "rowsWritten": 0,
+              "durationMs": 15,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialReuse": {
+              "calls": 100,
+              "rowsRead": 700,
+              "rowsWritten": 0,
+              "durationMs": 7,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            }
+          },
+          "wallClockMs": 2402.266,
+          "iterations": 100,
+          "credentialRowsCreated": 0,
+          "credentialRowsReturned": 100,
+          "currentAuthorityEvaluations": 200
+        },
+        "scheduledMaintenance": {
+          "calls": 1,
+          "rowsRead": 722,
+          "rowsWritten": 64,
+          "durationMs": 1,
+          "resultRows": 0,
+          "rowsReadAvailable": true,
+          "rowsWrittenAvailable": true,
+          "byQuery": {
+            "scheduledCredentialPurge": {
+              "calls": 1,
+              "rowsRead": 722,
+              "rowsWritten": 64,
+              "durationMs": 1,
+              "resultRows": 0,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            }
+          },
+          "wallClockMs": 0,
+          "deletedRows": 64
+        }
+      },
+      "delta": {
+        "rowsRead": -91144,
+        "rowsWritten": -476,
+        "durationMs": -82,
+        "wallClockMs": -5330.204
+      }
+    },
+    {
+      "fixture": {
+        "bindings": 81,
+        "operations": 257,
+        "checkpoints": 2050,
+        "credentials": 5201,
+        "historicalOperationsForTarget": 256,
+        "targetCredentialRows": 201,
+        "backgroundCredentialRows": 5000
+      },
+      "before": {
+        "label": "stress-before",
+        "initialFixture": {
+          "fixture": {
+            "bindings": 81,
+            "operations": 257,
+            "checkpoints": 2050,
+            "credentials": 5201,
+            "historicalOperationsForTarget": 256,
+            "targetCredentialRows": 201,
+            "backgroundCredentialRows": 5000
+          },
+          "tableCounts": {
+            "logical_instances": 81,
+            "repository_bindings": 81,
+            "runtime_reservations": 82,
+            "operations": 257,
+            "operation_checkpoints": 2050,
+            "runtime_git_credentials": 5201
+          },
+          "credentialStatusCounts": {
+            "active": 1768,
+            "revocation_pending": 1667,
+            "revoked": 1766
+          },
+          "rowCountSnapshotSha256": "cda7ab1ea868ba1eb1bba115d0dd61481b90a2167ecd80040340626d076e1993"
+        },
+        "localPlans": {
+          "runtimeAuthority": [
+            "CO-ROUTINE candidates",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH b USING INTEGER PRIMARY KEY (rowid=?)",
+            "SEARCH i USING INDEX sqlite_autoindex_logical_instances_1 (instance_id=?)",
+            "SEARCH o USING INDEX idx_operations_repository (repository_id=?)",
+            "SEARCH latest USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence=?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH pending_credential USING INDEX runtime_git_credentials_retirement (repository_id=? AND runtime_epoch=? AND status=? AND expires_at>?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SCAN evidence_identity VIRTUAL TABLE INDEX 3:",
+            "SEARCH r USING INDEX sqlite_autoindex_runtime_reservations_2 (instance_id=? AND runtime_epoch=?)",
+            "SEARCH absence USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence<?)",
+            "CORRELATED SCALAR SUBQUERY 3",
+            "SCAN evidence_identity VIRTUAL TABLE INDEX 3:",
+            "UNION ALL",
+            "SEARCH b USING INTEGER PRIMARY KEY (rowid=?)",
+            "SEARCH i USING INDEX sqlite_autoindex_logical_instances_1 (instance_id=?)",
+            "CORRELATED SCALAR SUBQUERY 7",
+            "SEARCH retirement_operation USING INDEX idx_operations_repository (repository_id=?)",
+            "SEARCH retirement_checkpoint USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=?)",
+            "CORRELATED SCALAR SUBQUERY 6",
+            "SEARCH confirmed_resume USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence>?)",
+            "CORRELATED SCALAR SUBQUERY 5",
+            "SEARCH retried_retirement USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence>?)",
+            "CORRELATED SCALAR SUBQUERY 9",
+            "SEARCH retired USING INDEX idx_operations_repository (repository_id=?)",
+            "SEARCH retired_latest USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence=?)",
+            "CORRELATED SCALAR SUBQUERY 8",
+            "SCAN evidence_identity VIRTUAL TABLE INDEX 3:",
+            "SEARCH retired_absence USING INDEX sqlite_autoindex_operation_checkpoints_1 (operation_id=? AND sequence<?)",
+            "SEARCH r USING INDEX sqlite_autoindex_runtime_reservations_2 (instance_id=? AND runtime_epoch=?)",
+            "SCAN candidates",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "scheduledCredentialPurge": [
+            "SEARCH runtime_git_credentials USING COVERING INDEX sqlite_autoindex_runtime_git_credentials_1 (token_id=?)",
+            "LIST SUBQUERY 1",
+            "SCAN runtime_git_credentials",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "credentialReadback": [
+            "SEARCH runtime_git_credentials USING INDEX sqlite_autoindex_runtime_git_credentials_1 (token_id=?)"
+          ]
+        },
+        "equivalence": {
+          "target": {
+            "authority": "post-absence-target",
+            "repositoryId": 899998001,
+            "installationId": 899998101,
+            "instanceId": "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "physicalInstanceId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_5",
+            "runtimeId": "res_d1-workload-target-5",
+            "runtimeEpoch": 5,
+            "leaseId": "res_d1-workload-target-5",
+            "clusterId": "local-cluster"
+          },
+          "observed": {
+            "authority": "observed-writer",
+            "repositoryId": 899998002,
+            "installationId": 899998102,
+            "instanceId": "ins_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "physicalInstanceId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAW_9",
+            "runtimeId": "res_d1-workload-observed-9",
+            "runtimeEpoch": 9,
+            "leaseId": "res_d1-workload-observed-9",
+            "clusterId": "local-cluster"
+          }
+        },
+        "requestMode": "mint-every-request",
+        "workload": {
+          "calls": 600,
+          "rowsRead": 1290530,
+          "rowsWritten": 1400,
+          "durationMs": 454,
+          "resultRows": 400,
+          "rowsReadAvailable": true,
+          "rowsWrittenAvailable": true,
+          "byQuery": {
+            "brokerBindingFirst": {
+              "calls": 100,
+              "rowsRead": 283900,
+              "rowsWritten": 0,
+              "durationMs": 77,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "brokerBindingSecond": {
+              "calls": 100,
+              "rowsRead": 283900,
+              "rowsWritten": 0,
+              "durationMs": 92,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialPurge": {
+              "calls": 100,
+              "rowsRead": 438530,
+              "rowsWritten": 1100,
+              "durationMs": 152,
+              "resultRows": 0,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialRegister": {
+              "calls": 100,
+              "rowsRead": 200,
+              "rowsWritten": 300,
+              "durationMs": 20,
+              "resultRows": 0,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialReadback": {
+              "calls": 100,
+              "rowsRead": 100,
+              "rowsWritten": 0,
+              "durationMs": 15,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialRegistrationAuthority": {
+              "calls": 100,
+              "rowsRead": 283900,
+              "rowsWritten": 0,
+              "durationMs": 98,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            }
+          },
+          "wallClockMs": 12638.524,
+          "iterations": 100,
+          "credentialRowsCreated": 100,
+          "credentialRowsReturned": 100,
+          "currentAuthorityEvaluations": 300
+        },
+        "scheduledMaintenance": {
+          "calls": 1,
+          "rowsRead": 4203,
+          "rowsWritten": 0,
+          "durationMs": 1,
+          "resultRows": 0,
+          "rowsReadAvailable": true,
+          "rowsWrittenAvailable": true,
+          "byQuery": {
+            "scheduledCredentialPurge": {
+              "calls": 1,
+              "rowsRead": 4203,
+              "rowsWritten": 0,
+              "durationMs": 1,
+              "resultRows": 0,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            }
+          },
+          "wallClockMs": 0,
+          "deletedRows": 0
+        }
+      },
+      "after": {
+        "label": "stress-after",
+        "initialFixture": {
+          "fixture": {
+            "bindings": 81,
+            "operations": 257,
+            "checkpoints": 2050,
+            "credentials": 5201,
+            "historicalOperationsForTarget": 256,
+            "targetCredentialRows": 201,
+            "backgroundCredentialRows": 5000
+          },
+          "tableCounts": {
+            "logical_instances": 81,
+            "repository_bindings": 81,
+            "runtime_reservations": 82,
+            "operations": 257,
+            "operation_checkpoints": 2050,
+            "runtime_git_credentials": 5201
+          },
+          "credentialStatusCounts": {
+            "active": 1768,
+            "revocation_pending": 1667,
+            "revoked": 1766
+          },
+          "rowCountSnapshotSha256": "cda7ab1ea868ba1eb1bba115d0dd61481b90a2167ecd80040340626d076e1993"
+        },
+        "localPlans": {
+          "runtimeAuthority": [
+            "SEARCH b USING INTEGER PRIMARY KEY (rowid=?)",
+            "SEARCH i USING INDEX sqlite_autoindex_logical_instances_1 (instance_id=?)",
+            "SEARCH r USING INDEX sqlite_autoindex_runtime_reservations_1 (reservation_id=?)",
+            "SEARCH o USING INDEX sqlite_autoindex_operations_1 (operation_id=?) LEFT-JOIN"
+          ],
+          "scheduledCredentialPurge": [
+            "SEARCH runtime_git_credentials USING COVERING INDEX sqlite_autoindex_runtime_git_credentials_1 (token_id=?)",
+            "LIST SUBQUERY 1",
+            "SCAN runtime_git_credentials",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "credentialReadback": [
+            "SEARCH runtime_git_credentials USING INDEX sqlite_autoindex_runtime_git_credentials_1 (token_id=?)"
+          ],
+          "credentialReuse": [
+            "SEARCH credential USING INDEX runtime_git_credentials_retirement (repository_id=? AND runtime_epoch=? AND status=? AND expires_at>?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "CO-ROUTINE current_authority",
+            "SEARCH b USING INTEGER PRIMARY KEY (rowid=?)",
+            "SEARCH i USING INDEX sqlite_autoindex_logical_instances_1 (instance_id=?)",
+            "SEARCH r USING INDEX sqlite_autoindex_runtime_reservations_1 (reservation_id=?)",
+            "SEARCH o USING INDEX sqlite_autoindex_operations_1 (operation_id=?) LEFT-JOIN",
+            "SCAN authority",
+            "USE TEMP B-TREE FOR LAST 2 TERMS OF ORDER BY"
+          ]
+        },
+        "equivalence": {
+          "target": {
+            "authority": "post-absence-target",
+            "repositoryId": 899998001,
+            "installationId": 899998101,
+            "instanceId": "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "physicalInstanceId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV_5",
+            "runtimeId": "res_d1-workload-target-5",
+            "runtimeEpoch": 5,
+            "leaseId": "res_d1-workload-target-5",
+            "clusterId": "local-cluster"
+          },
+          "observed": {
+            "authority": "observed-writer",
+            "repositoryId": 899998002,
+            "installationId": 899998102,
+            "instanceId": "ins_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "physicalInstanceId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAW_9",
+            "runtimeId": "res_d1-workload-observed-9",
+            "runtimeEpoch": 9,
+            "leaseId": "res_d1-workload-observed-9",
+            "clusterId": "local-cluster"
+          }
+        },
+        "requestMode": "reuse-exact-scope",
+        "workload": {
+          "calls": 200,
+          "rowsRead": 1100,
+          "rowsWritten": 0,
+          "durationMs": 45,
+          "resultRows": 200,
+          "rowsReadAvailable": true,
+          "rowsWrittenAvailable": true,
+          "byQuery": {
+            "brokerBindingFirst": {
+              "calls": 100,
+              "rowsRead": 400,
+              "rowsWritten": 0,
+              "durationMs": 20,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            },
+            "credentialReuse": {
+              "calls": 100,
+              "rowsRead": 700,
+              "rowsWritten": 0,
+              "durationMs": 25,
+              "resultRows": 100,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            }
+          },
+          "wallClockMs": 4570.491,
+          "iterations": 100,
+          "credentialRowsCreated": 0,
+          "credentialRowsReturned": 100,
+          "currentAuthorityEvaluations": 200
+        },
+        "scheduledMaintenance": {
+          "calls": 1,
+          "rowsRead": 6493,
+          "rowsWritten": 64,
+          "durationMs": 5,
+          "resultRows": 0,
+          "rowsReadAvailable": true,
+          "rowsWrittenAvailable": true,
+          "byQuery": {
+            "scheduledCredentialPurge": {
+              "calls": 1,
+              "rowsRead": 6493,
+              "rowsWritten": 64,
+              "durationMs": 5,
+              "resultRows": 0,
+              "rowsReadAvailable": true,
+              "rowsWrittenAvailable": true
+            }
+          },
+          "wallClockMs": 0,
+          "deletedRows": 64
+        }
+      },
+      "delta": {
+        "rowsRead": -1289430,
+        "rowsWritten": -1400,
+        "durationMs": -409,
+        "wallClockMs": -8068.033
+      }
+    }
+  ],
+  "gates": {
+    "hostedCloudflareD1": "NOT_CHECKED",
+    "productionQueryPlan": "NOT_CHECKED",
+    "hostedProducerAndRegistry": "NOT_CHECKED",
+    "browserAcceptance": "NOT_CHECKED"
+  }
+}

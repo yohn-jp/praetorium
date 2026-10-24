@@ -37,6 +37,7 @@ body:has(.admin-mobile-console) .page-shell{padding:0;max-width:none;min-height:
 .admin-mobile-stable{margin:0;padding:15px 16px;border:1px solid #c8dbcd;border-radius:9px;background:#e8f2e9;font:650 14px/1.55 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}
 .admin-mobile-stable-panel{display:grid;gap:6px;margin:0 0 18px;padding:13px 15px;border:1px solid #c8dbcd;border-radius:9px;background:#e8f2e9}
 .admin-mobile-stable-panel strong{font:650 14px/1.55 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}
+.admin-mobile-stable-link{display:inline-flex;min-height:44px;align-items:center;color:#174937;font-size:14px;font-weight:650;overflow-wrap:anywhere}
 .admin-mobile-release-list,.admin-mobile-job-list,.admin-mobile-platform-releases{display:grid;min-width:0;gap:11px;margin:0;padding:0;list-style:none}
 .admin-mobile-release-list>li{min-width:0;border-bottom:1px solid #d6e1da}
 .admin-mobile-release-list>li>a{display:flex;min-height:48px;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;color:#1b503d;text-decoration:none}
@@ -61,6 +62,8 @@ body:has(.admin-mobile-console) .page-shell{padding:0;max-width:none;min-height:
 .admin-mobile-search>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
 .admin-mobile-search button{padding-inline:13px}
 .admin-mobile-older{width:100%;margin-top:16px}
+.admin-mobile-card-action{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.admin-mobile-source-execution{display:inline-flex;min-height:44px;align-items:center;color:#174937;font-size:14px;font-weight:650;overflow-wrap:anywhere}
 .admin-mobile-back{display:inline-flex;min-height:44px;align-items:center;margin:0 0 12px;color:#1b503d;font-weight:650}
 .admin-mobile-release-detail-heading{display:grid;justify-items:start;gap:9px;padding:12px 0 17px;border-bottom:1px solid #d6e1da}
 .admin-mobile-release-detail-heading h1{margin:2px 0 0;font-size:clamp(27px,7vw,38px);line-height:1.15;letter-spacing:-.05em;overflow-wrap:anywhere}
@@ -71,8 +74,19 @@ body:has(.admin-mobile-console) .page-shell{padding:0;max-width:none;min-height:
 .admin-mobile-detail-heading{display:grid;justify-items:start;gap:7px;padding:17px 0 16px;border-bottom:1px solid #d6e1da}
 .admin-mobile-detail-heading h1{margin:3px 0 0;font-size:clamp(27px,7vw,38px);line-height:1.15;letter-spacing:-.05em;overflow-wrap:anywhere}
 .admin-mobile-detail-heading p{margin:0;color:#647c6c}
+.admin-mobile-detail-heading .admin-mobile-source-name{color:#17372f;font-size:16px;font-weight:700;overflow-wrap:anywhere}
+.admin-mobile-source-name span{color:#536d5c;font-size:13px;font-weight:500}
+.admin-mobile-refresh{min-height:48px}
 .admin-mobile-detail-facts{padding:14px 0 17px;border-bottom:1px solid #d6e1da}
 .admin-mobile-detail-facts code{display:block}
+.admin-mobile-failure-detail{padding:15px;border:1px solid #e2c4b7;border-left:4px solid #9b4938;border-radius:9px;background:#fffaf6}
+.admin-mobile-failure-detail h2,.admin-mobile-technical h2{margin:5px 0 0;color:#17372f;font-size:20px;line-height:1.3;overflow-wrap:anywhere}
+.admin-mobile-failure-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px;margin:13px 0 0}
+.admin-mobile-failure-facts>div{min-width:0}
+.admin-mobile-failure-facts dt{color:#52695b;font-size:12px;font-weight:700}
+.admin-mobile-failure-facts dd{margin:3px 0 0;color:#17372f;font-size:14px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
+.admin-mobile-technical{min-width:0;padding:15px;border:1px solid #d6e1da;border-radius:9px;background:#fff}
+.admin-mobile-technical>.admin-mobile-job-id{margin-top:10px;color:#365741;font-size:13px}
 .admin-mobile-evidence-state{margin:0 0 12px;color:#647c6c;font-size:13px}
 .admin-mobile-attempt-list{display:grid;gap:13px;margin:0;padding:0;list-style:none;counter-reset:attempt}
 .admin-mobile-attempt{min-width:0}
@@ -80,16 +94,21 @@ body:has(.admin-mobile-console) .page-shell{padding:0;max-width:none;min-height:
 .admin-mobile-attempt-heading{display:flex;min-width:0;align-items:flex-start;justify-content:space-between;gap:10px}
 .admin-mobile-attempt-heading>div{display:grid;justify-items:start;gap:6px}
 .admin-mobile-attempt-heading h3{margin:0;font-size:14px}
-.admin-mobile-attempt-heading>code{max-width:55%;font-size:10px;overflow-wrap:anywhere;word-break:break-word}
+.admin-mobile-attempt-heading>code{max-width:55%;font-size:12px;overflow-wrap:anywhere;word-break:break-word}
 .admin-mobile-diagnostic{min-width:0;margin-top:14px;padding-top:12px;border-top:1px solid #d6e1da}
 .admin-mobile-diagnostic h4{margin:0 0 5px;font-size:14px}
 .admin-mobile-diagnostic p{overflow-wrap:anywhere}
+.admin-mobile-diagnostic-caveat{margin:8px 0;color:#52695b;font-size:13px;line-height:1.55}
 .admin-mobile-diagnostic dl{display:grid;gap:7px}
 .admin-mobile-diagnostic details{margin-top:12px}
 .admin-mobile-diagnostic summary{min-height:48px;padding:10px 0}
-.admin-mobile-diagnostic pre{max-width:100%;max-height:20rem;margin:10px 0;padding:12px;border-radius:6px;background:#f3f5f0;color:#17372f;font-size:12px;line-height:1.55;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.admin-mobile-diagnostic summary:focus-visible,.admin-mobile-console a:focus-visible,.admin-mobile-console button:focus-visible{outline:3px solid #a64d2e;outline-offset:3px;border-radius:4px}
+.admin-mobile-diagnostic pre{width:100%;min-width:0;box-sizing:border-box;max-width:100%;max-height:20rem;margin:10px 0;padding:12px;border-radius:6px;background:#f3f5f0;color:#17372f;font-size:12px;line-height:1.55;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
 .admin-mobile-evidence-unavailable{margin:12px 0;padding:11px 12px;border-left:3px solid #885421;background:#fff6e6;color:#694219;font-size:13px;overflow-wrap:anywhere}
 .admin-mobile-action-region{position:fixed;z-index:12;bottom:calc(75px + env(safe-area-inset-bottom));left:50%;display:grid;width:min(600px,calc(100vw - 20px));max-height:140px;gap:9px;padding:13px;border:1px solid #c8dbcd;border-radius:10px;background:#fdfefb;box-shadow:0 5px 26px #153c2f2a;overflow:auto;transform:translateX(-50%)}
+.admin-mobile-build-detail .admin-mobile-action-region{position:static;z-index:auto;width:auto;max-height:none;margin:24px 0 0;transform:none}
+.admin-mobile-main:has(.admin-mobile-build-detail){padding-bottom:calc(54px + env(safe-area-inset-bottom))}
+.admin-mobile-console:has(.admin-mobile-build-detail) .admin-mobile-toast{top:calc(80px + env(safe-area-inset-top));bottom:auto}
 .admin-mobile-action-copy{display:grid;gap:3px;margin:0;color:#496958;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
 .admin-mobile-action-region form{margin:0}
 .admin-mobile-action-region button{width:100%;min-height:48px}

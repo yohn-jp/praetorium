@@ -103,6 +103,45 @@ describe("desktop operator composition", () => {
     expect(html).toContain('class="desktop-notice-slot" aria-live="polite"');
   });
 
+  it("orders failure detail before recovery and identifiers and labels summary-only or absent evidence truthfully", () => {
+    const render = (evidence: SourceBuildDetail["evidence"], diagnostic: SourceBuildDetail["attempts"][number]["diagnostic"]) =>
+      renderDesktopConsole(view({
+        selectedBuildId: job.id,
+        detail: dependency("GET /v1/operator/source-builds/:id", {
+          job,
+          nextCursor: null,
+          evidence,
+          attempts: [{
+            id: "attempt-current", attempt: 2, revision: 7, leaseEpoch: 3, state: "failed",
+            stage: "metadata", startedAt: null, finishedAt: null, failureCode: job.error,
+            evidence, expiresAt: evidence === "expired" ? 1_799_000_000_000 : null, diagnostic,
+          }],
+        }),
+      }));
+    const detailed = render("available", {
+      stage: "metadata", reason: "verification_failed", summary: "Metadata verification failed.",
+      excerpt: "git rev-parse HEAD failed", truncated: false,
+    });
+    const order = ["AUTHORITATIVE CURRENT STATE", "Recorded stage and reason", "Sanitized excerpt",
+      "SAFE NEXT ACTION", "TECHNICAL IDENTIFIERS", "Attempt history"];
+    const positions = order.map((text) => detailed.indexOf(text));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(detailed).toContain("This summary describes a failure category and may not identify the root cause.");
+    expect(detailed).toContain("Scriptorium");
+
+    const summaryOnly = render("available", {
+      stage: "metadata", reason: "verification_failed", summary: "Metadata verification failed.", truncated: false,
+    });
+    expect(summaryOnly).toContain("Diagnostic evidence · Summary only");
+    expect(summaryOnly).toContain("No detailed diagnostic excerpt was recorded.");
+    expect(summaryOnly).not.toContain("View sanitized diagnostic excerpt");
+
+    expect(render("not_recorded", null)).toContain("Diagnostic evidence was not recorded for this attempt.");
+    expect(render("expired", null)).toContain("Diagnostic evidence expired");
+    expect(render("available", null)).toContain("Diagnostic evidence is marked available, but its details are unavailable in this response.");
+  });
+
   it("keeps queue outages separate from build failures and hides retry when policy denies it", () => {
     const unavailable = renderDesktopConsole(view({
       builds: { ...dependency("GET /v1/operator/source-builds", null, null), reason: "schema_missing" },
@@ -117,7 +156,7 @@ describe("desktop operator composition", () => {
         job: { ...job, retryable: false }, attempts: [], nextCursor: null, evidence: "not_recorded",
       }),
     }));
-    expect(denied).toContain("Retry not permitted");
+    expect(denied).toContain("Retry is not permitted by the current queue policy.");
     expect(denied).not.toContain('name="idempotencyKey"');
     expect(denied).toContain("Canonical failure code <code>SOURCE_BUILD_FAILED</code>");
     expect(denied).toContain("Diagnostic evidence was not recorded for this job.");

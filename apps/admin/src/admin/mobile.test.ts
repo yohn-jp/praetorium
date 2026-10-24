@@ -188,6 +188,39 @@ describe("mobile operator console", () => {
     expect(html).toContain("The recorded failure remains available");
   });
 
+  it("leads with authoritative state and Source, then stage, evidence, recovery, identifiers, and history", () => {
+    const html = renderMobileConsole(model({ selectedBuildId: sourceJob.id }));
+    const order = ["status-badge status-bad", "AFFECTED SOURCE", "RECORDED FAILURE", "Sanitized excerpt",
+      'aria-label="Build recovery action"', "TECHNICAL IDENTIFIERS", "Attempt history"];
+    const positions = order.map((text) => html.indexOf(text));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(html).toContain("Scriptorium <span>(scriptorium)</span>");
+    expect(html).toContain("may not identify the root cause");
+  });
+
+  it("distinguishes summary-only, not recorded, expired, and unavailable diagnostic evidence", () => {
+    const render = (evidenceState: SourceBuildAttempt["evidence"], diagnostic: SourceBuildAttempt["diagnostic"]) => {
+      const changedAttempt = { ...attempt, evidence: evidenceState, diagnostic };
+      const detail: SourceBuildDetail = {
+        job: sourceJob, attempts: [changedAttempt], nextCursor: null, evidence: evidenceState,
+      };
+      return renderMobileConsole(model({
+        selectedBuildId: sourceJob.id,
+        detail: dependency(detail, "GET /v1/operator/source-builds/:id"),
+      }));
+    };
+    const summaryOnly = render("available", {
+      stage: "metadata", reason: "verification_failed", summary: "Metadata verification failed.", truncated: false,
+    });
+    expect(summaryOnly).toContain("Diagnostic evidence · Summary only");
+    expect(summaryOnly).toContain("No detailed diagnostic excerpt was recorded.");
+    expect(summaryOnly).not.toContain("Show sanitized diagnostic excerpt");
+    expect(render("not_recorded", null)).toContain("Diagnostic evidence was not recorded for this attempt.");
+    expect(render("expired", null)).toContain("Diagnostic evidence expired.");
+    expect(render("available", null)).toContain("Diagnostic evidence is marked available, but its details are unavailable in this response.");
+  });
+
   it("renders missing evidence and refuses to offer a retry when queue policy disallows it", () => {
     const unavailableAttempt: SourceBuildAttempt = {
       ...attempt,
@@ -336,7 +369,7 @@ describe("mobile operator console", () => {
     expect(html).toContain('href="/releases/release-detail?ui=mobile">Refresh status</a>');
     expect(html).toContain('href="/releases/release-detail?ui=desktop">Desktop view</a>');
     expect(html).toContain("Canary workflow");
-    expect(html).toContain("Canary build attempts");
+    expect(html).toContain("Composition build attempts");
     expect(html).toContain("canary_build_failed");
     expect(html).toContain("sha256:" + "d".repeat(64));
     expect(html).toContain('action="/releases/release-detail/retry?ui=mobile"');
@@ -356,7 +389,8 @@ describe("mobile operator console", () => {
         detail: dependency(detail, "GET /v1/operator/source-builds/:id"),
       }),
     );
-    expect(html).toContain('href="/releases/release-admitted?ui=mobile">release-admitted</a>');
+    expect(html).toContain('href="/releases/release-admitted?ui=mobile#composition-build">');
+    expect(html).toContain("Composition Build release-admitted");
   });
 
   it("keeps Audit searchable, bounded and escaped", () => {

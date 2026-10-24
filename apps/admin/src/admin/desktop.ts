@@ -6,7 +6,8 @@ import type {
 } from "@praetorium/contracts";
 import { escapeHtml } from "../presentation.js";
 import {
-  buildHref, consoleHref, operationHref, viewHref, type ConsoleDependency,
+  admittedReleaseHref, buildHref, compositionBuildHref, consoleHref, operationHref,
+  sourceReleaseExecutionHref, stableReleaseHref, viewHref, type ConsoleDependency,
   type ConsoleRelease, type ConsoleSection, type ConsoleViewModel,
 } from "./view-model.js";
 import type { PublishedSourceRelease, SourceReleaseView } from "./release-sources.js";
@@ -93,6 +94,7 @@ function stablePanel(model: ConsoleViewModel): string {
   return `<section class="desktop-stable" aria-labelledby="desktop-stable-title">` +
     `<div><span class="desktop-eyebrow">CURRENT STABLE</span><h2 id="desktop-stable-title">${escapeHtml(label)}</h2>` +
     `<code>${escapeHtml(channel.currentReleaseId)}</code></div>` +
+    `<a class="desktop-text-link" href="${escapeHtml(stableReleaseHref(channel.currentReleaseId, model.mode))}">Open Stable release details</a>` +
     (current ? `<div class="desktop-stable-digest"><span>OCI digest</span><code>${escapeHtml(current.release.imageDigest)}</code></div>` :
       `<p class="desktop-muted">Release details are outside the loaded catalog page.</p>`) + `</section>`;
 }
@@ -194,8 +196,9 @@ function sourceReleaseOption(source: SourceReleaseView, release: PublishedSource
     ? `<div class="desktop-source-identity"><span>Resolved immutable commit</span><code>${escapeHtml(job.commit)}</code>` +
       `<span>Praetorium job</span><a href="${escapeHtml(buildHref(job.id, model.mode))}">${escapeHtml(job.id)}</a> ${badge(humanize(job.state), job.state)}</div>`
     : `<p class="desktop-muted">Praetorium resolves and pins the exact commit when this release is submitted.</p>`;
+  const execution = `<a class="desktop-text-link desktop-source-execution" href="${escapeHtml(sourceReleaseExecutionHref(source.source.id, release.id, model.mode))}">Open Source build execution history</a>`;
   const selectedHref = job?.state === "admitted" && job.admittedReleaseId
-    ? "/releases/" + encodeURIComponent(job.admittedReleaseId) + "?ui=" + model.mode
+    ? admittedReleaseHref(job.admittedReleaseId, model.mode)
     : job ? buildHref(job.id, model.mode) : null;
   const deployAction = job && selectedHref
     ? `<a class="desktop-button desktop-button-secondary" href="${escapeHtml(selectedHref)}">${job.state === "admitted" ? "Inspect Canary / Stable" : job.state === "failed" ? "Review failure / retry" : "View current build"}</a>`
@@ -210,7 +213,7 @@ function sourceReleaseOption(source: SourceReleaseView, release: PublishedSource
     `<p class="desktop-eyebrow">${release.prerelease ? "PRERELEASE" : "PUBLISHED RELEASE"}</p>` +
     `<h4>${escapeHtml(release.name)}</h4><p><code>${escapeHtml(release.tag)}</code> · Published ${escapeHtml(dateTime(release.publishedAt))}</p>` +
     `<span class="desktop-muted">GitHub Release ID ${escapeHtml(String(release.id))}</span></div>` +
-    `${deployAction}</div>${exactIdentity}` +
+    `${deployAction}</div>${exactIdentity}${execution}` +
     (release.notes ? `<p class="desktop-release-notes">${escapeHtml(release.notes)}</p>` : "") + `</div>`;
 }
 
@@ -278,19 +281,21 @@ function releaseDetail(model: ConsoleViewModel): string {
     `<div><dt>Canonical failure</dt><dd>${escapeHtml(failureCode ?? "None recorded")}</dd></div>` +
      (stopBlocked ? `<div class="desktop-fact-wide"><dt>Safe recovery</dt><dd>Canary stop is blocked by the producer. Preserve unpublished local work and obtain a new quiesce/Writer-absence proof before Stable promotion. A completed Source build alone is not Stable.</dd></div>` : "") +
     `<div><dt>Next attempt</dt><dd>${workflow.nextAttemptAt === null ? "Not scheduled" : escapeHtml(dateTime(workflow.nextAttemptAt))}</dd></div>` +
-    `<div><dt>Canary build</dt><dd>${build
-      ? `${badge(humanize(build.status), build.status)} <span>${escapeHtml(build.id)}</span> · ${build.attemptCount} attempts`
+    `<div id="composition-build"><dt>Composition build</dt><dd>${build
+      ? `${badge(humanize(build.status), build.status)} <a class="desktop-text-link" href="${escapeHtml(compositionBuildHref(value.release.id, model.mode) + "#composition-build")}">${escapeHtml(build.id)}</a> · ${build.attemptCount} attempts`
       : "No Canary build is attached"}</dd></div>` +
     `<div><dt>Canary build key</dt><dd>${escapeHtml(workflow.canaryBuildKey ?? "Not recorded")}</dd></div>` +
     `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(workflow.canaryOperationId)
-  ? `<a href="${escapeHtml(operationHref(workflow.canaryOperationId, model.mode))}">${escapeHtml(workflow.canaryOperationId)}</a>`
+  ? `<a href="${escapeHtml(operationHref(workflow.canaryOperationId, model.mode, value.release.id))}">${escapeHtml(workflow.canaryOperationId)}</a>`
   : escapeHtml(workflow.canaryOperationId ?? "Not recorded")}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-release-followthrough-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">SAFE FOLLOW-THROUGH</p><h2 id="desktop-release-followthrough-title">Canary and Stable progression</h2></div>` +
     `<a class="desktop-button desktop-button-secondary" href="/releases/${encodeURIComponent(value.release.id)}?ui=${model.mode}">Refresh status</a></div>` +
     `<p class="desktop-section-intro">A completed build or admitted artifact does not by itself mean the release is Stable. Stable promotion follows the verified Canary and rollout workflow.</p>` +
     `<div class="desktop-release-followthrough"><span>${badge(humanize(workflow.state), workflow.state)}</span>` +
-    `<span class="desktop-muted">Current Stable channel status is shown on the Releases page.</span></div></section>`;
+    `${model.catalog.value?.stableChannel?.currentReleaseId
+      ? `<a class="desktop-text-link" href="${escapeHtml(stableReleaseHref(model.catalog.value.stableChannel.currentReleaseId, model.mode))}">Open current Stable release ${escapeHtml(model.catalog.value.stableChannel.currentReleaseId)}</a>`
+      : `<span class="desktop-muted">Current Stable release is not recorded.</span>`}</div></section>`;
 }
 
 function buildSort(model: ConsoleViewModel): BuildSort {
@@ -362,15 +367,24 @@ function attemptStateLabel(attempt: SourceBuildAttempt): string {
   return attempt.state === "lease_expired" ? "Lease expired" : humanize(attempt.state);
 }
 
-function diagnosticEvidence(attempt: SourceBuildAttempt): string {
-  if (attempt.evidence === "expired")
-    return `<p class="desktop-evidence-state" role="status">Diagnostic evidence expired${attempt.expiresAt ? ` on ${escapeHtml(dateTime(attempt.expiresAt))}` : ""}.</p>`;
-  if (attempt.evidence === "not_recorded" || !attempt.diagnostic)
+function diagnosticEvidence(
+  evidence: SourceBuildAttempt["evidence"],
+  diagnostic: SourceBuildAttempt["diagnostic"],
+  expiresAt: number | null = null,
+): string {
+  if (evidence === "expired")
+    return `<p class="desktop-evidence-state" role="status">Diagnostic evidence expired${expiresAt !== null ? ` on ${escapeHtml(dateTime(expiresAt))}` : ""}.</p>`;
+  if (evidence === "not_recorded")
     return `<p class="desktop-evidence-state" role="status">Diagnostic evidence was not recorded for this attempt.</p>`;
-  const diagnostic = attempt.diagnostic;
-  return `<div class="desktop-diagnostic"><p><strong>${escapeHtml(diagnostic.summary)}</strong></p>` +
-    `<p class="desktop-diagnostic-meta">${escapeHtml(humanize(diagnostic.reason))}${diagnostic.truncated ? " · excerpt truncated" : ""}</p>` +
-    (diagnostic.excerpt ? `<details><summary>View sanitized diagnostic excerpt</summary><pre>${escapeHtml(diagnostic.excerpt)}</pre></details>` : "") +
+  if (!diagnostic)
+    return `<p class="desktop-evidence-state" role="status">Diagnostic evidence is marked available, but its details are unavailable in this response.</p>`;
+  const kind = diagnostic.excerpt ? "Sanitized excerpt" : "Summary only";
+  return `<div class="desktop-diagnostic"><h3>Diagnostic evidence · ${kind}</h3>` +
+    `<p><strong>Recorded summary:</strong> ${escapeHtml(diagnostic.summary || "No failure summary was recorded.")}</p>` +
+    `<p class="desktop-diagnostic-meta">This summary describes a failure category and may not identify the root cause.</p>` +
+    `<p class="desktop-diagnostic-meta"><strong>Recorded reason:</strong> ${escapeHtml(humanize(diagnostic.reason))}${diagnostic.truncated ? " · excerpt truncated" : ""}</p>` +
+    (diagnostic.excerpt ? `<details><summary>View sanitized diagnostic excerpt</summary><pre>${escapeHtml(diagnostic.excerpt)}</pre></details>`
+      : `<p class="desktop-evidence-state">No detailed diagnostic excerpt was recorded.</p>`) +
     `</div>`;
 }
 
@@ -397,7 +411,7 @@ function attemptTimeline(detail: SourceBuildDetail): string {
       `<div><dt>Failure code</dt><dd>${escapeHtml(attempt.failureCode ?? "None recorded")}</dd></div>` +
       `<div><dt>Revision</dt><dd>${attempt.revision}</dd></div><div><dt>Lease epoch</dt><dd>${attempt.leaseEpoch}</dd></div>` +
       `<div><dt>Evidence</dt><dd>${escapeHtml(humanize(attempt.evidence))}</dd></div></dl>` +
-      diagnosticEvidence(attempt) + `</div></li>`;
+      diagnosticEvidence(attempt.evidence, attempt.diagnostic, attempt.expiresAt) + `</div></li>`;
   }).join("")}</ol>`;
 }
 
@@ -415,6 +429,10 @@ function retryForm(job: SourceBuildSummary, model: ConsoleViewModel): string {
     `<p>${copy}</p></form>`;
 }
 
+function sourceName(sourceId: string): string {
+  return sourceId === "scriptorium" ? "Scriptorium" : sourceId;
+}
+
 function buildDetail(model: ConsoleViewModel): string {
   const detailSection = model.detail;
   if (!detailSection) return `<p class="desktop-empty">Select a build from the queue to inspect its attempts.</p>`;
@@ -425,36 +443,48 @@ function buildDetail(model: ConsoleViewModel): string {
   if (model.selectedBuildId && model.selectedBuildId !== job.id)
     return `<p class="desktop-unavailable" role="status">Build detail is unavailable because the returned job identity did not match the requested job.</p>`;
   const recent = [...detail.attempts].sort((a,b)=>b.leaseEpoch-a.leaseEpoch)[0];
-  const reason = recent?.diagnostic?.summary ?? (recent?.evidence === "expired"
-    ? "Diagnostic evidence expired. The failure cause is unavailable."
-    : "Diagnostic evidence was not recorded. Confirm Worker delivery before attempting another build.");
-  const incident = job.state === "failed" ?
-    `<section class="desktop-section" aria-labelledby="desktop-build-incident"><p class="desktop-eyebrow">INVESTIGATE FIRST</p>` +
-    `<h2 id="desktop-build-incident">Failure: ${escapeHtml(job.error ?? "Unknown")}</h2>` +
-    `<p>${escapeHtml(reason)}</p><p>Last recorded stage: ${escapeHtml(recent?.stage ?? "unknown")}` +
-    ` · Evidence: ${escapeHtml(recent?.evidence ?? "not_recorded")}</p>` +
-    `<a class="desktop-text-link" href="#desktop-attempts-title">Inspect recorded attempt</a></section>` : "";
-  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">BUILD DETAIL / ${escapeHtml(job.id)}</p>` +
-    `<h1>${escapeHtml(job.sourceId)} / ${escapeHtml(job.tag)}</h1><p>Attempt history and bounded diagnostics for this immutable Source job.</p>` +
+  const recordedStage = recent?.stage && recent.stage !== "unknown"
+    ? recent.stage
+    : recent?.diagnostic?.stage && recent.diagnostic.stage !== "unknown" ? recent.diagnostic.stage : null;
+  const stage = recordedStage ? humanize(recordedStage) : "Not recorded";
+  const failure = job.state === "failed" ?
+    `<section class="desktop-section desktop-failure-detail" aria-labelledby="desktop-build-incident"><p class="desktop-eyebrow">FAILURE DETAIL</p>` +
+    `<h2 id="desktop-build-incident">Recorded stage and reason</h2>` +
+    `<dl class="desktop-failure-facts"><div><dt>Failure stage</dt><dd>${escapeHtml(stage)}</dd></div>` +
+    `<div><dt>Recorded reason</dt><dd>${escapeHtml(recent?.diagnostic ? humanize(recent.diagnostic.reason) : "No attempt-specific reason was recorded.")}</dd></div></dl>` +
+    `<p class="desktop-section-intro">The failure summary describes the recorded category. It does not establish a root cause.</p>` +
+    diagnosticEvidence(recent?.evidence ?? detail.evidence, recent?.diagnostic ?? null, recent?.expiresAt ?? null) +
+    `</section>` : "";
+  const retry = job.state === "failed" ?
+    `<section class="desktop-section desktop-recovery" aria-label="Source build recovery"><p class="desktop-eyebrow">SAFE NEXT ACTION</p>` +
+    `<h2>Retry eligibility</h2>` +
+    (job.retryable
+      ? `<p>The canonical queue policy permits retry. Control Plane will recheck the revision and policy when this request is submitted.</p>${retryForm(job, model)}`
+      : `<p role="status">Retry is not permitted by the current queue policy. Refresh the status to confirm the current state, then review the identifiers below if the job remains blocked.</p>`) +
+    `</section>` : "";
+  return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">AUTHORITATIVE CURRENT STATE</p>` +
+    `<p class="desktop-build-state">${badge(humanize(job.state), job.state)} · affected Source: <strong>${escapeHtml(sourceName(job.sourceId))}</strong> (${escapeHtml(job.sourceId)})</p>` +
+    `<h1>${escapeHtml(sourceName(job.sourceId))} / ${escapeHtml(job.tag)}</h1><p>Published release ${escapeHtml(job.tag)} · version ${escapeHtml(job.version)}.</p>` +
     `<a class="desktop-text-link" href="${consoleHref("builds", model.mode)}">Back to Builds</a> ` +
-    `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) + incident +
+    `<a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}">Refresh status</a></section>` + notice(model.notice) +
+    failure + retry +
     `<section class="desktop-job-summary" aria-labelledby="desktop-job-summary-title"><div class="desktop-job-heading">` +
-    `<div><p class="desktop-eyebrow">AUTHORITATIVE JOB STATE</p><h2 id="desktop-job-summary-title">${badge(humanize(job.state), job.state)}</h2>` +
+    `<div><p class="desktop-eyebrow">TECHNICAL IDENTIFIERS</p><h2 id="desktop-job-summary-title">Source build record</h2>` +
     `<code>${escapeHtml(job.id)}</code></div></div>` +
     `<dl class="desktop-facts desktop-job-facts"><div><dt>Source</dt><dd>${escapeHtml(job.sourceId)}</dd></div>` +
     `<div><dt>Published tag</dt><dd>${escapeHtml(job.tag)}</dd></div><div><dt>Version</dt><dd>${escapeHtml(job.version)}</dd></div>` +
     `<div><dt>GitHub Release ID</dt><dd>${job.releaseId}</dd></div><div class="desktop-fact-wide"><dt>Immutable source commit</dt><dd><code>${escapeHtml(job.commit)}</code></dd></div>` +
+    `<div><dt>Canonical failure code</dt><dd>${escapeHtml(job.error ?? "None recorded")}</dd></div>` +
     `<div><dt>Current revision</dt><dd>${job.revision}</dd></div><div><dt>Current attempt</dt><dd>${job.attempt}</dd></div>` +
-    `<div><dt>Retry policy</dt><dd>${job.retryable ? "Retryable by queue policy" : "Retry not permitted"}</dd></div>` +
     `<div><dt>Admitted release</dt><dd>${job.admittedReleaseId
-      ? `<a class="desktop-text-link" href="/releases/${encodeURIComponent(job.admittedReleaseId)}?ui=${model.mode}">Open Platform release ${escapeHtml(job.admittedReleaseId)}</a>`
+      ? `<a class="desktop-text-link" href="${escapeHtml(compositionBuildHref(job.admittedReleaseId, model.mode) + "#composition-build")}">Open Admission and Composition Build ${escapeHtml(job.admittedReleaseId)}</a>`
       : "Not admitted"}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-attempts-title"><div class="desktop-section-heading">` +
     `<div><p class="desktop-eyebrow">RECORDED EXECUTION</p><h2 id="desktop-attempts-title">Attempt history and last reported stage</h2></div></div>` +
     `<p class="desktop-section-intro">Each entry is tied to its attempt revision and lease epoch. Missing evidence is shown as unavailable.</p>` +
     attemptTimeline(detail) +
     (detail.nextCursor ? `<p class="desktop-pagination"><a class="desktop-button desktop-button-secondary" href="${buildHref(job.id, model.mode)}&amp;cursor=${encodeURIComponent(detail.nextCursor)}">Older attempts</a></p>` : "") +
-    `</section>` + (job.state === "failed" ? `<section class="desktop-section" aria-label="Source retry after investigation">${retryForm(job, model)}</section>` : "");
+    `</section>`;
 }
 
 function audit(model: ConsoleViewModel): string {
@@ -506,7 +536,9 @@ function operationDetail(model: ConsoleViewModel): string {
     return `<p class="desktop-unavailable" role="status">Operation identity mismatch.</p>`;
   const op=detail.operation;
   return `<section class="desktop-operator-heading"><p class="desktop-eyebrow">CANARY / RUNTIME OPERATION</p>` +
-    `<h1>Operation ${escapeHtml(op.id)}</h1><a class="desktop-text-link" href="${consoleHref("releases", model.mode)}">Back to Releases</a></section>` +
+    `<h1>Operation ${escapeHtml(op.id)}</h1>${model.relatedReleaseId
+      ? `<a class="desktop-text-link" href="${escapeHtml(admittedReleaseHref(model.relatedReleaseId, model.mode))}">Back to related release ${escapeHtml(model.relatedReleaseId)}</a>`
+      : `<a class="desktop-text-link" href="${consoleHref("releases", model.mode)}">Back to Releases</a>`}</section>` +
     `<section class="desktop-section"><h2>${badge(humanize(op.status), op.status)} · ${escapeHtml(op.phase)}</h2>` +
     `<dl class="desktop-facts"><div><dt>Instance</dt><dd><code>${escapeHtml(op.instanceId)}</code></dd></div>` +
     `<div><dt>Kind</dt><dd>${escapeHtml(op.kind)}</dd></div><div><dt>Generation</dt><dd>${op.generation}</dd></div>` +

@@ -1350,6 +1350,29 @@ describe("Kubernetes runtime provider", () => {
     ).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("does not report an HTTP-only drifted route as an HTTPS endpoint", async () => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const runtime = provider(api, targetReservations(), () => 500_000);
+    await runtime.ensureRunning(spec(), new AbortController().signal, () => undefined);
+    api.addWriterPod(spec());
+    const evidence = {
+      identity: identity(),
+      actualImageDigest: CHILD_DIGEST,
+      applicationProbe: { id: "app-probe-1", observedAt: 500_000, ready: true as const },
+      authProbe: { id: "auth-probe-1", observedAt: 500_000, ready: true as const },
+    };
+    await runtime.activateEndpoint(spec(), evidence, new AbortController().signal, () => undefined);
+
+    const routeKey = key("IngressRoute", NAMESPACE, DEPLOYMENT);
+    const route = record(api.objects.get(routeKey));
+    const routeSpec = record(route.spec);
+    api.objects.set(routeKey, { ...route, spec: { ...routeSpec, entryPoints: ["web"] } });
+
+    const observation = await runtime.inspect(identity());
+    expect(observation.endpoint).toBeUndefined();
+  });
+
   it("exposes the owned internal Service address for signed probes before route activation", async () => {
     const api = new FakeKubernetesApi();
     api.addNode();

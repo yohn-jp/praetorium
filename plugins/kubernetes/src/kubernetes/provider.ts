@@ -1576,24 +1576,44 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
   private observedEndpointHost(route: unknown, identity: InstanceIdentity): string | undefined {
     const metadata = objectMetadata(route);
     if (!targetMatches(metadata, identity)) return undefined;
-    const routes = record(record(route)?.spec)?.routes;
-    if (!Array.isArray(routes)) return undefined;
-    const targetName = runtimeResourceName(identity.instanceId);
-    const matchingHosts: string[] = [];
-    for (const value of routes) {
-      const routeEntry = record(value);
-      if (routeEntry === undefined) continue;
-      const match = routeEntry?.match;
-      if (typeof match !== "string" || !match.startsWith("Host(") || !match.endsWith(")")) continue;
-      const host = match.slice(6, -2);
-      if (host.length === 0 || host.includes(String.fromCharCode(96))) continue;
-      const services = Array.isArray(routeEntry.services) ? routeEntry.services : [];
-      if (services.length !== 1) continue;
-      const service = record(services[0]);
-      if (service?.name === targetName && typeof service.port === "number")
-        matchingHosts.push(host);
+    const resource = record(route);
+    const routeSpec = record(resource?.spec);
+    const routes = Array.isArray(routeSpec?.routes) ? routeSpec.routes : [];
+    const entryPoints = Array.isArray(routeSpec?.entryPoints) ? routeSpec.entryPoints : [];
+    const tls = record(routeSpec?.tls);
+    if (
+      resource?.apiVersion !== "traefik.io/v1alpha1" ||
+      resource.kind !== "IngressRoute" ||
+      entryPoints.length !== 1 ||
+      entryPoints[0] !== "websecure" ||
+      tls === undefined ||
+      Object.keys(tls).length !== 0 ||
+      routes.length !== 1
+    ) {
+      return undefined;
     }
-    return matchingHosts.length === 1 ? matchingHosts[0] : undefined;
+    const targetName = runtimeResourceName(identity.instanceId);
+    const routeEntry = record(routes[0]);
+    const match = routeEntry?.match;
+    const services = Array.isArray(routeEntry?.services) ? routeEntry.services : [];
+    const service = record(services[0]);
+    if (
+      routeEntry?.kind !== "Rule" ||
+      typeof match !== "string" ||
+      !match.startsWith("Host(`") ||
+      !match.endsWith("`)") ||
+      routeEntry.priority !== 10 ||
+      services.length !== 1 ||
+      service?.name !== targetName ||
+      !Number.isSafeInteger(service.port) ||
+      (service.port as number) < 1 ||
+      (service.port as number) > 65_535 ||
+      Object.keys(service).some((key) => key !== "name" && key !== "port")
+    ) {
+      return undefined;
+    }
+    const host = match.slice(6, -2);
+    return host.length === 0 || host.includes(String.fromCharCode(96)) ? undefined : host;
   }
 
   private endpointResourceMatchesSpec(

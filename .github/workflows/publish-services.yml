@@ -34,6 +34,7 @@ jobs:
           node --test tests/deployment/deployment-order.test.mjs tests/deployment/migrations.test.mjs tests/deployment/worker-projection.test.mjs
           node --test tests/deployment/service-image-publication.test.mjs
           node --test tests/deployment/observer-rollout.test.mjs
+          node --test tests/infra/*.test.mjs
           node --test tests/deployment/actions-verification.test.mjs
           node --test tests/deployment/fixture-process.test.mjs
           node --check scripts/deployment-migrations.mjs scripts/deployment-plan.mjs

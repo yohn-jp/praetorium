@@ -295,7 +295,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     `<div class="desktop-release-followthrough"><span>${badge(humanize(workflow.state), workflow.state)}</span>` +
     `${model.catalog.value?.stableChannel?.currentReleaseId
       ? `<a class="desktop-text-link" href="${escapeHtml(stableReleaseHref(model.catalog.value.stableChannel.currentReleaseId, model.mode))}">Open current Stable release ${escapeHtml(model.catalog.value.stableChannel.currentReleaseId)}</a>`
-      : `<span class="desktop-muted">Current Stable release is not recorded.</span>`}</div></section>`;
+      : `<span class="desktop-muted">${!model.catalog.value || model.catalog.value.stableChannel === undefined ? "Current Stable status is unavailable." : "Current Stable release is not recorded."}</span>`}</div></section>`;
 }
 
 function buildSort(model: ConsoleViewModel): BuildSort {

@@ -396,6 +396,14 @@ describe("mobile operator console", () => {
     expect(html).toContain('href="/releases?ui=mobile">Back to Releases</a>');
     expect(html).toContain('href="/releases/release-detail?ui=mobile">Refresh status</a>');
     expect(html).toContain('href="/releases/release-detail?ui=desktop">Desktop view</a>');
+    const base = model({ section: "releases", selectedReleaseId: "release-detail",
+      releaseDetail: dependency(status, "GET /v1/operator/releases/release-detail"),
+    });
+    const unavailableStable = renderMobileConsole({ ...base,
+      catalog: { ...base.catalog, value: null, status: 503, code: "UNAVAILABLE" },
+    });
+    expect(unavailableStable).toContain("Current Stable status is unavailable.");
+    expect(unavailableStable).not.toContain("A current Stable release is not recorded.");
     expect(html).toContain("Canary workflow");
     expect(html).toContain("Composition build attempts");
     expect(html).toContain("canary_build_failed");

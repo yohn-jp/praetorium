@@ -277,6 +277,11 @@ describe("desktop operator composition", () => {
     expect(html).toContain('name="expectedRevision" value="9"');
     expect(html).toContain('name="idempotencyKey" value="');
     expect(html).toContain('href="/releases/rel_canary?ui=desktop">Refresh status</a>');
+    const unavailableStable = renderDesktopConsole({ ...extended,
+      catalog: { ...base.catalog, value: null, status: 503, code: "OPERATOR_UNAVAILABLE" },
+    });
+    expect(unavailableStable).toContain("Current Stable status is unavailable.");
+    expect(unavailableStable).not.toContain("Current Stable release is not recorded.");
     expect(html).toContain("does not by itself mean the release is Stable");
     expect(html).toContain("Back to Releases");
     expect(html).toContain('href="/releases/rel_canary?ui=mobile"');

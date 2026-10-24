@@ -772,7 +772,7 @@ function releaseDetail(model: ConsoleViewModel): string {
     '<section class="admin-mobile-section" aria-label="Stable release status">' +
     (model.catalog.value?.stableChannel?.currentReleaseId
       ? '<a class="button button-secondary" href="' + value(stableReleaseHref(model.catalog.value.stableChannel.currentReleaseId, "mobile")) + '">Open current Stable release ' + value(model.catalog.value.stableChannel.currentReleaseId) + '</a>'
-      : '<p class="admin-mobile-empty-inline">A current Stable release is not recorded.</p>') +
+      : '<p class="admin-mobile-empty-inline">' + (!model.catalog.value || model.catalog.value.stableChannel === undefined ? "Current Stable status is unavailable." : "A current Stable release is not recorded.") + "</p>") +
     "</section>"
   );
 }

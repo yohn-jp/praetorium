@@ -593,4 +593,20 @@ test("the canonical Kind job runs real server-side history admission scenarios",
   assert.match(runner, /requests\.storage, "512Mi"/u);
   assert.match(runner, /wrongPodClaim/u);
   assert.match(runner, /wrongPodPath/u);
+  const negativePvcCreates = [
+    runner.indexOf("createObject(wrongOwnerPvc"),
+    runner.indexOf("createObject(wrongClassPvc"),
+    runner.indexOf("createObject(wrongNamePvc"),
+    runner.indexOf("createObject(oversizedPvc"),
+  ];
+  const validPvcUpdateFixture = runner.indexOf(
+    'createObject(pvc, { asProvisioner: true, label: "history-pvc-update-fixture" })',
+  );
+  const firstPvcUpdate = runner.indexOf("kubectl(\n  [", runner.indexOf("const badSizePatch"));
+  assert.ok(negativePvcCreates.every((index) => index >= 0 && index < validPvcUpdateFixture));
+  assert.ok(validPvcUpdateFixture < firstPvcUpdate);
+  assert.match(runner, /function safeStderr\(stderr\)/u);
+  assert.match(runner, /subarray\(0, 4096\)/u);
+  assert.ok(runner.includes("replace(/\\u001b\\[[0-?]*"));
+  assert.match(runner, /action=\$\{action\} namespace=\$\{namespace\} name=\$\{name\}/u);
 });

@@ -17,37 +17,64 @@ const provisioner = "system:serviceaccount:praetorium-system:praetorium-provisio
 
 if (!runtimePath) throw new Error("usage: verify-history-admission.mjs RUNTIME_RENDER.json");
 
-function kubectl(args, { input, expectedPolicy, expectedError, expectedErrors } = {}) {
+function requestContext(args, { label, object } = {}) {
+  const verbs = new Set(["apply", "create", "delete", "get", "label", "patch", "replace"]);
+  const action = args.find((argument) => verbs.has(argument)) ?? args[0] ?? "unknown";
+  const namespaceArg = args.findIndex(
+    (argument) => argument === "-n" || argument === "--namespace",
+  );
+  const namespace =
+    object?.metadata?.namespace ??
+    (namespaceArg >= 0 ? args[namespaceArg + 1] : undefined) ??
+    args.find((argument) => argument.startsWith("--namespace="))?.slice("--namespace=".length) ??
+    "default";
+  const actionIndex = args.indexOf(action);
+  const resource = args[actionIndex + 1];
+  const name =
+    object?.metadata?.name ??
+    (resource && args[actionIndex + 2] && !args[actionIndex + 2].startsWith("-")
+      ? args[actionIndex + 2]
+      : "-");
+  return `${label ?? `${object?.kind ?? "kubectl"}-${name}`} action=${action} namespace=${namespace} name=${name}`;
+}
+
+function safeStderr(stderr) {
+  return Buffer.from(String(stderr ?? "").replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, ""))
+    .subarray(0, 4096)
+    .toString("utf8");
+}
+
+function kubectl(
+  args,
+  { input, expectedPolicy, expectedError, expectedErrors, label, object } = {},
+) {
   const result = spawnSync("kubectl", args, {
     cwd: root,
     encoding: "utf8",
     input,
     maxBuffer: 8 * 1024 * 1024,
   });
-  if (result.error) throw new Error(`kubectl failed to start (${result.error.code ?? "unknown"})`);
+  const context = requestContext(args, { label, object });
+  const stderr = safeStderr(result.stderr);
+  const reject = (message) => {
+    throw new Error(`${context}: ${message}; kubectl stderr: ${stderr || "<empty>"}`);
+  };
+  if (result.error) reject(`kubectl failed to start (${result.error.code ?? "unknown"})`);
   if (expectedPolicy) {
-    assert.notEqual(result.status, 0, `expected admission rejection by ${expectedPolicy}`);
-    assert.ok(
-      result.stderr.includes(expectedPolicy),
-      `request failed without the expected admission policy ${expectedPolicy}`,
-    );
+    if (result.status === 0) reject(`expected admission rejection by ${expectedPolicy}`);
+    if (!stderr.includes(expectedPolicy))
+      reject(`request failed without the expected admission policy ${expectedPolicy}`);
     return;
   }
   if (expectedError || expectedErrors) {
     const acceptedErrors = expectedErrors ?? [expectedError];
-    assert.notEqual(
-      result.status,
-      0,
-      `expected rejection containing ${acceptedErrors.join(" or ")}`,
-    );
-    assert.ok(
-      acceptedErrors.some((message) => result.stderr.includes(message)),
-      `request failed without an expected rejection (${acceptedErrors.join(" or ")})`,
-    );
+    if (result.status === 0) reject(`expected rejection containing ${acceptedErrors.join(" or ")}`);
+    if (!acceptedErrors.some((message) => stderr.includes(message)))
+      reject(`request failed without an expected rejection (${acceptedErrors.join(" or ")})`);
     return;
   }
   if (result.status !== 0) {
-    throw new Error(`kubectl ${args[0]} failed (${result.status ?? "signal"})`);
+    reject(`kubectl failed (${result.status ?? "signal"})`);
   }
   return result.stdout;
 }
@@ -64,7 +91,14 @@ function applyObjects(objects) {
 
 function createObject(
   object,
-  { dryRun = false, asProvisioner = false, expectedPolicy, expectedError, expectedErrors } = {},
+  {
+    dryRun = false,
+    asProvisioner = false,
+    expectedPolicy,
+    expectedError,
+    expectedErrors,
+    label,
+  } = {},
 ) {
   const args = [];
   if (asProvisioner) args.push(`--as=${provisioner}`);
@@ -82,6 +116,8 @@ function createObject(
     expectedPolicy,
     expectedError,
     expectedErrors,
+    label,
+    object,
   });
 }
 
@@ -201,10 +237,9 @@ applyObjects(relevantOwnerPolicies);
 applyObjects(loadYaml("infrastructure/kubernetes/policies/provisioner-history-pvc.yaml"));
 applyObjects(loadYaml("infrastructure/kubernetes/policies/tenant-pod-policy.yaml"));
 
-// Exercise one valid PVC through admission and persist it only in this ephemeral
-// cluster so the immutable request size can be evaluated on UPDATE.
+// Exercise valid admission first, but keep the PVC absent until every negative
+// CREATE scenario has run so AlreadyExists cannot mask admission behavior.
 createObject(pvc, { dryRun: true, asProvisioner: true });
-createObject(pvc, { asProvisioner: true });
 createObject(seedSecret, { dryRun: true, asProvisioner: true });
 
 const wrongOwnerPvc = structuredClone(pvc);
@@ -213,6 +248,7 @@ createObject(wrongOwnerPvc, {
   dryRun: true,
   asProvisioner: true,
   expectedPolicy: "praetorium-provisioner-history-pvc",
+  label: "history-pvc-wrong-owner",
 });
 
 const wrongClassPvc = structuredClone(pvc);
@@ -221,6 +257,16 @@ createObject(wrongClassPvc, {
   dryRun: true,
   asProvisioner: true,
   expectedPolicy: "praetorium-provisioner-history-pvc",
+  label: "history-pvc-wrong-class",
+});
+
+const wrongNamePvc = structuredClone(pvc);
+wrongNamePvc.metadata.name += "-other";
+createObject(wrongNamePvc, {
+  dryRun: true,
+  asProvisioner: true,
+  expectedPolicy: "praetorium-provisioner-history-pvc",
+  label: "history-pvc-wrong-name",
 });
 
 const oversizedPvc = structuredClone(pvc);
@@ -229,6 +275,7 @@ createObject(oversizedPvc, {
   dryRun: true,
   asProvisioner: true,
   expectedError: "exceeded quota",
+  label: "history-pvc-oversized",
 });
 
 const wrongNameSeed = structuredClone(seedSecret);
@@ -256,6 +303,8 @@ createObject(extraDataSeed, {
 });
 
 const badSizePatch = JSON.stringify({ spec: { resources: { requests: { storage: "256Mi" } } } });
+// Persist the valid PVC immediately before the UPDATE fixtures below.
+createObject(pvc, { asProvisioner: true, label: "history-pvc-update-fixture" });
 kubectl(
   [
     `--as=${provisioner}`,

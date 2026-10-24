@@ -14,7 +14,7 @@ it.each([CLIENT, "https://chatgpt.com/oauth/callback-123/client.json"])("resolve
   vi.stubGlobal("fetch", fetcher);
   expect(await fetchMetadataClient(id)).toEqual({ clientId: id, clientName: "ChatGPT", redirectUris: [CALLBACK] });
   expect(fetcher).toHaveBeenCalledWith(id, {
-    headers: { Accept: "application/json" }, redirect: "error", signal: expect.any(AbortSignal),
+    headers: { Accept: "application/json" }, redirect: "manual", signal: expect.any(AbortSignal),
   });
 });
 

@@ -121,6 +121,25 @@ describe("generic service MCP OAuth", () => {
     expect(metadata).toMatchObject({ registration_endpoint: GATEWAY + "/oauth/register" });
   });
 
+  it("rejects callback origins that could change the consent CSP", async () => {
+    const f = await fixture();
+    const unsafe = "https://client.example.test;script-src/callback";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      client_id: CIMD, client_name: "Test MCP client", redirect_uris: [unsafe],
+      token_endpoint_auth_method: "none",
+    })));
+    const parameters = new URLSearchParams({
+      client_id: CIMD, redirect_uri: unsafe, resource: RESOURCE,
+      response_type: "code", state: "testing-client-state-123", scope: "read",
+      code_challenge: await deriveCodeChallengeS256(VERIFIER), code_challenge_method: "S256",
+    });
+    const response = await authorizeOAuth(new Request(GATEWAY + "/oauth/authorize?" + parameters, {
+      headers: { Cookie: f.cookie },
+    }), f.context);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_request" });
+  });
+
   it.each(["legacy DCR", "CIMD"])("%s consents, exchanges one-use PKCE code and atomically rotates refresh", async (kind) => {
     const f = await fixture();
     const clientId = kind === "legacy DCR" ? await registered(f) : CIMD;
@@ -139,7 +158,11 @@ describe("generic service MCP OAuth", () => {
       headers: { Cookie: f.cookie },
     }), f.context);
     expect(consent.status).toBe(200);
-    expect(await consent.text()).toContain("Test MCP client");
+    expect(consent.headers.get("Referrer-Policy")).toBe("same-origin");
+    expect(consent.headers.get("Content-Security-Policy")).toContain("form-action 'self' https://client.example.test;");
+    const consentHtml = await consent.text();
+    expect(consentHtml).toContain("Test MCP client");
+    expect(consentHtml).toContain('<meta name="referrer" content="same-origin">');
     const submitted = new URLSearchParams(parameters);
     submitted.set("csrfToken", f.csrf);
     submitted.set("decision", "approve");

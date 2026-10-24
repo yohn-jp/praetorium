@@ -1,0 +1,19 @@
+name: Verify public MCP ingress
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/verify-public-mcp.yml'
+      - 'scripts/verify-public-mcp.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-mcp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify public TCP, TLS and OAuth discovery without credentials
+        run: python3 scripts/verify-public-mcp.py

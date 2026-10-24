@@ -16,8 +16,9 @@ export function isSupportedMetadataClientId(id: string): boolean {
 /** Public CIMD clients use PKCE and `none`; private_key_jwt is not advertised. */
 export async function fetchMetadataClient(id: string): Promise<OAuthClientRecord | null> {
   if (!isSupportedMetadataClientId(id)) return null;
+  // Workers supports follow/manual only. Inspect 3xx without following the allowlisted URL.
   const response = await fetch(id, {
-    headers: { Accept: "application/json" }, redirect: "error",
+    headers: { Accept: "application/json" }, redirect: "manual",
     signal: AbortSignal.timeout(5_000),
   });
   if (!response.ok || response.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {

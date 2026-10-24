@@ -171,7 +171,7 @@ describe("desktop operator composition", () => {
     expect(releasePage).toContain("Resolved immutable commit");
     expect(releasePage).toContain(job.commit);
     expect(releasePage).toContain("Immutable OCI digest");
-    expect(releasePage).toContain("Build &amp; deploy");
+    expect(releasePage).toContain("Inspect Canary / Stable");
     expect(releasePage).toContain('href="/builds/sr_00000000-0000-4000-a000-000000000001?ui=desktop"');
 
     const admittedJobPage = renderDesktopConsole(view({
@@ -298,7 +298,7 @@ it("does not list superseded Source failures as Active incidents while Stable is
     builds:dependency("GET /v1/operator/source-builds",{items:[older,newer],nextCursor:null})}));
   expect(html).toContain("No release promoted yet");
   expect(html).not.toContain("SOURCE_BUILD_FAILED");
-  expect(html).toContain("No active failed builds");
+  expect(html).toContain("No unresolved failed builds");
 });
 
 

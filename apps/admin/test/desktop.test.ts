@@ -275,3 +275,15 @@ it("links allowlisted operation identities from the Audit ledger", () => {
   })}));
   expect(html).toContain('href="/operations/op_123?ui=desktop"');
 });
+
+
+it("keeps both Release and Operation evidence destinations when one audit event refers to both", () => {
+  const html=renderDesktopConsole(view({section:"audit",audit:dependency("audit",{
+    events:[{eventId:"aud_2",action:"release.canary-wait.skipped",outcome:"accepted",
+      actorId:"213253858",occurredAt:1792000000000,
+      releaseId:"rel_candidate",operationId:"op_123",jobId:null,failureCode:null}],
+    nextCursor:null,
+  })}));
+  expect(html).toContain('href="/releases/rel_candidate?ui=desktop"');
+  expect(html).toContain('href="/operations/op_123?ui=desktop"');
+});

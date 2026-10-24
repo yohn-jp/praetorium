@@ -407,7 +407,15 @@ describe("service-backed disposable release canary", () => {
     );
   });
 
-  it("exposes a blocked stop operation without fabricating writer absence proof", async () => {
+  it.each([
+    { generation: 8, observed: "ready", recovery: "valid", expected: "blocked" },
+    { generation: 9, observed: "stopped", recovery: "missing", expected: "blocked" },
+    { generation: 9, observed: "stopped", recovery: "generation", expected: "blocked" },
+    { generation: 9, observed: "stopped", recovery: "epoch", expected: "blocked" },
+    { generation: 9, observed: "stopped", recovery: "revision", expected: "blocked" },
+    { generation: 9, observed: "stopped", recovery: "proof", expected: "pending" },
+    { generation: 9, observed: "stopped", recovery: "valid", expected: "stopped" },
+  ] as const)("reconciles blocked stop receipts only with fenced recovery and writer proof: $recovery/$generation", async ({ generation, observed, recovery, expected }) => {
     const blocked = {
       id: "operation-stop-blocked", kind: "stop" as const, status: "blocked" as const,
       generation: 8, runtimeEpoch: 4, deploymentRevisionId: "revision-canary",
@@ -428,18 +436,38 @@ describe("service-backed disposable release canary", () => {
           };
         },
         async requestDesiredState() {
-          return { instance: { ...planReceipt().instance, generation:8, runtimeEpoch:4,
-            desiredState:"stopped" as const, observedState:"ready" as const }, operation: blocked };
+          return { instance: { ...planReceipt().instance, generation, runtimeEpoch:4,
+            observedRuntimeEpoch: 4,
+            desiredState:"stopped" as const, observedState:observed }, operation: blocked };
         },
       },
       configurations: {
         async plan() { throw new Error("unexpected plan"); },
         async findByIdempotency() { return null; },
       },
-      operations: { async getById() { return blocked; } },
+      operations: {
+        async getById() { return blocked; },
+        async findSucceededStop(input) {
+          expect(input).toEqual({instanceId:"canary-instance",repositoryId:900,generation:9,runtimeEpoch:4});
+          return recovery === "missing" ? null : {
+            ...blocked, id:"operation-stop-recovered", status:"succeeded" as const,
+            generation: recovery === "generation" ? 8 : 9,
+            runtimeEpoch: recovery === "epoch" ? 5 : 4,
+            deploymentRevisionId: recovery === "revision" ? "other-revision" : "revision-canary",
+          };
+        },
+      },
       observations: {
         async latestHealth() { throw new Error("unexpected health"); },
-        async writerAbsence() { throw new Error("no writer-absence claim for a blocked stop"); },
+        async writerAbsence(input) {
+          expect(expected).not.toBe("blocked");
+          expect(input.afterOperationId).toBe("operation-stop-recovered");
+          return recovery === "proof" ? null : {
+            instanceId:"canary-instance",repositoryId:900,retiredEpoch:4,
+            providerObservationId:"recovered-census",censusObservedAt:NOW,
+            remainingWriters:0,evidenceIdentities:[],source:"runtime-provider-census",
+          };
+        },
       },
       now: () => NOW,
     });
@@ -447,7 +475,8 @@ describe("service-backed disposable release canary", () => {
       runtimeId:"canary-instance", startedOperationId:"canary-start",
       idempotencyKey:"stable-canary-stop:release-1",
     });
-    expect(result).toEqual({kind:"blocked"});
+    expect(result.kind).toBe(expected);
+    if (result.kind === "stopped") expect(result.evidence.operationId).toBe("operation-stop-recovered");
   });
 
 });

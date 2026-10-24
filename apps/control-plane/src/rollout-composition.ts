@@ -119,7 +119,21 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
     binding: deps.canaryBinding,
     instances: canaryInstances,
     configurations: canaryConfigurations,
-    operations: deps.operations,
+    operations: {
+      getById: (id) => deps.operations.getById(id),
+      async findSucceededStop(input) {
+        const row = await deps.db.prepare(
+          `SELECT operation_id FROM operations WHERE instance_id = ? AND repository_id = ?
+             AND generation = ? AND runtime_epoch = ? AND kind = 'stop' AND status = 'succeeded'
+           ORDER BY updated_at DESC, operation_id DESC LIMIT 1`,
+        ).bind(input.instanceId, input.repositoryId, input.generation, input.runtimeEpoch)
+          .first<{ operation_id: string }>();
+        if (!row) return null;
+        const operation = await deps.operations.getById(row.operation_id);
+        return operation?.instanceId === input.instanceId && operation.repositoryId === input.repositoryId
+          ? operation : null;
+      },
+    },
     observations: deps.canaryObservations,
     now: () => deps.clock.nowMs(),
     ...(deps.requestId ? { newRequestId: deps.requestId } : {}),

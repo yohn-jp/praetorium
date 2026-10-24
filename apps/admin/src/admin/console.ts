@@ -4,7 +4,7 @@ import { SourceBuildDetailSchema, SourceBuildSummarySchema, type SourceBuildDeta
 import { renderDesktopConsole } from "./desktop.js";
 import { renderMobileConsole } from "./mobile.js";
 import { readInfrastructure, type InfraDependencies, type InfraHosts, type InfraServices, type HostObservation } from "../infrastructure.js";
-import { buildHref, viewHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
+import { buildHref, isOperationId, viewHref, type ConsoleViewModel, type ConsoleMode, type ConsoleSection, type ConsoleReleaseStatus, type OperatorOperationDetail } from "./view-model.js";
 import { page } from "../page.js";
 import {
   authenticateAdmin, adminFormCsrf, boundedForm, completeAdminHandoff,
@@ -433,7 +433,10 @@ async function handleAdminRequest(request: Request, context: AdminContext, mode:
   }
   const releaseMatch = /^\/releases\/([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})$/u.exec(url.pathname);
   const detailMatch = /^\/builds\/(sr_[0-9a-f-]{36})$/u.exec(url.pathname);
-  const operationMatch = /^\/operations\/(op_[A-Za-z0-9_.:-]{1,124})$/u.exec(url.pathname);
+  const operationPath = /^\/operations\/([^/]{1,128})$/u.exec(url.pathname);
+  const selectedOperationPathId = operationPath?.[1] ?? null;
+  const operationMatch = selectedOperationPathId && isOperationId(selectedOperationPathId)
+    ? operationPath : null;
   const infraHostMatch = /^\/infrastructure\/hosts\/([a-z][a-z0-9-]{0,63})$/u.exec(url.pathname);
   const dependenciesSelected = url.pathname === "/infrastructure/dependencies";
   const selectedHostId = infraHostMatch?.[1] ?? null;

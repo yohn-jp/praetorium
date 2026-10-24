@@ -7,7 +7,7 @@ import type {
 } from "@praetorium/contracts";
 import { escapeHtml } from "../presentation.js";
 import {
-  admittedReleaseHref, buildHref, compositionBuildHref, consoleHref, operationHref,
+  admittedReleaseHref, buildHref, compositionBuildHref, consoleHref, isOperationId, operationHref,
   sourceReleaseExecutionHref, stableReleaseHref, viewHref, type ConsoleDependency,
   type ConsoleRelease, type ConsoleSection, type ConsoleViewModel,
 } from "./view-model.js";
@@ -290,7 +290,7 @@ function releaseDetail(model: ConsoleViewModel): string {
       ? `${badge(humanize(build.status), build.status)} <a class="desktop-text-link" href="${escapeHtml(compositionBuildHref(value.release.id, model.mode) + "#composition-build")}">${escapeHtml(build.id)}</a> · ${build.attemptCount} attempts`
       : "No Canary build is attached"}</dd></div>` +
     `<div><dt>Canary build key</dt><dd>${escapeHtml(workflow.canaryBuildKey ?? "Not recorded")}</dd></div>` +
-    `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(workflow.canaryOperationId)
+    `<div><dt>Canary operation</dt><dd>${workflow.canaryOperationId && isOperationId(workflow.canaryOperationId)
   ? `<a href="${escapeHtml(operationHref(workflow.canaryOperationId, model.mode, value.release.id))}">${escapeHtml(workflow.canaryOperationId)}</a>`
   : escapeHtml(workflow.canaryOperationId ?? "Not recorded")}</dd></div></dl></section>` +
     `<section class="desktop-section" aria-labelledby="desktop-release-followthrough-title"><div class="desktop-section-heading">` +
@@ -512,7 +512,7 @@ function audit(model: ConsoleViewModel): string {
     const targets = [
       event.jobId ? `<a href="${escapeHtml(buildHref(event.jobId, model.mode))}">${escapeHtml(event.jobId)}</a>` : null,
       event.releaseId ? `<a href="/releases/${encodeURIComponent(event.releaseId)}?ui=${model.mode}">${escapeHtml(event.releaseId)}</a>` : null,
-      event.operationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(event.operationId)
+      event.operationId && isOperationId(event.operationId)
         ? `<a href="${escapeHtml(operationHref(event.operationId, model.mode))}">${escapeHtml(event.operationId)}</a>`
         : event.operationId ? `<code>${escapeHtml(event.operationId)}</code>` : null,
     ].filter((value): value is string => value !== null);

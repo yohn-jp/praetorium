@@ -396,7 +396,7 @@ describe("mobile operator console", () => {
         attempts: 2,
         nextAttemptAt: null,
         canaryBuildKey: "build-key-123",
-        canaryOperationId: "op-canary-123",
+        canaryOperationId: "operation_7e53e854-11d8-4722-b8d5-278a796a47d4",
       },
       build: {
         id: "build-canary-123",
@@ -561,9 +561,9 @@ it("links Canary operation evidence from the mobile audit trail", () => {
   const html=renderMobileConsole(model({section:"audit",
     audit:dependency({events:[{eventId:"aud_1",action:"release.canary-wait.skipped",
       outcome:"accepted",actorId:"213253858",occurredAt:1792000000000,
-      operationId:"op_123",jobId:null,releaseId:null,failureCode:null}],nextCursor:null},"audit"),
+      operationId:"op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ",jobId:null,releaseId:null,failureCode:null}],nextCursor:null},"audit"),
   }));
-  expect(html).toContain('href="/operations/op_123?ui=mobile"');
+  expect(html).toContain('href="/operations/op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ?ui=mobile"');
 });
 
 

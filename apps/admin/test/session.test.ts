@@ -192,14 +192,24 @@ it("accepts only bounded same-origin GET destination search parameters", () => {
   ]) expect(adminReturnPath(invalid)).toBe("/");
 });
 
-it("fetches only an operation's current evidence on its detail page", async () => {
+it.each([
+  "op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ",
+  "operation_7e53e854-11d8-4722-b8d5-278a796a47d4",
+])("fetches only operation %s current evidence on its detail page", async operationId => {
   const {context,identity,cp}=fixture();
-  const response=await handleAdminHost(sessionRequest(ADMIN+"/operations/op_123?ui=mobile"),context);
+  const response=await handleAdminHost(sessionRequest(ADMIN+"/operations/"+operationId+"?ui=mobile"),context);
   expect(response.status).toBe(200);
   expect(identity.listApprovedSourceReleases).not.toHaveBeenCalled();
   expect(cp.fetch).toHaveBeenCalledTimes(1);
   const request=vi.mocked(cp.fetch).mock.calls[0]?.[0];
-  expect(new URL(String(request)).pathname).toBe("/v1/operations/op_123/evidence");
+  expect(new URL(String(request)).pathname).toBe("/v1/operations/"+operationId+"/evidence");
+});
+
+it("rejects malformed or oversized operation path IDs before making a Control Plane request", async () => {
+  const {context,cp}=fixture();
+  for (const operationId of ["operation_bad", "operation_"+"a".repeat(129), "op_abc/../audit"])
+    expect((await handleAdminHost(sessionRequest(ADMIN+"/operations/"+operationId+"?ui=mobile"),context)).status).toBe(404);
+  expect(cp.fetch).not.toHaveBeenCalled();
 });
 
 

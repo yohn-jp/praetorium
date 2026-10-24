@@ -376,10 +376,10 @@ it("preserves server-filtered Builds and Audit context on Desktop/Mobile switch"
 it("links allowlisted operation identities from the Audit ledger", () => {
   const html=renderDesktopConsole(view({section:"audit",audit:dependency("audit",{
     events:[{eventId:"aud_1",action:"release.canary-wait.skipped",outcome:"accepted",actorId:"213253858",
-      occurredAt:1792000000000,operationId:"op_123",jobId:null,releaseId:null,failureCode:null}],
+      occurredAt:1792000000000,operationId:"op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ",jobId:null,releaseId:null,failureCode:null}],
     nextCursor:null,
   })}));
-  expect(html).toContain('href="/operations/op_123?ui=desktop"');
+  expect(html).toContain('href="/operations/op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ?ui=desktop"');
 });
 
 
@@ -387,11 +387,11 @@ it("keeps both Release and Operation evidence destinations when one audit event 
   const html=renderDesktopConsole(view({section:"audit",audit:dependency("audit",{
     events:[{eventId:"aud_2",action:"release.canary-wait.skipped",outcome:"accepted",
       actorId:"213253858",occurredAt:1792000000000,
-      releaseId:"rel_candidate",operationId:"op_123",jobId:null,failureCode:null}],
+      releaseId:"rel_candidate",operationId:"op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ",jobId:null,failureCode:null}],
     nextCursor:null,
   })}));
   expect(html).toContain('href="/releases/rel_candidate?ui=desktop"');
-  expect(html).toContain('href="/operations/op_123?ui=desktop"');
+  expect(html).toContain('href="/operations/op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ?ui=desktop"');
 });
 
 

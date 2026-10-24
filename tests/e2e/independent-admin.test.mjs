@@ -64,6 +64,7 @@ function fixture() {
   let retryAccepted = false;
   let catalogUnavailable = false;
   let canaryConfigurationConflict = false;
+  let canaryOperationId = "op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ";
   const jobId = "sr_00000000-0000-4000-a000-000000000001";
   const sourceDetail = () => SourceBuildDetailSchema.parse({
     job:{id:jobId,sourceId:"scriptorium",releaseId:101,tag:"v1.2.0",version:"1.2.0",commit:"b".repeat(40),
@@ -127,12 +128,14 @@ function fixture() {
         return Response.json({release:{id:"rel_owned",version:"1.2.0",imageDigest:"sha256:"+"c".repeat(64),status:"available"},
           workflow:{state:canaryConfigurationConflict?"canary_building":"stable",revision:4,
             failureCode:canaryConfigurationConflict?"canary_configuration_conflict":null,attempts:2,nextAttemptAt:null,
-            canaryBuildKey:"composition-owned",canaryOperationId:canaryConfigurationConflict?null:"op_owned"},
+            canaryBuildKey:"composition-owned",canaryOperationId:canaryConfigurationConflict?null:canaryOperationId},
           build:{id:"composition-owned",status:canaryConfigurationConflict?"building":"available",attemptCount:1,failure:null}});
-      if (pathname === "/v1/operations/op_owned/evidence")
-        return Response.json({operation:{id:"op_owned",instanceId:"runtime-owned",generation:2,runtimeEpoch:5,
+      if (/^\/v1\/operations\/(?:op_[0-9A-HJKMNP-TV-Z]{26}|operation_[0-9a-f-]{36})\/evidence$/iu.test(pathname)) {
+        const operationId = pathname.split("/")[3];
+        return Response.json({operation:{id:operationId,instanceId:"runtime-owned",generation:2,runtimeEpoch:5,
           kind:"deploy",status:"succeeded",phase:"stable",attempt:1,createdAt:1792820000000,updatedAt:1792820001000},
           readinessEvidence:{ready:true},rollbackCompatibilityEvidence:null,rollbackCompatible:true});
+      }
       if (pathname === "/v1/operator/releases" && catalogUnavailable)
         return Response.json({error:{code:"OPERATOR_UNAVAILABLE"}},{status:503});
       if (pathname === "/v1/operator/releases")
@@ -159,7 +162,7 @@ function fixture() {
         Response.json({error:"not_found"},{status:404});
     }},
   };
-  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},setCatalogUnavailable:value=>{catalogUnavailable=value;},setCanaryConfigurationConflict:value=>{canaryConfigurationConflict=value;},jobId};
+  return {env,calls,setBuildState:(value,evidence="detailed")=>{buildState=value;evidenceMode=evidence;if(value==="failed")retryAccepted=false;},setCatalogUnavailable:value=>{catalogUnavailable=value;},setCanaryConfigurationConflict:value=>{canaryConfigurationConflict=value;},setCanaryOperationId:value=>{canaryOperationId=value;},jobId};
 }
 async function listen(env) {
   const server = createServer(async (req,res) => {
@@ -192,7 +195,7 @@ async function listen(env) {
   return {server,origin:"http://127.0.0.1:"+address.port};
 }
 test("dedicated Admin Worker protects host telemetry and renders distinct responsive UI", async t=>{
-  const {env,calls,setBuildState,setCatalogUnavailable,setCanaryConfigurationConflict,jobId}=fixture();
+  const {env,calls,setBuildState,setCatalogUnavailable,setCanaryConfigurationConflict,setCanaryOperationId,jobId}=fixture();
   const noAuth=await worker.fetch(new Request(ADMIN+"/api/admin/v1/infrastructure/hosts"),env);
   assert.equal(noAuth.status,403);
   assert.equal(calls.observer,0);
@@ -394,10 +397,19 @@ test("dedicated Admin Worker protects host telemetry and renders distinct respon
     assert.doesNotMatch(unavailableStable,/Stable release is not recorded/i);
     setCatalogUnavailable(false);
     await page.reload({waitUntil:"networkidle"});
-    await page.getByRole("link",{name:"op_owned",exact:true}).click();
+    await page.getByRole("link",{name:"op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ",exact:true}).click();
     journey=await page.locator("main").innerText();
     assert.match(journey,/succeeded/iu,journey);
+    assert.match(journey,/Canary \/ runtime operation/iu);
     await page.getByRole("link",{name:"Back to related release rel_owned",exact:true}).click();
+    setCanaryOperationId("operation_7e53e854-11d8-4722-b8d5-278a796a47d4");
+    await page.reload({waitUntil:"networkidle"});
+    await page.getByRole("link",{name:"operation_7e53e854-11d8-4722-b8d5-278a796a47d4",exact:true}).click();
+    journey=await page.locator("main").innerText();
+    assert.match(journey,/succeeded/iu,journey);
+    assert.match(journey,/operation_7e53e854-11d8-4722-b8d5-278a796a47d4/iu);
+    await page.getByRole("link",{name:"Back to related release rel_owned",exact:true}).click();
+    setCanaryOperationId("op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ");
     await page.getByRole("link",{name:"Back to Releases",exact:true}).click();
     const stableLabelContrast=await renderedTextContrast(page,mode==="desktop"?[".desktop-stable-digest span"]:[".admin-mobile-stable-panel strong"]);
     assert.ok(stableLabelContrast.length>0,mode+" Stable status label must be audited");

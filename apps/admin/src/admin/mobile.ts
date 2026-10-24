@@ -13,6 +13,7 @@ import {
   buildHref,
   compositionBuildHref,
   operationHref,
+  isOperationId,
   consoleHref,
   sourceReleaseExecutionHref,
   stableReleaseHref,
@@ -756,7 +757,7 @@ function releaseDetail(model: ConsoleViewModel): string {
         value(status.workflow.canaryBuildKey) +
         "</code></dd></div>"
       : "") +
-    (status.workflow.canaryOperationId
+    (status.workflow.canaryOperationId && isOperationId(status.workflow.canaryOperationId)
       ? '<div><dt>Canary operation</dt><dd><a href="' + value(operationHref(status.workflow.canaryOperationId, "mobile", status.release.id)) + '">' +
         value(status.workflow.canaryOperationId) +
         "</a></dd></div>"
@@ -935,7 +936,7 @@ function audit(model: ConsoleViewModel): string {
             "</h2>" +
             (event.jobId ? '<p><a href="' + value(buildHref(event.jobId, "mobile")) + '">Build ' + value(event.jobId) + "</a></p>" : "") +
             (event.releaseId ? '<p><a href="/releases/' + value(encodeURIComponent(event.releaseId)) + '?ui=mobile">Release ' + value(event.releaseId) + "</a></p>" : "") +
-            (event.operationId && /^op_[A-Za-z0-9_.:-]{1,124}$/u.test(event.operationId)
+            (event.operationId && isOperationId(event.operationId)
               ? '<p><a href="' + value(operationHref(event.operationId, "mobile")) +
                 '">Operation ' + value(event.operationId) + '</a></p>' : "") +
             (event.failureCode ? "<p>Failure code: " + value(event.failureCode) + "</p>" : "") +

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   admittedReleaseHref,
   compositionBuildHref,
+  isOperationId,
   operationHref,
   sourceReleaseExecutionHref,
   stableReleaseHref,
@@ -27,10 +28,22 @@ describe("authoritative execution navigation", () => {
   });
 
   it("carries a validated Release return context when following the operation evidence link", () => {
-    expect(operationHref("op_123", "mobile", "release_123")).toBe(
-      "/operations/op_123?ui=mobile&release=release_123",
+    const operation = "op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ";
+    const systemOperation = "operation_7e53e854-11d8-4722-b8d5-278a796a47d4";
+    expect(isOperationId(operation)).toBe(true);
+    expect(isOperationId("op_123")).toBe(true);
+    expect(isOperationId(systemOperation)).toBe(true);
+    expect(isOperationId("operation_" + "a".repeat(129))).toBe(false);
+    expect(isOperationId("op_" + "a".repeat(125))).toBe(false);
+    expect(isOperationId("op_123/../../audit")).toBe(false);
+    expect(operationHref(operation, "mobile", "release_123")).toBe(
+      "/operations/" + operation + "?ui=mobile&release=release_123",
     );
-    expect(operationHref("op_123", "mobile", "bad/release")).toBe("/operations/op_123?ui=mobile");
+    expect(operationHref(systemOperation, "desktop", "release_123")).toBe(
+      "/operations/" + systemOperation + "?ui=desktop&release=release_123",
+    );
+    expect(operationHref("bad/release", "mobile")).toBe("/releases?ui=mobile");
+    expect(operationHref(operation, "mobile", "bad/release")).toBe("/operations/" + operation + "?ui=mobile");
   });
 
   it("preserves the related Release when an operator switches UI mode on operation evidence", () => {
@@ -45,11 +58,11 @@ describe("authoritative execution navigation", () => {
       audit: { endpoint: "", status: 200, code: null, value: null },
       detail: null,
       selectedBuildId: null,
-      selectedOperationId: "op_123",
+      selectedOperationId: "op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ",
       relatedReleaseId: "release_123",
       buildStateFilter: null,
       auditQuery: "",
     } as ConsoleViewModel;
-    expect(viewHref(model, "mobile")).toBe("/operations/op_123?ui=mobile&release=release_123");
+    expect(viewHref(model, "mobile")).toBe("/operations/op_01J9Z7H3M4P6Q8R2S5T0V1WXYZ?ui=mobile&release=release_123");
   });
 });

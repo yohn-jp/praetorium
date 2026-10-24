@@ -24,6 +24,7 @@ import {
   HISTORY_CONTRACT_VERSION,
   HISTORY_RESTORE_NODE_SCRIPT,
   HISTORY_SEED_KEY,
+  HISTORY_STORAGE_MIB,
   parseHistorySnapshot,
   type HistorySnapshot,
   type HistorySourceDirectory,
@@ -1961,12 +1962,11 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
       accessModes[0] !== "ReadWriteOnce" ||
       requestedMiB === null ||
       !Number.isSafeInteger(requestedMiB) ||
-      requestedMiB < 1 ||
-      requestedMiB > identity.resourceProfile.request.ephemeralStorageMiB
+      requestedMiB !== HISTORY_STORAGE_MIB
     ) {
       throw new RuntimeProviderError(
         "conflict",
-        "stable private-history PVC exceeds its admitted storage profile",
+        "stable private-history PVC does not match its fixed storage capacity",
         "terminal",
       );
     }
@@ -2462,7 +2462,7 @@ export class KubernetesRuntimeProvider implements RuntimeProvider {
           pvcSpec?.storageClassName !== HISTORY_STORAGE_CLASS ||
           accessModes.length !== 1 ||
           accessModes[0] !== "ReadWriteOnce" ||
-          requests?.storage !== `${spec.resourceProfile.request.ephemeralStorageMiB}Mi`
+          requests?.storage !== `${HISTORY_STORAGE_MIB}Mi`
         ) {
           throw new RuntimeProviderError(
             "invalid_spec",

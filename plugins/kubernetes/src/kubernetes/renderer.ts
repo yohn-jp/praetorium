@@ -25,7 +25,11 @@ import type {
   StoppedInstanceSpec,
 } from "../types.js";
 import type { KubernetesResource, KubernetesResourceRenderer } from "./types.js";
-import { HISTORY_CONTRACT_VERSION, HISTORY_RESTORE_NODE_SCRIPT } from "./history.js";
+import {
+  HISTORY_CONTRACT_VERSION,
+  HISTORY_RESTORE_NODE_SCRIPT,
+  HISTORY_STORAGE_MIB,
+} from "./history.js";
 
 const APPLICATION_LABEL_KEY = "app.kubernetes.io/name";
 const APPLICATION_LABEL_VALUE = "scriptorium";
@@ -82,7 +86,7 @@ function historyClaim(
     spec: {
       accessModes: ["ReadWriteOnce"],
       storageClassName: HISTORY_STORAGE_CLASS,
-      resources: { requests: { storage: memory(spec.resourceProfile.request.ephemeralStorageMiB) } },
+      resources: { requests: { storage: memory(HISTORY_STORAGE_MIB) } },
     },
   };
 }
@@ -424,7 +428,7 @@ function baseResources(
           "requests.ephemeral-storage": memory(profile.ephemeralStorageMiB),
           ...(spec.scriptoriumAssignment === undefined
             ? {}
-            : { "requests.storage": memory(profile.ephemeralStorageMiB) }),
+            : { "requests.storage": memory(HISTORY_STORAGE_MIB) }),
           "limits.cpu": cpu(limits.cpuMilli),
           "limits.memory": memory(limits.memoryMiB),
           "limits.ephemeral-storage": memory(limits.ephemeralStorageMiB),

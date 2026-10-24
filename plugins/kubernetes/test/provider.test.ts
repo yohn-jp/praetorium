@@ -474,6 +474,7 @@ function provider(
   reservations = targetReservations(),
   now = () => Date.now(),
   imagePullConfigJson?: string,
+  maximumEphemeralStorageMiB = 4_096,
 ) {
   const renderer = createKubernetesResourceRenderer({
     namespacePrefix: PREFIX,
@@ -483,7 +484,7 @@ function provider(
     instanceAccessService: "instance-access",
     controlNamespace: "praetorium-system",
     controlService: "provisioner",
-    maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: 4_096 },
+    maximumResources: { cpuMilli: 2_000, memoryMiB: 2_048, ephemeralStorageMiB: maximumEphemeralStorageMiB },
     ...(imagePullConfigJson === undefined ? {} : { includeImagePullSecret: true }),
   });
   return new KubernetesRuntimeProvider({
@@ -652,6 +653,60 @@ describe("Kubernetes runtime provider", () => {
 
     expect(api.historySnapshotCalls).toHaveLength(2);
     expect(api.objects.has(key("Secret", NAMESPACE, `${DEPLOYMENT}-history-seed`))).toBe(true);
+  });
+
+  it("keeps private history capacity fixed while workspace profiles change", async () => {
+    const api = new FakeKubernetesApi();
+    api.addNode();
+    const reservations = targetReservations();
+    let clock = 500_000;
+    const runtime = provider(api, reservations, () => ++clock, undefined, 8_192);
+    const small = hostedSpec();
+    await runtime.ensureRunning(small, new AbortController().signal, async () => undefined);
+
+    const pvcRef = key("PersistentVolumeClaim", NAMESPACE, `${DEPLOYMENT}-history`);
+    const pvc = record(api.objects.get(pvcRef));
+    expect(record(record(record(pvc.spec).resources).requests).storage).toBe("512Mi");
+    const pvcWrites = api.writes.filter((write) => write === "write:PersistentVolumeClaim").length;
+
+    const balancedResources = { ...RESOURCE, ephemeralStorageMiB: 8_192 };
+    reservations.snapshot = {
+      ...reservations.snapshot,
+      reservations: [reservation({ resources: balancedResources })],
+    };
+    const balanced: RunningInstanceSpec = {
+      ...small,
+      resourceProfile: { id: "balanced", request: balancedResources },
+    };
+    await runtime.ensureRunning(balanced, new AbortController().signal, async () => undefined);
+
+    const updatedPvc = record(api.objects.get(pvcRef));
+    expect(record(record(record(updatedPvc.spec).resources).requests).storage).toBe("512Mi");
+    expect(api.writes.filter((write) => write === "write:PersistentVolumeClaim")).toHaveLength(pvcWrites);
+    const quota = record(api.objects.get(key("ResourceQuota", NAMESPACE, `${DEPLOYMENT}-quota`)));
+    expect(record(quota.spec).hard).toMatchObject({
+      "requests.storage": "512Mi",
+      "requests.ephemeral-storage": "8192Mi",
+    });
+    const deployment = record(api.objects.get(key("Deployment", NAMESPACE, DEPLOYMENT)));
+    const podSpec = record(record(record(deployment.spec).template).spec);
+    const workspace = (podSpec.volumes as unknown[]).map(record).find((volume) => volume.name === "workspace");
+    expect(record(workspace?.emptyDir).sizeLimit).toBe("8192Mi");
+
+    reservations.snapshot = {
+      ...reservations.snapshot,
+      reservations: [reservation()],
+    };
+    await runtime.ensureRunning(small, new AbortController().signal, async () => undefined);
+    expect(record(record(record(api.objects.get(pvcRef)).spec).resources).requests).toMatchObject({
+      storage: "512Mi",
+    });
+    expect(api.writes.filter((write) => write === "write:PersistentVolumeClaim")).toHaveLength(pvcWrites);
+    const loweredQuota = record(api.objects.get(key("ResourceQuota", NAMESPACE, `${DEPLOYMENT}-quota`)));
+    expect(record(loweredQuota.spec).hard).toMatchObject({
+      "requests.storage": "512Mi",
+      "requests.ephemeral-storage": "1024Mi",
+    });
   });
 
   it.each([
@@ -1026,7 +1081,7 @@ describe("Kubernetes runtime provider", () => {
       spec: {
         storageClassName: "local-path",
         accessModes: ["ReadWriteOnce"],
-        resources: { requests: { storage: "1024Mi" } },
+        resources: { requests: { storage: "512Mi" } },
       },
     });
     const init = record((podSpec.initContainers as unknown[])[0]);

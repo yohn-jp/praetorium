@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const HISTORY_CONTRACT_VERSION = "v1";
+export const HISTORY_STORAGE_MIB = 512;
 export const MAX_HISTORY_BYTES = 512 * 1024;
 export const MAX_HISTORY_MANIFEST_BYTES = 768 * 1024;
 export const MAX_HISTORY_EXEC_STDOUT_BYTES = 1024 * 1024;

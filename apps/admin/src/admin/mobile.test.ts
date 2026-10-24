@@ -295,7 +295,7 @@ describe("mobile operator console", () => {
     );
     expect(html).toContain("CURRENT STABLE CHANNEL");
     expect(html).toContain("v0.3.3");
-    expect(html).toContain('action="/source-releases/deploy?ui=mobile"');
+    expect(html).toContain("Review failure / retry");
     expect(html).toContain("sha256:" + "c".repeat(64));
     expect(html).toContain('action="/releases/release-canary/retry?ui=mobile"');
     expect(html).toContain("Retry Canary build");

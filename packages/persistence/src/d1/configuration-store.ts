@@ -846,7 +846,7 @@ export class D1ConfigurationStore implements ConfigurationStore {
                AND NOT EXISTS (
                  SELECT 1 FROM runtime_reservations r
                  WHERE r.instance_id = logical_instances.instance_id
-                   AND r.status IN ('reserved', 'allocated')
+                   AND r.status IN ('pending', 'reserved', 'allocated')
                )
                AND NOT EXISTS (
                  SELECT 1 FROM operations o

@@ -212,7 +212,7 @@ async function createStage(db: SQLiteD1) {
 }
 
 describe("Canary plan requires an authoritatively stopped instance", () => {
-  it.each(["running", "retained-writer", "stale-stop", "reservation", "pending-operation", "stopped"])(
+  it.each(["running", "retained-writer", "stale-stop", "pending-reservation", "reservation", "pending-operation", "stopped"])(
     "atomically checks %s before changing the desired assignment",
     async (state) => {
       const db = new SQLiteD1();
@@ -223,10 +223,10 @@ describe("Canary plan requires an authoritatively stopped instance", () => {
       if (state === "running") db.database.exec("UPDATE logical_instances SET desired_state='running'");
       if (state === "retained-writer") db.database.exec("UPDATE logical_instances SET observed_state='ready'");
       if (state === "stale-stop") db.database.exec("UPDATE logical_instances SET observed_generation=1");
-      if (state === "reservation") db.database.exec(`INSERT INTO runtime_reservations (
+      if (state === "reservation" || state === "pending-reservation") db.database.exec(`INSERT INTO runtime_reservations (
         reservation_id, instance_id, repository_id, runtime_epoch, generation, cluster_id, status,
         capacity_snapshot_epoch, cpu_milli, memory_mib, ephemeral_storage_mib, created_at, updated_at
-      ) VALUES ('old-writer', 'instance-1', 101, 3, 2, 'cluster-1', 'allocated', 1, 1, 1, 1, 1, 1)`);
+      ) VALUES ('old-writer', 'instance-1', 101, 3, 2, 'cluster-1', '${state === "pending-reservation" ? "pending" : "allocated"}', 1, 1, 1, 1, 1, 1)`);
       if (state === "pending-operation") db.database.exec(`INSERT INTO operations (
         operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase,
         idempotency_scope, idempotency_key, request_hash, actor_id, authorization_revision, created_at, updated_at

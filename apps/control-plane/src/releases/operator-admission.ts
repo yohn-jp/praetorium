@@ -203,7 +203,15 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
         now: deps.clock.nowMs(),
       };
       const replay = await deps.retry.replay(command);
-      if (replay?.kind === "accepted") return c.json({ ...replay.status, duplicate: true });
+      if (replay?.kind === "accepted") {
+        try {
+          if (deps.afterAdmitted) {
+            const candidate = await deps.releases.findById(id.data);
+            if (candidate) deps.afterAdmitted(candidate, c.executionCtx);
+          }
+        } catch { /* Durable replay remains accepted during dependency outages. */ }
+        return c.json({ ...replay.status, duplicate: true });
+      }
       if (replay?.kind === "not_found") return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
       if (replay?.kind === "conflict") {
         return c.json({ error: { code: "RELEASE_RETRY_CONFLICT", reason: replay.reason } }, 409);

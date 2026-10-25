@@ -107,7 +107,7 @@ describe("private history snapshot validation", () => {
     expect(HISTORY_MARKER_NODE_SCRIPT).toContain("0o600");
   });
 
-  it("reapplies private modes on a marked PVC restart without overwriting later history", () => {
+  it.each(["regular", "projection", "escape"])("restores %s seeds within their projection and preserves later PVC history", (kind) => {
     const temporary = mkdtempSync(path.join(tmpdir(), "praetorium-history-"));
     try {
       const historyRoot = path.join(temporary, "history");
@@ -116,7 +116,19 @@ describe("private history snapshot validation", () => {
       const seedPath = path.join(seedRoot, "snapshot.json");
       mkdirSync(historyRoot);
       mkdirSync(seedRoot);
-      writeFileSync(seedPath, snapshot("activity/recent.json", "seeded"));
+      if (kind === "projection") {
+        const version = "..2026_10_25_00_00_00";
+        mkdirSync(path.join(seedRoot, version));
+        writeFileSync(path.join(seedRoot, version, "snapshot.json"), snapshot("activity/recent.json", "seeded"));
+        symlinkSync(version, path.join(seedRoot, "..data"));
+        symlinkSync("..data/snapshot.json", seedPath);
+      } else if (kind === "escape") {
+        const outside = path.join(temporary, "outside.json");
+        writeFileSync(outside, snapshot("activity/recent.json", "seeded"));
+        symlinkSync(outside, seedPath);
+      } else {
+        writeFileSync(seedPath, snapshot("activity/recent.json", "seeded"));
+      }
       const script = HISTORY_RESTORE_NODE_SCRIPT
         .replace("const root = '/history';", `const root = ${JSON.stringify(historyRoot)};`)
         .replace("const seedPath = '/history-seed/snapshot.json';", `const seedPath = ${JSON.stringify(seedPath)};`);
@@ -129,6 +141,11 @@ describe("private history snapshot validation", () => {
       };
       const runInit = () => spawnSync(process.execPath, ["-e", script], { env: environment });
       const first = runInit();
+      if (kind === "escape") {
+        expect(first.status).not.toBe(0);
+        expect(first.stderr.toString()).toContain("history seed escapes its projection");
+        return;
+      }
       expect(first.status, first.stderr.toString()).toBe(0);
       const recent = path.join(privateRoot, "activity", "recent.json");
       expect(readFileSync(recent, "utf8")).toBe("seeded");

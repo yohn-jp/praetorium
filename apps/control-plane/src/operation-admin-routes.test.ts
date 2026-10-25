@@ -15,6 +15,9 @@ const MIGRATIONS = [
   "0001_repository_platform.sql",
   "0002_stable_release_rollouts.sql",
   "0003_staged_configurations.sql",
+  "0004_runtime_git_credentials.sql",
+  "0006_application_origins.sql",
+  "0009_runtime_authority.sql",
 ];
 const liveDatabases: DatabaseSync[] = [];
 

@@ -270,8 +270,16 @@ export function createT11RolloutComposition(deps: T11RolloutCompositionDependenc
       },
     },
     ...(deps.requestId ? { requestId: deps.requestId } : {}),
-    afterAdmitted: (_candidate, context) => {
-      context.waitUntil(runStableReleaseWork(scheduled, { promotionPasses: 2 }));
+    afterAdmitted: (candidate, context) => {
+      context.waitUntil((async () => {
+        const status = await releases.getReleaseRetryStatus(candidate.id);
+        if (status?.build?.status === "succeeded") {
+          await releases.wakeSuccessfulCanaryBuild({
+            buildId: status.build.id, binding: deps.canaryBinding, now: deps.clock.nowMs(),
+          });
+        }
+        await runStableReleaseWork(scheduled, { promotionPasses: 2 });
+      })());
     },
   });
 

@@ -213,8 +213,15 @@ test("release policy rejects unsafe canary scope and reports partial operator co
   productionCanary.releasePolicy.canary.production = true;
   assert.match(
     validateInventory(productionCanary).errors.join("\n"),
-    /releasePolicy\.canary\.production must be false/u,
+    /releasePolicy\.canary must declare either disposable\/nonproduction or persistent\/production ownership/u,
   );
+
+  const persistentCanary = structuredClone(inventory);
+  persistentCanary.releasePolicy.canary.disposable = false;
+  persistentCanary.releasePolicy.canary.production = true;
+  assert.deepEqual(validateInventory(persistentCanary).errors, []);
+  persistentCanary.releasePolicy.canary.production = false;
+  assert.match(validateInventory(persistentCanary).errors.join("\n"), /Canary|canary/u);
 
   const partialPolicy = structuredClone(inventory);
   partialPolicy.releasePolicy.workerId = "release-worker";

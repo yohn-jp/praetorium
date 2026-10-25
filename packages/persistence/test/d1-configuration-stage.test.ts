@@ -9,6 +9,7 @@ import {
   canonicalBuildInput,
 } from "@praetorium/contracts";
 import type {
+  ConfigurationPlanMutation,
   ConfigurationStageActivationMutation,
   ConfigurationStageMutation,
 } from "@praetorium/application/configurations";
@@ -209,6 +210,47 @@ async function createStage(db: SQLiteD1) {
   if (!receipt) throw new Error("configuration stage did not persist");
   return { store, input, receipt, key };
 }
+
+describe("Canary plan requires an authoritatively stopped instance", () => {
+  it.each(["running", "retained-writer", "stale-stop", "pending-reservation", "reservation", "pending-operation", "stopped"])(
+    "atomically checks %s before changing the desired assignment",
+    async (state) => {
+      const db = new SQLiteD1();
+      liveDatabases.push(db);
+      const { store, input } = await createStage(db);
+      db.database.exec(`UPDATE logical_instances SET desired_state='stopped',
+        observed_state='stopped', observed_generation=2, observed_runtime_epoch=3`);
+      if (state === "running") db.database.exec("UPDATE logical_instances SET desired_state='running'");
+      if (state === "retained-writer") db.database.exec("UPDATE logical_instances SET observed_state='ready'");
+      if (state === "stale-stop") db.database.exec("UPDATE logical_instances SET observed_generation=1");
+      if (state === "reservation" || state === "pending-reservation") db.database.exec(`INSERT INTO runtime_reservations (
+        reservation_id, instance_id, repository_id, runtime_epoch, generation, cluster_id, status,
+        capacity_snapshot_epoch, cpu_milli, memory_mib, ephemeral_storage_mib, created_at, updated_at
+      ) VALUES ('old-writer', 'instance-1', 101, 3, 2, 'cluster-1', '${state === "pending-reservation" ? "pending" : "allocated"}', 1, 1, 1, 1, 1, 1)`);
+      if (state === "pending-operation") db.database.exec(`INSERT INTO operations (
+        operation_id, instance_id, repository_id, generation, runtime_epoch, kind, status, phase,
+        idempotency_scope, idempotency_key, request_hash, actor_id, authorization_revision, created_at, updated_at
+      ) VALUES ('pending-stop', 'instance-1', 101, 2, 3, 'stop', 'pending', 'accepted',
+        'repository:101', 'pending-stop', 'hash', 'actor', 4, 1, 1)`);
+      const plan: ConfigurationPlanMutation = {
+        ...input, expectedDesiredState: state === "running" ? "running" : "stopped",
+        selection: { ...input.selection, policy: "pinned" },
+        actorId: "system:stable-release-canary", revisionId: "revision-canary",
+        operationId: "operation-canary", idempotencyKey: "canary-plan", now: 20,
+      };
+      const result = await store.commitPlan(plan);
+      if (state === "stopped") {
+        expect(result?.revision.revisionId).toBe("revision-canary");
+      } else {
+        expect(result).toBeNull();
+        expect(db.database.prepare("SELECT generation,desired_revision_id FROM logical_instances").get())
+          .toMatchObject({ generation: 2, desired_revision_id: "revision-current" });
+        expect(db.database.prepare("SELECT count(*) AS count FROM deployment_revisions WHERE revision_id='revision-canary'").get())
+          .toMatchObject({ count: 0 });
+      }
+    },
+  );
+});
 
 function seedAdmittedArtifact(db: SQLiteD1, buildKeyValue: string, artifactDigest: string): void {
   db.database

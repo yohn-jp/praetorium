@@ -291,6 +291,18 @@ describe("operator pre-runtime Canary recovery", () => {
     expect(retry.execute).not.toHaveBeenCalled();
   });
 
+  it("redelivers progression for an exact accepted retry replay without repeating the mutation", async () => {
+    const { routeDeps, retry, status } = retryFixture();
+    retry.replay.mockResolvedValueOnce({ kind: "accepted", duplicate: true, status });
+    const afterAdmitted = vi.fn();
+    const app = createOperatorReleaseAdmissionRoutes({ ...routeDeps, afterAdmitted });
+    const response = await app.fetch(new Request("https://control.example/release-test/retry", retryRequest()),
+      {}, { waitUntil() {}, passThroughOnException() {}, props: {} });
+    expect(response.status).toBe(200);
+    expect(retry.execute).not.toHaveBeenCalled();
+    expect(afterAdmitted).toHaveBeenCalledOnce();
+  });
+
   it("distinguishes exact replay from stale revision conflicts", async () => {
     const { routeDeps, retry, status } = retryFixture();
     retry.execute.mockResolvedValueOnce({ kind: "accepted", duplicate: true, status });

@@ -259,7 +259,7 @@ test("tenant Role grants per-instance runtime resource operations and no data or
   assert.ok(allows(tenant, "", "pods", "list"));
   assert.ok(allows(tenant, "", "pods/exec", "get"));
   assert.ok(allows(tenant, "", "pods/exec", "create"));
-  assert.ok(!allows(tenant, "", "pods", "get"));
+  assert.ok(allows(tenant, "", "pods", "get"), "exact Pod reads are required for fenced private-history preservation");
   for (const verb of ["get", "create", "patch"]) {
     assert.ok(allows(tenant, "", "persistentvolumeclaims", verb));
   }
@@ -295,6 +295,7 @@ test("tenant Role grants per-instance runtime resource operations and no data or
       "/limitranges:delete",
       "/limitranges:get",
       "/limitranges:patch",
+      "/pods:get",
       "/pods:list",
       "/pods/exec:get",
       "/pods/exec:create",

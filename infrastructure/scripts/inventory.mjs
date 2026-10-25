@@ -672,11 +672,10 @@ export function validateInventory(value) {
     "releasePolicy.canary",
     errors,
   );
-  if (value.releasePolicy?.canary?.disposable !== true) {
-    errors.push("releasePolicy.canary.disposable must be true for the owned disposable canary");
-  }
-  if (value.releasePolicy?.canary?.production !== false) {
-    errors.push("releasePolicy.canary.production must be false");
+  if (typeof value.releasePolicy?.canary?.disposable !== "boolean" ||
+      typeof value.releasePolicy?.canary?.production !== "boolean" ||
+      value.releasePolicy.canary.disposable === value.releasePolicy.canary.production) {
+    errors.push("releasePolicy.canary must declare either disposable/nonproduction or persistent/production ownership");
   }
   const canaryFields = [
     "owner",

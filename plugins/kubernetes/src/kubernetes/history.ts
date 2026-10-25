@@ -328,9 +328,21 @@ if (fs.existsSync(marker)) {
   fsyncDirectory(root);
   process.exit(0);
 }
-const seedStat = fs.lstatSync(seedPath);
-if (!seedStat.isFile() || seedStat.isSymbolicLink() || seedStat.size > 768 * 1024) throw new Error('history seed is unsafe or oversized');
-const seed = JSON.parse(fs.readFileSync(seedPath, 'utf8'));
+// Kubernetes projects Secret keys through ..data symlinks inside this read-only mount.
+const seedRoot = path.dirname(seedPath);
+const seedRootStat = fs.lstatSync(seedRoot);
+const resolvedSeed = fs.realpathSync(seedPath);
+const relativeSeed = path.relative(seedRoot, resolvedSeed);
+if (!seedRootStat.isDirectory() || seedRootStat.isSymbolicLink() || !relativeSeed || relativeSeed === '..' || relativeSeed.startsWith('..' + path.sep) || path.isAbsolute(relativeSeed)) throw new Error('history seed escapes its projection');
+const seedFd = fs.openSync(resolvedSeed, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+let seed;
+try {
+  const seedStat = fs.fstatSync(seedFd);
+  if (!seedStat.isFile() || seedStat.size > 768 * 1024) throw new Error('history seed is unsafe or oversized');
+  const bytes = fs.readFileSync(seedFd);
+  if (bytes.length > 768 * 1024 || fs.fstatSync(seedFd).size !== seedStat.size) throw new Error('history seed changed while reading');
+  seed = JSON.parse(bytes.toString('utf8'));
+} finally { fs.closeSync(seedFd); }
 if (seed.schemaVersion !== 1 || typeof seed.sourcePodUid !== 'string' || !Array.isArray(seed.files) || seed.files.length > 4096 || typeof seed.manifestSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(seed.manifestSha256)) throw new Error('history seed schema is invalid');
 const canonical = JSON.stringify({ schemaVersion: 1, sourcePodUid: seed.sourcePodUid, files: seed.files });
 if (digest(Buffer.from(canonical)) !== seed.manifestSha256) throw new Error('history seed manifest digest failed');

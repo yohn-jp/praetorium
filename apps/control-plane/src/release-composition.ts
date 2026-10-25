@@ -14,6 +14,24 @@ import type { InstanceService } from "@praetorium/application/instances";
 import type { OperationService } from "@praetorium/application/operations";
 import type { WorkNotificationDispatcher } from "./work-notification-scheduler.js";
 
+/** Selected only by the trusted operator policy, never by a repository request. */
+export const ReleaseCanaryBindingSchema = z
+  .strictObject({
+    owner: z.string().min(1).max(128),
+    disposable: z.boolean(),
+    production: z.boolean(),
+    repositoryId: z.number().int().positive().safe(),
+    instanceId: z.string().regex(/^ins_[0-9A-HJKMNP-TV-Z]{26}$/u),
+    bindingEpoch: z.number().int().nonnegative().safe(),
+    authorizationRevision: z.number().int().nonnegative().safe(),
+    requestedModules: z.array(z.string().min(1).max(128)).max(128),
+    resourceProfileId: z.string().min(1).max(128),
+  })
+  .refine((value) => value.disposable !== value.production, {
+    message:
+      "Canary must be either disposable or an operator-selected persistent production instance",
+  });
+
 const Policy = z.strictObject({
   workerId: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/u),
   clusterId: z.string().min(1).max(128),
@@ -28,17 +46,7 @@ const Policy = z.strictObject({
     )
     .min(1)
     .max(32),
-  canary: z.strictObject({
-    owner: z.string().min(1).max(128),
-    disposable: z.literal(true),
-    production: z.literal(false),
-    repositoryId: z.number().int().positive().safe(),
-    instanceId: z.string().regex(/^ins_[0-9A-HJKMNP-TV-Z]{26}$/u),
-    bindingEpoch: z.number().int().nonnegative().safe(),
-    authorizationRevision: z.number().int().nonnegative().safe(),
-    requestedModules: z.array(z.string().min(1).max(128)).max(128),
-    resourceProfileId: z.string().min(1).max(128),
-  }),
+  canary: ReleaseCanaryBindingSchema,
 });
 
 /** Two already-authorized entry points for one operator authority.

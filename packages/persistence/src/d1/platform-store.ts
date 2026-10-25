@@ -490,6 +490,243 @@ export class D1PlatformStore implements OperationStore {
     const expectedClusterId = input.expectedClusterId ?? null;
     const statements: D1PreparedStatement[] = [...fenceStatements];
     if (fenceStatements.length > 0) statements.push(this.assertOneChange());
+    const supersededBeforeEffectResult = JSON.stringify({
+      terminal: "blocked",
+      code: "SUPERSEDED_BEFORE_RUNTIME_EFFECT",
+      message: "A newer desired state superseded this operation before runtime side effects.",
+      supersededByOperationId: operation.id,
+      supersededByGeneration: operation.generation,
+      writerAbsenceClaimed: false,
+    });
+    // Keep checkpoint predicates grouped below D1's expression-depth limit (100).
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE operations AS prior
+           SET status = 'blocked', phase = 'blocked', result_json = ?, updated_at = ?
+           WHERE prior.instance_id = ? AND prior.repository_id = ?
+             AND prior.status IN ('pending', 'claimed', 'running')
+             AND prior.generation < ?
+             AND (
+               (prior.status = 'pending' AND prior.worker_id IS NULL
+                 AND prior.lease_token IS NULL AND prior.lease_expires_at IS NULL)
+               OR (prior.status IN ('claimed', 'running')
+                 AND prior.lease_expires_at IS NOT NULL AND prior.lease_expires_at <= ?)
+             )
+             AND prior.kind IN ('start', 'update', 'redeploy')
+             AND prior.phase IN ('accepted', 'waiting-for-artifact', 'waiting-for-capacity')
+             AND prior.reservation_id IS NULL
+             AND EXISTS (
+               SELECT 1 FROM logical_instances instance_state
+               WHERE instance_state.instance_id = prior.instance_id
+                 AND instance_state.repository_id = prior.repository_id
+                 AND instance_state.generation = ? AND prior.generation < instance_state.generation
+                 AND (instance_state.observed_runtime_epoch IS NULL
+                   OR prior.runtime_epoch > instance_state.observed_runtime_epoch)
+                 AND (
+               (prior.checkpoint_sequence = 0 AND prior.checkpoint_json IS NULL
+                 AND NOT EXISTS (
+                   SELECT 1 FROM operation_checkpoints checkpoint
+                   WHERE checkpoint.operation_id = prior.operation_id
+                 ))
+               OR (
+                 (
+                   prior.checkpoint_sequence > 0
+                   AND json_type(prior.checkpoint_json, '$') = 'object'
+                   AND json_extract(prior.checkpoint_json, '$.schemaVersion') = 1
+                   AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json)) = 2
+                   AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json)
+                      WHERE key IN ('schemaVersion', 'lifecycle')) = 2
+                   AND json_type(prior.checkpoint_json, '$.lifecycle') = 'object'
+                 )
+                 AND (
+                   (SELECT COUNT(*) FROM json_each(prior.checkpoint_json, '$.lifecycle')) = 26
+                   AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json, '$.lifecycle')
+                      WHERE key IN ('id', 'version', 'instanceId', 'repositoryId', 'clusterId',
+                        'generation', 'kind', 'reason', 'phase', 'runtimeEpoch', 'targetRevisionId',
+                        'current', 'target', 'targetEpoch', 'targetReservationId', 'rollbackEpoch',
+                        'quiesceRequest', 'quiesceReceipt', 'writerAbsenceProof', 'readinessEvidence',
+                        'rollbackCompatibilityEvidence', 'rollbackCompatible', 'buildId', 'failureCode',
+                        'failureReason', 'lastAuthenticatedActivityAt')) = 26
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.id') = 'text'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.id') = prior.operation_id
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.version') = 'integer'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.version') = prior.checkpoint_sequence
+                 )
+                 AND (
+                   json_extract(prior.checkpoint_json, '$.lifecycle.instanceId') = prior.instance_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.repositoryId') = prior.repository_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.clusterId') = prior.cluster_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.generation') = prior.generation
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.kind') = prior.kind
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.phase') = prior.phase
+                 )
+                 AND (
+                   json_extract(prior.checkpoint_json, '$.lifecycle.runtimeEpoch') = prior.runtime_epoch
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.targetRevisionId') IS prior.deployment_revision_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.targetEpoch') = prior.runtime_epoch
+                   AND ((prior.kind = 'update' AND json_extract(prior.checkpoint_json, '$.lifecycle.reason') = 'update')
+                   OR (prior.kind = 'redeploy' AND json_extract(prior.checkpoint_json, '$.lifecycle.reason') = 'redeploy')
+                   OR (prior.kind = 'start' AND json_extract(prior.checkpoint_json, '$.lifecycle.reason') IN ('user', 'idle')))
+                   AND instance_state.observed_state = 'ready'
+                   AND instance_state.observed_generation IS NOT NULL
+                 )
+                 AND (
+                   instance_state.observed_runtime_epoch IS NOT NULL
+                   AND instance_state.observed_revision_id IS NOT NULL
+                   AND instance_state.reservation_id IS NOT NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.current') = 'object'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.instanceId') = prior.instance_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.repositoryId') = prior.repository_id
+                 )
+                 AND (
+                   json_extract(prior.checkpoint_json, '$.lifecycle.current.runtimeEpoch') = instance_state.observed_runtime_epoch
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.generation') = instance_state.observed_generation
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.current.clusterId') = 'text'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.current.reservationId') = 'text'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.reservationId') IS instance_state.reservation_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.clusterId') IS (
+                   SELECT old_writer.cluster_id FROM runtime_reservations old_writer
+                   WHERE old_writer.reservation_id = instance_state.reservation_id
+                     AND old_writer.instance_id = instance_state.instance_id
+                     AND old_writer.repository_id = instance_state.repository_id
+                     AND old_writer.runtime_epoch = instance_state.observed_runtime_epoch
+                     AND old_writer.generation = instance_state.observed_generation
+                     AND old_writer.status IN ('reserved', 'allocated')
+                 )
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.current.deployment.revisionId') = 'text'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.deployment.revisionId') IS instance_state.observed_revision_id
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target') = 'object'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.target.revisionId') IS prior.deployment_revision_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.target.repositoryId') = prior.repository_id
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.imageDigest') = 'text'
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.target.artifactRef') = 'text'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.platformManifestDigest') = 'text'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.compositionManifestDigest') = 'text'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.instanceId') IS NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.runtimeEpoch') IS NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.generation') IS NULL
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.target.clusterId') IS NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.reservationId') IS NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.targetReservationId') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackEpoch') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.quiesceRequest') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.quiesceReceipt') = 'null'
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.writerAbsenceProof') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.readinessEvidence') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackCompatibilityEvidence') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackCompatible') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.failureCode') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.failureReason') = 'null'
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.lastAuthenticatedActivityAt') = 'null'
+                   AND (SELECT COUNT(*) FROM operation_checkpoints history
+                      WHERE history.operation_id = prior.operation_id) = prior.checkpoint_sequence
+                   AND NOT EXISTS (
+                   SELECT 1 FROM operation_checkpoints effect
+                   WHERE effect.operation_id = prior.operation_id
+                     AND (effect.runtime_epoch <> prior.runtime_epoch
+                       OR effect.phase NOT IN ('accepted', 'waiting-for-artifact', 'waiting-for-capacity', 'capacity-reserved')
+                       OR CASE WHEN json_valid(effect.checkpoint_json) THEN (
+                         json_type(effect.checkpoint_json, '$') IS NOT 'object'
+                         OR json_extract(effect.checkpoint_json, '$.schemaVersion') IS NOT 1
+                         OR (SELECT COUNT(*) FROM json_each(effect.checkpoint_json)) <> 2
+                         OR (SELECT COUNT(*) FROM json_each(effect.checkpoint_json, '$.lifecycle')) <> 26
+                         OR json_extract(effect.checkpoint_json, '$.lifecycle.id') IS NOT prior.operation_id
+                         OR json_extract(effect.checkpoint_json, '$.lifecycle.version') IS NOT effect.sequence
+                         OR json_extract(effect.checkpoint_json, '$.lifecycle.phase') IS NOT effect.phase
+                         OR json_extract(effect.checkpoint_json, '$.lifecycle.runtimeEpoch') IS NOT prior.runtime_epoch
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.targetReservationId') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.rollbackEpoch') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.quiesceRequest') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.quiesceReceipt') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.writerAbsenceProof') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.readinessEvidence') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.rollbackCompatibilityEvidence') IS NOT 'null'
+                       ) ELSE 1 END)
+                 )
+                   AND EXISTS (
+                   SELECT 1 FROM operation_checkpoints latest
+                   WHERE latest.operation_id = prior.operation_id
+                     AND latest.sequence = prior.checkpoint_sequence
+                     AND latest.phase = prior.phase
+                     AND latest.runtime_epoch = prior.runtime_epoch
+                     AND latest.checkpoint_json = prior.checkpoint_json
+                 )
+                 )
+               )
+                 )
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM runtime_reservations target
+               WHERE target.instance_id = prior.instance_id
+                 AND target.repository_id = prior.repository_id
+                 AND target.runtime_epoch = prior.runtime_epoch
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM runtime_git_credentials target_credential
+               WHERE target_credential.repository_id = prior.repository_id
+                 AND (target_credential.instance_id = prior.instance_id
+                   OR target_credential.instance_id = 'run_' || substr(prior.instance_id, 5) || '_' || target_credential.runtime_epoch)
+                 AND target_credential.runtime_epoch = prior.runtime_epoch
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM logical_instances authority
+               WHERE authority.instance_id = prior.instance_id
+                 AND authority.runtime_authority_operation_id = prior.operation_id
+             )`,
+        )
+        .bind(
+          supersededBeforeEffectResult,
+          now,
+          snapshot.instance.instanceId,
+          snapshot.binding.repositoryId,
+          snapshot.instance.generation,
+          now,
+          snapshot.instance.generation,
+        ),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO audit_events (
+             event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
+             action, outcome, request_id, metadata_json, occurred_at
+           ) SELECT ? || prior.operation_id || ':' || ?, prior.repository_id, prior.instance_id, prior.operation_id, ?, ?,
+                    'operation.superseded', 'blocked', ?, ?, ?
+             FROM operations prior
+             WHERE prior.instance_id = ? AND prior.repository_id = ?
+               AND prior.generation < ? AND prior.status = 'blocked'
+               AND prior.updated_at = ?
+               AND json_extract(prior.result_json, '$.code') = 'SUPERSEDED_BEFORE_RUNTIME_EFFECT'
+               AND json_extract(prior.result_json, '$.supersededByOperationId') = ?`,
+        )
+        .bind(
+          "operation.superseded-before-effect:",
+          operation.id,
+          input.actorId,
+          input.actorKind ?? "user",
+          input.requestId,
+          JSON.stringify({
+            supersededByOperationId: operation.id,
+            supersededByGeneration: operation.generation,
+            writerAbsenceClaimed: false,
+          }),
+          now,
+          snapshot.instance.instanceId,
+          snapshot.binding.repositoryId,
+          snapshot.instance.generation,
+          now,
+          operation.id,
+        ),
+    );
     statements.push(
       this.db
         .prepare(

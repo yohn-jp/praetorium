@@ -482,8 +482,10 @@ export class D1T11ReleaseRolloutStore
               JOIN logical_instances i ON i.instance_id = d.instance_id
               JOIN repository_bindings rb ON rb.repository_id = d.repository_id
                                           AND rb.instance_id = i.instance_id
-             WHERE b.build_id = ? AND b.status = 'succeeded'
-               AND EXISTS (
+             WHERE (
+                 b.build_id = ?
+                 AND b.status = 'succeeded'
+                 AND EXISTS (
                  SELECT 1 FROM build_attempts completed
                  WHERE completed.attempt_id = b.active_attempt_id
                    AND completed.build_id = b.build_id
@@ -492,29 +494,52 @@ export class D1T11ReleaseRolloutStore
                    AND completed.report_sequence = b.report_sequence
                    AND completed.last_report_digest = b.last_report_digest
                )
-               AND c.status = 'candidate'
-               AND w.state = 'canary_building' AND w.failure_code IS NULL
-               AND w.next_attempt_at > ?
-               AND ((w.lease_owner IS NULL AND w.lease_expires_at IS NULL)
+                 AND c.status = 'candidate'
+                 AND w.state = 'canary_building'
+                 AND w.failure_code IS NULL
+               )
+               AND (
+                 w.next_attempt_at > ?
+                 AND ((w.lease_owner IS NULL AND w.lease_expires_at IS NULL)
                     OR (w.lease_owner IS NOT NULL AND w.lease_expires_at <= ?))
-               AND w.canary_artifact_digest IS NULL
-               AND w.canary_runtime_id IS NULL AND w.canary_operation_id IS NULL
-               AND d.status = 'admitted' AND d.artifact_digest IS NOT NULL
-               AND d.actor_id = 'system:stable-release-canary'
-               AND d.repository_id = ? AND d.instance_id = ?
-               AND json_extract(d.selection_json, '$.releaseId') = c.release_id
-               AND json_extract(d.selection_json, '$.policy') = 'pinned'
-               AND json_extract(d.selection_json, '$.resourceProfileId') = ?
-               AND json_extract(d.selection_json, '$.requestedModules') = ?
-               AND rb.binding_epoch = ? AND rb.authorization_revision = ? AND rb.suspended = 0
-               AND i.repository_id = d.repository_id AND i.generation = d.generation
-               AND i.desired_revision_id = d.revision_id
-               AND i.desired_state = 'stopped' AND i.observed_state = 'absent'
-               AND i.observed_generation IS NULL AND i.observed_runtime_epoch IS NULL
-               AND i.runtime_epoch = 0 AND i.reservation_state IN ('none', 'released')
-               AND i.reservation_id IS NULL AND i.desired_artifact_digest = d.artifact_digest
-               AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id)
-               AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id)
+                 AND w.canary_artifact_digest IS NULL
+                 AND w.canary_runtime_id IS NULL
+                 AND w.canary_operation_id IS NULL
+                 AND d.status = 'admitted'
+               )
+               AND (
+                 d.artifact_digest IS NOT NULL
+                 AND d.actor_id = 'system:stable-release-canary'
+                 AND d.repository_id = ?
+                 AND d.instance_id = ?
+                 AND json_extract(d.selection_json, '$.releaseId') = c.release_id
+                 AND json_extract(d.selection_json, '$.policy') = 'pinned'
+               )
+               AND (
+                 json_extract(d.selection_json, '$.resourceProfileId') = ?
+                 AND json_extract(d.selection_json, '$.requestedModules') = ?
+                 AND rb.binding_epoch = ?
+                 AND rb.authorization_revision = ?
+                 AND rb.suspended = 0
+                 AND i.repository_id = d.repository_id
+               )
+               AND (
+                 i.generation = d.generation
+                 AND i.desired_revision_id = d.revision_id
+                 AND i.desired_state = 'stopped'
+                 AND i.observed_state IN ('absent', 'stopped')
+                 AND (i.observed_generation IS NULL OR i.observed_generation <= i.generation)
+                 AND (i.observed_runtime_epoch IS NULL OR i.observed_runtime_epoch <= i.runtime_epoch)
+               )
+               AND (
+                 i.reservation_state IN ('none', 'released')
+                 AND i.reservation_id IS NULL
+                 AND i.desired_artifact_digest = d.artifact_digest
+                 AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.instance_id = i.instance_id
+                 AND o.status IN ('pending', 'claimed', 'running'))
+                 AND NOT EXISTS (SELECT 1 FROM runtime_reservations r WHERE r.instance_id = i.instance_id
+                 AND r.status IN ('pending', 'reserved', 'allocated'))
+               )
              ORDER BY w.next_attempt_at, w.release_id LIMIT 1
           )
           RETURNING release_id`,

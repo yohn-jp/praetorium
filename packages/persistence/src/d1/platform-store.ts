@@ -490,6 +490,105 @@ export class D1PlatformStore implements OperationStore {
     const expectedClusterId = input.expectedClusterId ?? null;
     const statements: D1PreparedStatement[] = [...fenceStatements];
     if (fenceStatements.length > 0) statements.push(this.assertOneChange());
+    const supersededBeforeEffectResult = JSON.stringify({
+      terminal: "blocked",
+      code: "SUPERSEDED_BEFORE_RUNTIME_EFFECT",
+      message: "A newer desired state superseded this operation before runtime side effects.",
+      supersededByOperationId: operation.id,
+      supersededByGeneration: operation.generation,
+      writerAbsenceClaimed: false,
+    });
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE operations AS prior
+           SET status = 'blocked', phase = 'blocked', result_json = ?, updated_at = ?
+           WHERE prior.instance_id = ? AND prior.repository_id = ?
+             AND prior.status IN ('pending', 'claimed', 'running')
+             AND prior.generation < ?
+             AND EXISTS (
+               SELECT 1 FROM logical_instances instance_state
+               WHERE instance_state.instance_id = prior.instance_id
+                 AND instance_state.repository_id = prior.repository_id
+                 AND prior.generation < instance_state.generation AND instance_state.generation = ?
+                 AND (instance_state.observed_runtime_epoch IS NULL
+                   OR prior.runtime_epoch > instance_state.observed_runtime_epoch)
+             )
+             AND (
+               (prior.status = 'pending' AND prior.worker_id IS NULL
+                 AND prior.lease_token IS NULL AND prior.lease_expires_at IS NULL)
+               OR (prior.status IN ('claimed', 'running')
+                 AND prior.lease_expires_at IS NOT NULL AND prior.lease_expires_at <= ?)
+             )
+             AND prior.kind IN ('start', 'update', 'redeploy')
+             AND prior.phase IN ('accepted', 'waiting-for-artifact', 'waiting-for-capacity')
+             AND prior.reservation_id IS NULL
+             AND prior.checkpoint_sequence = 0 AND prior.checkpoint_json IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM operation_checkpoints checkpoint
+               WHERE checkpoint.operation_id = prior.operation_id
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM runtime_reservations target
+               WHERE target.instance_id = prior.instance_id
+                 AND target.repository_id = prior.repository_id
+                 AND target.runtime_epoch = prior.runtime_epoch
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM runtime_git_credentials target_credential
+               WHERE target_credential.repository_id = prior.repository_id
+                 AND (target_credential.instance_id = prior.instance_id
+                   OR target_credential.instance_id = 'run_' || substr(prior.instance_id, 5) || '_' || target_credential.runtime_epoch)
+                 AND target_credential.runtime_epoch = prior.runtime_epoch
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM logical_instances authority
+               WHERE authority.instance_id = prior.instance_id
+                 AND authority.runtime_authority_operation_id = prior.operation_id
+             )`,
+        )
+        .bind(
+          supersededBeforeEffectResult,
+          now,
+          snapshot.instance.instanceId,
+          snapshot.binding.repositoryId,
+          snapshot.instance.generation,
+          snapshot.instance.generation,
+          now,
+        ),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO audit_events (
+             event_id, repository_id, instance_id, operation_id, actor_id, actor_kind,
+             action, outcome, request_id, metadata_json, occurred_at
+           ) SELECT ? || prior.operation_id || ':' || ?, prior.repository_id, prior.instance_id, prior.operation_id, ?, ?,
+                    'operation.superseded', 'blocked', ?, ?, ?
+             FROM operations prior
+             WHERE prior.instance_id = ? AND prior.repository_id = ?
+               AND prior.generation < ? AND prior.status = 'blocked'
+               AND prior.updated_at = ?
+               AND json_extract(prior.result_json, '$.code') = 'SUPERSEDED_BEFORE_RUNTIME_EFFECT'
+               AND json_extract(prior.result_json, '$.supersededByOperationId') = ?`,
+        )
+        .bind(
+          "operation.superseded-before-effect:",
+          operation.id,
+          input.actorId,
+          input.actorKind ?? "user",
+          input.requestId,
+          JSON.stringify({
+            supersededByOperationId: operation.id,
+            supersededByGeneration: operation.generation,
+            writerAbsenceClaimed: false,
+          }),
+          now,
+          snapshot.instance.instanceId,
+          snapshot.binding.repositoryId,
+          snapshot.instance.generation,
+          now,
+          operation.id,
+        ),
+    );
     statements.push(
       this.db
         .prepare(

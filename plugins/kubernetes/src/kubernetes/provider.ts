@@ -543,7 +543,9 @@ function podEvidence(
   // container uses the exact same immutable image on the same node, so its
   // observed platform digest can fence startup authority recovery. This is
   // image evidence only: it never makes an uninitialized Pod ready.
-  if (applicationImageDigest === undefined && ownershipValid && status?.phase === "Pending" &&
+  if (applicationImageDigest === undefined && ownershipValid &&
+      podIdentity?.runtimeEpoch === identity.runtimeEpoch && podIdentity.generation === identity.generation &&
+      status?.phase === "Pending" &&
       applicationStatus?.started !== true && !stringValue(applicationStatus?.containerID) &&
       record(applicationStatus?.state)?.running === undefined) {
     const podSpec = record(record(value)?.spec);

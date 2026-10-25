@@ -586,7 +586,7 @@ function reservation(
 }
 
 describe("Kubernetes runtime provider", () => {
-  it.each(["same image", "other init image", "missing image ID", "other init name", "started app"])(
+  it.each(["same image", "other init image", "missing image ID", "other init name", "started app", "other Pod generation", "other Pod epoch"])(
     "observes bootstrap image evidence without readiness: %s", async (variant) => {
       const api = new FakeKubernetesApi();
       api.addNode();
@@ -600,6 +600,10 @@ describe("Kubernetes runtime provider", () => {
       const init = (podSpec.initContainers as unknown[]).map(record);
       api.objects.set(podKey, {
         ...pod,
+        metadata: { ...record(pod.metadata), labels: { ...record(record(pod.metadata).labels),
+          ...(variant === "other Pod generation" ? { "arcadia.io/generation": "2" } : {}),
+          ...(variant === "other Pod epoch" ? { "praetorium.io/runtime-epoch": "2" } : {}),
+        } },
         spec: { ...podSpec, initContainers: init.map(item => ({ ...item,
           ...(variant === "other init image" ? { image: `other.example/image@${INDEX_DIGEST}` } : {}),
           ...(variant === "other init name" ? { name: "other-init" } : {}),

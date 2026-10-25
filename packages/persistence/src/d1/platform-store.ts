@@ -498,6 +498,7 @@ export class D1PlatformStore implements OperationStore {
       supersededByGeneration: operation.generation,
       writerAbsenceClaimed: false,
     });
+    // Keep checkpoint predicates grouped below D1's expression-depth limit (100).
     statements.push(
       this.db
         .prepare(
@@ -529,51 +530,62 @@ export class D1PlatformStore implements OperationStore {
                    WHERE checkpoint.operation_id = prior.operation_id
                  ))
                OR (
-                 prior.checkpoint_sequence > 0
-                 AND json_type(prior.checkpoint_json, '$') = 'object'
-                 AND json_extract(prior.checkpoint_json, '$.schemaVersion') = 1
-                 AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json)) = 2
-                 AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json)
+                 (
+                   prior.checkpoint_sequence > 0
+                   AND json_type(prior.checkpoint_json, '$') = 'object'
+                   AND json_extract(prior.checkpoint_json, '$.schemaVersion') = 1
+                   AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json)) = 2
+                   AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json)
                       WHERE key IN ('schemaVersion', 'lifecycle')) = 2
-                 AND json_type(prior.checkpoint_json, '$.lifecycle') = 'object'
-                 AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json, '$.lifecycle')) = 26
-                 AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json, '$.lifecycle')
+                   AND json_type(prior.checkpoint_json, '$.lifecycle') = 'object'
+                 )
+                 AND (
+                   (SELECT COUNT(*) FROM json_each(prior.checkpoint_json, '$.lifecycle')) = 26
+                   AND (SELECT COUNT(*) FROM json_each(prior.checkpoint_json, '$.lifecycle')
                       WHERE key IN ('id', 'version', 'instanceId', 'repositoryId', 'clusterId',
                         'generation', 'kind', 'reason', 'phase', 'runtimeEpoch', 'targetRevisionId',
                         'current', 'target', 'targetEpoch', 'targetReservationId', 'rollbackEpoch',
                         'quiesceRequest', 'quiesceReceipt', 'writerAbsenceProof', 'readinessEvidence',
                         'rollbackCompatibilityEvidence', 'rollbackCompatible', 'buildId', 'failureCode',
                         'failureReason', 'lastAuthenticatedActivityAt')) = 26
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.id') = 'text'
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.id') = prior.operation_id
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.version') = 'integer'
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.version') = prior.checkpoint_sequence
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.instanceId') = prior.instance_id
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.repositoryId') = prior.repository_id
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.clusterId') = prior.cluster_id
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.generation') = prior.generation
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.kind') = prior.kind
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.phase') = prior.phase
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.runtimeEpoch') = prior.runtime_epoch
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.targetRevisionId') IS prior.deployment_revision_id
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.targetEpoch') = prior.runtime_epoch
-                 AND ((prior.kind = 'update' AND json_extract(prior.checkpoint_json, '$.lifecycle.reason') = 'update')
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.id') = 'text'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.id') = prior.operation_id
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.version') = 'integer'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.version') = prior.checkpoint_sequence
+                 )
+                 AND (
+                   json_extract(prior.checkpoint_json, '$.lifecycle.instanceId') = prior.instance_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.repositoryId') = prior.repository_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.clusterId') = prior.cluster_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.generation') = prior.generation
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.kind') = prior.kind
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.phase') = prior.phase
+                 )
+                 AND (
+                   json_extract(prior.checkpoint_json, '$.lifecycle.runtimeEpoch') = prior.runtime_epoch
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.targetRevisionId') IS prior.deployment_revision_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.targetEpoch') = prior.runtime_epoch
+                   AND ((prior.kind = 'update' AND json_extract(prior.checkpoint_json, '$.lifecycle.reason') = 'update')
                    OR (prior.kind = 'redeploy' AND json_extract(prior.checkpoint_json, '$.lifecycle.reason') = 'redeploy')
                    OR (prior.kind = 'start' AND json_extract(prior.checkpoint_json, '$.lifecycle.reason') IN ('user', 'idle')))
-                 AND instance_state.observed_state = 'ready'
-                 AND instance_state.observed_generation IS NOT NULL
-                 AND instance_state.observed_runtime_epoch IS NOT NULL
-                 AND instance_state.observed_revision_id IS NOT NULL
-                 AND instance_state.reservation_id IS NOT NULL
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.current') = 'object'
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.current.instanceId') = prior.instance_id
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.current.repositoryId') = prior.repository_id
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.current.runtimeEpoch') = instance_state.observed_runtime_epoch
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.current.generation') = instance_state.observed_generation
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.current.clusterId') = 'text'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.current.reservationId') = 'text'
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.current.reservationId') IS instance_state.reservation_id
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.current.clusterId') IS (
+                   AND instance_state.observed_state = 'ready'
+                   AND instance_state.observed_generation IS NOT NULL
+                 )
+                 AND (
+                   instance_state.observed_runtime_epoch IS NOT NULL
+                   AND instance_state.observed_revision_id IS NOT NULL
+                   AND instance_state.reservation_id IS NOT NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.current') = 'object'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.instanceId') = prior.instance_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.repositoryId') = prior.repository_id
+                 )
+                 AND (
+                   json_extract(prior.checkpoint_json, '$.lifecycle.current.runtimeEpoch') = instance_state.observed_runtime_epoch
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.generation') = instance_state.observed_generation
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.current.clusterId') = 'text'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.current.reservationId') = 'text'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.reservationId') IS instance_state.reservation_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.clusterId') IS (
                    SELECT old_writer.cluster_id FROM runtime_reservations old_writer
                    WHERE old_writer.reservation_id = instance_state.reservation_id
                      AND old_writer.instance_id = instance_state.instance_id
@@ -582,34 +594,44 @@ export class D1PlatformStore implements OperationStore {
                      AND old_writer.generation = instance_state.observed_generation
                      AND old_writer.status IN ('reserved', 'allocated')
                  )
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.current.deployment.revisionId') = 'text'
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.current.deployment.revisionId') IS instance_state.observed_revision_id
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target') = 'object'
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.target.revisionId') IS prior.deployment_revision_id
-                 AND json_extract(prior.checkpoint_json, '$.lifecycle.target.repositoryId') = prior.repository_id
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.imageDigest') = 'text'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.artifactRef') = 'text'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.platformManifestDigest') = 'text'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.compositionManifestDigest') = 'text'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.instanceId') IS NULL
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.runtimeEpoch') IS NULL
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.generation') IS NULL
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.clusterId') IS NULL
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.target.reservationId') IS NULL
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.targetReservationId') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackEpoch') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.quiesceRequest') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.quiesceReceipt') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.writerAbsenceProof') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.readinessEvidence') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackCompatibilityEvidence') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackCompatible') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.failureCode') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.failureReason') = 'null'
-                 AND json_type(prior.checkpoint_json, '$.lifecycle.lastAuthenticatedActivityAt') = 'null'
-                 AND (SELECT COUNT(*) FROM operation_checkpoints history
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.current.deployment.revisionId') = 'text'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.current.deployment.revisionId') IS instance_state.observed_revision_id
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target') = 'object'
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.target.revisionId') IS prior.deployment_revision_id
+                   AND json_extract(prior.checkpoint_json, '$.lifecycle.target.repositoryId') = prior.repository_id
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.imageDigest') = 'text'
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.target.artifactRef') = 'text'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.platformManifestDigest') = 'text'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.compositionManifestDigest') = 'text'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.instanceId') IS NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.runtimeEpoch') IS NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.generation') IS NULL
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.target.clusterId') IS NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.target.reservationId') IS NULL
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.targetReservationId') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackEpoch') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.quiesceRequest') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.quiesceReceipt') = 'null'
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.writerAbsenceProof') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.readinessEvidence') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackCompatibilityEvidence') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.rollbackCompatible') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.failureCode') = 'null'
+                   AND json_type(prior.checkpoint_json, '$.lifecycle.failureReason') = 'null'
+                 )
+                 AND (
+                   json_type(prior.checkpoint_json, '$.lifecycle.lastAuthenticatedActivityAt') = 'null'
+                   AND (SELECT COUNT(*) FROM operation_checkpoints history
                       WHERE history.operation_id = prior.operation_id) = prior.checkpoint_sequence
-                 AND NOT EXISTS (
+                   AND NOT EXISTS (
                    SELECT 1 FROM operation_checkpoints effect
                    WHERE effect.operation_id = prior.operation_id
                      AND (effect.runtime_epoch <> prior.runtime_epoch
@@ -632,13 +654,14 @@ export class D1PlatformStore implements OperationStore {
                          OR json_type(effect.checkpoint_json, '$.lifecycle.rollbackCompatibilityEvidence') IS NOT 'null'
                        ) ELSE 1 END)
                  )
-                 AND EXISTS (
+                   AND EXISTS (
                    SELECT 1 FROM operation_checkpoints latest
                    WHERE latest.operation_id = prior.operation_id
                      AND latest.sequence = prior.checkpoint_sequence
                      AND latest.phase = prior.phase
                      AND latest.runtime_epoch = prior.runtime_epoch
                      AND latest.checkpoint_json = prior.checkpoint_json
+                 )
                  )
                )
                  )

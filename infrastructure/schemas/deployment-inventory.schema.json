@@ -764,6 +764,10 @@
         "canary": {
           "type": "object",
           "additionalProperties": false,
+          "oneOf": [
+            { "properties": { "disposable": { "const": true }, "production": { "const": false } } },
+            { "properties": { "disposable": { "const": false }, "production": { "const": true } } }
+          ],
           "required": [
             "owner",
             "disposable",
@@ -785,10 +789,10 @@
               "maxLength": 128
             },
             "disposable": {
-              "const": true
+              "type": "boolean"
             },
             "production": {
-              "const": false
+              "type": "boolean"
             },
             "repositoryId": {
               "type": [

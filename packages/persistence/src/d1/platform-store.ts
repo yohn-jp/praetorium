@@ -613,7 +613,24 @@ export class D1PlatformStore implements OperationStore {
                    SELECT 1 FROM operation_checkpoints effect
                    WHERE effect.operation_id = prior.operation_id
                      AND (effect.runtime_epoch <> prior.runtime_epoch
-                       OR effect.phase NOT IN ('accepted', 'waiting-for-artifact', 'waiting-for-capacity'))
+                       OR effect.phase NOT IN ('accepted', 'waiting-for-artifact', 'waiting-for-capacity', 'capacity-reserved')
+                       OR CASE WHEN json_valid(effect.checkpoint_json) THEN (
+                         json_type(effect.checkpoint_json, '$') IS NOT 'object'
+                         OR json_extract(effect.checkpoint_json, '$.schemaVersion') IS NOT 1
+                         OR (SELECT COUNT(*) FROM json_each(effect.checkpoint_json)) <> 2
+                         OR (SELECT COUNT(*) FROM json_each(effect.checkpoint_json, '$.lifecycle')) <> 26
+                         OR json_extract(effect.checkpoint_json, '$.lifecycle.id') IS NOT prior.operation_id
+                         OR json_extract(effect.checkpoint_json, '$.lifecycle.version') IS NOT effect.sequence
+                         OR json_extract(effect.checkpoint_json, '$.lifecycle.phase') IS NOT effect.phase
+                         OR json_extract(effect.checkpoint_json, '$.lifecycle.runtimeEpoch') IS NOT prior.runtime_epoch
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.targetReservationId') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.rollbackEpoch') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.quiesceRequest') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.quiesceReceipt') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.writerAbsenceProof') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.readinessEvidence') IS NOT 'null'
+                         OR json_type(effect.checkpoint_json, '$.lifecycle.rollbackCompatibilityEvidence') IS NOT 'null'
+                       ) ELSE 1 END)
                  )
                  AND EXISTS (
                    SELECT 1 FROM operation_checkpoints latest

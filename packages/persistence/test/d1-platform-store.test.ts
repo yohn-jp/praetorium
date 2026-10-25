@@ -368,6 +368,7 @@ describe("D1PlatformStore with SQLite transactions", () => {
 
   it.each([
     { name: "effect evidence", options: { serializedLifecycle: true, lifecycleEffectProof: true } },
+    { name: "historical reservation", options: { serializedLifecycle: true, historicalReservation: true } },
     { name: "target reservation evidence", options: { serializedLifecycle: true, lifecycleTargetReservation: true } },
     { name: "unknown envelope key", options: { serializedLifecycle: true, lifecycleUnknownKey: true } },
   ])("does not reconcile a lifecycle envelope with $name", async ({ options }) => {
@@ -1771,6 +1772,7 @@ async function prepareSupersededPreEffectStart(options: {
   readonly lifecycleEffectProof?: boolean;
   readonly lifecycleTargetReservation?: boolean;
   readonly lifecycleUnknownKey?: boolean;
+  readonly historicalReservation?: boolean;
   readonly targetReservation?: boolean;
   readonly authorityOwned?: boolean;
   readonly effectCheckpoint?: boolean;
@@ -1892,12 +1894,12 @@ async function prepareSupersededPreEffectStart(options: {
   );
   if (lifecycle) {
     for (const [sequence, phase] of [
-      [1, "accepted"],
-      [2, "waiting-for-artifact"],
-      [3, "waiting-for-capacity"],
+      [1, "capacity-reserved"],
+      [2, "waiting-for-capacity"],
+      [3, "capacity-reserved"],
       [4, "waiting-for-capacity"],
     ] as const) {
-      const checkpoint = JSON.stringify({ schemaVersion: 1, lifecycle: { ...lifecycle, version: sequence, phase } });
+      const checkpoint = JSON.stringify({ schemaVersion: 1, lifecycle: { ...lifecycle, version: sequence, phase, ...(sequence === 1 && options.historicalReservation ? { targetReservationId: "past-effect" } : {}) } });
       database.prepare(
         `INSERT INTO operation_checkpoints
            (operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at)

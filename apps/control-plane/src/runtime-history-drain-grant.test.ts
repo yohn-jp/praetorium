@@ -216,7 +216,7 @@ function operation(overrides: Partial<OperationRecord> = {}): OperationRecord {
     leaseToken: LEASE_TOKEN,
     requestHash: "hash-8",
     checkpointSequence: 11,
-    checkpoint: { schemaVersion: 1, lifecycle, writerAbsenceProof: null },
+    checkpoint: { schemaVersion: 1, lifecycle },
     result: null,
     createdAt: NOW - 1_000,
     updatedAt: NOW,
@@ -250,7 +250,6 @@ function stopOperation(options: {
     reservationId: null,
     checkpoint: {
       schemaVersion: 1,
-      writerAbsenceProof: null,
       lifecycle: {
         ...lifecycle,
         generation: desiredGeneration,
@@ -480,6 +479,11 @@ describe("provisioner history drain grant", () => {
   it.each([
     ["stale lease", { op: operation({ leaseExpiresAt: NOW }) }, BASE_BODY],
     ["wrong checkpoint sequence", {}, { ...BASE_BODY, expectedCheckpointSequence: 10 }],
+    ["legacy top-level writer absence proof", { op: operation({ checkpoint: {
+      schemaVersion: 1,
+      lifecycle: operation().checkpoint!.lifecycle,
+      writerAbsenceProof: { remainingWriters: 0 },
+    } }) }, BASE_BODY],
     ["writer absence proof", { op: operation({ checkpoint: {
       schemaVersion: 1,
       lifecycle: { ...operation().checkpoint!.lifecycle as object, writerAbsenceProof: { remainingWriters: 0 } },

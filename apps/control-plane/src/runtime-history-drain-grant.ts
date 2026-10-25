@@ -331,7 +331,8 @@ function persistedOldAssignment(
     (operation.kind !== "stop" && operation.kind !== "update" && operation.kind !== "redeploy") ||
     (isStop && (lifecycle["target"] !== null || lifecycle["targetEpoch"] !== null ||
       lifecycle["targetReservationId"] !== null)) ||
-    lifecycle["writerAbsenceProof"] !== null || checkpoint["writerAbsenceProof"] !== null ||
+    lifecycle["writerAbsenceProof"] !== null ||
+    (checkpoint["writerAbsenceProof"] !== undefined && checkpoint["writerAbsenceProof"] !== null) ||
     lifecycle["rollbackEpoch"] !== null || lifecycle["rollbackCompatibilityEvidence"] !== null ||
     lifecycle["rollbackCompatible"] === true
   ) return null;

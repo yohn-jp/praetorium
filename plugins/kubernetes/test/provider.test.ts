@@ -586,6 +586,48 @@ function reservation(
 }
 
 describe("Kubernetes runtime provider", () => {
+  it.each(["same image", "other init image", "missing image ID", "other init name", "started app"])(
+    "observes bootstrap image evidence without readiness: %s", async (variant) => {
+      const api = new FakeKubernetesApi();
+      api.addNode();
+      const runtime = provider(api, targetReservations(), () => 500_000);
+      const target = hostedSpec();
+      await runtime.ensureRunning(target, new AbortController().signal, () => undefined);
+      api.addWriterPod(target);
+      const podKey = key("Pod", NAMESPACE, "writer-1");
+      const pod = record(api.objects.get(podKey));
+      const podSpec = record(pod.spec);
+      const init = (podSpec.initContainers as unknown[]).map(record);
+      api.objects.set(podKey, {
+        ...pod,
+        spec: { ...podSpec, initContainers: init.map(item => ({ ...item,
+          ...(variant === "other init image" ? { image: `other.example/image@${INDEX_DIGEST}` } : {}),
+          ...(variant === "other init name" ? { name: "other-init" } : {}),
+        })) },
+        status: {
+          phase: "Pending", conditions: [{ type: "Ready", status: "False" }],
+          containerStatuses: [{ name: "scriptorium", started: variant === "started app",
+            ...(variant === "started app" ? { containerID: "containerd://application" } : {}),
+            state: { waiting: { reason: "PodInitializing" } } }],
+          initContainerStatuses: [{ name: "history-restore", containerID: "containerd://initializer",
+            ...(variant === "missing image ID" ? {} : { imageID: `containerd://registry/image@${CHILD_DIGEST}` }),
+            state: { terminated: { exitCode: 1 } } }],
+        },
+      });
+      const deploymentKey = key("Deployment", NAMESPACE, DEPLOYMENT);
+      const deployment = record(api.objects.get(deploymentKey));
+      api.objects.set(deploymentKey, { ...deployment, status: { readyReplicas: 0 } });
+      const observed = await runtime.inspect(target);
+      expect(observed.state).not.toBe("running");
+      if (variant === "same image") {
+        expect(observed.observedImageDigest).toBe(CHILD_DIGEST);
+        expect(observed.writerCensus.pods[0]?.imageIds).toContain(`containerd://registry/image@${CHILD_DIGEST}`);
+      } else {
+        expect(observed.observedImageDigest).toBeUndefined();
+      }
+    },
+  );
+
   it("does not migrate an already-running legacy target during an idempotent start", async () => {
     const api = new FakeKubernetesApi();
     addLegacyWriter(api);

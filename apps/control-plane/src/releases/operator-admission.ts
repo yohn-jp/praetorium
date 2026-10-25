@@ -155,7 +155,13 @@ export function createOperatorReleaseAdmissionRoutes(deps: OperatorReleaseAdmiss
         requestHash: `sha256:${Array.from(hash, byte => byte.toString(16).padStart(2, "0")).join("")}`,
         now: deps.clock.nowMs() };
       const replay = await deps.skipCanaryWait.replay(command);
-      if (replay?.kind === "accepted") return c.json({ ...replay.status, duplicate: true });
+      if (replay?.kind === "accepted") {
+        const candidate = await deps.releases.findById(id.data);
+        if (candidate) {
+          try { deps.afterAdmitted?.(candidate, c.executionCtx); } catch { /* Durable replay remains accepted. */ }
+        }
+        return c.json({ ...replay.status, duplicate: true });
+      }
       if (replay?.kind === "conflict") return c.json({ error: { code: "CANARY_WAIT_SKIP_CONFLICT", reason: replay.reason } }, 409);
       if (replay?.kind === "not_found") return c.json({ error: { code: "RELEASE_NOT_FOUND" } }, 404);
       const candidate = await deps.releases.findById(id.data);

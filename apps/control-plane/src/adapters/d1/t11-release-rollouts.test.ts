@@ -836,11 +836,22 @@ describe("D1T11ReleaseRolloutStore against SQLite execution", () => {
     });
   });
 
-  it("wakes only the configured admitted canary whose build just succeeded", async () => {
+  it.each([false, true])("wakes the admitted build for a stopped Canary, reused=%s", async (reused) => {
     const db = new SQLiteD1();
     installSchema(db);
     const seed = await seedFailedPreRuntimeCanary(db, "release-build-wake");
     await admitCanaryBuild(db, seed, NOW + 5 * 60_000);
+    if (reused) {
+      db.database.prepare(`UPDATE logical_instances SET generation=7, runtime_epoch=2,
+        observed_state='stopped', observed_generation=6, observed_runtime_epoch=2,
+        reservation_state='released' WHERE instance_id=?`).run(retryBinding.instanceId);
+      db.database.prepare("UPDATE deployment_revisions SET generation=7 WHERE revision_id=?").run(seed.revisionId);
+      db.database.prepare(`INSERT INTO operations (
+        operation_id,instance_id,repository_id,generation,runtime_epoch,kind,status,phase,
+        idempotency_scope,idempotency_key,request_hash,actor_id,authorization_revision,created_at,updated_at
+      ) VALUES ('historical-stop',?,101,6,2,'stop','succeeded','complete',
+        'repository:101','historical-stop','hash','actor',3,1,1)`).run(retryBinding.instanceId);
+    }
     db.database.prepare(
       "UPDATE release_candidate_workflows SET lease_owner = 'expired', lease_epoch = 3, lease_expires_at = ? WHERE release_id = ?"
     ).run(NOW + 25_000, seed.release.id);

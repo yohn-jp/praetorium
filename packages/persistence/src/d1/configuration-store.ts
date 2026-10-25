@@ -840,6 +840,20 @@ export class D1ConfigurationStore implements ConfigurationStore {
                ), updated_at = ?
            WHERE instance_id = ? AND repository_id = ? AND generation = ?
              AND runtime_epoch = ? AND desired_state = ? AND policy = ?
+             AND (? <> 'system:stable-release-canary' OR (
+               desired_state = 'stopped' AND observed_state IN ('stopped', 'absent')
+               AND (observed_generation = generation OR (generation = 0 AND observed_state = 'absent'))
+               AND NOT EXISTS (
+                 SELECT 1 FROM runtime_reservations r
+                 WHERE r.instance_id = logical_instances.instance_id
+                   AND r.status IN ('reserved', 'allocated')
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM operations o
+                 WHERE o.instance_id = logical_instances.instance_id
+                   AND o.status IN ('pending', 'claimed', 'running')
+               )
+             ))
              AND EXISTS (
                SELECT 1 FROM repository_bindings b
                WHERE b.repository_id = ? AND b.instance_id = logical_instances.instance_id
@@ -868,6 +882,7 @@ export class D1ConfigurationStore implements ConfigurationStore {
           input.expectedRuntimeEpoch,
           input.expectedDesiredState,
           input.expectedPolicy,
+          input.actorId,
           input.repositoryId,
           input.bindingEpoch,
           input.authorizationRevision,

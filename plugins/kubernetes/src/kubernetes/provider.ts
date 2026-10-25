@@ -528,7 +528,7 @@ function podEvidence(
     podIdentity.repositoryId === identity.repositoryId;
   const status = record(record(value)?.status);
   const conditions = Array.isArray(status?.conditions) ? status.conditions : [];
-  const ready = conditions.some((condition) => {
+  const ready = status?.phase === "Running" && conditions.some((condition) => {
     const item = record(condition);
     return item?.type === "Ready" && item.status === "True";
   });
@@ -537,8 +537,35 @@ function podEvidence(
     const imageId = stringValue(record(item)?.imageID);
     return imageId === null ? [] : [imageId];
   });
-  const applicationStatus = statuses.find((item) => record(item)?.name === "scriptorium");
-  const applicationImageDigest = digestFromImageId(record(applicationStatus)?.imageID);
+  const applicationStatus = record(statuses.find((item) => record(item)?.name === "scriptorium"));
+  let applicationImageDigest = digestFromImageId(applicationStatus?.imageID);
+  // Before the application starts, its imageID is absent. The history init
+  // container uses the exact same immutable image on the same node, so its
+  // observed platform digest can fence startup authority recovery. This is
+  // image evidence only: it never makes an uninitialized Pod ready.
+  if (applicationImageDigest === undefined && ownershipValid &&
+      podIdentity?.runtimeEpoch === identity.runtimeEpoch && podIdentity.generation === identity.generation &&
+      status?.phase === "Pending" &&
+      applicationStatus?.started !== true && !stringValue(applicationStatus?.containerID) &&
+      record(applicationStatus?.state)?.running === undefined) {
+    const podSpec = record(record(value)?.spec);
+    const containers = Array.isArray(podSpec?.containers) ? podSpec.containers.map(record) : [];
+    const initializers = Array.isArray(podSpec?.initContainers) ? podSpec.initContainers.map(record) : [];
+    const application = containers[0];
+    const initializer = initializers[0];
+    const initStatuses = Array.isArray(status?.initContainerStatuses) ? status.initContainerStatuses : [];
+    const observedInit = record(initStatuses.find((item) => record(item)?.name === "history-restore"));
+    const initImageId = stringValue(observedInit?.imageID);
+    const initDigest = digestFromImageId(initImageId);
+    if (containers.length === 1 && application?.name === "scriptorium" &&
+        typeof application.image === "string" && /@sha256:[a-f0-9]{64}$/u.test(application.image) &&
+        initializers.length === 1 && initializer?.name === "history-restore" &&
+        initializer.image === application.image && stringValue(observedInit?.containerID) &&
+        initImageId !== null && initDigest !== undefined) {
+      applicationImageDigest = initDigest;
+      if (!imageIds.includes(initImageId)) imageIds.push(initImageId);
+    }
+  }
   return {
     namespace: metadata.namespace,
     name: metadata.name,

@@ -450,6 +450,21 @@ test("production Control Plane Worker uses migrated D1 and persistent repository
         await database.prepare(statement).run();
       }
     }
+    // Compile the production Canary wake query in Workerd's D1 engine. Node SQLite
+    // permits deeper expressions and cannot catch D1's maximum depth of 100.
+    const { D1T11ReleaseRolloutStore } = await import(
+      "../../apps/control-plane/dist/adapters/d1/t11-release-rollouts.js"
+    );
+    const releaseStore = new D1T11ReleaseRolloutStore(database);
+    assert.equal(await releaseStore.wakeSuccessfulCanaryBuild({
+      buildId: "no-completed-build", now: Date.now(),
+      binding: {
+        repositoryId: testRepository.repositoryId,
+        instanceId: "ins_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        bindingEpoch: 1, authorizationRevision: 7,
+        requestedModules: [], resourceProfileId: "small",
+      },
+    }), null);
     const migratedTables = await database
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
       .all();

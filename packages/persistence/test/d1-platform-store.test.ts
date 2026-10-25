@@ -337,6 +337,64 @@ describe("D1PlatformStore with SQLite transactions", () => {
     });
   });
 
+  it("accepts only the serialized pre-effect lifecycle envelope with explicit null effect evidence", async () => {
+    const fixture = await prepareSupersededPreEffectStart({ serializedLifecycle: true });
+    const stopped = await fixture.instances.requestDesiredState({
+      repositoryId: fixture.binding.repositoryId,
+      bindingEpoch: fixture.binding.bindingEpoch,
+      authorizationRevision: fixture.binding.authorizationRevision,
+      desiredState: "stopped",
+      expectedGeneration: 4,
+      actorId: "user-2",
+      idempotencyKey: "canonical-stop-after-lifecycle-envelope",
+      requestId: "canonical-stop-after-lifecycle-envelope-request",
+      now: 100,
+    });
+    expect(stopped.operation).toMatchObject({ kind: "stop", generation: 5 });
+    expect(await fixture.operations.getById(fixture.priorOperationId)).toMatchObject({
+      status: "blocked",
+      checkpointSequence: 4,
+      result: { code: "SUPERSEDED_BEFORE_RUNTIME_EFFECT", writerAbsenceClaimed: false },
+    });
+    expect(await fixture.instances.getByInstanceId(fixture.binding.instanceId)).toMatchObject({
+      instance: {
+        observedState: "ready",
+        observedGeneration: 2,
+        observedRuntimeEpoch: 1,
+        reservationId: "retained-observed-writer",
+      },
+    });
+  });
+
+  it.each([
+    { name: "effect evidence", options: { serializedLifecycle: true, lifecycleEffectProof: true } },
+    { name: "target reservation evidence", options: { serializedLifecycle: true, lifecycleTargetReservation: true } },
+    { name: "unknown envelope key", options: { serializedLifecycle: true, lifecycleUnknownKey: true } },
+  ])("does not reconcile a lifecycle envelope with $name", async ({ options }) => {
+    const fixture = await prepareSupersededPreEffectStart(options);
+    await expect(fixture.instances.requestDesiredState({
+      repositoryId: fixture.binding.repositoryId,
+      bindingEpoch: fixture.binding.bindingEpoch,
+      authorizationRevision: fixture.binding.authorizationRevision,
+      desiredState: "stopped",
+      expectedGeneration: 4,
+      actorId: "user-2",
+      idempotencyKey: `unsafe-lifecycle-envelope-${fixture.priorOperationId}`,
+      requestId: `unsafe-lifecycle-envelope-${fixture.priorOperationId}`,
+      now: 100,
+    })).rejects.toBeInstanceOf(RepositoryStateConflict);
+    expect(await fixture.operations.getById(fixture.priorOperationId)).toMatchObject({
+      status: "running",
+      checkpointSequence: 4,
+    });
+    expect(await fixture.instances.getByInstanceId(fixture.binding.instanceId)).toMatchObject({
+      instance: { generation: 4, runtimeEpoch: 2, desiredState: "stopped", observedRuntimeEpoch: 1 },
+    });
+    expect(fixture.database.prepare(
+      "SELECT count(*) AS n FROM audit_events WHERE action='operation.superseded'",
+    ).get()).toMatchObject({ n: 0 });
+  });
+
   it("rolls back stale-operation retirement when another current operation still blocks mutation", async () => {
     const fixture = await prepareSupersededPreEffectStart();
     fixture.database.prepare(
@@ -1709,6 +1767,10 @@ describe("D1PlatformStore with SQLite transactions", () => {
 
 async function prepareSupersededPreEffectStart(options: {
   readonly pending?: boolean;
+  readonly serializedLifecycle?: boolean;
+  readonly lifecycleEffectProof?: boolean;
+  readonly lifecycleTargetReservation?: boolean;
+  readonly lifecycleUnknownKey?: boolean;
   readonly targetReservation?: boolean;
   readonly authorityOwned?: boolean;
   readonly effectCheckpoint?: boolean;
@@ -1721,6 +1783,7 @@ async function prepareSupersededPreEffectStart(options: {
   const { binding } = await registry.resolveOrCreate(
     registryInput("instance-superseded-pre-effect", "request-superseded-pre-effect"),
   );
+  if (options.serializedLifecycle) seedDeployment(database, binding.instanceId);
   const requested = await instances.requestDesiredState({
     repositoryId: binding.repositoryId,
     bindingEpoch: binding.bindingEpoch,
@@ -1741,10 +1804,12 @@ async function prepareSupersededPreEffectStart(options: {
   database.prepare(
     `UPDATE logical_instances SET generation=4, runtime_epoch=2, desired_state='stopped',
        observed_generation=2, observed_runtime_epoch=1, observed_sequence=1, observed_state='ready',
+       observed_revision_id=?,
        reservation_state='allocated', reservation_id='retained-observed-writer',
        runtime_authority_reservation_id='retained-observed-writer',
        runtime_authority_operation_id=? WHERE instance_id=?`,
-  ).run(options.authorityOwned ? requested.operation.id : null, binding.instanceId);
+  ).run(options.serializedLifecycle ? "revision-old" : null,
+    options.authorityOwned ? requested.operation.id : null, binding.instanceId);
 
   if (options.targetReservation) {
     database.prepare(
@@ -1755,14 +1820,65 @@ async function prepareSupersededPreEffectStart(options: {
     ).run(binding.instanceId, binding.repositoryId);
   }
   const priorGeneration = options.currentGeneration ? 4 : 3;
+  const lifecycle = options.serializedLifecycle ? {
+    id: requested.operation.id,
+    version: 4,
+    instanceId: binding.instanceId,
+    repositoryId: binding.repositoryId,
+    clusterId: "cluster-a",
+    generation: 3,
+    kind: "update",
+    reason: "update",
+    phase: "waiting-for-capacity",
+    runtimeEpoch: 2,
+    targetRevisionId: "revision-1",
+    current: {
+      instanceId: binding.instanceId,
+      repositoryId: binding.repositoryId,
+      runtimeEpoch: 1,
+      generation: 2,
+      clusterId: "cluster-a",
+      reservationId: "retained-observed-writer",
+      deployment: { revisionId: "revision-old" },
+    },
+    target: {
+      revisionId: "revision-1",
+      repositoryId: binding.repositoryId,
+      imageDigest: `sha256:${"a".repeat(64)}`,
+      artifactRef: "ghcr.io/praetorium/test@sha256:fixture",
+      platformManifestDigest: `sha256:${"b".repeat(64)}`,
+      compositionManifestDigest: `sha256:${"c".repeat(64)}`,
+      resources: resources(),
+    },
+    targetEpoch: 2,
+    targetReservationId: options.lifecycleTargetReservation ? "target-reservation" : null,
+    rollbackEpoch: null,
+    quiesceRequest: null,
+    quiesceReceipt: null,
+    writerAbsenceProof: options.lifecycleEffectProof ? { remainingWriters: 0 } : null,
+    readinessEvidence: null,
+    rollbackCompatibilityEvidence: null,
+    rollbackCompatible: null,
+    buildId: null,
+    failureCode: null,
+    failureReason: null,
+    lastAuthenticatedActivityAt: null,
+  } : null;
+  const serializedLifecycle = lifecycle ? JSON.stringify({
+    schemaVersion: 1,
+    lifecycle,
+    ...(options.lifecycleUnknownKey ? { unknown: true } : {}),
+  }) : null;
   database.prepare(
-    `UPDATE operations SET generation=?, runtime_epoch=2, status=?,
+    `UPDATE operations SET generation=?, runtime_epoch=2, status=?, kind=?, cluster_id=?,
        phase=?, attempt=?, lease_epoch=?, worker_id=?, lease_token=?,
        lease_expires_at=?, reservation_id=?, checkpoint_sequence=?, checkpoint_json=?
      WHERE operation_id=?`,
   ).run(
     priorGeneration,
     options.pending ? "pending" : "running",
+    lifecycle ? "update" : "start",
+    lifecycle ? "cluster-a" : null,
     options.phase ?? "waiting-for-capacity",
     options.pending ? 0 : 1,
     options.pending ? 0 : 1,
@@ -1770,10 +1886,38 @@ async function prepareSupersededPreEffectStart(options: {
     options.pending ? null : "old-worker-lease-token-0123456789abcdef",
     options.pending ? null : options.liveLease ? 1_000 : 50,
     options.targetReservation ? "stale-target-reservation" : null,
-    options.effectCheckpoint ? 1 : 0,
-    options.effectCheckpoint ? JSON.stringify({ effect: "starting-target" }) : null,
+    lifecycle ? 4 : options.effectCheckpoint ? 1 : 0,
+    lifecycle ? serializedLifecycle : options.effectCheckpoint ? JSON.stringify({ effect: "starting-target" }) : null,
     requested.operation.id,
   );
+  if (lifecycle) {
+    for (const [sequence, phase] of [
+      [1, "accepted"],
+      [2, "waiting-for-artifact"],
+      [3, "waiting-for-capacity"],
+      [4, "waiting-for-capacity"],
+    ] as const) {
+      const checkpoint = JSON.stringify({ schemaVersion: 1, lifecycle: { ...lifecycle, version: sequence, phase } });
+      database.prepare(
+        `INSERT INTO operation_checkpoints
+           (operation_id, sequence, phase, runtime_epoch, checkpoint_json, actor_id, occurred_at)
+         VALUES (?, ?, ?, 2, ?, 'old-worker', ?)`,
+      ).run(requested.operation.id, sequence, phase, checkpoint, 10 + sequence);
+    }
+    const finalCheckpoint = JSON.stringify({
+      schemaVersion: 1,
+      lifecycle: {
+        ...lifecycle,
+        ...(options.lifecycleEffectProof ? { writerAbsenceProof: { remainingWriters: 0 } } : {}),
+      },
+      ...(options.lifecycleUnknownKey ? { unknown: true } : {}),
+    });
+    database.prepare("UPDATE operations SET checkpoint_json=? WHERE operation_id=?")
+      .run(finalCheckpoint, requested.operation.id);
+    database.prepare(
+      `UPDATE operation_checkpoints SET checkpoint_json=? WHERE operation_id=? AND sequence=4`,
+    ).run(finalCheckpoint, requested.operation.id);
+  }
   if (options.effectCheckpoint) {
     database.prepare(
       `INSERT INTO operation_checkpoints
